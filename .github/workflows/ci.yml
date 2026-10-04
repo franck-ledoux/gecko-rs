@@ -1,0 +1,129 @@
+name: Build & Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The kernel alone, everywhere. Fast, and it is what most changes touch.
+  rust:
+    name: Rust (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Lint
+        # gecko-py is excluded: linking an extension module needs a Python
+        # interpreter's symbols, which only maturin arranges. It is built and
+        # tested in the `python` job instead.
+        run: cargo clippy --workspace --exclude gecko-py --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace --exclude gecko-py
+
+  # The wheel has to build and work on every platform someone might install it
+  # on, viewer included.
+  python:
+    name: Python wheel (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: front/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build the viewer bundle
+        # The wheel embeds it, so it has to exist first.
+        working-directory: front
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install the package
+        run: pip install ./crates/gecko-py
+
+      - name: Test
+        run: |
+          pip install pytest
+          python -m pytest python -q
+
+  # The only place the whole chain can run: the cross-mode test needs the wasm
+  # façade and the Python one to have been built from the same tree.
+  full:
+    name: Both modes end to end
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: front/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the browser Playwright drives
+        working-directory: front
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Everything
+        # The same script a developer runs. What passes locally passes here.
+        run: ./check.sh
+
+      - name: Keep the traces of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: front/playwright-report
+          retention-days: 7
