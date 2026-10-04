@@ -1,8 +1,7 @@
 /target
 .venv
 node_modules
-front/dist/*
-!front/dist/.gitkeep
+front/dist
 front/src/pkg
 front/artifacts
 front/test-results

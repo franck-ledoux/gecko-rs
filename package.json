@@ -1,0 +1,16 @@
+{
+  "name": "gecko-rust",
+  "version": "1.0.0",
+  "description": "Portage Rust de [GECKO](https://github.com/franck-ledoux/gecko), repris pas à pas.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "wasm-pack": "^0.15.0"
+  }
+}

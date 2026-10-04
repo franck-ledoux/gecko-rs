@@ -1,0 +1,14 @@
+[package]
+name = "gecko-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Browser facade: the session, behind wasm-bindgen."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+gecko-cmd = { workspace = true }
+wasm-bindgen = "0.2"
+console_error_panic_hook = "0.1"

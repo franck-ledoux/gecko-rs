@@ -1,0 +1,26 @@
+:root { color-scheme: dark; --bg: #15171b; --panel: #1c1f25; --line: #2b2f37;
+        --fg: #dfe3ea; --dim: #8c93a1; --accent: #6ea8fe; }
+* { box-sizing: border-box; }
+body { margin: 0; display: flex; height: 100vh; overflow: hidden;
+       background: var(--bg); color: var(--fg);
+       font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, sans-serif; }
+#panel { width: 260px; flex: none; padding: 16px; overflow-y: auto;
+         background: var(--panel); border-right: 1px solid var(--line); }
+/* The canvas is absolutely positioned inside a flex item rather than being the
+   flex item itself: otherwise its intrinsic width, which engine.resize() keeps
+   writing, feeds back into the layout and it grows past the viewport. */
+#stage { flex: 1; min-width: 0; position: relative; }
+#view { position: absolute; inset: 0; width: 100%; height: 100%;
+        display: block; outline: none; touch-action: none; }
+h1 { margin: 0; font-size: 20px; letter-spacing: -.02em; }
+h1 span { color: var(--accent); }
+.sub { margin: 2px 0 18px; color: var(--dim); font-size: 12px; }
+button { width: 100%; padding: 8px; font-size: 13px; cursor: pointer;
+         background: #262a32; color: var(--fg); border: 1px solid var(--line);
+         border-radius: 6px; }
+button:hover { background: #2f343e; }
+#stats { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }
+dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; }
+dt { color: var(--dim); font-size: 11px; }
+dd { margin: 0; font-size: 12px; font-variant-numeric: tabular-nums; }
+#status { margin-top: 12px; color: var(--dim); font-size: 11px; min-height: 3em; }
