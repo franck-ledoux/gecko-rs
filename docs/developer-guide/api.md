@@ -1,0 +1,28 @@
+# Rust API reference
+
+Generated from the source by rustdoc, and published alongside this site.
+
+<a href="../../api/gecko_core/index.html"><strong>gecko-core</strong></a>
+— the block structure on a 3-map: cells, the two identities, cube corners.
+
+<a href="../../api/gecko_cmd/index.html"><strong>gecko-cmd</strong></a>
+— the session: commands, outcomes, the view buffer.
+
+<a href="../../api/gecko_wasm/index.html"><strong>gecko-wasm</strong></a>
+— the browser façade.
+
+!!! note "Why it is a separate site"
+    GECKO folds its C++ reference into these pages with `mkdoxy`. There is no
+    equivalent for Rust worth the trouble: rustdoc generates its own site, with
+    its own search and its own cross-linking, and flattening that into Markdown
+    would lose both. It is published under `api/` and linked from here instead.
+
+To read it locally:
+
+```bash
+cargo doc --workspace --exclude gecko-py --no-deps --open
+```
+
+`gecko-py` is excluded for the same reason it is excluded from `cargo test`:
+building it needs maturin. Its API is the [Python one](../user-guide/python.md),
+documented by hand — one class and eight methods do not need a generator.

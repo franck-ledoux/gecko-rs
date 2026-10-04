@@ -4,6 +4,7 @@ node_modules
 front/dist
 front/src/pkg
 front/artifacts
+site
 front/test-results
 front/playwright-report
 __pycache__

@@ -157,3 +157,46 @@ jobs:
           name: playwright-report
           path: front/playwright-report
           retention-days: 7
+
+  # Builds the site on every push, which is what keeps the links honest:
+  # docs.sh passes --strict, so a dead link or a page missing from the
+  # navigation fails here rather than greeting a reader.
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build the site
+        run: ./docs.sh
+
+      - name: Keep it for the deploy job
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  # Waits for the repository to go public: GitHub Pages on a private repository
+  # needs a paid plan, and a deploy job that always fails is noise. The
+  # condition flips on its own — nothing to switch on by hand.
+  deploy-docs:
+    name: Publish the documentation
+    needs: docs
+    if: github.ref == 'refs/heads/main' && !github.event.repository.private
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deploy
+        uses: actions/deploy-pages@v4

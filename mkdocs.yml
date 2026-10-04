@@ -1,0 +1,58 @@
+site_name: gecko-rs
+site_description: Developer documentation for the Rust port of the Gecko block toolkit
+site_url: https://franck-ledoux.github.io/gecko-rs/
+repo_url: https://github.com/franck-ledoux/gecko-rs
+repo_name: franck-ledoux/gecko-rs
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - toc.follow
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.snippets
+
+plugins:
+  - search
+
+nav:
+  - Home: index.md
+  - User Guide:
+      - Static mode: user-guide/static.md
+      - Station mode: user-guide/station.md
+      - Python API: user-guide/python.md
+  - Developer Guide:
+      - Architecture: developer-guide/architecture.md
+      - Building: developer-guide/building.md
+      - Testing: developer-guide/testing.md
+      - Rust API reference: developer-guide/api.md
+      - Writing documentation: developer-guide/documentation.md
