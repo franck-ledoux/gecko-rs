@@ -36,6 +36,23 @@ pub const HEX_FACES: [[usize; 4]; 6] = [
 /// Darts per block: four per face, six faces.
 const DARTS_PER_BLOCK: usize = 24;
 
+/// The eight corners of an axis-aligned cube, in the order [`HEX_FACES`] reads
+/// them.
+pub fn cube_corners(origin: [f64; 3], size: f64) -> [[f64; 3]; 8] {
+    let [x, y, z] = origin;
+    let s = size;
+    [
+        [x, y, z],
+        [x + s, y, z],
+        [x + s, y + s, z],
+        [x, y + s, z],
+        [x, y, z + s],
+        [x + s, y, z + s],
+        [x + s, y + s, z + s],
+        [x, y + s, z + s],
+    ]
+}
+
 #[derive(Debug, Error)]
 pub enum BlockingError {
     #[error("could not build the map: {0}")]
@@ -44,6 +61,8 @@ pub enum BlockingError {
     Link(#[from] LinkError),
     #[error("attribute error: {0}")]
     Attribute(#[from] AttributeError),
+    #[error("no node is named {0:?}")]
+    NoSuchNode(CellId),
 }
 
 pub struct Blocking {
@@ -181,6 +200,40 @@ impl Blocking {
             let id = self.names[3].next_cell();
             self.map.write_attribute(b, BlockTag { id });
         }
+    }
+
+    /// Move one node.
+    ///
+    /// The node is named by its stable [`CellId`], never by the identifier the
+    /// map derives from darts: that one is rewritten by every edit, so a caller
+    /// holding it between two operations would be pointing at something else.
+    pub fn set_position(&mut self, node: CellId, to: [f64; 3]) -> Result<(), BlockingError> {
+        let vertex = self
+            .node_by_id(node)
+            .ok_or(BlockingError::NoSuchNode(node))?;
+        self.map.write_vertex(vertex, (to[0], to[1], to[2]));
+        Ok(())
+    }
+
+    /// The cell a stable name currently stands for.
+    ///
+    /// A scan. An index would have to be invalidated by every topological
+    /// change, and getting that wrong is silent; at this size the scan is not
+    /// worth the hazard. It goes here when it starts to matter.
+    pub fn node_by_id(&self, node: CellId) -> Option<VertexIdType> {
+        if node.is_none() {
+            return None;
+        }
+        self.map
+            .iter_vertices()
+            .find(|v| self.node_tag(*v).id == node)
+    }
+
+    /// Every node, by stable name and position.
+    pub fn nodes(&self) -> impl Iterator<Item = (CellId, [f64; 3])> + '_ {
+        self.map
+            .iter_vertices()
+            .map(move |v| (self.node_tag(v).id, self.position(v).unwrap_or([0.0; 3])))
     }
 
     // --- reading ----------------------------------------------------------

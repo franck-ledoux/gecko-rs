@@ -13,6 +13,9 @@ export interface View {
   centre: [number, number, number];
   /** Three f32 per node, relative to `centre`. */
   positions: Float32Array;
+  /** The kernel's stable name for each node, in the same order.
+   *  A position in this array is not a name: edits reorder it. */
+  names: Uint32Array;
   /** Two node indices per edge. */
   edges: Uint32Array;
 }
@@ -31,7 +34,7 @@ export function decodeView(bytes: Uint8Array): View {
   const head = new DataView(bytes.buffer, bytes.byteOffset, HEADER);
   if (head.getUint32(0, true) !== MAGIC) throw new Error("view buffer: bad magic");
   const version = head.getUint32(4, true);
-  if (version !== 1) throw new Error(`view buffer: version ${version} not understood`);
+  if (version !== 2) throw new Error(`view buffer: version ${version} not understood`);
 
   const centre: [number, number, number] = [
     head.getFloat64(8, true),
@@ -43,7 +46,8 @@ export function decodeView(bytes: Uint8Array): View {
 
   // Check the declared sizes before making any view, so a truncated buffer is
   // a clear error here rather than an opaque one three lines down.
-  const expected = HEADER + nNodes * 12 + nEdges * 8;
+  // Per node: three f32 of position and one u32 of name.
+  const expected = HEADER + nNodes * 16 + nEdges * 8;
   if (expected !== bytes.byteLength) {
     throw new Error(
       `view buffer: header declares ${expected} bytes, buffer holds ${bytes.byteLength}`,
@@ -54,6 +58,7 @@ export function decodeView(bytes: Uint8Array): View {
   return {
     centre,
     positions: new Float32Array(bytes.buffer, base, nNodes * 3),
-    edges: new Uint32Array(bytes.buffer, base + nNodes * 12, nEdges * 2),
+    names: new Uint32Array(bytes.buffer, base + nNodes * 12, nNodes),
+    edges: new Uint32Array(bytes.buffer, base + nNodes * 16, nEdges * 2),
   };
 }

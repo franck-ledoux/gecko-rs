@@ -62,11 +62,12 @@ def test_the_view_buffer_is_the_wire_format():
     buf = bytes(s.view_buffer)
 
     assert buf[:4] == b"GKB1"
-    assert int.from_bytes(buf[4:8], "little") == 1
+    assert int.from_bytes(buf[4:8], "little") == 2
     n_nodes = int.from_bytes(buf[32:36], "little")
     n_edges = int.from_bytes(buf[36:40], "little")
     assert (n_nodes, n_edges) == (8, 12)
-    assert len(buf) == 40 + n_nodes * 12 + n_edges * 8
+    # Per node: three f32 of position and one u32 of name.
+    assert len(buf) == 40 + n_nodes * 16 + n_edges * 8
 
 
 def test_show_serves_the_viewer_and_is_idempotent():
@@ -92,3 +93,71 @@ def test_two_sessions_do_not_fight_over_a_port():
     # session fails to start, or silently attaches to the first.
     a, b = gecko.Session(), gecko.Session()
     assert a.show(open=False) != b.show(open=False)
+
+
+def test_creating_a_cube_is_the_same_as_its_eight_corners():
+    by_cube = gecko.Session()
+    by_corners = gecko.Session()
+    by_cube.create_cube([0, 0, 0], 1.0)
+    by_corners.add_block(CUBE)
+    assert bytes(by_cube.view_buffer) == bytes(by_corners.view_buffer)
+
+    with pytest.raises(ValueError, match="strictly positive"):
+        gecko.Session().create_cube([0, 0, 0], 0.0)
+
+
+def test_nodes_are_listed_with_a_name_to_move_them_by():
+    s = gecko.Session()
+    s.create_cube([0, 0, 0], 2.0)
+    nodes = s.nodes
+    assert len(nodes) == 8
+    assert {tuple(n["pos"]) for n in nodes} == {
+        (x, y, z) for x in (0.0, 2.0) for y in (0.0, 2.0) for z in (0.0, 2.0)
+    }
+    # Distinct names, or two spheres would answer to one.
+    assert len({n["id"] for n in nodes}) == 8
+
+
+def test_moving_a_node_moves_exactly_that_one():
+    s = gecko.Session()
+    s.create_cube([0, 0, 0], 1.0)
+    before = {n["id"]: tuple(n["pos"]) for n in s.nodes}
+    target = sorted(before)[3]
+
+    s.move_node(target, [9.0, 8.0, 7.0])
+
+    after = {n["id"]: tuple(n["pos"]) for n in s.nodes}
+    assert after.keys() == before.keys(), "a move must not rename anything"
+    assert after[target] == (9.0, 8.0, 7.0)
+    for name, was in before.items():
+        if name != target:
+            assert after[name] == was, f"node {name} moved too"
+    # Not a topological change.
+    assert s.stats == {"nodes": 8, "edges": 12, "faces": 6, "blocks": 1}
+
+
+def test_a_name_still_means_the_same_node_after_another_edit():
+    # The reason nodes are named by a stable id and not by a position in the
+    # list: the list is reordered by edits, the name is not.
+    s = gecko.Session()
+    s.create_cube([0, 0, 0], 1.0)
+    target = sorted(n["id"] for n in s.nodes)[0]
+
+    s.create_cube([5, 0, 0], 1.0)
+    s.move_node(target, [-3.0, -3.0, -3.0])
+
+    moved = [n for n in s.nodes if n["id"] == target]
+    assert len(moved) == 1
+    assert tuple(moved[0]["pos"]) == (-3.0, -3.0, -3.0)
+    # The second cube is untouched.
+    others = [n["pos"] for n in s.nodes if n["id"] != target]
+    assert len(others) == 15
+
+
+def test_moving_a_node_that_does_not_exist_raises():
+    s = gecko.Session()
+    s.create_cube([0, 0, 0], 1.0)
+    before = bytes(s.view_buffer)
+    with pytest.raises(ValueError, match="4242"):
+        s.move_node(4242, [1.0, 2.0, 3.0])
+    assert bytes(s.view_buffer) == before

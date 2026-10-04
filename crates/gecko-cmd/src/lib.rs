@@ -11,7 +11,8 @@
 
 pub mod view;
 
-use gecko_core::{Blocking, BlockingError, CellId};
+use gecko_core::ids::CellId;
+use gecko_core::{cube_corners, Blocking, BlockingError};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -23,14 +24,33 @@ pub enum SessionError {
     Blocking(#[from] BlockingError),
     #[error("bad command: {0}")]
     BadCommand(String),
+    #[error("a cube's size must be strictly positive, not {0}")]
+    BadSize(f64),
 }
 
-/// Everything that can change a session. Deliberately one variant for now:
-/// the point of this step is the path, not what travels down it.
+/// Everything that can change a session.
+///
+/// This set *is* the API. A convenience written in one façade would have to be
+/// written again in the other, so anything worth offering is a command — which
+/// also means the journal records the intent (`create_cube`) rather than eight
+/// anonymous points.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Command {
-    AddBlock { corners: [[f64; 3]; 8] },
+    AddBlock {
+        corners: [[f64; 3]; 8],
+    },
+    /// An axis-aligned cube, `origin` being its lowest corner.
+    CreateCube {
+        origin: [f64; 3],
+        size: f64,
+    },
+    /// Move one node, named by its stable id — never by the identifier the map
+    /// derives from darts, which every edit rewrites.
+    MoveNode {
+        node: u32,
+        to: [f64; 3],
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -60,21 +80,39 @@ impl Session {
     /// The one mutation path.
     pub fn apply(&mut self, command: Command) -> Result<Outcome, SessionError> {
         match command {
-            Command::AddBlock { corners } => {
-                let id: CellId = self.blocking.add_block(corners)?;
+            Command::AddBlock { corners } => self.add(corners),
+            Command::CreateCube { origin, size } => {
+                // `size <= 0.0` alone would let NaN through, since every
+                // comparison with it is false.
+                if size <= 0.0 || !size.is_finite() {
+                    return Err(SessionError::BadSize(size));
+                }
+                self.add(cube_corners(origin, size))
+            }
+            Command::MoveNode { node, to } => {
+                let node = CellId::from_raw(node);
+                self.blocking.set_position(node, to)?;
                 Ok(Outcome {
-                    message: format!(
-                        "block {:?} added — {} nodes, {} edges, {} faces, {} blocks",
-                        id,
-                        self.blocking.nb_nodes(),
-                        self.blocking.nb_edges(),
-                        self.blocking.nb_faces(),
-                        self.blocking.nb_blocks(),
-                    ),
+                    message: format!("node {node:?} moved to {to:?}"),
                     view_changed: true,
                 })
             }
         }
+    }
+
+    fn add(&mut self, corners: [[f64; 3]; 8]) -> Result<Outcome, SessionError> {
+        let id = self.blocking.add_block(corners)?;
+        Ok(Outcome {
+            message: format!(
+                "block {:?} added — {} nodes, {} edges, {} faces, {} blocks",
+                id,
+                self.blocking.nb_nodes(),
+                self.blocking.nb_edges(),
+                self.blocking.nb_faces(),
+                self.blocking.nb_blocks(),
+            ),
+            view_changed: true,
+        })
     }
 
     /// Transport-agnostic entry point: a JSON command in, a JSON outcome out.
@@ -91,6 +129,17 @@ impl Session {
 
     pub fn view_buffer(&self) -> Vec<u8> {
         ViewBuffer::of(&self.blocking).to_bytes()
+    }
+
+    /// Every node, by stable name and position — what a script needs in order
+    /// to have something to move.
+    pub fn nodes_json(&self) -> String {
+        let nodes: Vec<_> = self
+            .blocking
+            .nodes()
+            .map(|(id, pos)| serde_json::json!({ "id": id.get(), "pos": pos }))
+            .collect();
+        serde_json::Value::Array(nodes).to_string()
     }
 
     pub fn stats_json(&self) -> String {

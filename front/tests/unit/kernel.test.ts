@@ -30,6 +30,8 @@ describe("the binary transport", () => {
     const view = decodeView(await kernel.view());
 
     expect(view.positions.length / 3).toBe(8);
+    expect(view.names.length).toBe(8);
+    expect(new Set(view.names).size).toBe(8);
     expect(view.edges.length / 2).toBe(12);
     expect(view.centre).toEqual([0.5, 0.5, 0.5]);
     // Rebased on the model centre: the unit cube sits in [-0.5, 0.5].
@@ -122,15 +124,20 @@ describe("the contract the other mode has to meet", () => {
     // Both modes are transports onto one `gecko_cmd::Session`. If that stops
     // being true, these bytes stop matching — and `python/test_modes.py`
     // replays this very sequence through PyO3 and says so.
-    const commands = [
-      { op: "add_block", corners: CUBE },
-      { op: "add_block", corners: CUBE.map((p) => [p[0] + 3, p[1], p[2]]) },
+    const kernel = new WasmKernel();
+    const commands: Record<string, unknown>[] = [
+      { op: "create_cube", origin: [0, 0, 0], size: 1 },
+      { op: "create_cube", origin: [3, 0, 0], size: 2 },
       { op: "add_block", corners: CUBE.map((p) => [p[0], p[1] + 3, p[2] - 1]) },
     ];
-    const kernel = new WasmKernel();
     for (const command of commands) {
       expect((await kernel.apply(command)).ok).toBe(true);
     }
+    // Move a node too, naming it the way a client does — out of the view.
+    const name = decodeView(await kernel.view()).names[2];
+    const move = { op: "move_node", node: name, to: [0.25, -0.5, 1.75] };
+    expect((await kernel.apply(move)).ok).toBe(true);
+    commands.push(move);
     const bytes = await kernel.view();
     const stats = await kernel.stats();
     expect(stats.blocks).toBe(3);
@@ -152,3 +159,88 @@ function fnv1a(data: Uint8Array): number {
   }
   return h;
 }
+
+describe("creating a cube and moving a node", () => {
+  it("creates the same block the eight corners would", async () => {
+    const byCube = new WasmKernel();
+    const byCorners = new WasmKernel();
+    await byCube.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    await byCorners.apply({ op: "add_block", corners: CUBE });
+    expect(await byCube.view()).toEqual(await byCorners.view());
+  });
+
+  it("refuses a cube with no size, and changes nothing", async () => {
+    const kernel = new WasmKernel();
+    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    const before = await kernel.view();
+
+    const reply = await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 0 });
+    expect(reply.ok).toBe(false);
+    expect(reply.message).toMatch(/strictly positive/);
+    expect(await kernel.view()).toEqual(before);
+  });
+
+  it("moves the node the view named, and only that one", async () => {
+    const kernel = new WasmKernel();
+    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    const before = decodeView(await kernel.view());
+    const name = before.names[5];
+
+    expect((await kernel.apply({ op: "move_node", node: name, to: [7, 8, 9] })).ok).toBe(true);
+    const after = decodeView(await kernel.view());
+
+    // The names are the thing that survives; the order need not.
+    expect([...after.names].sort()).toEqual([...before.names].sort());
+    const where = (v: typeof after, n: number) => {
+      const i = [...v.names].indexOf(n);
+      return [0, 1, 2].map((k) => v.centre[k] + v.positions[i * 3 + k]);
+    };
+    expect(where(after, name)).toEqual([7, 8, 9]);
+    for (const other of before.names) {
+      if (other === name) continue;
+      expect(where(after, other)).toEqual(where(before, other));
+    }
+  });
+
+  it("refuses to move a node that does not exist", async () => {
+    const kernel = new WasmKernel();
+    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    const before = await kernel.view();
+    const reply = await kernel.apply({ op: "move_node", node: 4242, to: [1, 2, 3] });
+    expect(reply.ok).toBe(false);
+    expect(await kernel.view()).toEqual(before);
+  });
+});
+
+describe("the scene carries the kernel's names", () => {
+  it("gives every sphere a name, and finds it back from the screen", async () => {
+    const viewer = new Viewer(new NullEngine());
+    const kernel = new WasmKernel();
+    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    const view = decodeView(await kernel.view());
+    viewer.setView(view);
+    viewer.frameAll();
+    viewer.render();
+
+    expect([...viewer.names()].sort()).toEqual([...view.names].sort());
+
+    // A real Babylon ray cast: aim at a node and get its name back. No GPU
+    // needed, so the whole pick path is testable here.
+    const name = view.names[3];
+    const at = viewer.nodeScreen(name)!;
+    expect(viewer.pickNode(...at)).toBe(name);
+    expect(viewer.pickNode(2, 2)).toBeNull();
+  });
+
+  it("reports a node's position in model coordinates", async () => {
+    const viewer = new Viewer(new NullEngine());
+    const kernel = new WasmKernel();
+    // Far from the origin, so the rebasing has to be undone correctly.
+    await kernel.apply({ op: "create_cube", origin: [1000, 0, 0], size: 1 });
+    const view = decodeView(await kernel.view());
+    viewer.setView(view);
+
+    const corners = Array.from(view.names).map((n) => viewer.nodePosition(n)!);
+    expect(corners.every((p) => p[0] === 1000 || p[0] === 1001)).toBe(true);
+  });
+});

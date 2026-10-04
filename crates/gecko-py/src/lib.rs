@@ -76,6 +76,30 @@ impl PySession {
         self.command(serde_json::json!({ "op": "add_block", "corners": corners }))
     }
 
+    /// An axis-aligned cube, `origin` being its lowest corner.
+    #[pyo3(signature = (origin=[0.0, 0.0, 0.0], size=1.0))]
+    fn create_cube(&self, origin: [f64; 3], size: f64) -> PyResult<String> {
+        self.command(serde_json::json!({ "op": "create_cube", "origin": origin, "size": size }))
+    }
+
+    /// Move one node.
+    ///
+    /// `node` is the stable id from [`Session::nodes`], not a position in that
+    /// list: the list is reordered by edits, the id is not.
+    fn move_node(&self, node: u32, to: [f64; 3]) -> PyResult<String> {
+        self.command(serde_json::json!({ "op": "move_node", "node": node, "to": to }))
+    }
+
+    /// Every node, as `{"id": …, "pos": [x, y, z]}` — what a script needs in
+    /// order to have something to move.
+    #[getter]
+    fn nodes(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let json = self.locked(|s| s.nodes_json());
+        let value: Value =
+            serde_json::from_str(&json).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        to_py(py, &value)
+    }
+
     /// Send a raw command. The same door the browser uses, exposed so a script
     /// can reach anything the typed methods have not caught up with yet.
     fn apply(&self, py: Python<'_>, command: &str) -> PyResult<PyObject> {

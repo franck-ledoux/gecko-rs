@@ -14,7 +14,10 @@ use gecko_core::Blocking;
 use std::collections::HashMap;
 
 pub const MAGIC: [u8; 4] = *b"GKB1";
-pub const VERSION: u32 = 1;
+/// 2 added the node names. The field is bumped rather than quietly reused: two
+/// independent decoders read this, and a silent change is how one of them ends
+/// up reading the wrong field as a coordinate.
+pub const VERSION: u32 = 2;
 /// magic + version + f64 centre + two counts.
 pub const HEADER: usize = 40;
 
@@ -23,6 +26,12 @@ pub struct ViewBuffer {
     pub centre: [f64; 3],
     /// Three f32 per node, relative to `centre`.
     pub positions: Vec<f32>,
+    /// The stable name of each node, in the order `positions` lists them.
+    ///
+    /// Without this the browser could pick a sphere and have nothing to call it
+    /// — and calling it by its position in this array would only work until the
+    /// next edit renumbered things.
+    pub names: Vec<u32>,
     /// Two indices into `positions` per edge.
     pub edges: Vec<u32>,
 }
@@ -32,10 +41,11 @@ impl ViewBuffer {
         let nodes: Vec<_> = blocking.map().iter_vertices().collect();
         let mut at: HashMap<u32, u32> = HashMap::with_capacity(nodes.len());
         let mut world = Vec::with_capacity(nodes.len() * 3);
+        let mut names = Vec::with_capacity(nodes.len());
         for (i, n) in nodes.iter().enumerate() {
             at.insert(*n, i as u32);
-            let p = blocking.position(*n).unwrap_or([0.0; 3]);
-            world.extend_from_slice(&p);
+            world.extend_from_slice(&blocking.position(*n).unwrap_or([0.0; 3]));
+            names.push(blocking.node_tag(*n).id.get().unwrap_or(u32::MAX));
         }
 
         let centre = centre_of(&world);
@@ -65,6 +75,7 @@ impl ViewBuffer {
         ViewBuffer {
             centre,
             positions,
+            names,
             edges,
         }
     }
@@ -73,7 +84,9 @@ impl ViewBuffer {
     /// everything after it 4-aligned, so a client can view the bytes as typed
     /// arrays without copying.
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(HEADER + self.positions.len() * 4 + self.edges.len() * 4);
+        let mut out = Vec::with_capacity(
+            HEADER + (self.positions.len() + self.names.len() + self.edges.len()) * 4,
+        );
         out.extend_from_slice(&MAGIC);
         out.extend_from_slice(&VERSION.to_le_bytes());
         for c in self.centre {
@@ -82,6 +95,9 @@ impl ViewBuffer {
         out.extend_from_slice(&((self.positions.len() / 3) as u32).to_le_bytes());
         out.extend_from_slice(&((self.edges.len() / 2) as u32).to_le_bytes());
         for x in &self.positions {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        for x in &self.names {
             out.extend_from_slice(&x.to_le_bytes());
         }
         for x in &self.edges {

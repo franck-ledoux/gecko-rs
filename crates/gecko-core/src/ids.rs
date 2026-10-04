@@ -42,6 +42,15 @@ macro_rules! sentinel_id {
             /// Not named yet.
             pub const NONE: Self = Self(u32::MAX);
 
+            /// Rebuild a name from the number a client sent back.
+            ///
+            /// Deliberately unchecked: a name that no cell answers to is not a
+            /// malformed value, it is a question whose answer is "no such
+            /// cell", and that is for the lookup to say.
+            pub fn from_raw(raw: u32) -> Self {
+                Self(raw)
+            }
+
             pub(crate) fn new(raw: u32) -> Self {
                 debug_assert!(raw != u32::MAX, concat!($label, " counter exhausted"));
                 Self(raw)

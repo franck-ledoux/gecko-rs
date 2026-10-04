@@ -1,7 +1,7 @@
 //! The door, and the bytes that come out of it.
 
 use gecko_cmd::view::{HEADER, MAGIC};
-use gecko_cmd::{Command, Session, ViewBuffer};
+use gecko_cmd::{Command, Session, SessionError, ViewBuffer};
 
 const UNIT_CUBE: [[f64; 3]; 8] = [
     [0.0, 0.0, 0.0],
@@ -68,6 +68,7 @@ fn the_view_buffer_describes_the_block() {
     let v = ViewBuffer::of(s.blocking());
 
     assert_eq!(v.positions.len() / 3, 8);
+    assert_eq!(v.names.len(), 8);
     assert_eq!(v.edges.len() / 2, 12);
     assert_eq!(v.centre, [0.5, 0.5, 0.5]);
     // Every edge index addresses a node that exists.
@@ -86,12 +87,13 @@ fn the_encoding_is_the_layout_a_client_will_decode() {
     let bytes = s.view_buffer();
 
     assert_eq!(&bytes[0..4], &MAGIC);
-    assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 1);
+    assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 2);
     let n_nodes = u32::from_le_bytes(bytes[32..36].try_into().unwrap()) as usize;
     let n_edges = u32::from_le_bytes(bytes[36..40].try_into().unwrap()) as usize;
     assert_eq!((n_nodes, n_edges), (8, 12));
     // Exact length, or a client's typed-array views walk off the end.
-    assert_eq!(bytes.len(), HEADER + n_nodes * 12 + n_edges * 8);
+    // Per node: three f32 of position and one u32 of name.
+    assert_eq!(bytes.len(), HEADER + n_nodes * 16 + n_edges * 8);
 }
 
 #[test]
@@ -124,4 +126,167 @@ fn an_empty_session_still_produces_a_well_formed_buffer() {
     let bytes = s.view_buffer();
     assert_eq!(bytes.len(), HEADER);
     assert_eq!(&bytes[0..4], &MAGIC);
+}
+
+// ---------------------------------------------------------------------------
+// Creating a cube, and moving a node.
+// ---------------------------------------------------------------------------
+
+fn nodes(s: &Session) -> Vec<(u32, [f64; 3])> {
+    serde_json::from_str::<serde_json::Value>(&s.nodes_json())
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| {
+            let p = n["pos"].as_array().unwrap();
+            (
+                n["id"].as_u64().unwrap() as u32,
+                [
+                    p[0].as_f64().unwrap(),
+                    p[1].as_f64().unwrap(),
+                    p[2].as_f64().unwrap(),
+                ],
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn creating_a_cube_is_the_same_thing_as_adding_its_eight_corners() {
+    let mut by_cube = Session::new().unwrap();
+    let mut by_corners = Session::new().unwrap();
+
+    by_cube
+        .apply(Command::CreateCube {
+            origin: [0.0, 0.0, 0.0],
+            size: 1.0,
+        })
+        .unwrap();
+    by_corners
+        .apply(Command::AddBlock { corners: UNIT_CUBE })
+        .unwrap();
+
+    // The convenience has to mean exactly the long way round, or the journal
+    // records something that does not reproduce.
+    assert_eq!(by_cube.view_buffer(), by_corners.view_buffer());
+    assert_eq!(by_cube.stats_json(), by_corners.stats_json());
+}
+
+#[test]
+fn a_cube_needs_a_positive_size() {
+    let mut s = Session::new().unwrap();
+    for bad in [0.0, -1.0, f64::NAN] {
+        let err = s
+            .apply(Command::CreateCube {
+                origin: [0.0; 3],
+                size: bad,
+            })
+            .unwrap_err();
+        assert!(matches!(err, SessionError::BadSize(_)), "{bad}: {err}");
+    }
+    assert_eq!(s.blocking().nb_blocks(), 0);
+}
+
+#[test]
+fn the_view_names_every_node_it_draws() {
+    let mut s = Session::new().unwrap();
+    s.apply(Command::CreateCube {
+        origin: [0.0; 3],
+        size: 1.0,
+    })
+    .unwrap();
+    let v = ViewBuffer::of(s.blocking());
+
+    assert_eq!(v.names.len(), v.positions.len() / 3);
+    // A client picks a sphere and has something to call it by — and the names
+    // are distinct, or two spheres would answer to one.
+    let mut unique = v.names.clone();
+    unique.sort_unstable();
+    unique.dedup();
+    assert_eq!(unique.len(), 8);
+    assert!(
+        v.names.iter().all(|n| *n != u32::MAX),
+        "an unnamed node: {:?}",
+        v.names
+    );
+}
+
+#[test]
+fn moving_a_node_moves_what_the_view_said_it_would() {
+    let mut s = Session::new().unwrap();
+    s.apply(Command::CreateCube {
+        origin: [0.0; 3],
+        size: 1.0,
+    })
+    .unwrap();
+
+    // Pick a node the way a client does: out of the view buffer.
+    let v = ViewBuffer::of(s.blocking());
+    let index = 3usize;
+    let name = v.names[index];
+    let before = nodes(&s);
+
+    let out = s
+        .apply(Command::MoveNode {
+            node: name,
+            to: [9.0, 8.0, 7.0],
+        })
+        .unwrap();
+    assert!(out.view_changed);
+
+    let after = nodes(&s);
+    assert_eq!(after.len(), before.len());
+    for (id, pos) in &after {
+        let was = before.iter().find(|(i, _)| i == id).unwrap().1;
+        if *id == name {
+            assert_eq!(*pos, [9.0, 8.0, 7.0]);
+        } else {
+            assert_eq!(*pos, was, "node {id} moved as well");
+        }
+    }
+    // Moving is not topological: the structure is the same shape.
+    assert_eq!(s.blocking().nb_nodes(), 8);
+    assert_eq!(s.blocking().nb_edges(), 12);
+}
+
+#[test]
+fn moving_a_node_that_does_not_exist_is_refused() {
+    let mut s = Session::new().unwrap();
+    s.apply(Command::CreateCube {
+        origin: [0.0; 3],
+        size: 1.0,
+    })
+    .unwrap();
+    let before = s.view_buffer();
+
+    let reply = s.apply_json(r#"{"op":"move_node","node":4242,"to":[1,2,3]}"#);
+    assert!(reply.contains(r#""ok":false"#), "{reply}");
+    assert!(
+        reply.contains("4242"),
+        "the message should name it: {reply}"
+    );
+    assert_eq!(s.view_buffer(), before);
+}
+
+#[test]
+fn both_new_commands_travel_as_json() {
+    let mut s = Session::new().unwrap();
+    assert!(s
+        .apply_json(r#"{"op":"create_cube","origin":[0,0,0],"size":2}"#)
+        .contains(r#""ok":true"#));
+    let name = ViewBuffer::of(s.blocking()).names[0];
+    let reply = s.apply_json(&format!(
+        r#"{{"op":"move_node","node":{name},"to":[0.5,0.5,0.5]}}"#
+    ));
+    assert!(reply.contains(r#""ok":true"#), "{reply}");
+    assert!(reply.contains(r#""viewChanged":true"#), "{reply}");
+
+    for bad in [
+        r#"{"op":"create_cube","origin":[0,0,0],"size":0}"#,
+        r#"{"op":"create_cube","origin":[0,0,0]}"#,
+        r#"{"op":"move_node","node":1}"#,
+    ] {
+        assert!(s.apply_json(bad).contains(r#""ok":false"#), "{bad}");
+    }
 }

@@ -25,9 +25,9 @@ test("boots with its own kernel and nothing else", async ({ page }) => {
   expect(errors, "no console errors, no wasm panic").toEqual([]);
 });
 
-test("adding a block reaches the kernel and comes back to the scene", async ({ page }) => {
+test("creating a cube reaches the kernel and comes back to the scene", async ({ page }) => {
   await boot(page);
-  await page.locator("#add").click();
+  await page.locator("#cube").click();
   await page.waitForFunction(() => (window as any).__gecko.revision() > 1);
 
   await expect(page.locator("[data-test=blocks]")).toHaveText("1");
@@ -41,14 +41,14 @@ test("adding a block reaches the kernel and comes back to the scene", async ({ p
     edges: 12,
   });
 
-  await page.locator("#add").click();
+  await page.locator("#cube").click();
   await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
   await expect(page.locator("[data-test=blocks]")).toHaveText("2");
 });
 
 test("a refused command is reported and changes nothing", async ({ page }) => {
   await boot(page);
-  await page.locator("#add").click();
+  await page.locator("#cube").click();
   await page.waitForFunction(() => (window as any).__gecko.revision() > 1);
 
   const reply = await page.evaluate(
@@ -67,4 +67,50 @@ test("the model is rebased on its own centre", async ({ page }) => {
   await page.evaluate(() => (window as any).__gecko.refresh());
   const centre = await page.evaluate(() => (window as any).__gecko.centre());
   expect(centre[0]).toBeCloseTo(1e6 + 0.5, 3);
+});
+
+test("dragging a node with the mouse moves it in the kernel", async ({ page }) => {
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+
+  // Screen coordinates are read off the camera's transform matrix, which the
+  // *next* render updates. Reading them before the reframe has been drawn
+  // aims the mouse with a stale matrix — which is right often enough to look
+  // like it works.
+  await page.evaluate(() => (window as any).__gecko.settled());
+  const name = (await page.evaluate(() => (window as any).__gecko.names()))[4] as number;
+  const before = await page.evaluate(
+    (n) => (window as any).__gecko.nodePosition(n),
+    name,
+  );
+  const at = (await page.evaluate(
+    (n) => (window as any).__gecko.nodeScreen(n),
+    name,
+  )) as [number, number];
+
+  // A real gesture: press on the sphere, move, release. One command is sent,
+  // at the drop.
+  const box = (await page.locator("#view").boundingBox())!;
+  await page.mouse.move(box.x + at[0], box.y + at[1]);
+  await page.mouse.down();
+  for (let i = 1; i <= 8; i++) {
+    await page.mouse.move(box.x + at[0] + i * 10, box.y + at[1] - i * 6);
+  }
+  await page.mouse.up();
+  await page.waitForFunction(() => (window as any).__gecko.message().includes("moved"));
+
+  // The scene is redrawn from the kernel after the drop, so reading it back
+  // is reading what the kernel holds.
+  const after = await page.evaluate(
+    (n) => (window as any).__gecko.nodePosition(n),
+    name,
+  );
+  expect(after).not.toEqual(before);
+  // Only that node moved: the block still has eight of them and twelve edges.
+  expect(await page.evaluate(() => (window as any).__gecko.counts())).toEqual({
+    nodes: 8,
+    edges: 12,
+  });
+  expect(errors).toEqual([]);
 });

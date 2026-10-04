@@ -22,9 +22,15 @@ compilé en wasm ; aucun serveur, aucun Python.
 ```python
 import gecko
 s = gecko.Session()
-s.add_block([[0,0,0],[1,0,0],[1,1,0],[0,1,0],[0,0,1],[1,0,1],[1,1,1],[0,1,1]])
-s.show()          # ouvre un onglet ; la vue suit ce que tape la console
+s.create_cube([0, 0, 0], 1.0)
+s.show()                       # ouvre un onglet ; la vue suit la console
+
+n = s.nodes[0]                 # {"id": …, "pos": [x, y, z]}
+s.move_node(n["id"], [0.5, -0.2, 0])
 ```
+
+Dans l'onglet, les sommets se **tirent à la souris**, et la session Python voit
+le résultat — c'est le même objet.
 
 ## Ce qui rend les deux modes possibles
 
@@ -92,12 +98,32 @@ millisecondes dans Node. Playwright ne garde que ce qui exige un navigateur —
 dont le test qui justifie le mode station : **une commande tapée en Python
 atteint la page sans que la page ait rien demandé.**
 
+## Nommer un sommet
+
+Un sommet se désigne par son **`CellId` stable**, jamais par l'identifiant que
+la carte dérive des darts : celui-là est réécrit par chaque édition, donc un
+appelant qui le garderait entre deux opérations désignerait autre chose. Le
+tampon de vue transporte donc ces noms, sans quoi le navigateur pourrait piquer
+une sphère sans rien avoir à renvoyer.
+
+La résolution nom → cellule est un **parcours**, pas un index en cache : un index
+devrait être invalidé par chaque changement de topologie, et se tromper là est
+silencieux.
+
+Pendant un glisser-déposer, la vue **prévisualise en local** et le noyau n'est
+prévenu qu'au lâcher, par une commande unique — sinon c'est un aller-retour
+réseau par mouvement de souris en mode station. La vue diverge donc du noyau le
+temps du geste, puis est reconstruite depuis lui, qui reste l'autorité. Et parce
+que le fil est en f32 alors que le noyau calcule en f64, un aller-retour par le
+tampon est volontairement imprécis : c'est le noyau qui fait foi.
+
 ## Ce qui n'est pas encore là
 
-Le noyau ne sait construire qu'un bloc hexaédrique à partir de huit points. Pas
-de classification, pas de courbes de Bézier ni de surfaces de Coons, aucune
+Le noyau sait créer un cube et déplacer un sommet. Pas d'annulation, pas de
+validité géométrique (rien n'empêche de retourner un bloc), pas de
+classification, pas de courbes de Bézier ni de surfaces de Coons, aucune autre
 opération topologique (coudre, couper une nappe, supprimer, pillower), pas de
-maillage, pas de lecture de fichier, aucune interaction à la souris.
+maillage, pas de lecture de fichier.
 
 Le prochain choix de conception est le stockage de la classification : tableau de
 taille fixe dans l'attribut, ou table latérale indexée par le `CellId`.

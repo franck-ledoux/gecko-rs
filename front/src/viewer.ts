@@ -13,14 +13,19 @@ import type { AbstractEngine } from "@babylonjs/core/Engines/abstractEngine";
 import { Scene } from "@babylonjs/core/scene";
 import { ArcRotateCamera } from "@babylonjs/core/Cameras/arcRotateCamera";
 import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight";
-import { Vector3 } from "@babylonjs/core/Maths/math.vector";
+import { Matrix, Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { Color3, Color4 } from "@babylonjs/core/Maths/math.color";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import type { LinesMesh } from "@babylonjs/core/Meshes/linesMesh";
 import { CreateSphere } from "@babylonjs/core/Meshes/Builders/sphereBuilder";
 import { CreateLineSystem } from "@babylonjs/core/Meshes/Builders/linesBuilder";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
+import { PointerDragBehavior } from "@babylonjs/core/Behaviors/Meshes/pointerDragBehavior";
+import "@babylonjs/core/Culling/ray";
 import type { View } from "./decode";
+
+/** Where a dragged node was let go, in model coordinates. */
+export type Drop = (name: number, to: [number, number, number]) => void;
 
 export class Viewer {
   readonly scene: Scene;
@@ -33,6 +38,10 @@ export class Viewer {
 
   private nodes: Mesh[] = [];
   private wire?: LinesMesh;
+  /** A working copy of the view: the drag previews against it, so the scene can
+   *  follow the mouse without a round trip to the kernel. */
+  private view?: View;
+  private dropped: Drop[] = [];
 
   constructor(engine: AbstractEngine) {
     this.scene = new Scene(engine);
@@ -54,22 +63,33 @@ export class Viewer {
     this.camera.attachControl(canvas, true);
   }
 
+  /** Called when a drag ends, with the node's new position in model space. */
+  onDrop(listener: Drop) {
+    this.dropped.push(listener);
+  }
+
   setView(view: View) {
     this.centre = view.centre;
+    // A copy, because the drag writes into it. The incoming arrays are views
+    // onto the kernel's bytes.
+    this.view = {
+      centre: view.centre,
+      positions: Float32Array.from(view.positions),
+      names: Uint32Array.from(view.names),
+      edges: Uint32Array.from(view.edges),
+    };
     this.nodes.forEach((m) => m.dispose());
     this.nodes = [];
     this.wire?.dispose();
     this.wire = undefined;
 
-    const point = (i: number) =>
-      new Vector3(view.positions[i * 3], view.positions[i * 3 + 1], view.positions[i * 3 + 2]);
-
-    const segments: Vector3[][] = [];
-    for (let e = 0; e < view.edges.length; e += 2) {
-      segments.push([point(view.edges[e]), point(view.edges[e + 1])]);
-    }
-    if (segments.length) {
-      this.wire = CreateLineSystem("edges", { lines: segments }, this.scene);
+    if (view.edges.length) {
+      // Updatable, so a drag can redraw the edges without rebuilding the mesh.
+      this.wire = CreateLineSystem(
+        "edges",
+        { lines: this.segments(), updatable: true },
+        this.scene,
+      );
       this.wire.color = new Color3(0.95, 0.95, 1);
       this.wire.isPickable = false;
     }
@@ -77,14 +97,106 @@ export class Viewer {
     const size = this.span(view) * 0.03;
     for (let n = 0; n < view.positions.length / 3; n++) {
       const s = CreateSphere(`node${n}`, { diameter: size, segments: 8 }, this.scene);
-      s.position = point(n);
-      s.metadata = { node: n };
+      s.position = this.point(n);
+      // The kernel's name, not this index: the index is only good until the
+      // next edit reorders the view.
+      s.metadata = { index: n, name: view.names[n] };
       const m = new StandardMaterial(`nodeMat${n}`, this.scene);
       m.emissiveColor = new Color3(0.4, 0.7, 1);
       m.disableLighting = true;
       s.material = m;
       this.nodes.push(s);
+      this.makeDraggable(s, n);
     }
+  }
+
+  /**
+   * Drag and drop, one gesture.
+   *
+   * A behaviour per node rather than one attached on selection: attaching on
+   * the press that should *start* the drag misses that press, which turns the
+   * gesture into click-then-drag. Cheap at this size; an instanced hit target
+   * goes here when it is not.
+   *
+   * The kernel hears once, at the drop. Telling it on every mouse move would
+   * be a network round trip per pixel in the station.
+   */
+  private makeDraggable(sphere: Mesh, index: number) {
+    const drag = new PointerDragBehavior({});
+    drag.useObjectOrientationForDragging = false;
+    sphere.addBehavior(drag);
+    drag.onDragObservable.add(() => this.preview(index, sphere.position));
+    drag.onDragEndObservable.add(() => {
+      const p = sphere.position;
+      const name = sphere.metadata.name as number;
+      const to: [number, number, number] = [
+        p.x + this.centre[0],
+        p.y + this.centre[1],
+        p.z + this.centre[2],
+      ];
+      this.dropped.forEach((listener) => listener(name, to));
+    });
+  }
+
+  /** Move a node in the working copy and redraw the edges that reach it. */
+  private preview(index: number, to: Vector3) {
+    if (!this.view) return;
+    this.view.positions[index * 3] = to.x;
+    this.view.positions[index * 3 + 1] = to.y;
+    this.view.positions[index * 3 + 2] = to.z;
+    if (this.wire) {
+      this.wire = CreateLineSystem(
+        "edges",
+        { lines: this.segments(), updatable: true, instance: this.wire },
+        this.scene,
+      );
+    }
+  }
+
+  private point(i: number): Vector3 {
+    const p = this.view!.positions;
+    return new Vector3(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]);
+  }
+
+  private segments(): Vector3[][] {
+    const edges = this.view!.edges;
+    const out: Vector3[][] = [];
+    for (let e = 0; e < edges.length; e += 2) {
+      out.push([this.point(edges[e]), this.point(edges[e + 1])]);
+    }
+    return out;
+  }
+
+  /** Screen coordinates -> the kernel's name for the node under them. */
+  pickNode(x: number, y: number): number | null {
+    const hit = this.scene.pick(x, y, (m) => (m.metadata?.name ?? -1) >= 0);
+    return hit?.hit && hit.pickedMesh ? (hit.pickedMesh.metadata.name as number) : null;
+  }
+
+  /** The node with this name, in screen coordinates — the inverse of
+   *  `pickNode`, and what lets a test aim a real mouse at a real handle. */
+  nodeScreen(name: number): [number, number] | null {
+    const mesh = this.nodes.find((m) => m.metadata.name === name);
+    if (!mesh) return null;
+    const engine = this.scene.getEngine();
+    const v = Vector3.Project(
+      mesh.position,
+      Matrix.Identity(),
+      this.scene.getTransformMatrix(),
+      this.camera.viewport.toGlobal(engine.getRenderWidth(), engine.getRenderHeight()),
+    );
+    return [v.x, v.y];
+  }
+
+  /** Model-space position of a node, as the scene currently shows it. */
+  nodePosition(name: number): [number, number, number] | null {
+    const mesh = this.nodes.find((m) => m.metadata.name === name);
+    if (!mesh) return null;
+    return [
+      mesh.position.x + this.centre[0],
+      mesh.position.y + this.centre[1],
+      mesh.position.z + this.centre[2],
+    ];
   }
 
   private span(view: View): number {
@@ -107,6 +219,11 @@ export class Viewer {
     this.camera.radius = hi.subtract(lo).length() * 1.8 || 4;
     this.camera.alpha = -Math.PI / 3;
     this.camera.beta = Math.PI / 3;
+  }
+
+  /** The kernel's names for the nodes on screen. */
+  names(): number[] {
+    return this.nodes.map((m) => m.metadata.name as number);
   }
 
   get nodeCount() {

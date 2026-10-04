@@ -13,11 +13,6 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
-const CUBE = [
-  [0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
-  [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1],
-];
-
 const PYTHON = fileURLToPath(new URL("../../../.venv/bin/python", import.meta.url));
 const DRIVER = fileURLToPath(new URL("../station.py", import.meta.url));
 
@@ -93,7 +88,7 @@ test("a command typed in Python reaches the browser unasked", async ({ page }) =
 
     // Python moves the kernel. Nothing is clicked, nothing is reloaded.
     const reply = await station.ask<{ ok: boolean; message: string }>(
-      JSON.stringify({ op: "add_block", corners: CUBE }),
+      JSON.stringify({ op: "create_cube", origin: [0, 0, 0], size: 1 }),
     );
     expect(reply.ok, reply.message).toBe(true);
 
@@ -116,7 +111,7 @@ test("a click in the browser is visible to the same Python session", async ({ pa
     await page.goto(station.url);
     await page.waitForSelector("body[data-ready='1']", { timeout: 30_000 });
 
-    await page.locator("#add").click();
+    await page.locator("#cube").click();
     await expect(page.locator("[data-test=blocks]")).toHaveText("1");
 
     // One kernel, two clients: Python must see what the mouse did.
@@ -137,13 +132,93 @@ test("two tabs on one station see each other's work", async ({ browser }) => {
       await page.waitForSelector("body[data-ready='1']", { timeout: 30_000 });
     }
 
-    await first.locator("#add").click();
+    await first.locator("#cube").click();
     await expect(first.locator("[data-test=blocks]")).toHaveText("1");
     // The second tab asked for nothing, and must still be told.
     await expect(second.locator("[data-test=blocks]")).toHaveText("1");
   } finally {
     await first.close();
     await second.close();
+    station.stop();
+  }
+});
+
+test("a node dragged in the browser lands in the Python session", async ({ page }) => {
+  const station = await Station.start();
+  try {
+    await station.ask(JSON.stringify({ op: "create_cube", origin: [0, 0, 0], size: 1 }));
+    await page.goto(station.url);
+    await page.waitForSelector("body[data-ready='1']", { timeout: 30_000 });
+    await expect(page.locator("[data-test=nodes]")).toHaveText("8");
+
+    // Screen coordinates are read off the camera's transform matrix, which the
+    // *next* render updates. Reading them before the reframe has been drawn
+    // aims the mouse with a stale matrix — which is right often enough to look
+    // like it works.
+    await page.evaluate(() => (window as any).__gecko.settled());
+    const name = (await page.evaluate(() => (window as any).__gecko.names()))[2] as number;
+    const at = (await page.evaluate(
+      (n) => (window as any).__gecko.nodeScreen(n),
+      name,
+    )) as [number, number];
+
+    const box = (await page.locator("#view").boundingBox())!;
+    await page.mouse.move(box.x + at[0], box.y + at[1]);
+    await page.mouse.down();
+    for (let i = 1; i <= 8; i++) {
+      await page.mouse.move(box.x + at[0] + i * 9, box.y + at[1] - i * 7);
+    }
+    await page.mouse.up();
+    await page.waitForFunction(() => (window as any).__gecko.message().includes("moved"));
+
+    // The drag happened in a browser; the node lives in a Python process. They
+    // have to agree on where it ended up — to the precision the wire carries,
+    // not to the last bit: the view is f32 by design and the kernel is the
+    // authority in f64, so a round trip through the buffer is lossy on purpose.
+    const shown = (await page.evaluate(
+      (n) => (window as any).__gecko.nodePosition(n),
+      name,
+    )) as number[];
+    const { nodes } = await station.ask<{ nodes: { id: number; pos: number[] }[] }>("nodes");
+    const held = nodes.find((n) => n.id === name)!;
+    expect(held.pos).toHaveLength(3);
+    for (let k = 0; k < 3; k++) {
+      expect(held.pos[k]).toBeCloseTo(shown[k], 5);
+    }
+    // And it really moved: the node did not start at the origin corner.
+    expect(Math.hypot(...held.pos)).toBeGreaterThan(0.1);
+  } finally {
+    station.stop();
+  }
+});
+
+test("a node moved from Python moves in the browser", async ({ page }) => {
+  const station = await Station.start();
+  try {
+    await station.ask(JSON.stringify({ op: "create_cube", origin: [0, 0, 0], size: 1 }));
+    await page.goto(station.url);
+    await page.waitForSelector("body[data-ready='1']", { timeout: 30_000 });
+
+    const name = (await page.evaluate(() => (window as any).__gecko.names()))[0] as number;
+    const before = await page.evaluate(
+      (n) => (window as any).__gecko.nodePosition(n),
+      name,
+    );
+
+    await station.ask(JSON.stringify({ op: "move_node", node: name, to: [5, 6, 7] }));
+
+    // Nothing was clicked and nothing reloaded.
+    await expect(page.locator("#status")).toHaveText("modifié depuis Python");
+    await page.waitForFunction(
+      (n) => {
+        const p = (window as any).__gecko.nodePosition(n);
+        return p && p[0] === 5 && p[1] === 6 && p[2] === 7;
+      },
+      name,
+      { timeout: 10_000 },
+    );
+    expect(before).not.toEqual([5, 6, 7]);
+  } finally {
     station.stop();
   }
 });

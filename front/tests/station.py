@@ -22,6 +22,8 @@ for line in sys.stdin:
     try:
         if line == "stats":
             answer = {"ok": True, "stats": session.stats}
+        elif line == "nodes":
+            answer = {"ok": True, "nodes": session.nodes}
         else:
             answer = {"ok": True, "message": session.apply(line)}
     except Exception as error:  # noqa: BLE001 - the test wants the message

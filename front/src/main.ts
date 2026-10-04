@@ -36,19 +36,10 @@ async function detectMode(): Promise<Kernel> {
   return new WasmKernel();
 }
 
-/** A unit cube, shifted so successive blocks sit side by side. */
-function cube(index: number): number[][] {
-  const dx = index * 1.5;
-  return [
-    [dx, 0, 0],
-    [dx + 1, 0, 0],
-    [dx + 1, 1, 0],
-    [dx, 1, 0],
-    [dx, 0, 1],
-    [dx + 1, 0, 1],
-    [dx + 1, 1, 1],
-    [dx, 1, 1],
-  ];
+/** Where to put the next cube, so successive ones stand side by side.
+ *  Placement is the interface's business; the kernel takes an origin. */
+function nextOrigin(blocks: number): [number, number, number] {
+  return [blocks * 1.5, 0, 0];
 }
 
 async function boot() {
@@ -85,12 +76,24 @@ async function boot() {
     void refresh();
   });
 
-  $("add").addEventListener("click", async () => {
+  $("cube").addEventListener("click", async () => {
     const stats = await kernel.stats();
-    const reply = await kernel.apply({ op: "add_block", corners: cube(stats.blocks) });
+    const reply = await kernel.apply({
+      op: "create_cube",
+      origin: nextOrigin(stats.blocks),
+      size: 1,
+    });
     message = reply.message;
-    if (reply.viewChanged) await refresh(true);
-    else await refresh();
+    await refresh(reply.viewChanged);
+  });
+
+  // Dropping a node is one command, sent once. The scene has been following
+  // the mouse on its own copy; this is where the kernel takes it back over,
+  // and the refresh below redraws from what the kernel actually holds.
+  viewer.onDrop(async (name, to) => {
+    const reply = await kernel.apply({ op: "move_node", node: name, to });
+    message = reply.message;
+    await refresh();
   });
   window.addEventListener("resize", () => engine.resize());
 
@@ -106,6 +109,10 @@ async function boot() {
     message: () => message,
     revision: () => revision,
     counts: () => ({ nodes: viewer.nodeCount, edges: viewer.edgeCount }),
+    names: () => viewer.names(),
+    pickNode: (x: number, y: number) => viewer.pickNode(x, y),
+    nodeScreen: (name: number) => viewer.nodeScreen(name),
+    nodePosition: (name: number) => viewer.nodePosition(name),
     centre: () => viewer.centre,
     apply: (command: Record<string, unknown>) => kernel.apply(command),
     refresh: () => refresh(),
