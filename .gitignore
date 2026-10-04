@@ -1,0 +1,10 @@
+/target
+.venv
+node_modules
+front/dist/*
+!front/dist/.gitkeep
+front/src/pkg
+front/artifacts
+front/test-results
+front/playwright-report
+__pycache__

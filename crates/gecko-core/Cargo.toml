@@ -1,0 +1,13 @@
+[package]
+name = "gecko-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Block structure over a 3-dimensional combinatorial map."
+
+[dependencies]
+honeycomb-core = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+anyhow = "1"
