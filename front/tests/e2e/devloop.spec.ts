@@ -20,42 +20,66 @@ import { Station } from "./station";
 // server is a singleton, and saying so is clearer than working around it.
 test.describe.configure({ mode: "serial" });
 
-// Deliberately not 8731/5173: a developer may well have `./dev` running.
-const STATION_PORT = 8799;
-const VITE_PORT = 5174;
-const VITE_URL = `http://localhost:${VITE_PORT}/`;
+// Deliberately not 8731/5173: a developer may well have `./dev` running. And a
+// pair per test rather than one pair shared — a dev server that has been asked
+// to stop has not necessarily released its port, and the next test would
+// happily latch onto it while it still points at a station that is gone.
+const PORTS = [
+  { station: 8799, vite: 5174 },
+  { station: 8800, vite: 5175 },
+];
 
 const FRONT = fileURLToPath(new URL("../..", import.meta.url));
 
-async function startVite(stationPort: number): Promise<ChildProcess> {
+/**
+ * Start a dev server in front of a station, and wait until it is really
+ * forwarding.
+ *
+ * Waiting for the index page is not enough: any leftover server answers that.
+ * The mode probe only answers `station` once this server is up *and* reaching
+ * the station behind it, which is the thing being tested.
+ */
+async function startVite(ports: { station: number; vite: number }): Promise<ChildProcess> {
   const vite = spawn(
     "npx",
-    ["vite", "--port", String(VITE_PORT), "--strictPort", "--clearScreen", "false"],
-    { cwd: FRONT, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, GECKO_PORT: String(stationPort) } },
+    ["vite", "--port", String(ports.vite), "--strictPort", "--clearScreen", "false"],
+    {
+      cwd: FRONT,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, GECKO_PORT: String(ports.station) },
+    },
   );
-  const deadline = Date.now() + 60_000;
+  const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
     try {
-      const probe = await fetch(VITE_URL);
-      if (probe.ok) return vite;
+      const probe = await fetch(`http://localhost:${ports.vite}/mode`);
+      if (probe.ok && (await probe.text()).trim() === "station") return vite;
     } catch {
       // not up yet
     }
     await new Promise((r) => setTimeout(r, 300));
   }
   vite.kill();
-  throw new Error("the dev server never came up");
+  throw new Error(`no dev server forwarding to :${ports.station}`);
+}
+
+async function stop(vite: ChildProcess) {
+  if (vite.exitCode !== null) return;
+  const ended = new Promise((r) => vite.once("exit", r));
+  vite.kill();
+  await Promise.race([ended, new Promise((r) => setTimeout(r, 5000))]);
 }
 
 test("the dev server stands in front of a live Python session", async ({ page }) => {
-  const station = await Station.start(STATION_PORT);
-  const vite = await startVite(STATION_PORT);
+  const ports = PORTS[0];
+  const station = await Station.start(ports.station);
+  const vite = await startVite(ports);
   try {
     await station.ask(JSON.stringify({ op: "create_cube", origin: [0, 0, 0], size: 1 }));
 
     const errors: string[] = [];
     page.on("pageerror", (e) => errors.push(String(e)));
-    await page.goto(VITE_URL);
+    await page.goto(`http://localhost:${ports.vite}/`);
     await page.waitForSelector("body[data-ready='1']", { timeout: 30_000 });
 
     // Served by Vite, yet in station mode: the mode probe was forwarded.
@@ -72,7 +96,7 @@ test("the dev server stands in front of a live Python session", async ({ page })
     await expect(page.locator("[data-test=blocks]")).toHaveText("3");
     expect(errors).toEqual([]);
   } finally {
-    vite.kill();
+    await stop(vite);
     station.stop();
   }
 });
@@ -81,11 +105,12 @@ test("a reload leaves the session untouched", async ({ page }) => {
   // The point of proxying rather than embedding: the page can be thrown away
   // and rebuilt — which is what a hot reload does — and the kernel does not
   // notice.
-  const station = await Station.start(STATION_PORT + 1);
-  const vite = await startVite(STATION_PORT + 1);
+  const ports = PORTS[1];
+  const station = await Station.start(ports.station);
+  const vite = await startVite(ports);
   try {
     await station.ask(JSON.stringify({ op: "create_cube", origin: [0, 0, 0], size: 1 }));
-    await page.goto(VITE_URL);
+    await page.goto(`http://localhost:${ports.vite}/`);
     await page.waitForSelector("body[data-ready='1']", { timeout: 30_000 });
     await page.locator("#cube").click();
     await expect(page.locator("[data-test=blocks]")).toHaveText("2");
@@ -95,7 +120,7 @@ test("a reload leaves the session untouched", async ({ page }) => {
     await expect(page.locator("[data-test=blocks]")).toHaveText("2");
     await expect(page.locator("[data-test=mode]")).toHaveText("station");
   } finally {
-    vite.kill();
+    await stop(vite);
     station.stop();
   }
 });
