@@ -63,6 +63,33 @@ after its own commands would never see it.
 A change also carries its **origin**, and a tab ignores its own. Without that a
 tab refreshes twice for its own click, and announces that Python did it.
 
+### Which mode, and what "not yet" means
+
+The page asks its own origin for `mode` and reads three answers, not two
+(`front/src/mode.ts`):
+
+| Answer                  | Means                                     |
+| ----------------------- | ----------------------------------------- |
+| `2xx` and `station`     | a station is behind this origin           |
+| `4xx`, or anything else | a static host — this tab carries a kernel |
+| `5xx`, or a throw       | a station is **meant** to be here         |
+
+The third row is the one worth the table. In the development loop `mode` is
+*forwarded* to the station by the dev server, so a 5xx from it does not mean
+"no station here" — it means the proxy had nothing to forward to, which is
+exactly what a tab opened before the Python session sees.
+
+Read as a static host, that answer starts a kernel in the tab, and the page
+then looks completely healthy while ignoring every command typed in the
+console. So the page never falls back once a station has been promised: it says
+it is waiting, keeps probing, and comes alive when one answers. A tab can be
+opened before its station, and a station can be restarted under a tab.
+
+The body carries `data-waiting` while that is going on, which is what the test
+waits for. Checking the status code alone is not enough either way: a static
+host that serves `index.html` for unknown paths answers `200` to everything, so
+a success is also checked for its content.
+
 ## Naming a cell
 
 A combinatorial map names its cells by darts: `vertex_id`, `edge_id` and the

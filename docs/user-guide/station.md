@@ -87,6 +87,19 @@ view keeps up with the cells you run. The view is a separate tab, not an output
 cell — a widget that renders inline is a different piece of plumbing and is not
 built yet.
 
+## If the page ignores the console
+
+Check what the panel says next to **mode**. If it says `static`, the tab is
+driving a kernel of its own and the Python session is not in the picture at
+all: everything works, nothing you type reaches it.
+
+That means the page was served by something that is not your station — most
+often the dev server with no station behind it. A tab that reaches a dev server
+before the station is listening now says *en attente de la station Python…* and
+connects by itself as soon as one answers, so this should only show up if the
+page came from a genuinely static host. Reload it from the address `show()`
+returned, or from the dev server if you are running `./dev`.
+
 ## If the page says the bundle is missing
 
 The viewer is embedded in the wheel at build time. A package built without it

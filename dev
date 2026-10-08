@@ -51,14 +51,18 @@ case "${1:-console}" in
       s.create_cube([0, 0, 0], 1.0)
       s.show(port=int(os.environ["GECKO_PORT"]), open=False)
 
-  Then open $GECKO_VIEW in a tab to watch it.
+  Open $GECKO_VIEW in a tab to watch it. Before or after the cell: the
+  page waits for a station rather than starting a kernel of its own.
 
 NOTE
     uv run --with jupyterlab jupyter lab
     ;;
   console)
-    (command -v open >/dev/null && open "$GECKO_VIEW") \
-      || (command -v xdg-open >/dev/null && xdg-open "$GECKO_VIEW") || true
+    # The browser is opened by console.py, once the station is really
+    # listening. Opened from here it raced Python's start-up and won, which is
+    # not what you want: the tab reaches a dev server with no station behind
+    # it yet. The page now waits for one instead of carrying its own kernel,
+    # but there is no reason to make it wait.
     ./.venv/bin/python -i scripts/console.py
     ;;
   *)

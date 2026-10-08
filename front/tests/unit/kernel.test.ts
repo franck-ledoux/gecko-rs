@@ -22,6 +22,7 @@ import {
   type Axis,
 } from "../../src/axes";
 import { PRESETS } from "../../src/theme";
+import { readProbe } from "../../src/mode";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
 import type { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 
@@ -472,5 +473,32 @@ describe("which camera is the active one", () => {
     expect(viewer.scene.activeCamera).toBe(viewer.camera);
     viewer.render();
     expect(viewer.scene.activeCamera).toBe(viewer.camera);
+  });
+});
+
+describe("reading the mode probe", () => {
+  it("knows a station when it hears one", () => {
+    expect(readProbe(200, "station")).toBe("station");
+    // The station's own server adds no newline; a proxy might.
+    expect(readProbe(200, "station\n")).toBe("station");
+  });
+
+  it("knows a static host", () => {
+    // No such route: the deployed site, which carries its own kernel.
+    expect(readProbe(404, "not found")).toBe("static");
+    // A host that serves index.html for anything, which is why the body is
+    // read at all rather than just the code.
+    expect(readProbe(200, "<!doctype html>")).toBe("static");
+  });
+
+  it("waits when a station is promised and missing", () => {
+    // This is the one. Vite forwards `mode` to the station, so with no station
+    // behind it the answer is a 502/500 from the proxy — not "no station
+    // here". Read as static, the page starts a kernel of its own and then
+    // ignores every command typed in Python, while looking perfectly alive.
+    expect(readProbe(500, "")).toBe("waiting");
+    expect(readProbe(502, "Error: connect ECONNREFUSED")).toBe("waiting");
+    // And a fetch that threw, which this reports as status 0.
+    expect(readProbe(0, "")).toBe("waiting");
   });
 });

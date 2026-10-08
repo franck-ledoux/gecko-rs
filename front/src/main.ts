@@ -8,6 +8,7 @@
 
 import { Engine } from "@babylonjs/core/Engines/engine";
 import { decodeView } from "./decode";
+import { readProbe, type Probe } from "./mode";
 import type { Kernel } from "./kernel";
 import { initKernel, WasmKernel } from "./kernel-wasm";
 import { RemoteKernel } from "./kernel-remote";
@@ -18,24 +19,42 @@ import "./style.css";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
+const PROBE_PAUSE = 500;
+
 /**
- * Ask whether a station is serving this page.
+ * Ask whether a station is serving this page, and keep asking while the answer
+ * is "not yet".
  *
- * A static host that falls back to `index.html` for unknown paths would make a
- * plain "did it 404?" test say yes, so the answer is checked for its content.
+ * Never falls back to a local kernel once a station has been promised: a page
+ * that is wired to Python and silently is not is worse than a page that says
+ * it is waiting.
  */
-async function detectMode(): Promise<Kernel> {
-  try {
-    const response = await fetch("mode");
-    if (response.ok && (await response.text()).trim() === "station") {
-      const scheme = location.protocol === "https:" ? "wss" : "ws";
-      return await RemoteKernel.connect(`${scheme}://${location.host}/ws`);
+async function detectMode(waiting: () => void): Promise<Kernel> {
+  for (;;) {
+    let answer: Probe;
+    try {
+      const response = await fetch("mode", { cache: "no-store" });
+      answer = readProbe(response.status, await response.text());
+    } catch {
+      answer = readProbe(0, "");
     }
-  } catch {
-    // No station. The static build carries its own kernel.
+
+    if (answer === "static") {
+      await initKernel();
+      return new WasmKernel();
+    }
+    if (answer === "station") {
+      const scheme = location.protocol === "https:" ? "wss" : "ws";
+      try {
+        return await RemoteKernel.connect(`${scheme}://${location.host}/ws`);
+      } catch {
+        // The probe was answered and the socket was not: the station went down
+        // between the two. Wait for it like any other absent station.
+      }
+    }
+    waiting();
+    await new Promise((r) => setTimeout(r, PROBE_PAUSE));
   }
-  await initKernel();
-  return new WasmKernel();
 }
 
 /** Where to put the next cube, so successive ones stand side by side.
@@ -45,7 +64,13 @@ function nextOrigin(blocks: number): [number, number, number] {
 }
 
 async function boot() {
-  const kernel = await detectMode();
+  // Said out loud, and marked on the body so a test can wait for it: this is
+  // the state the page used to hide by pretending to be a static build.
+  const kernel = await detectMode(() => {
+    document.body.dataset.waiting = "1";
+    $("status").textContent = "en attente de la station Python…";
+  });
+  delete document.body.dataset.waiting;
 
   const canvas = $<HTMLCanvasElement>("view");
   const engine = new Engine(canvas, true, { preserveDrawingBuffer: true }, true);

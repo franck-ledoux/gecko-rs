@@ -27,6 +27,7 @@ test.describe.configure({ mode: "serial" });
 const PORTS = [
   { station: 8799, vite: 5174 },
   { station: 8800, vite: 5175 },
+  { station: 8801, vite: 5176 },
 ];
 
 const FRONT = fileURLToPath(new URL("../..", import.meta.url));
@@ -40,15 +41,7 @@ const FRONT = fileURLToPath(new URL("../..", import.meta.url));
  * the station behind it, which is the thing being tested.
  */
 async function startVite(ports: { station: number; vite: number }): Promise<ChildProcess> {
-  const vite = spawn(
-    "npx",
-    ["vite", "--port", String(ports.vite), "--strictPort", "--clearScreen", "false"],
-    {
-      cwd: FRONT,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, GECKO_PORT: String(ports.station) },
-    },
-  );
+  const vite = await serveOnly(ports);
   const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
     try {
@@ -61,6 +54,36 @@ async function startVite(ports: { station: number; vite: number }): Promise<Chil
   }
   vite.kill();
   throw new Error(`no dev server forwarding to :${ports.station}`);
+}
+
+/**
+ * The dev server alone, waiting only for itself.
+ *
+ * This is the arrangement `./dev` really produces for a moment: a dev server
+ * up, the Python session still starting. The page is served, and the station
+ * behind the proxy is not there yet.
+ */
+async function serveOnly(ports: { station: number; vite: number }): Promise<ChildProcess> {
+  const vite = spawn(
+    "npx",
+    ["vite", "--port", String(ports.vite), "--strictPort", "--clearScreen", "false"],
+    {
+      cwd: FRONT,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, GECKO_PORT: String(ports.station) },
+    },
+  );
+  const deadline = Date.now() + 90_000;
+  while (Date.now() < deadline) {
+    try {
+      if ((await fetch(`http://localhost:${ports.vite}/`)).ok) return vite;
+    } catch {
+      // not up yet
+    }
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  vite.kill();
+  throw new Error(`no dev server on :${ports.vite}`);
 }
 
 async function stop(vite: ChildProcess) {
@@ -122,5 +145,39 @@ test("a reload leaves the session untouched", async ({ page }) => {
   } finally {
     await stop(vite);
     station.stop();
+  }
+});
+
+test("a tab opened before the station waits for it", async ({ page }) => {
+  // The order `./dev` used to produce, and the browser won the race every
+  // time. The probe is forwarded, so with no station behind it the proxy
+  // answers 5xx — which is not the same thing as "no station here". Taken for
+  // one, the tab starts a kernel of its own and then looks entirely healthy
+  // while ignoring everything typed in the Python console.
+  const ports = PORTS[2];
+  const vite = await serveOnly(ports);
+  let station: Station | undefined;
+  try {
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(String(e)));
+    await page.goto(`http://localhost:${ports.vite}/`);
+
+    await page.waitForSelector("body[data-waiting='1']", { timeout: 30_000 });
+    // Waiting, not running: no kernel has been chosen.
+    expect(await page.evaluate(() => document.body.dataset.ready)).toBeUndefined();
+    expect(await page.evaluate(() => (window as any).__gecko)).toBeUndefined();
+
+    station = await Station.start(ports.station);
+    await station.ask(JSON.stringify({ op: "create_cube", origin: [0, 0, 0], size: 1 }));
+
+    // No reload: the page picks the station up by itself.
+    await page.waitForSelector("body[data-ready='1']", { timeout: 30_000 });
+    await expect(page.locator("[data-test=mode]")).toHaveText("station");
+    await expect(page.locator("[data-test=blocks]")).toHaveText("1");
+    expect(await page.evaluate(() => document.body.dataset.waiting)).toBeUndefined();
+    expect(errors).toEqual([]);
+  } finally {
+    await stop(vite);
+    station?.stop();
   }
 });

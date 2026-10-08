@@ -4,6 +4,7 @@ Run through `python -i`, so everything here is in scope at the prompt.
 """
 
 import os
+import webbrowser
 
 import gecko
 
@@ -14,6 +15,11 @@ s.create_cube([0, 0, 0], 1.0)
 # page is served by Vite, not from here, which is what makes a TypeScript edit
 # reload the view without touching this session.
 s.show(port=int(os.environ["GECKO_PORT"]), open=False)
+
+# Opened here rather than by `./dev`, because here is where the station is
+# known to be listening. Vite's address, not the station's: the page has to
+# come from the dev server for a TypeScript edit to reload it.
+webbrowser.open(os.environ["GECKO_VIEW"])
 
 print(f"""
   gecko — session ready as `s`, already holding one cube.
