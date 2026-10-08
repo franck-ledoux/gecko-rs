@@ -93,6 +93,15 @@ export class Viewer {
     this.scene.onBeforeRenderObservable.add(() => this.rescaleHandles());
     this.axes = new AxisGizmo(this.scene, this.camera);
     this.scene.activeCameras = [this.camera, this.axes.camera];
+    // Rendering leaves `activeCamera` set to whichever camera went last — the
+    // corner gizmo. Everything that runs between frames then reads the wrong
+    // one, and Babylon's own drag behaviour reads it twice: to decide whose
+    // controls to suspend, and to build the ray the drag follows. So the
+    // dragged node went the wrong way *and* the view orbited along with it.
+    // Put it back to the main camera once the frame is done.
+    this.scene.onAfterRenderObservable.add(() => {
+      this.scene.activeCamera = this.camera;
+    });
     // Babylon's own picking — which is what the drag behaviours run on — must
     // use the main camera, not whichever happens to be active. The gizmo does
     // its own pick, through its own camera.
@@ -185,6 +194,11 @@ export class Viewer {
   private makeDraggable(sphere: Mesh, index: number) {
     const drag = new PointerDragBehavior({});
     drag.useObjectOrientationForDragging = false;
+    // Babylon eases the node towards the pointer, a fifth of the way each
+    // frame, to damp jitter from a tracked controller. With a mouse it means
+    // the node lands wherever the easing had got to rather than where you
+    // pointed — and placing a vertex is exactly the case where that matters.
+    drag.dragDeltaRatio = 1;
     sphere.addBehavior(drag);
     drag.onDragObservable.add(() => this.preview(index, sphere.position));
     drag.onDragEndObservable.add(() => {

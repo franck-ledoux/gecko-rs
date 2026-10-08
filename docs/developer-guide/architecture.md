@@ -145,6 +145,22 @@ not promise.
 The node names are there so the browser has something to call a sphere it
 picked. Its position in the array is not a name: edits reorder it.
 
+### The origin stays put
+
+The centre is **not** recomputed from the bounding box each time. It is session
+state, settled when the model changes, and left alone while it still serves.
+
+Recomputing it means every edit shifts the whole scene: drag one node and the
+other seven slide across the screen, because all of them are drawn relative to
+a centre that just moved. The origin is there for precision, not for centring,
+so it only has to stay *near* the model — it follows only once the model has
+wandered half a diagonal away from it.
+
+Settled on **edit**, never on read. An origin adopted when someone asks for the
+view would make the bytes depend on how many times they had asked, and the two
+façades — which ask at different moments — would quietly stop agreeing. The
+cross-mode test caught exactly that.
+
 ## What does not go through the kernel
 
 Exactly one thing, and it is worth naming because everything else does: **how
@@ -171,6 +187,12 @@ Every node sphere carries its own drag behaviour rather than one being attached
 on selection: attaching on the press that should *start* the drag misses that
 press, and turns the gesture into click-then-drag.
 
+Babylon eases a dragged node towards the pointer, a fifth of the way per frame,
+to damp jitter from a tracked controller. With a mouse that means the node
+lands wherever the easing had got to rather than where you pointed, so
+`dragDeltaRatio` is set to 1. Placing a vertex is exactly the case where "close
+to where you meant" is not good enough.
+
 ## Two cameras
 
 The orientation triad is a second camera on a corner viewport, separated from
@@ -183,6 +205,11 @@ find:
   the triad. Anything projecting a world point to the screen has to use its own
   camera's view and projection matrices, and anything picking has to name its
   camera rather than relying on the active one.
+- **So is `scene.activeCamera`**, and Babylon's own drag behaviour reads it
+  twice: to decide whose controls to suspend while dragging, and to build the
+  ray the drag follows. Left alone, dragging a node turned the view *and* sent
+  the node along a plane belonging to the corner gizmo. The viewer puts
+  `activeCamera` back to the main camera once each frame is done.
 - **A Babylon viewport measures y from the bottom; `Vector3.Project` wants it
   from the top.** Full-screen viewports hide the difference because the offset
   is zero either way. A corner one does not.

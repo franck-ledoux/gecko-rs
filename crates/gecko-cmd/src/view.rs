@@ -37,7 +37,9 @@ pub struct ViewBuffer {
 }
 
 impl ViewBuffer {
-    pub fn of(blocking: &Blocking) -> ViewBuffer {
+    /// Build the view, reusing `previous` as the rebasing origin when it is
+    /// still close enough to serve.
+    pub fn of(blocking: &Blocking, previous: Option<[f64; 3]>) -> ViewBuffer {
         let nodes: Vec<_> = blocking.map().iter_vertices().collect();
         let mut at: HashMap<u32, u32> = HashMap::with_capacity(nodes.len());
         let mut world = Vec::with_capacity(nodes.len() * 3);
@@ -48,7 +50,7 @@ impl ViewBuffer {
             names.push(blocking.node_tag(*n).id.get().unwrap_or(u32::MAX));
         }
 
-        let centre = centre_of(&world);
+        let centre = stable_centre(&world, previous);
         // `as_chunks` rather than `chunks_exact`: it yields `&[f64; 3]`, so the
         // three coordinates are a type rather than a convention.
         let positions = world
@@ -107,9 +109,22 @@ impl ViewBuffer {
     }
 }
 
-fn centre_of(world: &[f64]) -> [f64; 3] {
+/// How far the model may wander from its origin before the origin follows.
+/// Half a diagonal keeps every coordinate comfortably small for f32 while
+/// leaving the origin alone for anything short of a wholesale move.
+const DRIFT: f64 = 0.5;
+
+/// The rebasing origin: the previous one if it still serves, otherwise the
+/// model's centre.
+///
+/// Recomputing the centre on every edit means **every edit shifts the whole
+/// scene**: drag one node and the other seven slide across the screen,
+/// because all of them are drawn relative to a centre that just moved. The
+/// origin exists for precision, not for centring, so it only has to stay
+/// *near* the model — and staying put is worth more than staying centred.
+pub fn stable_centre(world: &[f64], previous: Option<[f64; 3]>) -> [f64; 3] {
     if world.is_empty() {
-        return [0.0; 3];
+        return previous.unwrap_or([0.0; 3]);
     }
     let mut lo = [f64::INFINITY; 3];
     let mut hi = [f64::NEG_INFINITY; 3];
@@ -119,9 +134,22 @@ fn centre_of(world: &[f64]) -> [f64; 3] {
             hi[k] = hi[k].max(p[k]);
         }
     }
-    [
+    let centre = [
         (lo[0] + hi[0]) / 2.0,
         (lo[1] + hi[1]) / 2.0,
         (lo[2] + hi[2]) / 2.0,
-    ]
+    ];
+    let Some(previous) = previous else {
+        return centre;
+    };
+    let diagonal = (0..3).map(|k| (hi[k] - lo[k]).powi(2)).sum::<f64>().sqrt();
+    let drifted = (0..3)
+        .map(|k| (previous[k] - centre[k]).powi(2))
+        .sum::<f64>()
+        .sqrt();
+    if drifted <= DRIFT * diagonal.max(f64::MIN_POSITIVE) {
+        previous
+    } else {
+        centre
+    }
 }

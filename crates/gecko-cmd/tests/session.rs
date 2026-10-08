@@ -65,7 +65,7 @@ fn bad_json_is_an_error_not_a_panic() {
 fn the_view_buffer_describes_the_block() {
     let mut s = Session::new().unwrap();
     s.apply(Command::AddBlock { corners: UNIT_CUBE }).unwrap();
-    let v = ViewBuffer::of(s.blocking());
+    let v = ViewBuffer::of(s.blocking(), None);
 
     assert_eq!(v.positions.len() / 3, 8);
     assert_eq!(v.names.len(), 8);
@@ -104,7 +104,7 @@ fn a_model_far_from_the_origin_keeps_its_precision() {
 
     let mut s = Session::new().unwrap();
     s.apply(Command::AddBlock { corners }).unwrap();
-    let v = ViewBuffer::of(s.blocking());
+    let v = ViewBuffer::of(s.blocking(), None);
 
     assert!(
         v.positions.iter().all(|x| x.abs() <= 0.5 + 1e-6),
@@ -196,7 +196,7 @@ fn the_view_names_every_node_it_draws() {
         size: 1.0,
     })
     .unwrap();
-    let v = ViewBuffer::of(s.blocking());
+    let v = ViewBuffer::of(s.blocking(), None);
 
     assert_eq!(v.names.len(), v.positions.len() / 3);
     // A client picks a sphere and has something to call it by — and the names
@@ -222,7 +222,7 @@ fn moving_a_node_moves_what_the_view_said_it_would() {
     .unwrap();
 
     // Pick a node the way a client does: out of the view buffer.
-    let v = ViewBuffer::of(s.blocking());
+    let v = ViewBuffer::of(s.blocking(), None);
     let index = 3usize;
     let name = v.names[index];
     let before = nodes(&s);
@@ -275,7 +275,7 @@ fn both_new_commands_travel_as_json() {
     assert!(s
         .apply_json(r#"{"op":"create_cube","origin":[0,0,0],"size":2}"#)
         .contains(r#""ok":true"#));
-    let name = ViewBuffer::of(s.blocking()).names[0];
+    let name = ViewBuffer::of(s.blocking(), None).names[0];
     let reply = s.apply_json(&format!(
         r#"{{"op":"move_node","node":{name},"to":[0.5,0.5,0.5]}}"#
     ));
@@ -289,4 +289,63 @@ fn both_new_commands_travel_as_json() {
     ] {
         assert!(s.apply_json(bad).contains(r#""ok":false"#), "{bad}");
     }
+}
+
+#[test]
+fn the_view_stays_put_when_a_node_moves() {
+    // The bug this guards: the rebasing origin was the bounding box's centre,
+    // recomputed every time. So dragging one node slid the other seven across
+    // the screen — all of them are drawn relative to that centre, and it had
+    // just moved.
+    let mut s = Session::new().unwrap();
+    s.apply(Command::CreateCube {
+        origin: [0.0; 3],
+        size: 1.0,
+    })
+    .unwrap();
+    let before = ViewBuffer::of(s.blocking(), None).centre;
+    let _ = s.view_buffer(); // the session adopts that origin
+
+    let name = ViewBuffer::of(s.blocking(), Some(before)).names[0];
+    s.apply(Command::MoveNode {
+        node: name,
+        to: [0.3, -0.4, 0.2],
+    })
+    .unwrap();
+
+    let after = ViewBuffer::of(s.blocking(), Some(before)).centre;
+    assert_eq!(after, before, "the whole scene would have shifted");
+}
+
+#[test]
+fn the_origin_follows_a_model_that_walks_away() {
+    // It is kept still for convenience, not forever: the point of rebasing is
+    // that f32 coordinates stay small, so an origin the model has left behind
+    // has to be abandoned.
+    let mut s = Session::new().unwrap();
+    s.apply(Command::CreateCube {
+        origin: [0.0; 3],
+        size: 1.0,
+    })
+    .unwrap();
+    let near = ViewBuffer::of(s.blocking(), None).centre;
+
+    // A nudge keeps it.
+    assert_eq!(
+        ViewBuffer::of(s.blocking(), Some([0.6, 0.5, 0.5])).centre,
+        [0.6, 0.5, 0.5]
+    );
+    // A different continent does not.
+    let far = ViewBuffer::of(s.blocking(), Some([1.0e6, 0.0, 0.0])).centre;
+    assert_eq!(far, near);
+}
+
+#[test]
+fn an_empty_session_keeps_whatever_origin_it_had() {
+    let s = Session::new().unwrap();
+    assert_eq!(ViewBuffer::of(s.blocking(), None).centre, [0.0; 3]);
+    assert_eq!(
+        ViewBuffer::of(s.blocking(), Some([7.0, 8.0, 9.0])).centre,
+        [7.0, 8.0, 9.0]
+    );
 }

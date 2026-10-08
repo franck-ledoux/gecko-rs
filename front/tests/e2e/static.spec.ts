@@ -91,6 +91,8 @@ test("dragging a node with the mouse moves it in the kernel", async ({ page }) =
 
   // A real gesture: press on the sphere, move, release. One command is sent,
   // at the drop.
+  const camera = await page.evaluate(() => (window as any).__gecko.camera());
+
   const box = (await page.locator("#view").boundingBox())!;
   await page.mouse.move(box.x + at[0], box.y + at[1]);
   await page.mouse.down();
@@ -99,6 +101,23 @@ test("dragging a node with the mouse moves it in the kernel", async ({ page }) =
   }
   await page.mouse.up();
   await page.waitForFunction(() => (window as any).__gecko.message().includes("moved"));
+
+  // Dragging a node is not orbiting. Babylon suspends the controls of
+  // `scene.activeCamera`, which with two cameras is whichever rendered last —
+  // so the view used to turn along with the node.
+  expect(await page.evaluate(() => (window as any).__gecko.camera())).toEqual(camera);
+
+  // And it went where the mouse went. The same confusion fed the ray the drag
+  // follows, so the node used to travel along a plane belonging to the corner
+  // gizmo instead of to the view.
+  const landed = (await page.evaluate(
+    (n) => (window as any).__gecko.nodeScreen(n),
+    name,
+  )) as [number, number];
+  // Within a pixel or two: the kernel holds f64 and the view is drawn from
+  // f32, and nothing else should be between the pointer and where it landed.
+  expect(Math.abs(landed[0] - (at[0] + 80))).toBeLessThan(2);
+  expect(Math.abs(landed[1] - (at[1] - 48))).toBeLessThan(2);
 
   // The scene is redrawn from the kernel after the drop, so reading it back
   // is reading what the kernel holds.

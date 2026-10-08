@@ -112,7 +112,10 @@ describe("the scene is a function of the view", () => {
     viewer.setView(decodeView(await kernel.view()));
     expect(viewer.nodeCount).toBe(16);
     expect(viewer.edgeCount).toBe(24);
-    expect(viewer.centre[0]).toBeCloseTo(2, 9);
+    // The rebasing origin has not followed the new cube. It is there so f32
+    // coordinates stay small, not to keep the model centred, and moving it
+    // would slide everything already on screen.
+    expect(viewer.centre[0]).toBeCloseTo(0.5, 9);
   });
 
   it("frames the model from its bounds, not from where the camera was", async () => {
@@ -451,5 +454,23 @@ describe("node handles", () => {
     expect(worldSizeForPixels(10, 5, 0.8, 1200)).toBeCloseTo(near / 2, 12);
     // A canvas with no height has no pixels to cover.
     expect(worldSizeForPixels(10, 5, 0.8, 0)).toBe(0);
+  });
+});
+
+describe("which camera is the active one", () => {
+  it("is the main camera once a frame is over", async () => {
+    // Rendering leaves it set to whichever camera went last, which is the
+    // corner gizmo. Anything running between frames reads it — including
+    // Babylon's drag behaviour, which uses it both to suspend the right
+    // camera's controls and to build the ray the drag follows.
+    const viewer = new Viewer(new NullEngine());
+    const kernel = new WasmKernel();
+    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    viewer.setView(decodeView(await kernel.view()));
+
+    viewer.render();
+    expect(viewer.scene.activeCamera).toBe(viewer.camera);
+    viewer.render();
+    expect(viewer.scene.activeCamera).toBe(viewer.camera);
   });
 });

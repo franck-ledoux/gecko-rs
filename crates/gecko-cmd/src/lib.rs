@@ -64,12 +64,16 @@ pub struct Outcome {
 
 pub struct Session {
     blocking: Blocking,
+    /// Kept between views so the scene does not slide every time something
+    /// moves. See [`view::stable_centre`].
+    origin: Option<[f64; 3]>,
 }
 
 impl Session {
     pub fn new() -> Result<Self, SessionError> {
         Ok(Session {
             blocking: Blocking::new()?,
+            origin: None,
         })
     }
 
@@ -79,6 +83,14 @@ impl Session {
 
     /// The one mutation path.
     pub fn apply(&mut self, command: Command) -> Result<Outcome, SessionError> {
+        let outcome = self.run(command)?;
+        if outcome.view_changed {
+            self.settle_origin();
+        }
+        Ok(outcome)
+    }
+
+    fn run(&mut self, command: Command) -> Result<Outcome, SessionError> {
         match command {
             Command::AddBlock { corners } => self.add(corners),
             Command::CreateCube { origin, size } => {
@@ -115,6 +127,17 @@ impl Session {
         })
     }
 
+    /// Settle the rebasing origin against the model as it now stands.
+    ///
+    /// Done when the model changes, never when someone looks at it. An origin
+    /// adopted on read would make `view_buffer` depend on how many times it
+    /// had been called — and the two façades, which ask at different moments,
+    /// would quietly stop agreeing.
+    fn settle_origin(&mut self) {
+        let world: Vec<f64> = self.blocking.nodes().flat_map(|(_, p)| p).collect();
+        self.origin = Some(view::stable_centre(&world, self.origin));
+    }
+
     /// Transport-agnostic entry point: a JSON command in, a JSON outcome out.
     /// Both façades bottom out here, so neither can grow behaviour of its own.
     pub fn apply_json(&mut self, json: &str) -> String {
@@ -128,7 +151,7 @@ impl Session {
     }
 
     pub fn view_buffer(&self) -> Vec<u8> {
-        ViewBuffer::of(&self.blocking).to_bytes()
+        ViewBuffer::of(&self.blocking, self.origin).to_bytes()
     }
 
     /// Every node, by stable name and position — what a script needs in order
