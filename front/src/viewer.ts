@@ -23,6 +23,8 @@ import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { PointerDragBehavior } from "@babylonjs/core/Behaviors/Meshes/pointerDragBehavior";
 import "@babylonjs/core/Culling/ray";
 import type { View } from "./decode";
+import { AxisGizmo, MAIN_LAYER } from "./axes";
+import { DEFAULTS, type Theme } from "./theme";
 
 /** Where a dragged node was let go, in model coordinates. */
 export type Drop = (name: number, to: [number, number, number]) => void;
@@ -42,6 +44,8 @@ export class Viewer {
    *  follow the mouse without a round trip to the kernel. */
   private view?: View;
   private dropped: Drop[] = [];
+  private theme: Theme = { ...DEFAULTS.theme };
+  readonly axes: AxisGizmo;
 
   constructor(engine: AbstractEngine) {
     this.scene = new Scene(engine);
@@ -56,7 +60,33 @@ export class Viewer {
     );
     this.camera.wheelPrecision = 40;
     this.camera.minZ = 0.001;
+    this.camera.layerMask = MAIN_LAYER;
     new HemisphericLight("hemi", new Vector3(0, 1, 0), this.scene).intensity = 0.9;
+
+    this.axes = new AxisGizmo(this.scene, this.camera);
+    this.scene.activeCameras = [this.camera, this.axes.camera];
+    // Babylon's own picking — which is what the drag behaviours run on — must
+    // use the main camera, not whichever happens to be active. The gizmo does
+    // its own pick, through its own camera.
+    this.scene.cameraToUseForPointers = this.camera;
+    this.applyTheme(this.theme);
+  }
+
+  /** How the scene looks. Not the kernel's business, so it never goes through
+   *  it: the kernel says what exists, not what colour it is here. */
+  applyTheme(theme: Theme) {
+    this.theme = { ...theme };
+    this.scene.clearColor = Color3.FromHexString(theme.background).toColor4(1);
+    const nodes = Color3.FromHexString(theme.nodes);
+    for (const mesh of this.nodes) {
+      (mesh.material as StandardMaterial).emissiveColor = nodes;
+    }
+    if (this.wire) this.wire.color = Color3.FromHexString(theme.edges);
+  }
+
+  /** Keep the corner viewport square when the canvas changes shape. */
+  resize() {
+    this.axes.resize();
   }
 
   attachTo(canvas: HTMLCanvasElement) {
@@ -90,8 +120,9 @@ export class Viewer {
         { lines: this.segments(), updatable: true },
         this.scene,
       );
-      this.wire.color = new Color3(0.95, 0.95, 1);
+      this.wire.color = Color3.FromHexString(this.theme.edges);
       this.wire.isPickable = false;
+      this.wire.layerMask = MAIN_LAYER;
     }
 
     const size = this.span(view) * 0.03;
@@ -102,9 +133,10 @@ export class Viewer {
       // next edit reorders the view.
       s.metadata = { index: n, name: view.names[n] };
       const m = new StandardMaterial(`nodeMat${n}`, this.scene);
-      m.emissiveColor = new Color3(0.4, 0.7, 1);
+      m.emissiveColor = Color3.FromHexString(this.theme.nodes);
       m.disableLighting = true;
       s.material = m;
+      s.layerMask = MAIN_LAYER;
       this.nodes.push(s);
       this.makeDraggable(s, n);
     }
@@ -169,7 +201,9 @@ export class Viewer {
 
   /** Screen coordinates -> the kernel's name for the node under them. */
   pickNode(x: number, y: number): number | null {
-    const hit = this.scene.pick(x, y, (m) => (m.metadata?.name ?? -1) >= 0);
+    // Explicitly the main camera: after a frame, `scene.activeCamera` is
+    // whichever rendered last, which is the corner gizmo.
+    const hit = this.scene.pick(x, y, (m) => (m.metadata?.name ?? -1) >= 0, false, this.camera);
     return hit?.hit && hit.pickedMesh ? (hit.pickedMesh.metadata.name as number) : null;
   }
 
@@ -179,10 +213,13 @@ export class Viewer {
     const mesh = this.nodes.find((m) => m.metadata.name === name);
     if (!mesh) return null;
     const engine = this.scene.getEngine();
+    // The main camera's own matrices, not `scene.getTransformMatrix()`: with
+    // two active cameras that holds whichever rendered last, which is the
+    // corner gizmo.
     const v = Vector3.Project(
       mesh.position,
       Matrix.Identity(),
-      this.scene.getTransformMatrix(),
+      this.camera.getViewMatrix().multiply(this.camera.getProjectionMatrix()),
       this.camera.viewport.toGlobal(engine.getRenderWidth(), engine.getRenderHeight()),
     );
     return [v.x, v.y];

@@ -114,3 +114,75 @@ test("dragging a node with the mouse moves it in the kernel", async ({ page }) =
   });
   expect(errors).toEqual([]);
 });
+
+test("colours can be changed, and are remembered", async ({ page }) => {
+  const errors = await boot(page);
+
+  // The panel is generated from the theme's keys, so there is one input per
+  // colour and no markup to keep in step.
+  await expect(page.locator("#swatches input[type=color]")).toHaveCount(3);
+  expect(await page.evaluate(() => (window as any).__gecko.theme())).toMatchObject({
+    background: "#15171b",
+  });
+
+  await page.locator("#preset-light").click();
+  const light = await page.evaluate(() => (window as any).__gecko.theme());
+  expect(light.background).toBe("#f4f5f7");
+
+  await page.locator("[data-test=colour-nodes]").fill("#ff00aa");
+  await page.waitForFunction(
+    () => (window as any).__gecko.theme().nodes === "#ff00aa",
+  );
+
+  // A viewing preference belongs to the viewer, so it survives a reload —
+  // and it never went near the kernel.
+  await page.reload();
+  await page.waitForSelector("body[data-ready='1']", { timeout: 30_000 });
+  const kept = await page.evaluate(() => (window as any).__gecko.theme());
+  expect(kept).toMatchObject({ background: "#f4f5f7", nodes: "#ff00aa" });
+  expect(errors).toEqual([]);
+});
+
+test("the triad turns the view, and can be hidden", async ({ page }) => {
+  await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  expect(await page.evaluate(() => (window as any).__gecko.axesVisible())).toBe(true);
+
+  // Aim a real mouse at the +X handle in the corner.
+  const at = (await page.evaluate(
+    () => (window as any).__gecko.axisScreen("+x"),
+  )) as [number, number];
+  expect(at, "the +x handle should be on screen").not.toBeNull();
+
+  const box = (await page.locator("#view").boundingBox())!;
+  await page.mouse.click(box.x + at[0], box.y + at[1]);
+
+  // It swings rather than snapping, so wait for it to arrive: on +X the
+  // camera looks at the YZ plane.
+  await page.waitForFunction(
+    () => {
+      const c = (window as any).__gecko.camera();
+      return Math.abs(c.alpha) < 0.01 && Math.abs(c.beta - Math.PI / 2) < 0.01;
+    },
+    undefined,
+    { timeout: 5000 },
+  );
+
+  // Hidden means out of the way, not merely invisible.
+  await page.locator("#show-axes").uncheck();
+  expect(await page.evaluate(() => (window as any).__gecko.axesVisible())).toBe(false);
+  expect(
+    await page.evaluate(
+      (p) => (window as any).__gecko.pickAxis(p[0], p[1]),
+      at,
+    ),
+  ).toBeNull();
+
+  // And that choice is remembered too.
+  await page.reload();
+  await page.waitForSelector("body[data-ready='1']", { timeout: 30_000 });
+  expect(await page.evaluate(() => (window as any).__gecko.axesVisible())).toBe(false);
+});

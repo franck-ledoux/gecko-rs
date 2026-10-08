@@ -145,6 +145,17 @@ not promise.
 The node names are there so the browser has something to call a sphere it
 picked. Its position in the array is not a name: edits reorder it.
 
+## What does not go through the kernel
+
+Exactly one thing, and it is worth naming because everything else does: **how
+the scene looks**. Colours and the triad's visibility are view state. They are
+kept in the browser, per viewer, and in station mode two tabs on one session
+may look nothing alike.
+
+The line is that the kernel describes what *exists*; it has no opinion on what
+colour that is on your screen. Anything that would change what another client
+sees belongs in a command; anything that only changes what *you* see does not.
+
 ## Direct manipulation
 
 During a drag the scene **previews against its own copy** of the view — the
@@ -159,3 +170,25 @@ the drop, when the view is rebuilt from what the kernel actually holds.
 Every node sphere carries its own drag behaviour rather than one being attached
 on selection: attaching on the press that should *start* the drag misses that
 press, and turns the gesture into click-then-drag.
+
+## Two cameras
+
+The orientation triad is a second camera on a corner viewport, separated from
+the main one by layer mask. Three consequences, each of which cost a test to
+find:
+
+- **Every mesh must opt into a layer.** A mesh created without one renders in
+  both viewports, so the viewer sets the main layer on everything it builds.
+- **`scene.getTransformMatrix()` is whichever camera rendered last**, which is
+  the triad. Anything projecting a world point to the screen has to use its own
+  camera's view and projection matrices, and anything picking has to name its
+  camera rather than relying on the active one.
+- **A Babylon viewport measures y from the bottom; `Vector3.Project` wants it
+  from the top.** Full-screen viewports hide the difference because the offset
+  is zero either way. A corner one does not.
+
+And one that cost a run-time crash in the browser while every headless test
+passed: `Animation.CreateAndStartAnimation` calls `scene.beginDirectAnimation`,
+which only exists if `@babylonjs/core/Animations/animatable` has been imported
+for its side effect. Importing the `Animation` class alone compiles, ships, and
+throws. There is now a test that asserts the method exists.

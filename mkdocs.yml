@@ -49,6 +49,7 @@ nav:
   - User Guide:
       - Static mode: user-guide/static.md
       - Station mode: user-guide/station.md
+      - Appearance: user-guide/display.md
       - Python API: user-guide/python.md
   - Developer Guide:
       - Architecture: developer-guide/architecture.md

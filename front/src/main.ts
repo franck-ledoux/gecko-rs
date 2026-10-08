@@ -12,6 +12,8 @@ import type { Kernel } from "./kernel";
 import { initKernel, WasmKernel } from "./kernel-wasm";
 import { RemoteKernel } from "./kernel-remote";
 import { Viewer } from "./viewer";
+import { loadPrefs, savePrefs, PRESETS, SWATCHES, type Theme } from "./theme";
+import type { Axis } from "./axes";
 import "./style.css";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -52,6 +54,56 @@ async function boot() {
 
   let message = "";
   let revision = 0;
+
+  // --- how it looks: viewer state, never the kernel's ---------------------
+  const prefs = loadPrefs();
+  viewer.applyTheme(prefs.theme);
+  viewer.axes.setVisible(prefs.axes);
+
+  function setTheme(theme: Theme) {
+    prefs.theme = { ...theme };
+    viewer.applyTheme(prefs.theme);
+    savePrefs(prefs);
+    drawSwatches();
+  }
+
+  /** The panel is generated from the theme's own keys, so a colour added later
+   *  needs no new markup. */
+  function drawSwatches() {
+    $("swatches").innerHTML = SWATCHES.map(
+      ({ key, label }) =>
+        `<label class="swatch">${label}` +
+        `<input type="color" data-key="${key}" data-test="colour-${key}"` +
+        ` value="${prefs.theme[key]}" /></label>`,
+    ).join("");
+    for (const input of $("swatches").querySelectorAll("input")) {
+      input.addEventListener("input", (e) => {
+        const target = e.target as HTMLInputElement;
+        setTheme({ ...prefs.theme, [target.dataset.key as keyof Theme]: target.value });
+      });
+    }
+  }
+  drawSwatches();
+
+  $<HTMLInputElement>("show-axes").checked = prefs.axes;
+  $("show-axes").addEventListener("change", (e) => {
+    prefs.axes = (e.target as HTMLInputElement).checked;
+    viewer.axes.setVisible(prefs.axes);
+    savePrefs(prefs);
+  });
+  $("preset-dark").addEventListener("click", () => setTheme(PRESETS.dark));
+  $("preset-light").addEventListener("click", () => setTheme(PRESETS.light));
+
+  // Clicking the triad swings the view onto that axis. Checked before
+  // anything else: it is an overlay, so it is in front.
+  canvas.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    const axis = viewer.axes.pick(e.offsetX, e.offsetY);
+    if (!axis) return;
+    viewer.axes.lookDown(axis);
+    message = `vue selon ${axis}`;
+    $("status").textContent = message;
+  });
 
   async function refresh(frame = false) {
     const [bytes, stats] = await Promise.all([kernel.view(), kernel.stats()]);
@@ -95,7 +147,10 @@ async function boot() {
     message = reply.message;
     await refresh();
   });
-  window.addEventListener("resize", () => engine.resize());
+  window.addEventListener("resize", () => {
+    engine.resize();
+    viewer.resize();
+  });
 
   engine.runRenderLoop(() => viewer.render());
   await refresh(true);
@@ -110,6 +165,15 @@ async function boot() {
     revision: () => revision,
     counts: () => ({ nodes: viewer.nodeCount, edges: viewer.edgeCount }),
     names: () => viewer.names(),
+    theme: () => ({ ...prefs.theme }),
+    setTheme: (t: Theme) => setTheme(t),
+    axesVisible: () => viewer.axes.visible,
+    /** Jump the camera onto an axis without the animation, so a test asserts
+     *  where it landed rather than racing it. */
+    snapTo: (axis: Axis) => viewer.axes.snapTo(axis),
+    pickAxis: (x: number, y: number) => viewer.axes.pick(x, y),
+    axisScreen: (axis: Axis) => viewer.axes.axisScreen(axis),
+    camera: () => ({ alpha: viewer.camera.alpha, beta: viewer.camera.beta }),
     pickNode: (x: number, y: number) => viewer.pickNode(x, y),
     nodeScreen: (name: number) => viewer.nodeScreen(name),
     nodePosition: (name: number) => viewer.nodePosition(name),

@@ -13,6 +13,16 @@ import { NullEngine } from "@babylonjs/core/Engines/nullEngine";
 import { decodeView } from "../../src/decode";
 import { initKernel, WasmKernel } from "../../src/kernel-wasm";
 import { Viewer } from "../../src/viewer";
+import {
+  GIZMO_LAYER,
+  MAIN_LAYER,
+  orientationFor,
+  shortestTurn,
+  type Axis,
+} from "../../src/axes";
+import { PRESETS } from "../../src/theme";
+import { Color3 } from "@babylonjs/core/Maths/math.color";
+import type { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 
 const CUBE = [
   [0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
@@ -242,5 +252,145 @@ describe("the scene carries the kernel's names", () => {
 
     const corners = Array.from(view.names).map((n) => viewer.nodePosition(n)!);
     expect(corners.every((p) => p[0] === 1000 || p[0] === 1001)).toBe(true);
+  });
+});
+
+describe("the orientation gizmo", () => {
+  it("puts the camera on the axis you clicked", () => {
+    // A pure function, so the six cases are checkable without a scene. The
+    // camera sits *on* the named axis, so you are looking at the plane
+    // opposite: +x shows you YZ.
+    const direction = (axis: Axis) => {
+      const { alpha, beta } = orientationFor(axis);
+      return [
+        Math.cos(alpha) * Math.sin(beta),
+        Math.cos(beta),
+        Math.sin(alpha) * Math.sin(beta),
+        // `+ 0` normalises negative zero, which is not worth asserting about.
+      ].map((v) => Math.round(v * 1000) / 1000 + 0);
+    };
+    expect(direction("+x")).toEqual([1, 0, 0]);
+    expect(direction("-x")).toEqual([-1, 0, 0]);
+    expect(direction("+y")).toEqual([0, 1, -0.001]);
+    expect(direction("-y")).toEqual([0, -1, -0.001]);
+    expect(direction("+z")).toEqual([0, 0, 1]);
+    expect(direction("-z")).toEqual([0, 0, -1]);
+
+    // Looking straight down Y is a singularity for an arc-rotate camera, so
+    // the pole is approached but never reached.
+    for (const axis of ["+y", "-y"] as Axis[]) {
+      const { beta } = orientationFor(axis);
+      expect(beta).toBeGreaterThan(0);
+      expect(beta).toBeLessThan(Math.PI);
+    }
+  });
+
+  it("turns the short way round", () => {
+    // Azimuth is periodic: 3.1 and -3.1 are a tenth of a turn apart, and also
+    // six radians apart. Animating to the raw value spins the model for no
+    // reason.
+    expect(shortestTurn(3.1, -3.1)).toBeCloseTo(3.1831, 3);
+    expect(shortestTurn(-3.1, 3.1)).toBeCloseTo(-3.1831, 3);
+    expect(shortestTurn(0, 0)).toBe(0);
+    expect(shortestTurn(0.2, 0.5)).toBe(0.5);
+    // Whatever it returns is the same angle.
+    for (const [from, to] of [[3.1, -3.1], [-6, 1], [10, -10]]) {
+      const turned = shortestTurn(from, to);
+      expect(Math.abs(Math.sin(turned) - Math.sin(to))).toBeLessThan(1e-9);
+      expect(Math.abs(turned - from)).toBeLessThanOrEqual(Math.PI + 1e-9);
+    }
+  });
+
+  it("lives on its own layer, so neither camera draws the other's meshes", async () => {
+    const viewer = new Viewer(new NullEngine());
+    const kernel = new WasmKernel();
+    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    viewer.setView(decodeView(await kernel.view()));
+
+    // Two cameras, and the pointer picking is pinned to the main one — the
+    // drag behaviours run on that, and must not see the corner.
+    expect(viewer.scene.activeCameras).toHaveLength(2);
+    expect(viewer.scene.cameraToUseForPointers).toBe(viewer.camera);
+    expect(viewer.camera.layerMask).toBe(MAIN_LAYER);
+    expect(viewer.axes.camera.layerMask).toBe(GIZMO_LAYER);
+
+    // Every mesh belongs to exactly one side. A mesh created without a layer
+    // mask renders in both, which is the failure this guards.
+    for (const mesh of viewer.scene.meshes) {
+      const sides = [MAIN_LAYER, GIZMO_LAYER].filter((l) => mesh.layerMask & l);
+      expect(sides, `${mesh.name} renders in ${sides.length} viewports`).toHaveLength(1);
+    }
+  });
+
+  it("has the animation machinery it needs to swing the view", async () => {
+    // `Animation.CreateAndStartAnimation` calls `scene.beginDirectAnimation`,
+    // which only exists if the animatable side-effect module was imported.
+    // Importing the `Animation` class alone compiles, ships, and throws.
+    const viewer = new Viewer(new NullEngine());
+    expect(typeof viewer.scene.beginDirectAnimation).toBe("function");
+    expect(() => viewer.axes.lookDown("+z")).not.toThrow();
+  });
+
+  it("can be hidden, and snaps the camera when asked", async () => {
+    const viewer = new Viewer(new NullEngine());
+    const kernel = new WasmKernel();
+    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    viewer.setView(decodeView(await kernel.view()));
+
+    expect(viewer.axes.visible).toBe(true);
+    viewer.axes.setVisible(false);
+    expect(viewer.axes.visible).toBe(false);
+    // Hidden means unpickable: a triad you cannot see must not be in the way.
+    viewer.render();
+    expect(viewer.axes.pick(10, 10)).toBeNull();
+
+    viewer.axes.setVisible(true);
+    viewer.axes.snapTo("+x");
+    expect(viewer.camera.alpha).toBeCloseTo(0, 9);
+    expect(viewer.camera.beta).toBeCloseTo(Math.PI / 2, 9);
+  });
+
+  it("finds an axis back from the corner it was drawn in", async () => {
+    const viewer = new Viewer(new NullEngine());
+    const kernel = new WasmKernel();
+    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    viewer.setView(decodeView(await kernel.view()));
+    viewer.frameAll();
+    viewer.render();
+
+    // Project through the gizmo's own camera, then pick it back. Using the
+    // scene's transform would aim into the middle of the model instead.
+    for (const axis of ["+x", "+y", "+z"] as Axis[]) {
+      const at = viewer.axes.axisScreen(axis);
+      expect(at, `no screen position for ${axis}`).not.toBeNull();
+      expect(viewer.axes.pick(...at!)).toBe(axis);
+    }
+  });
+});
+
+describe("the theme", () => {
+  it("reaches the scene", async () => {
+    const viewer = new Viewer(new NullEngine());
+    const kernel = new WasmKernel();
+    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    viewer.setView(decodeView(await kernel.view()));
+
+    viewer.applyTheme(PRESETS.light);
+    expect(viewer.scene.clearColor.toHexString()).toBe(
+      Color3.FromHexString(PRESETS.light.background).toColor4(1).toHexString(),
+    );
+    const anyNode = viewer.scene.getMeshByName("node0")!;
+    expect((anyNode.material as StandardMaterial).emissiveColor.toHexString()).toBe(
+      Color3.FromHexString(PRESETS.light.nodes).toHexString(),
+    );
+
+    // And a theme set before there is anything to colour still applies to what
+    // arrives afterwards.
+    const fresh = new Viewer(new NullEngine());
+    fresh.applyTheme(PRESETS.light);
+    fresh.setView(decodeView(await kernel.view()));
+    expect(
+      (fresh.scene.getMeshByName("node0")!.material as StandardMaterial).emissiveColor.toHexString(),
+    ).toBe(Color3.FromHexString(PRESETS.light.nodes).toHexString());
   });
 });
