@@ -53,7 +53,7 @@ leaving a stale viewer inside the wheel.
 cargo test --workspace --exclude gecko-py   # the kernel
 ./build-wasm.sh                              # the wasm façade
 cd front && npm run dev                      # the viewer, static mode
-pip install ./crates/gecko-py                # the Python package
+uv pip install ./crates/gecko-py             # the Python package
 ```
 
 `gecko-py` is excluded from plain `cargo` commands on purpose: linking an

@@ -9,13 +9,15 @@ set -euo pipefail
 cd "$(dirname "$0")"
 export PATH="$HOME/.cargo/bin:$PATH"
 
-# --- bootstrap, so a fresh clone needs nothing but rust, node and python ---
+# --- bootstrap, so a fresh clone needs nothing but rust, node and uv ---
+command -v uv >/dev/null || {
+  echo "uv is required: https://docs.astral.sh/uv/getting-started/installation/" >&2
+  exit 1
+}
 [ -d node_modules ] || npm install --no-audit --no-fund
 [ -d front/node_modules ] || (cd front && npm install --no-audit --no-fund)
-if [ ! -x .venv/bin/python ]; then
-  python3 -m venv .venv
-  ./.venv/bin/pip install --quiet --upgrade pip maturin pytest
-fi
+[ -x .venv/bin/python ] || uv venv --quiet
+uv pip install --quiet maturin pytest
 rustup target list --installed | grep -qx wasm32-unknown-unknown \
   || rustup target add wasm32-unknown-unknown
 

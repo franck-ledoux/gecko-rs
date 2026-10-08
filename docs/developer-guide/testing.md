@@ -70,7 +70,7 @@ rebaselining chore, not a test.
 cargo test --workspace --exclude gecko-py
 cd front && npm run test:unit
 cd front && npx playwright test
-./.venv/bin/python -m pytest python -q
+uv run python -m pytest python -q
 ```
 
 The last two need artefacts the earlier ones produce; see

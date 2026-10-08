@@ -29,8 +29,9 @@ and the mouse drive the same live object, in both directions.
 
 ### Installing it
 
-You need **Rust** (stable), **Node** 20 or later, and **Python** 3.9 or later.
-Nothing else: the scripts fetch what they are missing.
+You need **Rust** (stable), **Node** 20 or later, and
+[**uv**](https://docs.astral.sh/uv/getting-started/installation/). Nothing
+else — uv brings its own Python, and the scripts fetch what they are missing.
 
 ```bash
 git clone git@github.com:franck-ledoux/gecko-rs.git
@@ -39,9 +40,8 @@ cd gecko-rs
 ./build-wasm.sh                       # the kernel, compiled to wasm
 cd front && npm install && npm run build && cd ..   # the viewer bundle
 
-python3 -m venv .venv
-source .venv/bin/activate
-pip install ./crates/gecko-py
+uv venv
+uv pip install ./crates/gecko-py
 ```
 
 **The order matters.** The wheel *embeds* the viewer, and the viewer *imports*
@@ -51,7 +51,7 @@ serves a message telling you to come back and build them.
 ### Using it
 
 ```bash
-python
+uv run python
 ```
 
 ```python
@@ -79,7 +79,7 @@ Scripts and notebooks work the same way. On a headless machine, use
 ready-to-use `.venv`:
 
 ```bash
-./check.sh && source .venv/bin/activate && python
+./check.sh && uv run python
 ```
 
 When iterating on the Rust, reinstall with maturin rather than pip; it is the
@@ -97,7 +97,7 @@ cd crates/gecko-py && maturin develop --release
 ```
 
 `check.sh` bootstraps itself — virtual environment, `npm install`, the `wasm32`
-target — so a fresh clone needs nothing but Rust, Node and Python. **CI runs
+target — so a fresh clone needs nothing but Rust, Node and uv. **CI runs
 that same script**, so what passes locally passes there.
 
 | Tier                                                  | Tool                     | Time    |

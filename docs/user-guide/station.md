@@ -6,8 +6,9 @@ visible to the console. There is only one session.
 
 ## Installing it
 
-You need **Rust** (stable), **Node** 20 or later, and **Python** 3.9 or later.
-Nothing else: the scripts fetch what they are missing.
+You need **Rust** (stable), **Node** 20 or later, and
+[**uv**](https://docs.astral.sh/uv/getting-started/installation/). Nothing
+else — uv brings its own Python, and the scripts fetch what they are missing.
 
 ```bash
 git clone git@github.com:franck-ledoux/gecko-rs.git
@@ -16,9 +17,8 @@ cd gecko-rs
 ./build-wasm.sh                                     # the kernel, as wasm
 cd front && npm install && npm run build && cd ..   # the viewer bundle
 
-python3 -m venv .venv
-source .venv/bin/activate
-pip install ./crates/gecko-py
+uv venv
+uv pip install ./crates/gecko-py
 ```
 
 !!! note "Why the first two steps come first"
@@ -95,7 +95,7 @@ serves an explanatory message instead of a blank page:
 ```bash
 ./build-wasm.sh
 cd front && npm install && npm run build && cd ..
-pip install ./crates/gecko-py        # or: maturin develop --release
+uv pip install ./crates/gecko-py     # or: maturin develop --release
 ```
 
 The first line is not optional: the bundle imports the wasm kernel, so building

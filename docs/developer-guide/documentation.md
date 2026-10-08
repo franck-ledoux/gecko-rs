@@ -5,9 +5,8 @@ The site is [MkDocs](https://www.mkdocs.org/) with the
 GECKO's.
 
 ```bash
-pip install -r requirements-docs.txt
-./docs.sh            # build everything into site/
-mkdocs serve         # live preview on http://127.0.0.1:8000
+./docs.sh            # installs what it needs, builds everything into site/
+uv run mkdocs serve  # live preview on http://127.0.0.1:8000
 ```
 
 `docs.sh` builds the Markdown **and** the rustdoc reference, putting the latter
@@ -28,8 +27,8 @@ rustdoc site without `--strict` objecting to a path it cannot resolve.
 Markdown is formatted with `mdformat`, as in GECKO:
 
 ```bash
-mdformat docs README.md          # rewrite
-mdformat --check docs README.md  # verify, as CI does
+uv run mdformat docs README.md          # rewrite
+uv run mdformat --check docs README.md  # verify, as CI does
 ```
 
 ## What goes where

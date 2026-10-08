@@ -5,8 +5,11 @@ a script does here is something the page could have done, and the other way
 round.
 
 ```bash
-pip install ./crates/gecko-py
+uv pip install ./crates/gecko-py
 ```
+
+See [Station mode](station.md#installing-it) for the two build steps that come
+first.
 
 ## `gecko.Session`
 
