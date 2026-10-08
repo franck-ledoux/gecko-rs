@@ -47,6 +47,40 @@ TypeScript bundle is missing would be the wrong dependency — and declares
 `rerun-if-changed` on it, so rebuilding the front end re-embeds it rather than
 leaving a stale viewer inside the wheel.
 
+## The development loop
+
+```bash
+./dev           # a Python console, a browser watching it, hot reload
+./dev notebook  # the same, with JupyterLab instead of a console
+./view          # the viewer alone, static mode, no Python
+```
+
+`./dev` rebuilds what changed, starts a station, opens the view and leaves you
+at a Python prompt with that session as `s`.
+
+The part worth understanding is **why a TypeScript edit does not cost you the
+session**. In station mode the page normally comes from the wheel's embedded
+bundle, so changing the viewer means rebuilding, reinstalling and restarting —
+and the kernel's state goes with it.
+
+Under `./dev` the page comes from the dev server instead, and Vite forwards the
+two things the page asks of its origin — the mode probe and the socket — to the
+station behind it. The kernel is on the far side of that proxy and never hears
+about the reload.
+
+```
+browser ──▶ Vite :5173 ──── /mode, /ws ───▶ station :8731 ──▶ kernel
+             (hot reload)                    (Python, keeps its state)
+```
+
+It is a configuration-only arrangement: `front/vite.config.ts` turns the proxy
+on when `GECKO_PORT` is set, and the station is an ordinary station. The
+dev-loop spec starts both and checks a page served by Vite really is in station
+mode and really drives the Python session.
+
+`./dev` builds the extension in debug rather than release — this is the
+edit-and-try loop, and the difference is twenty seconds a go.
+
 ## Building pieces on their own
 
 ```bash

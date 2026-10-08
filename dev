@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# The whole loop in one command: a Python session, a browser watching it, and
+# a TypeScript edit reloading the view without losing the session's state.
+#
+#   ./dev            a Python console
+#   ./dev notebook   JupyterLab instead
+#
+# The page comes from Vite rather than from the station, so hot reload works;
+# Vite forwards the mode probe and the socket to the station behind it.
+set -euo pipefail
+cd "$(dirname "$0")"
+export PATH="$HOME/.cargo/bin:$PATH"
+
+command -v uv >/dev/null || {
+  echo "uv is required: https://docs.astral.sh/uv/getting-started/installation/" >&2
+  exit 1
+}
+
+export GECKO_PORT="${GECKO_PORT:-8731}"
+export GECKO_VIEW="http://localhost:5173/"
+
+[ -d node_modules ] || npm install --no-audit --no-fund
+[ -d front/node_modules ] || (cd front && npm install --no-audit --no-fund)
+[ -x .venv/bin/python ] || uv venv --quiet
+uv pip install --quiet maturin
+
+echo "── building the kernel ───────────────────────────────────────"
+./build-wasm.sh
+# Debug, not release: this is the edit-and-try loop, and the difference is
+# twenty seconds a go.
+(cd crates/gecko-py && VIRTUAL_ENV="$PWD/../../.venv" ../../.venv/bin/maturin develop --quiet)
+
+echo "── starting the dev server ───────────────────────────────────"
+(cd front && npm run dev -- --clearScreen false) &
+VITE=$!
+trap 'kill $VITE 2>/dev/null || true' EXIT
+
+for _ in $(seq 1 60); do
+  curl -sf -o /dev/null "$GECKO_VIEW" && break
+  sleep 0.5
+done
+
+case "${1:-console}" in
+  notebook)
+    cat <<NOTE
+
+  gecko — paste this into the first cell:
+
+      import os, gecko
+      s = gecko.Session()
+      s.create_cube([0, 0, 0], 1.0)
+      s.show(port=int(os.environ["GECKO_PORT"]), open=False)
+
+  Then open $GECKO_VIEW in a tab to watch it.
+
+NOTE
+    uv run --with jupyterlab jupyter lab
+    ;;
+  console)
+    (command -v open >/dev/null && open "$GECKO_VIEW") \
+      || (command -v xdg-open >/dev/null && xdg-open "$GECKO_VIEW") || true
+    ./.venv/bin/python -i scripts/console.py
+    ;;
+  *)
+    echo "usage: ./dev [console|notebook]" >&2
+    exit 2
+    ;;
+esac

@@ -89,7 +89,19 @@ same build, without re-resolving the wheel:
 cd crates/gecko-py && maturin develop --release
 ```
 
-## Building and testing
+## Working on it
+
+```bash
+./dev           # a Python console, a browser watching it, hot reload
+./dev notebook  # the same, with JupyterLab instead of a console
+./view          # the viewer alone, static mode, no Python
+```
+
+`./dev` is the whole loop in one command: it rebuilds what changed, starts a
+Python session with a cube already in it, opens the view, and leaves you at a
+prompt with that session as `s`. Editing TypeScript reloads the page **without
+losing the session** — the page is served by the dev server, which forwards the
+socket to the Python process behind it.
 
 ```bash
 ./check.sh      # format, lint, every suite, both modes in a real browser

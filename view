@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# The viewer on its own: static mode, no Python at all.
+#
+# This is the deployable artefact's own loop — what the page does when it
+# carries its own kernel. Use ./dev when you want a Python session behind it.
+set -euo pipefail
+cd "$(dirname "$0")"
+export PATH="$HOME/.cargo/bin:$PATH"
+
+[ -d node_modules ] || npm install --no-audit --no-fund
+[ -d front/node_modules ] || (cd front && npm install --no-audit --no-fund)
+
+./build-wasm.sh
+cd front && npm run dev -- --open

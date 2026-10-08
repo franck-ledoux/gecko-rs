@@ -10,9 +10,10 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { NullEngine } from "@babylonjs/core/Engines/nullEngine";
+import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { decodeView } from "../../src/decode";
 import { initKernel, WasmKernel } from "../../src/kernel-wasm";
-import { Viewer } from "../../src/viewer";
+import { HANDLE_PIXELS, Viewer, worldSizeForPixels } from "../../src/viewer";
 import {
   GIZMO_LAYER,
   MAIN_LAYER,
@@ -392,5 +393,63 @@ describe("the theme", () => {
     expect(
       (fresh.scene.getMeshByName("node0")!.material as StandardMaterial).emissiveColor.toHexString(),
     ).toBe(Color3.FromHexString(PRESETS.light.nodes).toHexString());
+  });
+});
+
+describe("node handles", () => {
+  async function sceneWith(cubes: number) {
+    const viewer = new Viewer(new NullEngine());
+    const kernel = new WasmKernel();
+    for (let i = 0; i < cubes; i++) {
+      await kernel.apply({ op: "create_cube", origin: [i * 1.5, 0, 0], size: 1 });
+    }
+    viewer.setView(decodeView(await kernel.view()));
+    viewer.frameAll();
+    viewer.render();
+    return viewer;
+  }
+
+  /** How many pixels across the first handle actually covers. */
+  function apparent(viewer: Viewer): number {
+    const mesh = viewer.scene.getMeshByName("node0")!;
+    const distance = Vector3.Distance(mesh.position, viewer.camera.position);
+    const height = viewer.scene.getEngine().getRenderHeight();
+    return (viewer.nodeSize * height) / (2 * Math.tan(viewer.camera.fov / 2) * distance);
+  }
+
+  it("covers the same number of pixels however many blocks there are", async () => {
+    // The bug this guards: sizing handles off the model's bounding box made
+    // them grow with the model while the blocks they mark did not, until a
+    // corner marker was half the width of its own cube. Sizing them off a
+    // block's edge instead swaps that for handles too small to aim at once
+    // the model is framed from far away. What has to stay fixed is the only
+    // thing the user sees: how big they are on screen.
+    for (const count of [1, 2, 5, 20]) {
+      expect(apparent(await sceneWith(count))).toBeCloseTo(HANDLE_PIXELS, 6);
+    }
+  });
+
+  it("covers the same number of pixels however big the blocks are", async () => {
+    const viewer = new Viewer(new NullEngine());
+    for (const size of [0.01, 1, 1000]) {
+      const kernel = new WasmKernel();
+      await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size });
+      viewer.setView(decodeView(await kernel.view()));
+      viewer.frameAll();
+      viewer.render();
+      expect(apparent(viewer)).toBeCloseTo(HANDLE_PIXELS, 6);
+      // In the model's own units it does scale — that is the point.
+      expect(viewer.nodeSize).toBeGreaterThan(0);
+    }
+  });
+
+  it("converts pixels to world units proportionally to distance", () => {
+    // A pure function, so the relation is checkable without a scene.
+    const near = worldSizeForPixels(10, 5, 0.8, 600);
+    expect(worldSizeForPixels(10, 10, 0.8, 600)).toBeCloseTo(near * 2, 12);
+    expect(worldSizeForPixels(20, 5, 0.8, 600)).toBeCloseTo(near * 2, 12);
+    expect(worldSizeForPixels(10, 5, 0.8, 1200)).toBeCloseTo(near / 2, 12);
+    // A canvas with no height has no pixels to cover.
+    expect(worldSizeForPixels(10, 5, 0.8, 0)).toBe(0);
   });
 });

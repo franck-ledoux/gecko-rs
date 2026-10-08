@@ -29,6 +29,33 @@ import { DEFAULTS, type Theme } from "./theme";
 /** Where a dragged node was let go, in model coordinates. */
 export type Drop = (name: number, to: [number, number, number]) => void;
 
+/** How many pixels across a node handle should be, whatever the zoom. */
+export const HANDLE_PIXELS = 11;
+
+/**
+ * The world size that covers `pixels` on screen at this distance.
+ *
+ * Sizing handles in world units is wrong in both directions: tied to the
+ * model's extent they balloon as blocks are added, tied to a block's edge they
+ * vanish once the model is big enough to be framed from far away. A handle is
+ * something you aim at, so what has to stay constant is how big it is *on
+ * screen*.
+ *
+ * There is deliberately no ceiling on the result. Zooming in makes a handle
+ * *smaller* in world units, never larger, so it can never swallow the block it
+ * marks — a cap would only ever bind when far away, which is exactly where it
+ * would undo the point.
+ */
+export function worldSizeForPixels(
+  pixels: number,
+  distance: number,
+  fieldOfView: number,
+  renderHeight: number,
+): number {
+  if (renderHeight <= 0) return 0;
+  return (pixels * 2 * Math.tan(fieldOfView / 2) * distance) / renderHeight;
+}
+
 export class Viewer {
   readonly scene: Scene;
   readonly camera: ArcRotateCamera;
@@ -63,6 +90,7 @@ export class Viewer {
     this.camera.layerMask = MAIN_LAYER;
     new HemisphericLight("hemi", new Vector3(0, 1, 0), this.scene).intensity = 0.9;
 
+    this.scene.onBeforeRenderObservable.add(() => this.rescaleHandles());
     this.axes = new AxisGizmo(this.scene, this.camera);
     this.scene.activeCameras = [this.camera, this.axes.camera];
     // Babylon's own picking — which is what the drag behaviours run on — must
@@ -125,9 +153,10 @@ export class Viewer {
       this.wire.layerMask = MAIN_LAYER;
     }
 
-    const size = this.span(view) * 0.03;
     for (let n = 0; n < view.positions.length / 3; n++) {
-      const s = CreateSphere(`node${n}`, { diameter: size, segments: 8 }, this.scene);
+      // Unit diameter; the per-frame pass below scales it to a fixed number
+      // of pixels.
+      const s = CreateSphere(`node${n}`, { diameter: 1, segments: 8 }, this.scene);
       s.position = this.point(n);
       // The kernel's name, not this index: the index is only good until the
       // next edit reorders the view.
@@ -236,12 +265,6 @@ export class Viewer {
     ];
   }
 
-  private span(view: View): number {
-    let max = 0;
-    for (const x of view.positions) max = Math.max(max, Math.abs(x));
-    return max * 2 || 1;
-  }
-
   /** Frame everything. Derived from the bounds alone, never from wherever the
    *  user last left the camera — screenshot tests depend on that. */
   frameAll() {
@@ -261,6 +284,29 @@ export class Viewer {
   /** The kernel's names for the nodes on screen. */
   names(): number[] {
     return this.nodes.map((m) => m.metadata.name as number);
+  }
+
+  /** Diameter of the node handles, as the scene currently draws them. */
+  get nodeSize(): number {
+    return this.nodes[0]?.scaling.x ?? 0;
+  }
+
+  /**
+   * Keep every handle the same size on screen.
+   *
+   * A loop per frame over the node meshes. Negligible at this scale; when
+   * there are thousands of nodes this becomes a thin-instance buffer updated
+   * once, not a loop.
+   */
+  private rescaleHandles() {
+    if (!this.nodes.length) return;
+    const engine = this.scene.getEngine();
+    const height = engine.getRenderHeight();
+    for (const mesh of this.nodes) {
+      const distance = Vector3.Distance(mesh.position, this.camera.position);
+      const wanted = worldSizeForPixels(HANDLE_PIXELS, distance, this.camera.fov, height);
+      mesh.scaling.setAll(wanted);
+    }
   }
 
   get nodeCount() {

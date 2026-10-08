@@ -22,6 +22,18 @@ no new markup.
     The flip side: clearing site data forgets them, and they do not follow you
     to another machine.
 
+## Node handles
+
+The spheres marking nodes keep a **constant size on screen**, whatever the zoom
+and however many blocks there are.
+
+That is less obvious than it sounds. Sizing them in the model's own units is
+wrong in both directions: tied to the model's extent they balloon as blocks are
+added, until a corner marker is half the width of its own cube; tied to a
+block's edge they vanish once the model is big enough to be framed from far
+away. A handle is something you aim at, so the thing that has to stay fixed is
+how big it is where you are aiming.
+
 ## The orientation triad
 
 Bottom right, and switched on and off with **trièdre X/Y/Z**.

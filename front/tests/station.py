@@ -6,12 +6,14 @@ browser notice when *Python* moves the kernel?
 """
 
 import json
+import os
 import sys
 
 import gecko
 
 session = gecko.Session()
-print(session.show(open=False), flush=True)
+# A pinned port when the dev server has to be told where to forward.
+print(session.show(port=int(os.environ.get("GECKO_PORT", 0)), open=False), flush=True)
 
 for line in sys.stdin:
     line = line.strip()
