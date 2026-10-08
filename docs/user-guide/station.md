@@ -4,6 +4,36 @@ A Python process holds the kernel; a browser tab is a view of it. The link is
 two-way: what the console does shows up in the page, and what the mouse does is
 visible to the console. There is only one session.
 
+## Installing it
+
+You need **Rust** (stable), **Node** 20 or later, and **Python** 3.9 or later.
+Nothing else: the scripts fetch what they are missing.
+
+```bash
+git clone git@github.com:franck-ledoux/gecko-rs.git
+cd gecko-rs
+
+./build-wasm.sh                                     # the kernel, as wasm
+cd front && npm install && npm run build && cd ..   # the viewer bundle
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install ./crates/gecko-py
+```
+
+!!! note "Why the first two steps come first"
+    The wheel **embeds** the viewer, and the viewer **imports** the wasm
+    kernel. Install the package on its own and it works, but `show()` serves a
+    message telling you to come back and build them. See
+    [Building](../developer-guide/building.md) for the full dependency order.
+
+`./check.sh` does all of this — and runs every test — leaving a ready `.venv`.
+
+When iterating on the Rust, reinstall with `maturin develop --release` from
+`crates/gecko-py` rather than with pip.
+
+## Starting a station
+
 ```python
 import gecko
 
@@ -63,8 +93,11 @@ The viewer is embedded in the wheel at build time. A package built without it
 serves an explanatory message instead of a blank page:
 
 ```bash
-cd front && npm install && npm run build
+./build-wasm.sh
+cd front && npm install && npm run build && cd ..
 pip install ./crates/gecko-py        # or: maturin develop --release
 ```
 
-See [Building](../developer-guide/building.md) for why that ordering matters.
+The first line is not optional: the bundle imports the wasm kernel, so building
+it without that step fails on a missing module. See
+[Building](../developer-guide/building.md) for the full dependency order.

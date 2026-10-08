@@ -31,8 +31,12 @@ static FRONT: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../front/dist");
 
 /// What to say when `show()` is called and no bundle was built.
 const NO_BUNDLE: &str = "The viewer bundle is missing. Build it with:\n\n    \
+                         ./build-wasm.sh\n    \
                          cd front && npm install && npm run build\n\n\
-                         then reinstall this package.";
+                         then reinstall this package. The first line is not \
+                         optional: the bundle imports the wasm kernel, so \
+                         building it without that step fails on a missing \
+                         module.";
 
 /// Who made a change. Clients ignore their own, so a tab does not refresh twice
 /// for its own command while still hearing about everyone else's.

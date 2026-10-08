@@ -27,19 +27,67 @@ cd front && npm install && npm run dev
 A local Python module holds the kernel and serves it to a browser. The console
 and the mouse drive the same live object, in both directions.
 
-```python
-import gecko
+### Installing it
 
-s = gecko.Session()
-s.create_cube([0, 0, 0], 1.0)
-s.show()                        # opens a tab; the view follows the console
+You need **Rust** (stable), **Node** 20 or later, and **Python** 3.9 or later.
+Nothing else: the scripts fetch what they are missing.
 
-n = s.nodes[0]                  # {"id": …, "pos": [x, y, z]}
-s.move_node(n["id"], [0.5, -0.2, 0])
+```bash
+git clone git@github.com:franck-ledoux/gecko-rs.git
+cd gecko-rs
+
+./build-wasm.sh                       # the kernel, compiled to wasm
+cd front && npm install && npm run build && cd ..   # the viewer bundle
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install ./crates/gecko-py
 ```
 
-In the tab, nodes are **dragged with the mouse**, and the Python session sees
-the result — it is the same object.
+**The order matters.** The wheel *embeds* the viewer, and the viewer *imports*
+the wasm kernel. Install the package on its own and it works, but `show()`
+serves a message telling you to come back and build them.
+
+### Using it
+
+```bash
+python
+```
+
+```python
+>>> import gecko
+>>> s = gecko.Session()
+>>> s.create_cube([0, 0, 0], 1.0)
+'block CellId(0) added — 8 nodes, 12 edges, 6 faces, 1 blocks'
+>>> s.show()                    # opens a tab; the view follows the console
+'http://127.0.0.1:52431/'
+
+>>> s.create_cube([2, 0, 0], 0.5)   # the open tab redraws, unasked
+>>> n = s.nodes[0]                  # {"id": …, "pos": [x, y, z]}
+>>> s.move_node(n["id"], [0.5, -0.2, 0])
+```
+
+In the tab, nodes are **dragged with the mouse**, and `s.nodes` reports where
+they ended up — it is the same object, not a copy kept in step.
+
+Scripts and notebooks work the same way. On a headless machine, use
+`s.show(port=8731, open=False)` and tunnel the port.
+
+### Shortcuts
+
+`./check.sh` does the whole sequence above — and runs every test — leaving a
+ready-to-use `.venv`:
+
+```bash
+./check.sh && source .venv/bin/activate && python
+```
+
+When iterating on the Rust, reinstall with maturin rather than pip; it is the
+same build, without re-resolving the wheel:
+
+```bash
+cd crates/gecko-py && maturin develop --release
+```
 
 ## Building and testing
 
