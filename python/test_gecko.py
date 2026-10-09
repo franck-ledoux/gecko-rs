@@ -202,3 +202,44 @@ def test_a_refused_glue_raises_and_changes_nothing():
     with pytest.raises(ValueError, match="no face"):
         s.glue_faces(face, 9999)
     assert bytes(s.view_buffer) == before
+
+
+def test_removing_a_block_through_the_binding():
+    s = gecko.Session()
+    for x in (0.0, 1.0, 2.0):
+        s.create_cube([x, 0.0, 0.0], 1.0)
+
+    # A script has no mouse, so it names a block from the listing.
+    blocks = s.blocks
+    assert len(blocks) == 3
+    assert [b["centre"][0] for b in blocks] == [0.5, 1.5, 2.5]
+
+    message = s.remove_block(blocks[1]["id"])
+    assert "removed" in message
+    assert s.stats == {"nodes": 16, "edges": 24, "faces": 12, "blocks": 2}
+    assert [b["centre"][0] for b in s.blocks] == [0.5, 2.5]
+
+
+def test_removing_a_glued_block_leaves_the_neighbour_whole():
+    s = gecko.Session()
+    s.create_cube([0.0, 0.0, 0.0], 1.0)
+    s.create_cube([1.0, 0.0, 0.0], 1.0)
+    blocks = [b["id"] for b in s.blocks]
+    seam = [f for f in s.faces if abs(f["centre"][0] - 1.0) < 1e-9]
+    s.glue_faces(*[f["id"] for f in seam])
+    assert s.stats == {"nodes": 12, "edges": 20, "faces": 11, "blocks": 2}
+
+    s.remove_block(blocks[1])
+    # A closed hexahedron again: the shared cells were split off on the way
+    # out rather than going with it.
+    assert s.stats == {"nodes": 8, "edges": 12, "faces": 6, "blocks": 1}
+    assert sorted({round(n["pos"][0], 9) for n in s.nodes}) == [0.0, 1.0]
+
+
+def test_a_refused_removal_raises_and_changes_nothing():
+    s = gecko.Session()
+    s.create_cube([0.0, 0.0, 0.0], 1.0)
+    before = bytes(s.view_buffer)
+    with pytest.raises(ValueError, match="no block"):
+        s.remove_block(4242)
+    assert bytes(s.view_buffer) == before

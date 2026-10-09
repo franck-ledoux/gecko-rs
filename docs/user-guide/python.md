@@ -68,7 +68,45 @@ s.move_node(n["id"], [0.5, -0.2, 0.0])
     This is not pedantry — it is why nodes have a stable identity at all. See
     [Architecture](../developer-guide/architecture.md#naming-a-cell).
 
+#### `glue_faces(first, second)`
+
+Weld two blocks along a face. `first` stays put and `second` is brought onto
+it, so the order decides where the seam lands. Only that face moves — see
+[Joining and removing blocks](gluing.md).
+
+```python
+s.create_cube([0, 0, 0], 1.0)
+s.create_cube([1.5, 0, 0], 1.0)
+seam = [f for f in s.faces if abs(f["centre"][0] - 1.0) < 1e-9
+        or abs(f["centre"][0] - 1.5) < 1e-9]
+s.glue_faces(seam[0]["id"], seam[1]["id"])
+s.stats    # {'nodes': 12, 'edges': 20, 'faces': 11, 'blocks': 2}
+```
+
+#### `remove_block(block)`
+
+Take one block away. Whatever it was glued to keeps its own cells: the shared
+ones are split off on the way out rather than going with it.
+
+```python
+s.remove_block(s.blocks[0]["id"])
+```
+
 ### Looking at the session
+
+#### `faces` and `blocks`
+
+What a script names to `glue_faces` and `remove_block`, since it has no mouse.
+
+```python
+>>> s.faces[0]
+{'id': 0, 'block': 0, 'centre': [0.5, 0.5, 0.0]}
+>>> s.blocks[0]
+{'id': 0, 'centre': [0.5, 0.5, 0.5]}
+```
+
+A face with a block on each side is listed once per block, as the drawn
+surface is.
 
 #### `stats`
 

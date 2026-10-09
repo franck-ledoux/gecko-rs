@@ -4,6 +4,35 @@
 
 import { expect, test } from "@playwright/test";
 
+/**
+ * The two faces looking at each other: the closest pair with one from each
+ * block. Evaluated in the page, and said that way rather than by coordinate,
+ * so no test quietly depends on where the button happens to put a cube.
+ */
+declare function facingPair(): number[];
+
+const FACING_PAIR = `
+window.facingPair = () => {
+  const s = window.__gecko.surface("faces");
+  const centre = (q) => {
+    const at = [0, 0, 0];
+    for (let k = 0; k < 4; k++)
+      for (let axis = 0; axis < 3; axis++) at[axis] += s.positions[(q * 4 + k) * 3 + axis] / 4;
+    return at;
+  };
+  let best = [0, 0];
+  let shortest = Infinity;
+  for (let a = 0; a < s.quads; a++)
+    for (let b = 0; b < s.quads; b++) {
+      if (s.blocks[a] === s.blocks[b]) continue;
+      const [p, q] = [centre(a), centre(b)];
+      const gap = Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+      if (gap < shortest) { shortest = gap; best = [s.faces[a], s.faces[b]]; }
+    }
+  return best;
+};`;
+
+
 const CUBE = [
   [0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
   [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1],
@@ -15,6 +44,7 @@ async function boot(page: import("@playwright/test").Page) {
   page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
   await page.goto("/");
   await page.waitForSelector("body[data-ready='1']", { timeout: 30_000 });
+  await page.evaluate(FACING_PAIR);
   return errors;
 }
 
@@ -413,31 +443,7 @@ test("two faces are picked with the mouse and glued", async ({ page }) => {
   // Nothing to glue until two faces are chosen.
   await expect(page.locator("#glue")).toBeDisabled();
 
-  // The two faces looking at each other: the closest pair with one from each
-  // block. Said that way rather than by coordinate, so the test does not
-  // quietly depend on where the button happens to put a cube.
-  const facing = (await page.evaluate(() => {
-    const s = (window as any).__gecko.surface("faces");
-    const centre = (q: number) => {
-      const at = [0, 0, 0];
-      for (let k = 0; k < 4; k++)
-        for (let axis = 0; axis < 3; axis++) at[axis] += s.positions[(q * 4 + k) * 3 + axis] / 4;
-      return at;
-    };
-    let best: [number, number] = [0, 0];
-    let shortest = Infinity;
-    for (let a = 0; a < s.quads; a++)
-      for (let b = 0; b < s.quads; b++) {
-        if (s.blocks[a] === s.blocks[b]) continue;
-        const [p, q] = [centre(a), centre(b)];
-        const gap = Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
-        if (gap < shortest) {
-          shortest = gap;
-          best = [s.faces[a], s.faces[b]];
-        }
-      }
-    return best;
-  })) as number[];
+  const facing = (await page.evaluate(() => facingPair())) as number[];
   expect(facing[0]).not.toBe(facing[1]);
 
   const box = (await page.locator("#view").boundingBox())!;
@@ -494,5 +500,119 @@ test("dragging from a face turns the view instead of selecting it", async ({ pag
   expect(await page.evaluate(() => (window as any).__gecko.selection())).toEqual([]);
   const after = await page.evaluate(() => (window as any).__gecko.camera());
   expect(after.alpha).not.toBeCloseTo(before.alpha, 3);
+  expect(errors).toEqual([]);
+});
+
+test("gluing leaves the camera exactly where it was", async ({ page }) => {
+  // A glue welds two blocks you are already looking at. Reframing on it was
+  // a conflation: the kernel's `viewChanged` says the bytes are stale, which
+  // is a different question from whether the camera should move.
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // Put the camera somewhere deliberate, so "unchanged" means something.
+  const box = (await page.locator("#view").boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 60, box.y + box.height / 2 + 30);
+  await page.mouse.up();
+  await page.mouse.wheel(0, -240);
+  // Babylon keeps applying inertia after a gesture, so "unchanged" means
+  // nothing unless the drift is stopped first. Waiting for it to decay is a
+  // flake under load; stopping it is not.
+  await page.evaluate(() => (window as any).__gecko.stopCamera());
+  await page.evaluate(() => (window as any).__gecko.settled());
+  const before = await page.evaluate(() => (window as any).__gecko.camera());
+
+  const facing = (await page.evaluate(() => facingPair())) as number[];
+  await page.evaluate(
+    (f) => (window as any).__gecko.choose({ face: f[0], block: 0 }),
+    facing,
+  );
+  await page.evaluate(
+    (f) => (window as any).__gecko.choose({ face: f[1], block: 1 }),
+    facing,
+  );
+  await page.locator("#glue").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 12);
+
+  const after = await page.evaluate(() => (window as any).__gecko.camera());
+  expect(after.alpha).toBe(before.alpha);
+  expect(after.beta).toBe(before.beta);
+  expect(after.radius).toBe(before.radius);
+  expect(errors).toEqual([]);
+});
+
+test("recentring puts the whole model back in view", async ({ page }) => {
+  const errors = await boot(page);
+  for (let i = 0; i < 3; i++) {
+    await page.locator("#cube").click();
+    await page.waitForFunction((n) => (window as any).__gecko.counts().nodes === n, (i + 1) * 8);
+  }
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // Lose the model: zoom right in on a corner of it.
+  const box = (await page.locator("#view").boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  for (let i = 0; i < 40; i++) await page.mouse.wheel(0, -120);
+  await page.evaluate(() => (window as any).__gecko.settled());
+  await page.waitForTimeout(400);
+
+  const offScreen = async () =>
+    page.evaluate(() => {
+      const g = (window as any).__gecko;
+      const canvas = document.querySelector("#view") as HTMLCanvasElement;
+      const r = canvas.getBoundingClientRect();
+      return (g.names() as number[]).filter((n) => {
+        const at = g.nodeScreen(n) as [number, number] | null;
+        return !at || at[0] < 0 || at[1] < 0 || at[0] > r.width || at[1] > r.height;
+      }).length;
+    });
+  expect(await offScreen(), "the zoom should have lost some of the model").toBeGreaterThan(0);
+
+  await page.locator("#recentre").click();
+  await page.evaluate(() => (window as any).__gecko.settled());
+  await expect(page.locator("#status")).toHaveText("vue recadrée");
+
+  // Every node back inside the canvas, and the camera at the canonical angle.
+  expect(await offScreen()).toBe(0);
+  const camera = await page.evaluate(() => (window as any).__gecko.camera());
+  expect(camera.alpha).toBeCloseTo(-Math.PI / 3, 9);
+  expect(camera.beta).toBeCloseTo(Math.PI / 3, 9);
+  expect(errors).toEqual([]);
+});
+
+test("a block is picked and removed", async ({ page }) => {
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  await expect(page.locator("#remove")).toBeDisabled();
+
+  // One click is enough: a pick knows which block's side it landed on.
+  const face = (await page.evaluate(() => facingPair()))[0] as number;
+  const at = (await page.evaluate((f) => (window as any).__gecko.faceScreen(f), face)) as [
+    number,
+    number,
+  ];
+  const box = (await page.locator("#view").boundingBox())!;
+  await page.mouse.click(box.x + at[0], box.y + at[1]);
+
+  await expect(page.locator("#remove")).toBeEnabled();
+  await expect(page.locator("#status")).toContainText("bloc");
+
+  await page.locator("#remove").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await expect(page.locator("[data-test=blocks]")).toHaveText("1");
+  await expect(page.locator("[data-test=faces]")).toHaveText("6");
+  expect(await page.evaluate(() => (window as any).__gecko.selection())).toEqual([]);
+  await expect(page.locator("#remove")).toBeDisabled();
   expect(errors).toEqual([]);
 });

@@ -192,11 +192,25 @@ describe("the contract the other mode has to meet", () => {
     expect((await kernel.apply(glue)).ok).toBe(true);
     commands.push(glue);
 
+    // And a removal, which walks an orbit, unsews, and hands darts back to
+    // the pool. Whether the pool hands them out again in the same order is
+    // exactly the kind of thing only this test would notice.
+    const standing = decodeView(await kernel.view());
+    // The block that was not part of the glue: the one whose faces are all
+    // still on the boundary.
+    const glued = new Set(
+      [...standing.quadFaces.keys()]
+        .filter((q) => standing.quadFaces.filter((f) => f === standing.quadFaces[q]).length > 1)
+        .map((q) => standing.quadBlocks[q]),
+    );
+    const lonely = [...standing.quadBlocks].find((b) => !glued.has(b))!;
+    const remove = { op: "remove_block", block: lonely };
+    expect((await kernel.apply(remove)).ok).toBe(true);
+    commands.push(remove);
+
     const bytes = await kernel.view();
     const stats = await kernel.stats();
-    expect(stats.blocks).toBe(3);
-    // Two of the three are one object now.
-    expect(stats.nodes).toBe(20);
+    expect(stats.blocks).toBe(2);
 
     mkdirSync(new URL("../../artifacts/", import.meta.url), { recursive: true });
     writeFileSync(
@@ -970,15 +984,18 @@ describe("picking faces to glue", () => {
     // Which is which is not decoration: the first one's position is what
     // survives the glue.
     const { viewer } = await twoCubes();
-    const names = [...viewer.surface("faces")!.faces];
-    const plain = viewer.surface("faces")!.colours;
-    expect(plain).toBe(1);
+    const surface = viewer.surface("faces")!;
+    const picks = [...surface.faces].map((face, i) => ({
+      face,
+      block: surface.blocks[i],
+    }));
+    expect(viewer.surface("faces")!.colours).toBe(1);
 
-    viewer.select([names[0]]);
-    expect(viewer.selection).toEqual([names[0]]);
+    viewer.select([picks[0]]);
+    expect(viewer.selection).toEqual([picks[0]]);
     expect(viewer.surface("faces")!.colours).toBe(2);
 
-    viewer.select([names[0], names[1]]);
+    viewer.select([picks[0], picks[1]]);
     // The rest, the anchor, and the one coming to meet it.
     expect(viewer.surface("faces")!.colours).toBe(3);
 
@@ -989,8 +1006,8 @@ describe("picking faces to glue", () => {
   it("shows the selection on the blocks as well as the faces", async () => {
     const { viewer } = await twoCubes();
     viewer.applyPrefs({ ...DEFAULTS, blocks: { ...DEFAULTS.blocks, visible: true } });
-    const name = viewer.surface("faces")!.faces[0];
-    viewer.select([name]);
+    const surface = viewer.surface("faces")!;
+    viewer.select([{ face: surface.faces[0], block: surface.blocks[0] }]);
     // Keyed by face, so one pick lights up wherever that face is drawn.
     expect(viewer.surface("blocks")!.colours).toBeGreaterThan(1);
   });

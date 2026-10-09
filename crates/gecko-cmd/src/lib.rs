@@ -58,6 +58,11 @@ pub enum Command {
         first: u32,
         second: u32,
     },
+    /// Take one block away. Whatever it was glued to keeps its own cells —
+    /// they are split off on the way out, not deleted with it.
+    RemoveBlock {
+        block: u32,
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -113,6 +118,20 @@ impl Session {
                 self.blocking.set_position(node, to)?;
                 Ok(Outcome {
                     message: format!("node {node:?} moved to {to:?}"),
+                    view_changed: true,
+                })
+            }
+            Command::RemoveBlock { block } => {
+                let block = CellId::from_raw(block);
+                self.blocking.remove_block(block)?;
+                Ok(Outcome {
+                    message: format!(
+                        "block {block:?} removed — {} nodes, {} edges, {} faces, {} blocks",
+                        self.blocking.nb_nodes(),
+                        self.blocking.nb_edges(),
+                        self.blocking.nb_faces(),
+                        self.blocking.nb_blocks(),
+                    ),
                     view_changed: true,
                 })
             }
@@ -212,6 +231,35 @@ impl Session {
             })
             .collect();
         serde_json::Value::Array(faces).to_string()
+    }
+
+    /// Every block, by stable name and centre — enough for a script to name
+    /// one to [`Command::RemoveBlock`] without having to see it.
+    pub fn blocks_json(&self) -> String {
+        let sides = self.blocking.block_faces();
+        let mut names: Vec<CellId> = sides.iter().map(|s| s.block).collect();
+        names.dedup();
+        let blocks: Vec<_> = names
+            .iter()
+            .map(|block| {
+                let mut centre = [0.0; 3];
+                let mut corners = 0.0_f64;
+                for side in sides.iter().filter(|s| s.block == *block) {
+                    for node in side.nodes {
+                        let p = self.blocking.position(node).unwrap_or([0.0; 3]);
+                        for k in 0..3 {
+                            centre[k] += p[k];
+                        }
+                        corners += 1.0;
+                    }
+                }
+                for axis in &mut centre {
+                    *axis /= corners.max(1.0);
+                }
+                serde_json::json!({ "id": block.get(), "centre": centre })
+            })
+            .collect();
+        serde_json::Value::Array(blocks).to_string()
     }
 
     pub fn stats_json(&self) -> String {

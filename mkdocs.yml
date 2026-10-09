@@ -50,7 +50,7 @@ nav:
       - Static mode: user-guide/static.md
       - Station mode: user-guide/station.md
       - Appearance: user-guide/display.md
-      - Gluing blocks: user-guide/gluing.md
+      - Joining and removing blocks: user-guide/gluing.md
       - Python API: user-guide/python.md
   - Developer Guide:
       - Architecture: developer-guide/architecture.md

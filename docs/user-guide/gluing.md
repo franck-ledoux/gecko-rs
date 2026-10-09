@@ -1,4 +1,4 @@
-# Gluing blocks
+# Joining and removing blocks
 
 Two blocks that merely touch are two objects. Gluing a face of one to a face
 of the other **welds** them: four pairs of nodes become four nodes, four pairs
@@ -75,3 +75,35 @@ here, only a least bad quarter turn.
 - a name no face answers to.
 
 A refused glue changes nothing at all, and says why.
+
+## Removing a block
+
+Click any face of it and press **Supprimer le bloc**. One click is enough:
+the quadrangles are listed per (face, block) pair, so a pick knows which
+block's side it landed on — even for a face that has one on each. The status
+line names the block before you commit to it.
+
+From Python, `s.remove_block(id)`, with the names from `s.blocks`.
+
+**Whatever it was glued to keeps its own cells.** They are split off on the
+way out, not deleted with it: the neighbour comes out of the operation a
+closed block again, with the face that was internal back on its boundary and
+free to be glued to something else. Removing the middle of three glued blocks
+leaves two closed ones.
+
+The names of the neighbour's split cells are **cleared** and reissued, which
+is exactly the case the two identities were designed around: nothing was cut
+in two, so the corner keys are copied across and the neighbour goes on
+recognising its own corners. See
+[Architecture](../developer-guide/architecture.md#naming-a-cell).
+
+## The camera stays where you put it
+
+Neither gluing nor removing moves the view. Both act on something you are
+already looking at, and a camera that jumps on every edit is a camera you
+have to re-aim after every edit.
+
+Creating a cube does reframe, because it puts a new block down beside the
+others and a model growing past the edge of the window is no use. For
+everything else there is **Recadrer la vue**, which frames the whole model
+without touching anything else.

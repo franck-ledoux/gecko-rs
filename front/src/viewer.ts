@@ -38,6 +38,15 @@ import {
 /** The two groups drawn from the same quadrangles. */
 export type Group = "faces" | "blocks";
 
+/** One click on the surface. Both names, because the quadrangles are listed
+ *  per (face, block) pair: gluing wants the face, removing wants the block,
+ *  and a pick knows which block's side it landed on even when the face has
+ *  one on each. */
+export interface Pick {
+  face: number;
+  block: number;
+}
+
 /** Where a dragged node was let go, in model coordinates. */
 export type Drop = (name: number, to: [number, number, number]) => void;
 
@@ -129,9 +138,9 @@ export class Viewer {
   private view?: View;
   private dropped: Drop[] = [];
   private prefs: ViewPrefs = structuredClone(DEFAULTS);
-  /** Faces the user has picked, in order. The first is the anchor — a glue
+  /** What the user has picked, in order. The first is the anchor — a glue
    *  leaves the seam where it is — so the two are drawn differently. */
-  private picked: number[] = [];
+  private picked: Pick[] = [];
   readonly axes: AxisGizmo;
 
   constructor(engine: AbstractEngine) {
@@ -185,7 +194,7 @@ export class Viewer {
     // the drag behaviour, which checks that the pick is *its* mesh, never
     // started. Half the handles of every cube, silently.
     //
-    // Faces are picked deliberately instead, by `pickFace`, on a click that
+    // Faces are picked deliberately instead, by `pickSurface`, on a click that
     // did not land on a handle.
     const handles = (m: { metadata?: { name?: number } }) => (m.metadata?.name ?? -1) >= 0;
     this.scene.pointerDownPredicate = handles;
@@ -236,7 +245,7 @@ export class Viewer {
       // A block keeps all six of its own faces whatever this says: shrink an
       // open shell and you are looking into a box with a side missing.
       internal: group === "faces" ? this.prefs.faces.internal : true,
-      highlight: new Map(this.picked.map((face, n) => [face, n === 0 ? ANCHOR : MATE])),
+      highlight: new Map(this.picked.map((p, n) => [p.face, n === 0 ? ANCHOR : MATE])),
     };
   }
 
@@ -247,24 +256,23 @@ export class Viewer {
    * a command, and never holds one. Two tabs on a station may legitimately
    * have different faces selected.
    */
-  get selection(): number[] {
-    return [...this.picked];
+  get selection(): Pick[] {
+    return this.picked.map((p) => ({ ...p }));
   }
 
-  select(faces: readonly number[]) {
-    this.picked = [...faces];
+  select(picks: readonly Pick[]) {
+    this.picked = picks.map((p) => ({ ...p }));
     this.rebuildSurface("faces");
     this.rebuildSurface("blocks");
   }
 
   /**
-   * Screen coordinates -> the name of the face under them.
+   * Screen coordinates -> the face and block under them.
    *
    * Babylon reports the triangle it hit; two triangles make a quadrangle, and
-   * the quadrangle knows which face it was drawn for whichever group is on
-   * screen.
+   * the quadrangle carries both names whichever group is on screen.
    */
-  pickFace(x: number, y: number): number | null {
+  pickSurface(x: number, y: number): Pick | null {
     const hit = this.scene.pick(
       x,
       y,
@@ -275,7 +283,8 @@ export class Viewer {
     if (!hit?.hit || !hit.pickedMesh) return null;
     const data = this.surfaces[hit.pickedMesh.name as Group].data;
     const quad = Math.floor(hit.faceId / 2);
-    return data && quad >= 0 && quad < data.faces.length ? data.faces[quad] : null;
+    if (!data || quad < 0 || quad >= data.faces.length) return null;
+    return { face: data.faces[quad], block: data.blocks[quad] };
   }
 
   /**
@@ -515,7 +524,7 @@ export class Viewer {
   }
 
   /** The centre of a drawn face, in **CSS pixels** — the inverse of
-   *  `pickFace`, and what lets a test aim a real mouse at a real face. */
+   *  `pickSurface`, and what lets a test aim a real mouse at a real face. */
   faceScreen(name: number): [number, number] | null {
     for (const group of ["faces", "blocks"] as Group[]) {
       const data = this.surfaces[group].data;

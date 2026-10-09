@@ -111,6 +111,11 @@ How near and how far are both derived from the model's size, and they follow
 it: build a block from Python and the limits move with it, without the camera
 being yanked anywhere.
 
+**Recadrer la vue** frames everything that is on screen — the whole model,
+from the model's own bounds rather than from wherever the camera was left.
+It is the only control that moves the camera on purpose; edits do not, except
+for creating a cube.
+
 ## The orientation triad
 
 Bottom right, and switched on and off with **trièdre X/Y/Z**.

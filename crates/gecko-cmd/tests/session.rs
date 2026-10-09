@@ -502,3 +502,99 @@ mod gluing {
         assert_eq!(build().view_buffer(), build().view_buffer());
     }
 }
+
+/// Taking a block away, through the same door.
+mod removal {
+    use super::*;
+
+    fn three_in_a_row() -> Session {
+        let mut s = Session::new().unwrap();
+        for x in [0.0, 1.0, 2.0] {
+            s.apply(Command::CreateCube {
+                origin: [x, 0.0, 0.0],
+                size: 1.0,
+            })
+            .unwrap();
+        }
+        s
+    }
+
+    fn block_names(s: &Session) -> Vec<u32> {
+        let blocks: serde_json::Value = serde_json::from_str(&s.blocks_json()).unwrap();
+        blocks
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| b["id"].as_u64().unwrap() as u32)
+            .collect()
+    }
+
+    #[test]
+    fn the_blocks_a_script_can_name() {
+        let s = three_in_a_row();
+        let blocks: serde_json::Value = serde_json::from_str(&s.blocks_json()).unwrap();
+        let blocks = blocks.as_array().unwrap();
+        assert_eq!(blocks.len(), 3);
+        // Each cube's centre, in the order they were made.
+        for (n, block) in blocks.iter().enumerate() {
+            assert!((block["centre"][0].as_f64().unwrap() - (n as f64 + 0.5)).abs() < 1e-9);
+            assert!((block["centre"][1].as_f64().unwrap() - 0.5).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn removing_goes_through_the_json_door_like_everything_else() {
+        let mut s = three_in_a_row();
+        let middle = block_names(&s)[1];
+
+        let raw = s.apply_json(&format!(r#"{{"op":"remove_block","block":{middle}}}"#));
+        let reply: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(reply["ok"], true, "{raw}");
+        assert_eq!(reply["outcome"]["viewChanged"], true);
+
+        let stats: serde_json::Value = serde_json::from_str(&s.stats_json()).unwrap();
+        assert_eq!(stats["blocks"], 2);
+        assert_eq!(stats["nodes"], 16);
+        // And the one that went is the one that was named.
+        assert!(!block_names(&s).contains(&middle));
+    }
+
+    #[test]
+    fn a_name_no_block_answers_to_is_reported_and_changes_nothing() {
+        let mut s = three_in_a_row();
+        let before = s.view_buffer();
+        let raw = s.apply_json(r#"{"op":"remove_block","block":4242}"#);
+        let reply: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(reply["ok"], false);
+        assert!(
+            reply["error"].as_str().unwrap().contains("no block"),
+            "{raw}"
+        );
+        assert_eq!(s.view_buffer(), before);
+    }
+
+    #[test]
+    fn the_surface_loses_exactly_that_block() {
+        let mut s = three_in_a_row();
+        let names = block_names(&s);
+        s.apply(Command::RemoveBlock { block: names[0] }).unwrap();
+        let v = ViewBuffer::of(s.blocking(), None);
+
+        assert_eq!(v.quads.len() / 4, 12);
+        assert!(!v.quad_blocks.contains(&names[0]));
+        for kept in [names[1], names[2]] {
+            assert_eq!(v.quad_blocks.iter().filter(|n| **n == kept).count(), 6);
+        }
+    }
+
+    #[test]
+    fn two_sessions_that_removed_the_same_block_ship_the_same_bytes() {
+        let build = || {
+            let mut s = three_in_a_row();
+            let names = block_names(&s);
+            s.apply(Command::RemoveBlock { block: names[1] }).unwrap();
+            s
+        };
+        assert_eq!(build().view_buffer(), build().view_buffer());
+    }
+}

@@ -99,6 +99,24 @@ impl PySession {
         self.command(serde_json::json!({ "op": "glue_faces", "first": first, "second": second }))
     }
 
+    /// Take one block away.
+    ///
+    /// Whatever it was glued to keeps its own cells: the shared ones are
+    /// split off on the way out rather than going with it.
+    fn remove_block(&self, block: u32) -> PyResult<String> {
+        self.command(serde_json::json!({ "op": "remove_block", "block": block }))
+    }
+
+    /// Every block, as `{"id": …, "centre": [x, y, z]}` — what a script needs
+    /// in order to have something to remove.
+    #[getter]
+    fn blocks(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let json = self.locked(|s| s.blocks_json());
+        let value: Value =
+            serde_json::from_str(&json).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        to_py(py, &value)
+    }
+
     /// Every face, as `{"id": …, "block": …, "centre": [x, y, z]}` — what a
     /// script needs in order to have something to glue. A face with a block
     /// on each side is listed once per block.

@@ -12,7 +12,7 @@ import { readProbe, type Probe } from "./mode";
 import type { Kernel } from "./kernel";
 import { initKernel, WasmKernel } from "./kernel-wasm";
 import { RemoteKernel } from "./kernel-remote";
-import { Viewer, type Group } from "./viewer";
+import { Viewer, type Group, type Pick } from "./viewer";
 import { loadPrefs, savePrefs, PRESETS, SWATCHES, type Theme } from "./theme";
 import type { Colouring } from "./surface";
 import type { Axis } from "./axes";
@@ -232,7 +232,7 @@ async function boot() {
     // ended — not a face being chosen. The node wins: it is the smaller
     // target, and the one you had to aim at.
     if (viewer.pickNode(x, y) !== null) return;
-    chooseFace(viewer.pickFace(x, y));
+    choose(viewer.pickSurface(x, y));
   });
 
   /**
@@ -242,35 +242,67 @@ async function boot() {
    * being ignored: being stuck with two wrong faces and no way to say so is
    * worse than losing a click.
    */
-  function chooseFace(face: number | null) {
+  function choose(pick: Pick | null) {
     let picked = viewer.selection;
-    if (face === null) picked = [];
-    else if (picked.includes(face)) picked = picked.filter((f) => f !== face);
-    else if (picked.length >= 2) picked = [face];
-    else picked = [...picked, face];
+    if (pick === null) picked = [];
+    else if (picked.some((p) => p.face === pick.face))
+      picked = picked.filter((p) => p.face !== pick.face);
+    else if (picked.length >= 2) picked = [pick];
+    else picked = [...picked, pick];
 
     viewer.select(picked);
     $<HTMLButtonElement>("glue").disabled = picked.length !== 2;
+    $<HTMLButtonElement>("remove").disabled = picked.length === 0;
+    // The block is named as well as the face: it is what the remove button
+    // would act on, and a click that deletes something unnamed is no good.
     message =
       picked.length === 0
         ? ""
         : picked.length === 1
-          ? `face ${picked[0]} — la suivante viendra sur elle`
-          : `face ${picked[1]} sera collée sur la face ${picked[0]}`;
+          ? `face ${picked[0].face} (bloc ${picked[0].block}) — la suivante viendra sur elle`
+          : `face ${picked[1].face} sera collée sur la face ${picked[0].face}`;
     $("status").textContent = message;
   }
 
   $("glue").addEventListener("click", async () => {
     const [first, second] = viewer.selection;
     if (first === undefined || second === undefined) return;
-    const reply = await kernel.apply({ op: "glue_faces", first, second });
+    const reply = await kernel.apply({
+      op: "glue_faces",
+      first: first.face,
+      second: second.face,
+    });
     // Whatever happened, those two names mean something else now — or
     // nothing at all. Keeping them selected would leave the panel offering to
     // glue a face that no longer exists. Clearing resets the message, so the
     // outcome is said after.
-    chooseFace(null);
+    choose(null);
     message = reply.message;
-    await refresh(reply.viewChanged);
+    // Deliberately not framed. `viewChanged` says the bytes are stale, which
+    // is a different question from whether the camera should move — and
+    // welding two blocks you are already looking at is no reason to move it.
+    await refresh();
+  });
+
+  // The block the first pick landed on. Not the face's block in general —
+  // once two blocks are glued a face has one on each side — but the pick
+  // knows which side it hit.
+  $("remove").addEventListener("click", async () => {
+    const [first] = viewer.selection;
+    if (first === undefined) return;
+    const reply = await kernel.apply({ op: "remove_block", block: first.block });
+    choose(null);
+    message = reply.message;
+    // Not framed: taking a block away is no reason to move the camera either.
+    await refresh();
+  });
+
+  /** Put everything back in view. Camera state, so it never goes near the
+   *  kernel: in station mode two tabs on one session each have their own. */
+  $("recentre").addEventListener("click", () => {
+    viewer.frameAll();
+    message = "vue recadrée";
+    $("status").textContent = message;
   });
 
   async function refresh(frame = false) {
@@ -304,7 +336,9 @@ async function boot() {
       size: 1,
     });
     message = reply.message;
-    await refresh(reply.viewChanged);
+    // Framed: a new cube is put down beside the others, and a model that
+    // grows past the edge of the window is no use.
+    await refresh(true);
   });
 
   // Dropping a node is one command, sent once. The scene has been following
@@ -362,15 +396,24 @@ async function boot() {
       closest: viewer.camera.lowerRadiusLimit,
     }),
     pickNode: (x: number, y: number) => viewer.pickNode(x, y),
-    pickFace: (x: number, y: number) => viewer.pickFace(x, y),
+    pickSurface: (x: number, y: number) => viewer.pickSurface(x, y),
     faceScreen: (name: number) => viewer.faceScreen(name),
     selection: () => viewer.selection,
-    chooseFace: (face: number | null) => chooseFace(face),
+    choose: (pick: Pick | null) => choose(pick),
     nodeScreen: (name: number) => viewer.nodeScreen(name),
     nodePosition: (name: number) => viewer.nodePosition(name),
     centre: () => viewer.centre,
     apply: (command: Record<string, unknown>) => kernel.apply(command),
     refresh: () => refresh(),
+    recentre: () => viewer.frameAll(),
+    /** Stop the camera drifting. Babylon keeps applying inertia for a while
+     *  after a gesture, so a test that wants to show nothing *else* moved the
+     *  camera has to be able to say that nothing was still moving it. */
+    stopCamera: () => {
+      viewer.camera.inertialAlphaOffset = 0;
+      viewer.camera.inertialBetaOffset = 0;
+      viewer.camera.inertialRadiusOffset = 0;
+    },
     /** Resolves once the scene has drawn twice more. */
     settled: () =>
       new Promise<void>((r) =>

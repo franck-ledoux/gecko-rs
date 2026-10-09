@@ -10,8 +10,8 @@ use std::collections::HashMap;
 
 use honeycomb_core::attributes::AttributeError;
 use honeycomb_core::cmap::{
-    CMap3, CMapBuilder, DartIdType, EdgeIdType, FaceIdType, LinkError, OrbitPolicy, SewError,
-    VertexIdType, VolumeIdType, NULL_DART_ID,
+    CMap3, CMapBuilder, DartIdType, DartReleaseError, EdgeIdType, FaceIdType, LinkError,
+    OrbitPolicy, SewError, VertexIdType, VolumeIdType, NULL_DART_ID,
 };
 use thiserror::Error;
 
@@ -80,6 +80,16 @@ pub enum BlockingError {
     AlreadyGlued(CellId),
     #[error("could not glue: {0}")]
     Sew(#[from] SewError),
+    #[error("no block is named {0:?}")]
+    NoSuchBlock(CellId),
+    #[error("could not free dart {0}")]
+    Release(DartIdType),
+}
+
+impl From<DartReleaseError> for BlockingError {
+    fn from(e: DartReleaseError) -> Self {
+        BlockingError::Release(e.0)
+    }
 }
 
 /// Which quarter turn lines two faces up best.
@@ -331,6 +341,68 @@ impl Blocking {
         self.map.sew::<3>(da[0], db[(turn + 3) % 4])?;
         self.assign_missing_ids();
         Ok(())
+    }
+
+    /// Remove one block, leaving whatever it was glued to intact.
+    ///
+    /// Three steps, in this order because each needs what the previous one
+    /// has not yet destroyed:
+    ///
+    /// 1. **unsew β₃**, while the orbits that walk takes still exist. This is
+    ///    where a neighbour gets its own copy of the shared cells back — and
+    ///    it is the case [`CornerKey`][crate::ids::CornerKey] was written
+    ///    for: the names on both sides are cleared, but the neighbour goes on
+    ///    recognising the corner.
+    /// 2. **unlink β₂ then β₁** — the raw operations, not the sewing ones.
+    ///    There is no cell left to split by then; what is left is a block
+    ///    being taken apart.
+    /// 3. **release the darts**, which the map only allows once every β of
+    ///    theirs is null — hence the order.
+    pub fn remove_block(&mut self, block: CellId) -> Result<(), BlockingError> {
+        let volume = self
+            .block_by_id(block)
+            .ok_or(BlockingError::NoSuchBlock(block))?;
+        // Collected first: the orbit is about to stop being walkable. β₃ is
+        // not one of its generators, so this is one block's darts, never a
+        // neighbour's.
+        let darts: Vec<DartIdType> = self
+            .map
+            .orbit(OrbitPolicy::Volume, volume as DartIdType)
+            .collect();
+
+        for &dart in &darts {
+            if self.map.beta::<3>(dart) != NULL_DART_ID {
+                self.map.unsew::<3>(dart)?;
+            }
+        }
+        for &dart in &darts {
+            if self.map.beta::<2>(dart) != NULL_DART_ID {
+                self.map.unlink::<2>(dart)?;
+            }
+        }
+        for &dart in &darts {
+            if self.map.beta::<1>(dart) != NULL_DART_ID {
+                self.map.unlink::<1>(dart)?;
+            }
+        }
+        for &dart in &darts {
+            self.map.release_dart(dart)?;
+        }
+
+        // The neighbour's cells came out of the split unnamed.
+        self.assign_missing_ids();
+        Ok(())
+    }
+
+    /// The block a stable name currently stands for. A scan, for the same
+    /// reason [`node_by_id`][Self::node_by_id] is one.
+    pub fn block_by_id(&self, block: CellId) -> Option<VolumeIdType> {
+        if block.is_none() {
+            return None;
+        }
+        self.map
+            .iter_volumes()
+            .find(|v| self.block_tag(*v).id == block)
     }
 
     /// The four darts of a face, in the order β₁ walks them.
