@@ -582,20 +582,34 @@ test("recentring shows everything without changing the direction", async ({ page
     });
   expect(await offScreen(), "the zoom should have lost some of the model").toBeGreaterThan(0);
 
+  // Record every frame's radius while it moves. Sampling at one chosen
+  // moment instead would be a bet on how fast the machine is — and on a slow
+  // one the eased start has barely left the ground.
+  await page.evaluate(() => {
+    const w = window as any;
+    w.__radii = [];
+    const tick = () => {
+      w.__radii.push(w.__gecko.camera().radius);
+      if (w.__radii.length < 200) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
   await page.locator("#recentre").click();
-
-  // Part way there, not already arrived: the view glides rather than cutting.
-  await page.waitForTimeout(120);
-  const midway = await page.evaluate(() => (window as any).__gecko.camera());
-  expect(midway.radius).toBeGreaterThan(before.radius);
-  expect(midway.radius).toBeLessThan(before.radius * 4);
-
   await page.evaluate(() => (window as any).__gecko.settled());
   await expect(page.locator("#status")).toHaveText("vue recadrée");
 
+  // It glided: a cut goes straight from one radius to the other and leaves
+  // nothing in between, however the frames happen to fall.
+  const after = await page.evaluate(() => (window as any).__gecko.camera());
+  const between = (await page.evaluate(() => (window as any).__radii)) as number[];
+  const partWay = between.filter((r) => r > before.radius + 1e-6 && r < after.radius - 1e-6);
+  // Two, not a dozen: a cut leaves exactly none however the frames fall, so
+  // a low bar still has teeth, and a slow runner drawing a handful of frames
+  // in 450 ms does not make this a lottery.
+  expect(partWay.length, `radii seen: ${between.join(", ")}`).toBeGreaterThanOrEqual(2);
+
   // Everything in view, and looked at from exactly where it was.
   expect(await offScreen()).toBe(0);
-  const after = await page.evaluate(() => (window as any).__gecko.camera());
   expect(after.alpha).toBeCloseTo(before.alpha, 9);
   expect(after.beta).toBeCloseTo(before.beta, 9);
   expect(after.radius).toBeGreaterThan(before.radius);
