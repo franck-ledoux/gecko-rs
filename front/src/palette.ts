@@ -77,3 +77,14 @@ export function hexToRgb(hex: string): [number, number, number] {
   const n = parseInt(hex.replace("#", ""), 16);
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
 }
+
+/**
+ * The two selection colours.
+ *
+ * Fixed rather than themed, for two reasons: they have to stand out against
+ * whatever the model is coloured, which is the one thing the user can change;
+ * and the two must not be confusable with each other, because which is which
+ * decides where the seam of a glue ends up.
+ */
+export const ANCHOR = "#ffcc33";
+export const MATE = "#ff5577";

@@ -163,9 +163,40 @@ describe("the contract the other mode has to meet", () => {
     const move = { op: "move_node", node: name, to: [0.25, -0.5, 1.75] };
     expect((await kernel.apply(move)).ok).toBe(true);
     commands.push(move);
+
+    // And a glue, because it is the first operation that walks an orbit and
+    // orders what it finds. Non-determinism there would show up here and
+    // nowhere else — which is exactly how an earlier prototype's HashSet was
+    // caught.
+    const view = decodeView(await kernel.view());
+    const centre = (q: number) => {
+      const at = [0, 0, 0];
+      for (let k = 0; k < 4; k++)
+        for (let axis = 0; axis < 3; axis++)
+          at[axis] += view.positions[view.quads[q * 4 + k] * 3 + axis] / 4;
+      return at;
+    };
+    let pair: [number, number] = [0, 0];
+    let shortest = Infinity;
+    for (let a = 0; a < view.quadFaces.length; a++)
+      for (let b = 0; b < view.quadFaces.length; b++) {
+        if (view.quadBlocks[a] === view.quadBlocks[b]) continue;
+        const [p, q] = [centre(a), centre(b)];
+        const gap = Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+        if (gap < shortest) {
+          shortest = gap;
+          pair = [view.quadFaces[a], view.quadFaces[b]];
+        }
+      }
+    const glue = { op: "glue_faces", first: pair[0], second: pair[1] };
+    expect((await kernel.apply(glue)).ok).toBe(true);
+    commands.push(glue);
+
     const bytes = await kernel.view();
     const stats = await kernel.stats();
     expect(stats.blocks).toBe(3);
+    // Two of the three are one object now.
+    expect(stats.nodes).toBe(20);
 
     mkdirSync(new URL("../../artifacts/", import.meta.url), { recursive: true });
     writeFileSync(
@@ -720,16 +751,34 @@ describe("the surfaces in the scene", () => {
     expect(viewer.surface("faces")?.alpha).toBeCloseTo(0.25, 9);
   });
 
-  it("never lets a surface answer a pick", async () => {
-    // These sit exactly where the node handles are. A surface that is
-    // pickable is a node that cannot be dragged.
+  it("lets a surface answer a pick, because a face is chosen with the mouse", async () => {
+    // This was the other way round until faces could be glued. The handles
+    // still win where the two overlap — a sphere is centred on the surface,
+    // so its near half is in front — and the end-to-end test "a surface never
+    // swallows the node under it" is what holds that down.
     const viewer = await show({
       ...DEFAULTS,
       blocks: { ...DEFAULTS.blocks, visible: true },
     });
     for (const name of ["faces", "blocks"]) {
-      expect(viewer.scene.getMeshByName(name)!.isPickable).toBe(false);
+      expect(viewer.scene.getMeshByName(name)!.isPickable).toBe(true);
     }
+  });
+
+  it("knows which face each drawn quadrangle belongs to, on both meshes", async () => {
+    // Picking has to answer "which face" even when what is on screen is the
+    // blocks, so both meshes carry both names.
+    const viewer = await show({
+      ...DEFAULTS,
+      blocks: { ...DEFAULTS.blocks, visible: true },
+    });
+    const faces = viewer.surface("faces")!;
+    const blocks = viewer.surface("blocks")!;
+    expect(new Set(faces.faces).size).toBe(6);
+    expect(new Set(blocks.faces).size).toBe(6);
+    expect(new Set(blocks.blocks).size).toBe(1);
+    // The same six faces, drawn twice.
+    expect([...faces.faces].sort()).toEqual([...blocks.faces].sort());
   });
 
   it("follows a node being dragged", async () => {
@@ -903,5 +952,136 @@ describe("how close the camera may get", () => {
     expect(viewer.camera.lowerRadiusLimit).toBeNull();
     expect(viewer.camera.upperRadiusLimit).toBeNull();
     expect(viewer.camera.radius).toBe(4);
+  });
+});
+
+describe("picking faces to glue", () => {
+  const twoCubes = async () => {
+    const viewer = new Viewer(new NullEngine());
+    const kernel = new WasmKernel();
+    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    await kernel.apply({ op: "create_cube", origin: [1, 0, 0], size: 1 });
+    viewer.applyPrefs(DEFAULTS);
+    viewer.setView(decodeView(await kernel.view()));
+    return { viewer, kernel };
+  };
+
+  it("paints the two picked faces apart from each other", async () => {
+    // Which is which is not decoration: the first one's position is what
+    // survives the glue.
+    const { viewer } = await twoCubes();
+    const names = [...viewer.surface("faces")!.faces];
+    const plain = viewer.surface("faces")!.colours;
+    expect(plain).toBe(1);
+
+    viewer.select([names[0]]);
+    expect(viewer.selection).toEqual([names[0]]);
+    expect(viewer.surface("faces")!.colours).toBe(2);
+
+    viewer.select([names[0], names[1]]);
+    // The rest, the anchor, and the one coming to meet it.
+    expect(viewer.surface("faces")!.colours).toBe(3);
+
+    viewer.select([]);
+    expect(viewer.surface("faces")!.colours).toBe(1);
+  });
+
+  it("shows the selection on the blocks as well as the faces", async () => {
+    const { viewer } = await twoCubes();
+    viewer.applyPrefs({ ...DEFAULTS, blocks: { ...DEFAULTS.blocks, visible: true } });
+    const name = viewer.surface("faces")!.faces[0];
+    viewer.select([name]);
+    // Keyed by face, so one pick lights up wherever that face is drawn.
+    expect(viewer.surface("blocks")!.colours).toBeGreaterThan(1);
+  });
+
+  it("glues, and the model becomes one object", async () => {
+    const { viewer, kernel } = await twoCubes();
+    const view = decodeView(await kernel.view());
+
+    // The two faces that meet at x = 1, found the way a mouse would: by
+    // where they are.
+    const centreX = (quad: number) => {
+      let x = 0;
+      for (let k = 0; k < 4; k++) x += view.positions[view.quads[quad * 4 + k] * 3] / 4;
+      return x + view.centre[0];
+    };
+    const meeting = [...view.quadFaces.keys()].filter((q) => Math.abs(centreX(q) - 1) < 1e-6);
+    expect(meeting).toHaveLength(2);
+
+    const reply = await kernel.apply({
+      op: "glue_faces",
+      first: view.quadFaces[meeting[0]],
+      second: view.quadFaces[meeting[1]],
+    });
+    expect(reply.ok, reply.message).toBe(true);
+
+    const after = decodeView(await kernel.view());
+    expect(after.positions.length / 3).toBe(12);
+    expect(after.edges.length / 2).toBe(20);
+    expect(after.quads.length / 4).toBe(12);
+
+    // And the viewer can now hide something: one face has a block on each
+    // side, which until this operation existed never happened.
+    viewer.setView(after);
+    expect(viewer.surface("faces")!.quads).toBe(11);
+    viewer.applyPrefs({ ...DEFAULTS, faces: { ...DEFAULTS.faces, internal: false } });
+    expect(viewer.surface("faces")!.quads).toBe(10);
+  });
+});
+
+describe("the frame a screen position is reported in", () => {
+  /** The same scene, on an engine that reports a backing store twice the
+   *  size of its canvas — what a retina display gives you. `NullEngine`
+   *  ignores `setHardwareScalingLevel`, so the two numbers that matter are
+   *  stubbed directly rather than asked for. */
+  const viewerOn = async (retina: boolean) => {
+    const engine = new NullEngine();
+    if (retina) {
+      const [w, h] = [engine.getRenderWidth(), engine.getRenderHeight()];
+      Object.assign(engine, {
+        getRenderWidth: () => w * 2,
+        getRenderHeight: () => h * 2,
+        getHardwareScalingLevel: () => 0.5,
+      });
+    }
+    const viewer = new Viewer(engine);
+    const kernel = new WasmKernel();
+    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    viewer.applyPrefs(DEFAULTS);
+    viewer.setView(decodeView(await kernel.view()));
+    viewer.frameAll();
+    viewer.render();
+    return viewer;
+  };
+
+  const reported = (viewer: Viewer) => ({
+    node: viewer.nodeScreen(viewer.names()[0])!,
+    face: viewer.faceScreen(viewer.surface("faces")!.faces[0])!,
+    axis: viewer.axes.axisScreen("+x")!,
+  });
+
+  it("is CSS pixels, not the backing store", async () => {
+    // `scene.pick` and a pointer event's `offsetX` are both in CSS pixels,
+    // and `Vector3.Project` works in the backing store. The two coincide at a
+    // device pixel ratio of 1 — which is what this runner and Playwright both
+    // use, so nothing else here can tell them apart — and are a factor of two
+    // apart on the machine this is used on, where aiming at what these report
+    // would miss by half the window.
+    const plain = reported(await viewerOn(false));
+    const retina = reported(await viewerOn(true));
+
+    for (const key of ["node", "face", "axis"] as const) {
+      for (let k = 0; k < 2; k++) {
+        expect(
+          retina[key][k],
+          `${key}[${k}] moved when only the backing store changed`,
+        ).toBeCloseTo(plain[key][k], 6);
+      }
+    }
+    // And the scene really was twice the size, or the above proves nothing.
+    expect((await viewerOn(true)).scene.getEngine().getRenderWidth()).toBe(
+      (await viewerOn(false)).scene.getEngine().getRenderWidth() * 2,
+    );
   });
 });

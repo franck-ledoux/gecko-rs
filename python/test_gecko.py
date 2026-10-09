@@ -163,3 +163,42 @@ def test_moving_a_node_that_does_not_exist_raises():
     with pytest.raises(ValueError, match="4242"):
         s.move_node(4242, [1.0, 2.0, 3.0])
     assert bytes(s.view_buffer) == before
+
+
+def test_gluing_two_blocks_through_the_binding():
+    s = gecko.Session()
+    s.create_cube([0.0, 0.0, 0.0], 1.0)
+    s.create_cube([1.5, 0.0, 0.0], 1.0)
+
+    # A script has no mouse, so it names a face from the listing.
+    faces = s.faces
+    assert len(faces) == 12
+    blocks = sorted({f["block"] for f in faces})
+    first = next(f for f in faces if f["block"] == blocks[0] and f["centre"][0] == 1.0)
+    second = next(f for f in faces if f["block"] == blocks[1] and f["centre"][0] == 1.5)
+
+    message = s.glue_faces(first["id"], second["id"])
+    assert "glued" in message
+    assert s.stats == {"nodes": 12, "edges": 20, "faces": 11, "blocks": 2}
+
+    # The rule: the seam is where the *first* face was, not half way. The map
+    # merges two vertices by averaging them, so this would be 1.25 if the
+    # faces were not brought together before being sewn.
+    seam = [n for n in s.nodes if abs(n["pos"][0] - 1.0) < 1e-9]
+    assert len(seam) == 4
+    assert not [n for n in s.nodes if abs(n["pos"][0] - 1.25) < 1e-9]
+    # Only the face moved: the far side of the second block stayed put.
+    assert [n for n in s.nodes if abs(n["pos"][0] - 2.5) < 1e-9]
+
+
+def test_a_refused_glue_raises_and_changes_nothing():
+    s = gecko.Session()
+    s.create_cube([0.0, 0.0, 0.0], 1.0)
+    before = bytes(s.view_buffer)
+
+    face = s.faces[0]["id"]
+    with pytest.raises(ValueError, match="itself"):
+        s.glue_faces(face, face)
+    with pytest.raises(ValueError, match="no face"):
+        s.glue_faces(face, 9999)
+    assert bytes(s.view_buffer) == before

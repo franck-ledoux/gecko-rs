@@ -27,6 +27,7 @@ import "@babylonjs/core/Culling/ray";
 import type { View } from "./decode";
 import { AxisGizmo, MAIN_LAYER } from "./axes";
 import { DEFAULTS, type Layer, type ViewPrefs } from "./theme";
+import { ANCHOR, MATE } from "./palette";
 import {
   buildSurface,
   edgeSegments,
@@ -97,6 +98,17 @@ function normalsFor(data: SurfaceData): number[] {
   return normals;
 }
 
+/*
+ * Render pixels to the CSS pixels a pointer event speaks — applied by
+ * `nodeScreen`, `faceScreen` and `AxisGizmo.axisScreen`.
+ *
+ * `Vector3.Project` works in the canvas's backing store, which on a
+ * high-density display is twice the size of the canvas itself. `scene.pick`
+ * and `offsetX`/`offsetY` are both in CSS pixels. The two frames coincide at
+ * a device pixel ratio of 1 — which is what a headless test runs at, so no
+ * test here can see the difference — and are a factor of two apart on the
+ * machine this is used on.
+ */
 export class Viewer {
   readonly scene: Scene;
   readonly camera: ArcRotateCamera;
@@ -117,6 +129,9 @@ export class Viewer {
   private view?: View;
   private dropped: Drop[] = [];
   private prefs: ViewPrefs = structuredClone(DEFAULTS);
+  /** Faces the user has picked, in order. The first is the anchor — a glue
+   *  leaves the seam where it is — so the two are drawn differently. */
+  private picked: number[] = [];
   readonly axes: AxisGizmo;
 
   constructor(engine: AbstractEngine) {
@@ -161,6 +176,21 @@ export class Viewer {
     // use the main camera, not whichever happens to be active. The gizmo does
     // its own pick, through its own camera.
     this.scene.cameraToUseForPointers = this.camera;
+    // And it must only ever see the node handles.
+    //
+    // The surfaces are pickable, because a face is something you choose with
+    // the mouse. But Babylon's pointer system returns the nearest pickable
+    // mesh, so a node on the far side of the model became ungrabbable the
+    // moment the faces were drawn — the face in front answered first, and
+    // the drag behaviour, which checks that the pick is *its* mesh, never
+    // started. Half the handles of every cube, silently.
+    //
+    // Faces are picked deliberately instead, by `pickFace`, on a click that
+    // did not land on a handle.
+    const handles = (m: { metadata?: { name?: number } }) => (m.metadata?.name ?? -1) >= 0;
+    this.scene.pointerDownPredicate = handles;
+    this.scene.pointerUpPredicate = handles;
+    this.scene.pointerMovePredicate = handles;
     this.applyPrefs(this.prefs);
   }
 
@@ -206,7 +236,46 @@ export class Viewer {
       // A block keeps all six of its own faces whatever this says: shrink an
       // open shell and you are looking into a box with a side missing.
       internal: group === "faces" ? this.prefs.faces.internal : true,
+      highlight: new Map(this.picked.map((face, n) => [face, n === 0 ? ANCHOR : MATE])),
     };
+  }
+
+  /**
+   * Which faces are picked, in the order they were picked.
+   *
+   * View state, like the theme: the kernel is told about a selection once, as
+   * a command, and never holds one. Two tabs on a station may legitimately
+   * have different faces selected.
+   */
+  get selection(): number[] {
+    return [...this.picked];
+  }
+
+  select(faces: readonly number[]) {
+    this.picked = [...faces];
+    this.rebuildSurface("faces");
+    this.rebuildSurface("blocks");
+  }
+
+  /**
+   * Screen coordinates -> the name of the face under them.
+   *
+   * Babylon reports the triangle it hit; two triangles make a quadrangle, and
+   * the quadrangle knows which face it was drawn for whichever group is on
+   * screen.
+   */
+  pickFace(x: number, y: number): number | null {
+    const hit = this.scene.pick(
+      x,
+      y,
+      (m) => m.name === "faces" || m.name === "blocks",
+      false,
+      this.camera,
+    );
+    if (!hit?.hit || !hit.pickedMesh) return null;
+    const data = this.surfaces[hit.pickedMesh.name as Group].data;
+    const quad = Math.floor(hit.faceId / 2);
+    return data && quad >= 0 && quad < data.faces.length ? data.faces[quad] : null;
   }
 
   /**
@@ -268,9 +337,10 @@ export class Viewer {
     material.zOffset = SURFACE_DEPTH_BIAS.factor;
     material.zOffsetUnits = SURFACE_DEPTH_BIAS.units;
     mesh.material = material;
-    // Never pickable. These sit exactly where the node handles are, and a
-    // surface that answers the pick is a node that cannot be dragged.
-    mesh.isPickable = false;
+    // Pickable, because a face is something you choose with the mouse. The
+    // node handles still win where they overlap: a sphere is centred on the
+    // surface, so its near half is in front, and that is the half you aim at.
+    mesh.isPickable = true;
     mesh.layerMask = MAIN_LAYER;
 
     slot.mesh = mesh;
@@ -424,8 +494,9 @@ export class Viewer {
     return hit?.hit && hit.pickedMesh ? (hit.pickedMesh.metadata.name as number) : null;
   }
 
-  /** The node with this name, in screen coordinates — the inverse of
-   *  `pickNode`, and what lets a test aim a real mouse at a real handle. */
+  /** The node with this name, in **CSS pixels** — the inverse of `pickNode`,
+   *  in the frame that takes, and what lets a test aim a real mouse at a real
+   *  handle. */
   nodeScreen(name: number): [number, number] | null {
     const mesh = this.nodes.find((m) => m.metadata.name === name);
     if (!mesh) return null;
@@ -439,7 +510,37 @@ export class Viewer {
       this.camera.getViewMatrix().multiply(this.camera.getProjectionMatrix()),
       this.camera.viewport.toGlobal(engine.getRenderWidth(), engine.getRenderHeight()),
     );
-    return [v.x, v.y];
+    const css = engine.getHardwareScalingLevel();
+    return [v.x * css, v.y * css];
+  }
+
+  /** The centre of a drawn face, in **CSS pixels** — the inverse of
+   *  `pickFace`, and what lets a test aim a real mouse at a real face. */
+  faceScreen(name: number): [number, number] | null {
+    for (const group of ["faces", "blocks"] as Group[]) {
+      const data = this.surfaces[group].data;
+      const quad = data ? data.faces.indexOf(name) : -1;
+      if (!data || quad < 0) continue;
+      const mid = new Vector3(0, 0, 0);
+      for (let k = 0; k < 4; k++) {
+        const v = (quad * 4 + k) * 3;
+        mid.addInPlaceFromFloats(
+          data.positions[v] / 4,
+          data.positions[v + 1] / 4,
+          data.positions[v + 2] / 4,
+        );
+      }
+      const engine = this.scene.getEngine();
+      const at = Vector3.Project(
+        mid,
+        Matrix.Identity(),
+        this.camera.getViewMatrix().multiply(this.camera.getProjectionMatrix()),
+        this.camera.viewport.toGlobal(engine.getRenderWidth(), engine.getRenderHeight()),
+      );
+      const css = engine.getHardwareScalingLevel();
+      return [at.x * css, at.y * css];
+    }
+    return null;
   }
 
   /** Model-space position of a node, as the scene currently shows it. */
@@ -540,7 +641,8 @@ export class Viewer {
     alpha: number;
     colours: number;
     positions: Float32Array;
-    names: Uint32Array;
+    faces: Uint32Array;
+    blocks: Uint32Array;
   } | null {
     const slot = this.surfaces[group];
     if (!slot.mesh || !slot.data) return null;
@@ -553,7 +655,8 @@ export class Viewer {
       alpha: (slot.mesh.material as StandardMaterial).alpha,
       colours: seen.size,
       positions: slot.data.positions,
-      names: slot.data.names,
+      faces: slot.data.faces,
+      blocks: slot.data.blocks,
     };
   }
 

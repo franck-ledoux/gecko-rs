@@ -51,6 +51,13 @@ pub enum Command {
         node: u32,
         to: [f64; 3],
     },
+    /// Weld two blocks along a face. `first` stays where it is and `second`
+    /// is brought onto it, so the order is part of the command rather than a
+    /// detail of how it is carried out.
+    GlueFaces {
+        first: u32,
+        second: u32,
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -109,6 +116,20 @@ impl Session {
                     view_changed: true,
                 })
             }
+            Command::GlueFaces { first, second } => {
+                let (first, second) = (CellId::from_raw(first), CellId::from_raw(second));
+                self.blocking.glue_faces(first, second)?;
+                Ok(Outcome {
+                    message: format!(
+                        "faces {first:?} and {second:?} glued — {} nodes, {} edges, {} faces, {} blocks",
+                        self.blocking.nb_nodes(),
+                        self.blocking.nb_edges(),
+                        self.blocking.nb_faces(),
+                        self.blocking.nb_blocks(),
+                    ),
+                    view_changed: true,
+                })
+            }
         }
     }
 
@@ -163,6 +184,34 @@ impl Session {
             .map(|(id, pos)| serde_json::json!({ "id": id.get(), "pos": pos }))
             .collect();
         serde_json::Value::Array(nodes).to_string()
+    }
+
+    /// Every face, by stable name, with the block it bounds and its centre —
+    /// enough for a script to name one to [`Command::GlueFaces`] without
+    /// having to see it.
+    ///
+    /// A face already glued is listed once per block, as the surface is.
+    pub fn faces_json(&self) -> String {
+        let faces: Vec<_> = self
+            .blocking
+            .block_faces()
+            .iter()
+            .map(|side| {
+                let mut centre = [0.0; 3];
+                for node in side.nodes {
+                    let p = self.blocking.position(node).unwrap_or([0.0; 3]);
+                    for k in 0..3 {
+                        centre[k] += p[k] / 4.0;
+                    }
+                }
+                serde_json::json!({
+                    "id": side.face.get(),
+                    "block": side.block.get(),
+                    "centre": centre,
+                })
+            })
+            .collect();
+        serde_json::Value::Array(faces).to_string()
     }
 
     pub fn stats_json(&self) -> String {

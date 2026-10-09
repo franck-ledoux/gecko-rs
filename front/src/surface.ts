@@ -36,6 +36,10 @@ export interface SurfaceOptions {
    *  all six of its own whatever this says — otherwise shrinking one would
    *  open it. */
   internal: boolean;
+  /** Faces to paint in a colour of their own, whatever the colouring says:
+   *  what the user has picked. Keyed by face name, so a selected face stands
+   *  out on both meshes at once. */
+  highlight?: ReadonlyMap<number, string>;
 }
 
 export interface SurfaceData {
@@ -46,15 +50,21 @@ export interface SurfaceData {
   /** Four per vertex, RGBA. The alpha is left at 1 — a group's transparency
    *  is one number on its material, not a thousand copies in a buffer. */
   colors: Float32Array;
-  /** The cell name each quadrangle was drawn for, in order. */
-  names: Uint32Array;
+  /** The face each drawn quadrangle belongs to.
+   *
+   *  Carried whichever group this is, because picking has to answer "which
+   *  face" even when what is on screen is the blocks. */
+  faces: Uint32Array;
+  /** The block each drawn quadrangle belongs to. */
+  blocks: Uint32Array;
 }
 
 const EMPTY: SurfaceData = {
   positions: new Float32Array(0),
   indices: new Uint32Array(0),
   colors: new Float32Array(0),
-  names: new Uint32Array(0),
+  faces: new Uint32Array(0),
+  blocks: new Uint32Array(0),
 };
 
 /**
@@ -120,14 +130,20 @@ export function buildSurface(view: View, options: SurfaceOptions): SurfaceData {
   const positions = new Float32Array(kept.length * 12);
   const colors = new Float32Array(kept.length * 16);
   const indices = new Uint32Array(kept.length * 6);
-  const drawn = new Uint32Array(kept.length);
+  const faces = new Uint32Array(kept.length);
+  const blocks = new Uint32Array(kept.length);
 
   kept.forEach((q, i) => {
     const name = names[q];
-    drawn[i] = name;
+    faces[i] = view.quadFaces[q];
+    blocks[i] = view.quadBlocks[q];
     const c = middle.get(name) ?? [0, 0, 0];
-    const rgb =
-      options.colouring === "id" ? hexToRgb(colourForId(name, dimension)) : uniform;
+    const picked = options.highlight?.get(view.quadFaces[q]);
+    const rgb = picked
+      ? hexToRgb(picked)
+      : options.colouring === "id"
+        ? hexToRgb(colourForId(name, dimension))
+        : uniform;
 
     for (let k = 0; k < 4; k++) {
       const p = view.quads[q * 4 + k] * 3;
@@ -147,7 +163,7 @@ export function buildSurface(view: View, options: SurfaceOptions): SurfaceData {
     indices.set([base, base + 1, base + 2, base, base + 2, base + 3], i * 6);
   });
 
-  return { positions, indices, colors, names: drawn };
+  return { positions, indices, colors, faces, blocks };
 }
 
 /**

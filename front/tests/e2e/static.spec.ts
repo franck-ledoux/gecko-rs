@@ -318,10 +318,14 @@ test("the display settings survive a reload", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
-test("a surface never swallows the node under it", async ({ page }) => {
-  // The surfaces sit exactly where the handles are. One that answered a pick
-  // would be a node that cannot be dragged — with everything still looking
-  // perfectly normal.
+test("every handle stays grabbable through an opaque surface", async ({ page }) => {
+  // All eight, not a node picked for being likely: Babylon's pointer system
+  // returns the nearest pickable mesh, so when the surfaces joined that
+  // contest it was exactly the handles **behind** one that stopped working —
+  // and which ones those are depends on where the camera happens to be.
+  //
+  // A real drag each time. Asking `pickNode` would prove nothing: it passes
+  // a predicate of its own, and so never travels the path that matters.
   const errors = await boot(page);
   await page.locator("#cube").click();
   await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
@@ -329,14 +333,44 @@ test("a surface never swallows the node under it", async ({ page }) => {
   await page.locator("[data-test=faces-alpha]").fill("1");
   await page.evaluate(() => (window as any).__gecko.settled());
 
-  const name = (await page.evaluate(() => (window as any).__gecko.names()))[0] as number;
-  const at = (await page.evaluate(
-    (n) => (window as any).__gecko.nodeScreen(n),
-    name,
-  )) as [number, number];
-  expect(await page.evaluate((p) => (window as any).__gecko.pickNode(p[0], p[1]), at)).toBe(
-    name,
-  );
+  const names = (await page.evaluate(() => (window as any).__gecko.names())) as number[];
+  expect(names).toHaveLength(8);
+  const box = (await page.locator("#view").boundingBox())!;
+
+  for (const name of names) {
+    const before = (await page.evaluate(
+      (n) => (window as any).__gecko.nodePosition(n),
+      name,
+    )) as number[];
+    const at = (await page.evaluate(
+      (n) => (window as any).__gecko.nodeScreen(n),
+      name,
+    )) as [number, number];
+
+    await page.mouse.move(box.x + at[0], box.y + at[1]);
+    await page.mouse.down();
+    for (let i = 1; i <= 4; i++) {
+      await page.mouse.move(box.x + at[0] + i * 8, box.y + at[1] - i * 5);
+    }
+    await page.mouse.up();
+
+    await page
+      .waitForFunction(
+        ([n, was]) => {
+          const p = (window as any).__gecko.nodePosition(n) as number[];
+          return p.some((x, k) => Math.abs(x - (was as number[])[k]) > 1e-4);
+        },
+        [name, before] as const,
+        { timeout: 5000 },
+      )
+      .catch(() => {
+        throw new Error(`handle ${name} could not be dragged`);
+      });
+    await page.evaluate(() => (window as any).__gecko.settled());
+  }
+
+  // Dragged, never selected: a handle is a handle even with a face over it.
+  expect(await page.evaluate(() => (window as any).__gecko.selection())).toEqual([]);
   expect(errors).toEqual([]);
 });
 
@@ -363,5 +397,102 @@ test("zooming in stops at the model instead of going through it", async ({ page 
   // radius sails past the target and the view turns inside out.
   expect(close.radius).toBeLessThan(framed.radius);
   expect(close.radius).toBeGreaterThanOrEqual(close.closest - 1e-6);
+  expect(errors).toEqual([]);
+});
+
+test("two faces are picked with the mouse and glued", async ({ page }) => {
+  const errors = await boot(page);
+  // Two cubes side by side, sharing the plane x = 1.5 — the button spaces
+  // them, so they are glued across the gap rather than at a touching face.
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // Nothing to glue until two faces are chosen.
+  await expect(page.locator("#glue")).toBeDisabled();
+
+  // The two faces looking at each other: the closest pair with one from each
+  // block. Said that way rather than by coordinate, so the test does not
+  // quietly depend on where the button happens to put a cube.
+  const facing = (await page.evaluate(() => {
+    const s = (window as any).__gecko.surface("faces");
+    const centre = (q: number) => {
+      const at = [0, 0, 0];
+      for (let k = 0; k < 4; k++)
+        for (let axis = 0; axis < 3; axis++) at[axis] += s.positions[(q * 4 + k) * 3 + axis] / 4;
+      return at;
+    };
+    let best: [number, number] = [0, 0];
+    let shortest = Infinity;
+    for (let a = 0; a < s.quads; a++)
+      for (let b = 0; b < s.quads; b++) {
+        if (s.blocks[a] === s.blocks[b]) continue;
+        const [p, q] = [centre(a), centre(b)];
+        const gap = Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+        if (gap < shortest) {
+          shortest = gap;
+          best = [s.faces[a], s.faces[b]];
+        }
+      }
+    return best;
+  })) as number[];
+  expect(facing[0]).not.toBe(facing[1]);
+
+  const box = (await page.locator("#view").boundingBox())!;
+  for (const face of facing) {
+    const at = (await page.evaluate((f) => (window as any).__gecko.faceScreen(f), face)) as
+      | [number, number]
+      | null;
+    expect(at, `face ${face} should be on screen`).not.toBeNull();
+    await page.mouse.click(box.x + at![0], box.y + at![1]);
+  }
+
+  // Both picked, in order, and the panel says which one the other comes to.
+  expect(await page.evaluate(() => (window as any).__gecko.selection())).toHaveLength(2);
+  await expect(page.locator("#status")).toContainText("sera collée sur");
+  await expect(page.locator("#glue")).toBeEnabled();
+
+  await page.locator("#glue").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 12);
+
+  // Four pairs of nodes became four nodes: the blocks are one object now.
+  expect(await page.evaluate(() => (window as any).__gecko.counts())).toEqual({
+    nodes: 12,
+    edges: 20,
+  });
+  await expect(page.locator("[data-test=faces]")).toHaveText("11");
+  await expect(page.locator("[data-test=blocks]")).toHaveText("2");
+  // And the selection is gone: those two names mean something else now.
+  expect(await page.evaluate(() => (window as any).__gecko.selection())).toEqual([]);
+  await expect(page.locator("#glue")).toBeDisabled();
+  expect(errors).toEqual([]);
+});
+
+test("dragging from a face turns the view instead of selecting it", async ({ page }) => {
+  // Orbiting starts wherever the pointer happens to be, which is usually on
+  // the model. A press-move-release must not also count as a pick.
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  const face = (await page.evaluate(() => (window as any).__gecko.surface("faces").faces[0])) as number;
+  const at = (await page.evaluate((f) => (window as any).__gecko.faceScreen(f), face)) as [
+    number,
+    number,
+  ];
+  const box = (await page.locator("#view").boundingBox())!;
+  const before = await page.evaluate(() => (window as any).__gecko.camera());
+
+  await page.mouse.move(box.x + at[0], box.y + at[1]);
+  await page.mouse.down();
+  for (let i = 1; i <= 6; i++) await page.mouse.move(box.x + at[0] + i * 12, box.y + at[1]);
+  await page.mouse.up();
+
+  expect(await page.evaluate(() => (window as any).__gecko.selection())).toEqual([]);
+  const after = await page.evaluate(() => (window as any).__gecko.camera());
+  expect(after.alpha).not.toBeCloseTo(before.alpha, 3);
   expect(errors).toEqual([]);
 });

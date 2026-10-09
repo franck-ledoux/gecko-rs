@@ -48,3 +48,8 @@ h2 { margin: 18px 0 8px; font-size: 11px; color: var(--dim);
           font-size: 12px; color: var(--dim); }
 .slider span { flex: none; width: 66px; }
 .slider input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); }
+
+/* Greyed rather than hidden: the button says what the two clicks are for. */
+button:disabled { opacity: .45; cursor: default; }
+button:disabled:hover { background: #262a32; }
+#glue { margin-top: 6px; }

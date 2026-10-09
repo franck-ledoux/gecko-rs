@@ -10,8 +10,8 @@ use std::collections::HashMap;
 
 use honeycomb_core::attributes::AttributeError;
 use honeycomb_core::cmap::{
-    CMap3, CMapBuilder, DartIdType, EdgeIdType, FaceIdType, LinkError, OrbitPolicy, VertexIdType,
-    VolumeIdType,
+    CMap3, CMapBuilder, DartIdType, EdgeIdType, FaceIdType, LinkError, OrbitPolicy, SewError,
+    VertexIdType, VolumeIdType, NULL_DART_ID,
 };
 use thiserror::Error;
 
@@ -72,6 +72,40 @@ pub enum BlockingError {
     Attribute(#[from] AttributeError),
     #[error("no node is named {0:?}")]
     NoSuchNode(CellId),
+    #[error("no face is named {0:?}")]
+    NoSuchFace(CellId),
+    #[error("a face cannot be glued to itself")]
+    SameFace,
+    #[error("face {0:?} is already glued to another block")]
+    AlreadyGlued(CellId),
+    #[error("could not glue: {0}")]
+    Sew(#[from] SewError),
+}
+
+/// Which quarter turn lines two faces up best.
+///
+/// The pairing is necessarily orientation-reversing — glued faces are
+/// back-to-back, so one is traversed the way the other is not — which leaves
+/// exactly four candidates: `a[i]` meets `b[(m - i) mod 4]`, for `m` in 0..4.
+/// The answer is the one that moves the corners least.
+///
+/// Pure, and separate from the gluing, because it is the only part of this
+/// with a choice in it. Note what it cannot do: two blocks turned against each
+/// other have no right answer here, only a least bad quarter turn.
+pub fn best_pairing(a: &[[f64; 3]; 4], b: &[[f64; 3]; 4]) -> usize {
+    let cost = |m: usize| -> f64 {
+        (0..4)
+            .map(|i| {
+                let (p, q) = (a[i], b[(m + 4 - i) % 4]);
+                (0..3).map(|k| (p[k] - q[k]).powi(2)).sum::<f64>()
+            })
+            .sum()
+    };
+    // `total_cmp` and a stable minimum: ties go to the lowest turn, so the
+    // same two faces always glue the same way.
+    (0..4)
+        .min_by(|&m, &n| cost(m).total_cmp(&cost(n)))
+        .expect("four turns")
 }
 
 pub struct Blocking {
@@ -243,6 +277,85 @@ impl Blocking {
         self.map
             .iter_vertices()
             .map(move |v| (self.node_tag(v).id, self.position(v).unwrap_or([0.0; 3])))
+    }
+
+    /// Glue two faces together, welding the blocks they belong to.
+    ///
+    /// The second face is moved onto the first, and the first's position is
+    /// what survives. That is not merely a convention: honeycomb merges two
+    /// vertices by **averaging** them, so sewing faces that are apart would
+    /// leave the shared corners half way between the two. Making them coincide
+    /// first settles the question here, where the rule lives, instead of
+    /// depending on a merge policy that belongs to the map.
+    ///
+    /// Only the four corners of the face move. The rest of the second block
+    /// stays where it is, so gluing blocks that are far apart deforms one of
+    /// them rather than carrying it over.
+    pub fn glue_faces(&mut self, first: CellId, second: CellId) -> Result<(), BlockingError> {
+        let a = self
+            .face_by_id(first)
+            .ok_or(BlockingError::NoSuchFace(first))?;
+        let b = self
+            .face_by_id(second)
+            .ok_or(BlockingError::NoSuchFace(second))?;
+        if a == b {
+            return Err(BlockingError::SameFace);
+        }
+        for (name, face) in [(first, a), (second, b)] {
+            if self.map.beta::<3>(face as DartIdType) != NULL_DART_ID {
+                return Err(BlockingError::AlreadyGlued(name));
+            }
+        }
+
+        let (da, db) = (self.face_darts(a), self.face_darts(b));
+        let corner = |d: DartIdType| {
+            self.position(self.map.vertex_id(d))
+                .unwrap_or([f64::NAN; 3])
+        };
+        let (pa, pb) = (da.map(corner), db.map(corner));
+        let turn = best_pairing(&pa, &pb);
+
+        for i in 0..4 {
+            let vertex = self.map.vertex_id(db[(turn + 4 - i) % 4]);
+            self.map
+                .write_vertex(vertex, (pa[i][0], pa[i][1], pa[i][2]));
+        }
+
+        // One call. `three_sew` walks the face orbit itself — β₁ down one side
+        // and β₀ up the other — so it links all four pairs and merges the
+        // faces, edges and vertices along the way.
+        //
+        // `da[0]` runs from corner A₀ to A₁, so its partner must run from the
+        // B corner now sitting on A₁ back to the one on A₀. That is the dart
+        // starting at `b[(turn + 3) % 4]`.
+        self.map.sew::<3>(da[0], db[(turn + 3) % 4])?;
+        self.assign_missing_ids();
+        Ok(())
+    }
+
+    /// The four darts of a face, in the order β₁ walks them.
+    ///
+    /// Only meaningful for a face with one side: for a glued face the
+    /// identifier is the smallest dart of an orbit spanning both blocks, and
+    /// which of the two you would get is not something a caller should have to
+    /// reason about. [`glue_faces`][Self::glue_faces] refuses those anyway.
+    fn face_darts(&self, face: FaceIdType) -> [DartIdType; 4] {
+        let mut out = [0; 4];
+        let mut dart = face as DartIdType;
+        for slot in out.iter_mut() {
+            *slot = dart;
+            dart = self.map.beta::<1>(dart);
+        }
+        out
+    }
+
+    /// The face a stable name currently stands for. A scan, for the same
+    /// reason [`node_by_id`][Self::node_by_id] is one.
+    pub fn face_by_id(&self, face: CellId) -> Option<FaceIdType> {
+        if face.is_none() {
+            return None;
+        }
+        self.map.iter_faces().find(|f| self.face_tag(*f).id == face)
     }
 
     /// Every face of every block.

@@ -31,6 +31,9 @@ import type { Scene } from "@babylonjs/core/scene";
 
 /** Meshes the main camera draws. */
 export const MAIN_LAYER = 0x1;
+/** How many pixels across the corner triad should be. */
+export const CORNER_PIXELS = 150;
+
 /** Meshes only the corner viewport draws. */
 export const GIZMO_LAYER = 0x2;
 
@@ -207,9 +210,13 @@ export class AxisGizmo {
    */
   resize() {
     const engine = this.scene.getEngine();
-    const width = engine.getRenderWidth() || 1;
-    const height = engine.getRenderHeight() || 1;
-    const w = Math.min(0.22, (150 / width) * 1.0);
+    // CSS pixels, not the backing store. A fraction worked out from the
+    // backing store makes the triad **half the size** on a high-density
+    // display, because 150 of those pixels are 75 of the ones anyone sees.
+    const css = engine.getHardwareScalingLevel();
+    const width = (engine.getRenderWidth() || 1) * css;
+    const height = (engine.getRenderHeight() || 1) * css;
+    const w = Math.min(0.22, CORNER_PIXELS / width);
     const h = (w * width) / height;
     this.camera.viewport = new Viewport(1 - w - 0.012, 0.018, w, h);
   }
@@ -231,11 +238,21 @@ export class AxisGizmo {
   }
 
   /**
-   * Where an axis handle is on screen — the inverse of [`AxisGizmo.pick`].
+   * Where an axis handle is on screen, in **CSS pixels** — the inverse of
+   * [`AxisGizmo.pick`], and in the frame that takes.
    *
    * Projected through the gizmo's **own** camera and viewport, not the
    * scene's: the corner is a different projection entirely, and using the main
    * camera's transform would point somewhere in the middle of the model.
+   *
+   * * Render pixels to the CSS pixels a pointer event speaks.
+   *
+   * `Vector3.Project` works in the canvas's backing store, which on a
+   * high-density display is twice the size of the canvas itself. `scene.pick`
+   * and `offsetX`/`offsetY` are both in CSS pixels. The two frames coincide at
+   * a device pixel ratio of 1 — which is what a headless test runs at, so no
+   * test here can see the difference — and are a factor of two apart on the
+   * machine this is used on.
    */
   axisScreen(axis: Axis): [number, number] | null {
     const mesh = this.meshes.find((m) => m.metadata?.axis === axis);
@@ -254,7 +271,8 @@ export class AxisGizmo {
       this.camera.getViewMatrix().multiply(this.camera.getProjectionMatrix()),
       topDown,
     );
-    return [projected.x, projected.y];
+    const css = engine.getHardwareScalingLevel();
+    return [projected.x * css, projected.y * css];
   }
 
   /** Swing the main camera onto an axis, rather than snapping: a jump loses

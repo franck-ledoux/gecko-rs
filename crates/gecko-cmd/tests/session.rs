@@ -397,3 +397,108 @@ fn an_empty_session_keeps_whatever_origin_it_had() {
         [7.0, 8.0, 9.0]
     );
 }
+
+/// Welding two blocks, through the same door everything else uses.
+mod gluing {
+    use super::*;
+
+    fn two_cubes() -> Session {
+        let mut s = Session::new().unwrap();
+        for x in [0.0, 1.0] {
+            s.apply(Command::CreateCube {
+                origin: [x, 0.0, 0.0],
+                size: 1.0,
+            })
+            .unwrap();
+        }
+        s
+    }
+
+    /// The face of the n-th listed block whose centre sits at this x.
+    fn face_at(s: &Session, block: usize, x: f64) -> u32 {
+        let faces: serde_json::Value = serde_json::from_str(&s.faces_json()).unwrap();
+        let faces = faces.as_array().unwrap();
+        let mut blocks: Vec<u64> = faces.iter().map(|f| f["block"].as_u64().unwrap()).collect();
+        blocks.dedup();
+        faces
+            .iter()
+            .filter(|f| f["block"].as_u64() == Some(blocks[block]))
+            .find(|f| (f["centre"][0].as_f64().unwrap() - x).abs() < 1e-9)
+            .expect("a face there")["id"]
+            .as_u64()
+            .unwrap() as u32
+    }
+
+    #[test]
+    fn the_faces_a_script_can_name() {
+        let s = two_cubes();
+        let faces: serde_json::Value = serde_json::from_str(&s.faces_json()).unwrap();
+        // Six per block, each with somewhere to point a mouse or a script.
+        assert_eq!(faces.as_array().unwrap().len(), 12);
+        for f in faces.as_array().unwrap() {
+            assert!(f["id"].is_u64() && f["block"].is_u64());
+            assert_eq!(f["centre"].as_array().unwrap().len(), 3);
+        }
+    }
+
+    #[test]
+    fn gluing_goes_through_the_json_door_like_everything_else() {
+        let mut s = two_cubes();
+        let (first, second) = (face_at(&s, 0, 1.0), face_at(&s, 1, 1.0));
+
+        let raw = s.apply_json(&format!(
+            r#"{{"op":"glue_faces","first":{first},"second":{second}}}"#
+        ));
+        let reply: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(reply["ok"], true, "{raw}");
+        assert_eq!(reply["outcome"]["viewChanged"], true);
+
+        let stats: serde_json::Value = serde_json::from_str(&s.stats_json()).unwrap();
+        assert_eq!(stats["nodes"], 12);
+        assert_eq!(stats["edges"], 20);
+        assert_eq!(stats["faces"], 11);
+        assert_eq!(stats["blocks"], 2);
+    }
+
+    #[test]
+    fn the_surface_still_gives_each_block_a_closed_shell() {
+        let mut s = two_cubes();
+        let (first, second) = (face_at(&s, 0, 1.0), face_at(&s, 1, 1.0));
+        s.apply(Command::GlueFaces { first, second }).unwrap();
+        let v = ViewBuffer::of(s.blocking(), None);
+
+        // Twelve quadrangles for two blocks, as before — but one face name is
+        // now shared, which is how the viewer knows it is internal.
+        assert_eq!(v.quads.len() / 4, 12);
+        let shared = v
+            .quad_faces
+            .iter()
+            .filter(|n| v.quad_faces.iter().filter(|m| m == n).count() == 2)
+            .count();
+        assert_eq!(shared, 2, "one face, listed once per block");
+    }
+
+    #[test]
+    fn a_refused_glue_is_reported_and_changes_nothing() {
+        let mut s = two_cubes();
+        let before = s.view_buffer();
+        let raw = s.apply_json(r#"{"op":"glue_faces","first":1,"second":1}"#);
+        let reply: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(reply["ok"], false);
+        assert!(reply["error"].as_str().unwrap().contains("itself"), "{raw}");
+        assert_eq!(s.view_buffer(), before);
+    }
+
+    #[test]
+    fn two_sessions_glued_the_same_way_ship_the_same_bytes() {
+        // The cross-mode test rests on this, and gluing is the first operation
+        // that walks an orbit to decide what to do.
+        let build = || {
+            let mut s = two_cubes();
+            let (first, second) = (face_at(&s, 0, 1.0), face_at(&s, 1, 1.0));
+            s.apply(Command::GlueFaces { first, second }).unwrap();
+            s
+        };
+        assert_eq!(build().view_buffer(), build().view_buffer());
+    }
+}

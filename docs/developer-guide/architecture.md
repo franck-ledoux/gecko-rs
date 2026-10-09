@@ -90,6 +90,29 @@ waits for. Checking the status code alone is not enough either way: a static
 host that serves `index.html` for unknown paths answers `200` to everything, so
 a success is also checked for its content.
 
+## Welding two blocks
+
+Gluing is a 3-sew, and two facts about honeycomb shape how it is done.
+
+**`Vertex3::merge` is the average.** Sewing two faces that are apart would
+leave the shared corners half way between them. So the second face is moved
+onto the first *before* the sewing, and the average is then of two points
+that already coincide. The rule — the first face wins — is settled where it
+belongs rather than by reaching into a merge policy that is the map's.
+
+**`three_sew_tx` walks the face orbit itself**, β₁ down one side and β₀ up the
+other, so one call links all four pairs and merges the faces, edges and
+vertices along the way. It also refuses a pair of darts whose directions are
+not opposed — a useful guard, but a partial one: its own comment says it
+checks only the argument darts, so a half turn would pass. Choosing the
+corner correspondence is entirely ours.
+
+That choice is `best_pairing`, kept pure and apart because it is the only part
+with a decision in it. A glue is necessarily orientation-reversing, which
+leaves exactly four candidates, and the one that moves the corners least wins.
+Ties go to the lowest turn, because both modes ship these bytes and compare
+them.
+
 ## Naming a cell
 
 A combinatorial map names its cells by darts: `vertex_id`, `edge_id` and the
@@ -188,11 +211,10 @@ which name picks the colour, and which centre a shrink pulls towards. That is
 what lets both be on screen at once, each with its own colouring, transparency
 and shrink, without the kernel shipping the surface twice.
 
-Today that distinction has no teeth: `add_block` leaves β₃ unset, so blocks are
-free-standing and no face is shared. It will once blocks can be joined — a
-shared face will then arrive twice, once per block, wound each way, which is
-exactly what gives each block a closed surface of its own. Having the shape
-right now costs nothing and saves a format change then.
+A shared face arrives twice, once per block, wound each way — which is exactly
+what gives each block a closed surface of its own. The format was given this
+shape before anything could produce one, and so did not have to change when
+[gluing](../user-guide/gluing.md) arrived.
 
 It also means **internal is derived, not declared**: a face with a block on
 both sides is one whose name appears twice in the list. No parallel flag to

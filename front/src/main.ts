@@ -208,11 +208,69 @@ async function boot() {
   // anything else: it is an overlay, so it is in front.
   canvas.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
+    pressedAt = [e.offsetX, e.offsetY];
     const axis = viewer.axes.pick(e.offsetX, e.offsetY);
     if (!axis) return;
+    pressedAt = undefined;
     viewer.axes.lookDown(axis);
     message = `vue selon ${axis}`;
     $("status").textContent = message;
+  });
+
+  // --- picking faces to glue ---------------------------------------------
+  /** How far the pointer may travel and still count as a click. Dragging from
+   *  a face is how you orbit the view, and it must not also select it. */
+  const CLICK_SLOP = 4;
+  let pressedAt: [number, number] | undefined;
+
+  canvas.addEventListener("pointerup", (e) => {
+    if (e.button !== 0 || !pressedAt) return;
+    const [x, y] = pressedAt;
+    pressedAt = undefined;
+    if (Math.hypot(e.offsetX - x, e.offsetY - y) > CLICK_SLOP) return;
+    // A node under the cursor is a drag that is about to start, or has just
+    // ended — not a face being chosen. The node wins: it is the smaller
+    // target, and the one you had to aim at.
+    if (viewer.pickNode(x, y) !== null) return;
+    chooseFace(viewer.pickFace(x, y));
+  });
+
+  /**
+   * Add, remove, or clear.
+   *
+   * Two is the whole selection, so a third pick starts again rather than
+   * being ignored: being stuck with two wrong faces and no way to say so is
+   * worse than losing a click.
+   */
+  function chooseFace(face: number | null) {
+    let picked = viewer.selection;
+    if (face === null) picked = [];
+    else if (picked.includes(face)) picked = picked.filter((f) => f !== face);
+    else if (picked.length >= 2) picked = [face];
+    else picked = [...picked, face];
+
+    viewer.select(picked);
+    $<HTMLButtonElement>("glue").disabled = picked.length !== 2;
+    message =
+      picked.length === 0
+        ? ""
+        : picked.length === 1
+          ? `face ${picked[0]} — la suivante viendra sur elle`
+          : `face ${picked[1]} sera collée sur la face ${picked[0]}`;
+    $("status").textContent = message;
+  }
+
+  $("glue").addEventListener("click", async () => {
+    const [first, second] = viewer.selection;
+    if (first === undefined || second === undefined) return;
+    const reply = await kernel.apply({ op: "glue_faces", first, second });
+    // Whatever happened, those two names mean something else now — or
+    // nothing at all. Keeping them selected would leave the panel offering to
+    // glue a face that no longer exists. Clearing resets the message, so the
+    // outcome is said after.
+    chooseFace(null);
+    message = reply.message;
+    await refresh(reply.viewChanged);
   });
 
   async function refresh(frame = false) {
@@ -282,7 +340,14 @@ async function boot() {
       const s = viewer.surface(group);
       // Typed arrays do not survive the bridge out of the page; a test wants
       // the numbers, not the buffers.
-      return s && { ...s, positions: Array.from(s.positions), names: Array.from(s.names) };
+      return (
+        s && {
+          ...s,
+          positions: Array.from(s.positions),
+          faces: Array.from(s.faces),
+          blocks: Array.from(s.blocks),
+        }
+      );
     },
     axesVisible: () => viewer.axes.visible,
     /** Jump the camera onto an axis without the animation, so a test asserts
@@ -297,6 +362,10 @@ async function boot() {
       closest: viewer.camera.lowerRadiusLimit,
     }),
     pickNode: (x: number, y: number) => viewer.pickNode(x, y),
+    pickFace: (x: number, y: number) => viewer.pickFace(x, y),
+    faceScreen: (name: number) => viewer.faceScreen(name),
+    selection: () => viewer.selection,
+    chooseFace: (face: number | null) => chooseFace(face),
     nodeScreen: (name: number) => viewer.nodeScreen(name),
     nodePosition: (name: number) => viewer.nodePosition(name),
     centre: () => viewer.centre,

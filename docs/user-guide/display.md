@@ -67,8 +67,9 @@ alternative is a palette that renumbers behind you.
 **faces internes** decides whether faces with a block on each side are drawn.
 Blocks are unaffected: each keeps its own six, or shrinking one would open it.
 
-Today nothing is internal — blocks are free-standing until joining them is
-implemented — so the control has nothing to hide yet.
+A face is internal when it turns up twice in the surface, once per block —
+derived from the model rather than declared, so it cannot disagree with it.
+Nothing is internal until two blocks are [glued](gluing.md).
 
 !!! note "Dragging a slider does not rebuild the scene"
     Moving opacity, shrink or colouring rewrites the mesh's buffers in place.

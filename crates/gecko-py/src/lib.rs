@@ -90,6 +90,26 @@ impl PySession {
         self.command(serde_json::json!({ "op": "move_node", "node": node, "to": to }))
     }
 
+    /// Weld two blocks along a face.
+    ///
+    /// `first` stays put and `second` is brought onto it, so the order
+    /// decides where the seam ends up. Only the face moves: the rest of the
+    /// second block stays where it is.
+    fn glue_faces(&self, first: u32, second: u32) -> PyResult<String> {
+        self.command(serde_json::json!({ "op": "glue_faces", "first": first, "second": second }))
+    }
+
+    /// Every face, as `{"id": …, "block": …, "centre": [x, y, z]}` — what a
+    /// script needs in order to have something to glue. A face with a block
+    /// on each side is listed once per block.
+    #[getter]
+    fn faces(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let json = self.locked(|s| s.faces_json());
+        let value: Value =
+            serde_json::from_str(&json).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        to_py(py, &value)
+    }
+
     /// Every node, as `{"id": …, "pos": [x, y, z]}` — what a script needs in
     /// order to have something to move.
     #[getter]
