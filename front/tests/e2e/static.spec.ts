@@ -547,7 +547,7 @@ test("gluing leaves the camera exactly where it was", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
-test("recentring puts the whole model back in view", async ({ page }) => {
+test("recentring shows everything without changing the direction", async ({ page }) => {
   const errors = await boot(page);
   for (let i = 0; i < 3; i++) {
     await page.locator("#cube").click();
@@ -555,18 +555,26 @@ test("recentring puts the whole model back in view", async ({ page }) => {
   }
   await page.evaluate(() => (window as any).__gecko.settled());
 
-  // Lose the model: zoom right in on a corner of it.
   const box = (await page.locator("#view").boundingBox())!;
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  const centre = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+
+  // Look at it from somewhere deliberate — not the angle it starts at, or
+  // "unchanged" would be indistinguishable from "reset to the default".
+  await page.mouse.move(centre.x, centre.y);
+  await page.mouse.down();
+  await page.mouse.move(centre.x + 110, centre.y + 40);
+  await page.mouse.up();
+  // Then lose the model by zooming right in.
   for (let i = 0; i < 40; i++) await page.mouse.wheel(0, -120);
+  await page.evaluate(() => (window as any).__gecko.stopCamera());
   await page.evaluate(() => (window as any).__gecko.settled());
-  await page.waitForTimeout(400);
+  const before = await page.evaluate(() => (window as any).__gecko.camera());
+  expect(Math.abs(before.alpha + Math.PI / 3)).toBeGreaterThan(0.05);
 
   const offScreen = async () =>
     page.evaluate(() => {
       const g = (window as any).__gecko;
-      const canvas = document.querySelector("#view") as HTMLCanvasElement;
-      const r = canvas.getBoundingClientRect();
+      const r = (document.querySelector("#view") as HTMLCanvasElement).getBoundingClientRect();
       return (g.names() as number[]).filter((n) => {
         const at = g.nodeScreen(n) as [number, number] | null;
         return !at || at[0] < 0 || at[1] < 0 || at[0] > r.width || at[1] > r.height;
@@ -575,14 +583,22 @@ test("recentring puts the whole model back in view", async ({ page }) => {
   expect(await offScreen(), "the zoom should have lost some of the model").toBeGreaterThan(0);
 
   await page.locator("#recentre").click();
+
+  // Part way there, not already arrived: the view glides rather than cutting.
+  await page.waitForTimeout(120);
+  const midway = await page.evaluate(() => (window as any).__gecko.camera());
+  expect(midway.radius).toBeGreaterThan(before.radius);
+  expect(midway.radius).toBeLessThan(before.radius * 4);
+
   await page.evaluate(() => (window as any).__gecko.settled());
   await expect(page.locator("#status")).toHaveText("vue recadrée");
 
-  // Every node back inside the canvas, and the camera at the canonical angle.
+  // Everything in view, and looked at from exactly where it was.
   expect(await offScreen()).toBe(0);
-  const camera = await page.evaluate(() => (window as any).__gecko.camera());
-  expect(camera.alpha).toBeCloseTo(-Math.PI / 3, 9);
-  expect(camera.beta).toBeCloseTo(Math.PI / 3, 9);
+  const after = await page.evaluate(() => (window as any).__gecko.camera());
+  expect(after.alpha).toBeCloseTo(before.alpha, 9);
+  expect(after.beta).toBeCloseTo(before.beta, 9);
+  expect(after.radius).toBeGreaterThan(before.radius);
   expect(errors).toEqual([]);
 });
 

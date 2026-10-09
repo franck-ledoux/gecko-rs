@@ -301,14 +301,17 @@ async function boot() {
    *  kernel: in station mode two tabs on one session each have their own. */
   $("recentre").addEventListener("click", () => {
     viewer.frameAll();
+
     message = "vue recadrée";
     $("status").textContent = message;
   });
 
-  async function refresh(frame = false) {
+  /** `frame` is how the camera should get there, not whether the bytes are
+   *  stale — they always are by the time this is called. */
+  async function refresh(frame: false | "jump" | "glide" = false) {
     const [bytes, stats] = await Promise.all([kernel.view(), kernel.stats()]);
     viewer.setView(decodeView(bytes));
-    if (frame) viewer.frameAll();
+    if (frame) viewer.frameAll(frame === "jump");
     $("stats").innerHTML = `
       <dl>
         <dt>mode</dt><dd data-test="mode">${kernel.mode}</dd>
@@ -337,8 +340,9 @@ async function boot() {
     });
     message = reply.message;
     // Framed: a new cube is put down beside the others, and a model that
-    // grows past the edge of the window is no use.
-    await refresh(true);
+    // grows past the edge of the window is no use. Gliding, so the view does
+    // not lurch every time you press the button.
+    await refresh("glide");
   });
 
   // Dropping a node is one command, sent once. The scene has been following
@@ -355,7 +359,8 @@ async function boot() {
   });
 
   engine.runRenderLoop(() => viewer.render());
-  await refresh(true);
+  // Straight there: there is nothing on screen yet to glide away from.
+  await refresh("jump");
 
   // --- test surface -----------------------------------------------------
   // State, not pixels: everything an end-to-end test needs, with no reliance
@@ -414,11 +419,25 @@ async function boot() {
       viewer.camera.inertialBetaOffset = 0;
       viewer.camera.inertialRadiusOffset = 0;
     },
-    /** Resolves once the scene has drawn twice more. */
+    /**
+     * Resolves once the camera has stopped and the scene has drawn twice
+     * more.
+     *
+     * Framing glides, so without the first half a test that aims a mouse
+     * straight after one aims at where the model used to be — and is right
+     * often enough to look like it works.
+     */
     settled: () =>
-      new Promise<void>((r) =>
-        requestAnimationFrame(() => requestAnimationFrame(() => r())),
-      ),
+      new Promise<void>((resolve) => {
+        const tick = () => {
+          if (viewer.cameraMoving) {
+            requestAnimationFrame(tick);
+            return;
+          }
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        };
+        tick();
+      }),
   };
   document.body.dataset.ready = "1";
 }

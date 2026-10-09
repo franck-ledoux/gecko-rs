@@ -129,18 +129,62 @@ describe("the scene is a function of the view", () => {
     expect(viewer.centre[0]).toBeCloseTo(0.5, 9);
   });
 
-  it("frames the model from its bounds, not from where the camera was", async () => {
+  it("frames the model from its bounds, and leaves the direction alone", async () => {
     const viewer = new Viewer(new NullEngine());
     const kernel = new WasmKernel();
     await kernel.apply({ op: "add_block", corners: CUBE });
     viewer.setView(decodeView(await kernel.view()));
 
+    // Looking at it from somewhere deliberate, and from too far away.
     viewer.camera.alpha = 1.234;
+    viewer.camera.beta = 0.789;
     viewer.camera.radius = 99;
-    viewer.frameAll();
-    // Reproducible: a screenshot test would be worthless otherwise.
-    expect(viewer.camera.alpha).toBeCloseTo(-Math.PI / 3, 9);
+    viewer.frameAll(true);
+
+    // Where it is and how far away come from the model. Which way round you
+    // are looking at it from is yours — recentring is not a point of view.
     expect(viewer.camera.radius).toBeCloseTo(Math.sqrt(3) * 1.8, 6);
+    expect(viewer.camera.target.x).toBeCloseTo(0, 6);
+    expect(viewer.camera.target.y).toBeCloseTo(0, 6);
+    expect(viewer.camera.target.z).toBeCloseTo(0, 6);
+    expect(viewer.camera.alpha).toBeCloseTo(1.234, 9);
+    expect(viewer.camera.beta).toBeCloseTo(0.789, 9);
+  });
+
+  it("moves the target without Babylon re-deriving the angles from it", async () => {
+    // `camera.target = …` normally keeps the camera where it is and works
+    // out new angles to the new target, which would turn every recentring
+    // into a change of direction. This is the flag that stops it, asserted
+    // rather than trusted.
+    const viewer = new Viewer(new NullEngine());
+    const kernel = new WasmKernel();
+    await kernel.apply({ op: "create_cube", origin: [7, -3, 5], size: 2 });
+    viewer.setView(decodeView(await kernel.view()));
+
+    viewer.camera.alpha = 0.5;
+    viewer.camera.beta = 1.1;
+    viewer.camera.target = new Vector3(4, 4, 4);
+    expect(viewer.camera.alpha).toBeCloseTo(0.5, 9);
+    expect(viewer.camera.beta).toBeCloseTo(1.1, 9);
+  });
+
+  it("glides rather than jumping, unless told to jump", async () => {
+    const viewer = new Viewer(new NullEngine());
+    const kernel = new WasmKernel();
+    await kernel.apply({ op: "add_block", corners: CUBE });
+    viewer.setView(decodeView(await kernel.view()));
+    viewer.camera.radius = 99;
+
+    viewer.frameAll();
+    // Not there yet: an animation is running and the value is still the old
+    // one until it has had a frame.
+    expect(viewer.camera.radius).toBe(99);
+    expect(viewer.scene.getAllAnimatablesByTarget(viewer.camera)).not.toHaveLength(0);
+
+    // And asking for a jump really jumps, with nothing left running.
+    viewer.frameAll(true);
+    expect(viewer.camera.radius).toBeCloseTo(Math.sqrt(3) * 1.8, 6);
+    expect(viewer.scene.getAllAnimatablesByTarget(viewer.camera)).toHaveLength(0);
   });
 });
 

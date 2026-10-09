@@ -111,10 +111,23 @@ How near and how far are both derived from the model's size, and they follow
 it: build a block from Python and the limits move with it, without the camera
 being yanked anywhere.
 
-**Recadrer la vue** frames everything that is on screen — the whole model,
-from the model's own bounds rather than from wherever the camera was left.
-It is the only control that moves the camera on purpose; edits do not, except
-for creating a cube.
+## Recentring
+
+**Recadrer la vue** brings the whole model into view, and **leaves the
+direction alone**. Where the model is and how far away it has to be come
+from its own bounds; which way round you are looking at it from is yours, and
+the triad is what changes that. A recentring that also swung the view back to
+some default angle would mean re-aiming after every use.
+
+It **glides** rather than cutting, eased in and out, for the same reason the
+triad swings: a camera that teleports leaves you working out which way round
+the model ended up. A second recentring replaces the first rather than racing
+it, and any inertia left over from a gesture is stopped first — otherwise it
+would go on nudging the camera while the glide moved it, and the two would
+land somewhere neither meant.
+
+It is the only control that moves the camera on purpose. Edits do not, except
+for creating a cube, which glides too.
 
 ## The orientation triad
 

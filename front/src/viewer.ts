@@ -14,6 +14,9 @@ import { Scene } from "@babylonjs/core/scene";
 import { ArcRotateCamera } from "@babylonjs/core/Cameras/arcRotateCamera";
 import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight";
 import { Matrix, Vector3 } from "@babylonjs/core/Maths/math.vector";
+import { Animation } from "@babylonjs/core/Animations/animation";
+import { CubicEase, EasingFunction } from "@babylonjs/core/Animations/easing";
+import "@babylonjs/core/Animations/animatable";
 import { Color3, Color4 } from "@babylonjs/core/Maths/math.color";
 import { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { VertexData } from "@babylonjs/core/Meshes/mesh.vertexData";
@@ -52,6 +55,10 @@ export type Drop = (name: number, to: [number, number, number]) => void;
 
 /** How many pixels across a node handle should be, whatever the zoom. */
 export const HANDLE_PIXELS = 11;
+
+/** How long a recentring takes. Long enough to follow the model moving into
+ *  place, short enough not to be waiting for it. */
+export const FRAMING_MS = 450;
 
 /** How much of the remaining distance one wheel notch covers. Proportional,
  *  so zooming feels the same at every scale. */
@@ -99,6 +106,29 @@ export function worldSizeForPixels(
 ): number {
   if (renderHeight <= 0) return 0;
   return (pixels * 2 * Math.tan(fieldOfView / 2) * distance) / renderHeight;
+}
+
+/**
+ * Animate one property from where it is to where it should be.
+ *
+ * Eased in and out rather than linear: a constant-speed move starts and stops
+ * dead, which reads as two jumps with a wait in between.
+ */
+function glide(target: object, property: string, from: number | Vector3, to: number | Vector3) {
+  const frames = 30;
+  const running = Animation.CreateAndStartAnimation(
+    `frame-${property}`,
+    target,
+    property,
+    (frames * 1000) / FRAMING_MS,
+    frames,
+    from,
+    to,
+    Animation.ANIMATIONLOOPMODE_CONSTANT,
+  );
+  const ease = new CubicEase();
+  ease.setEasingMode(EasingFunction.EASINGMODE_EASEINOUT);
+  for (const a of running?.getAnimations() ?? []) a.animation.setEasingFunction(ease);
 }
 
 function normalsFor(data: SurfaceData): number[] {
@@ -154,6 +184,14 @@ export class Viewer {
       Vector3.Zero(),
       this.scene,
     );
+    // Moving the target must not re-derive the angles.
+    //
+    // `camera.target = …` goes through `setTarget`, which by default calls
+    // `rebuildAnglesAndRadius`: it keeps the camera where it is and works out
+    // new angles to the new target. That is the opposite of recentring, whose
+    // whole point is that the direction you are looking from does not change.
+    // This flag makes every assignment keep alpha, beta and radius.
+    this.camera.overrideCloneAlphaBetaRadius = true;
     // Zoom by a percentage of the distance, not a fixed step. With a fixed
     // step every notch is the same number of world units, so far out it
     // barely moves and close in a single notch leaps straight through the
@@ -579,31 +617,61 @@ export class Viewer {
     this.camera.upperRadiusLimit = diagonal ? diagonal * 60 : null;
   }
 
-  private modelBounds(): number {
-    if (!this.nodes.length) return 0;
+  /** The model's extent, from the handles, which are on every node there is. */
+  private bounds(): { lo: Vector3; hi: Vector3 } | null {
+    if (!this.nodes.length) return null;
     let lo = new Vector3(Infinity, Infinity, Infinity);
     let hi = new Vector3(-Infinity, -Infinity, -Infinity);
     for (const m of this.nodes) {
       lo = Vector3.Minimize(lo, m.position);
       hi = Vector3.Maximize(hi, m.position);
     }
-    return hi.subtract(lo).length();
+    return { lo, hi };
   }
 
-  /** Frame everything. Derived from the bounds alone, never from wherever the
-   *  user last left the camera — screenshot tests depend on that. */
-  frameAll() {
-    if (!this.nodes.length) return;
-    let lo = new Vector3(Infinity, Infinity, Infinity);
-    let hi = new Vector3(-Infinity, -Infinity, -Infinity);
-    for (const m of this.nodes) {
-      lo = Vector3.Minimize(lo, m.position);
-      hi = Vector3.Maximize(hi, m.position);
+  private modelBounds(): number {
+    const box = this.bounds();
+    return box ? box.hi.subtract(box.lo).length() : 0;
+  }
+
+  /**
+   * Bring the whole model into view.
+   *
+   * **The direction is left alone.** Where the model is and how far away it
+   * has to be come from its own bounds; which way you are looking at it from
+   * is yours, and the triad is what changes that. Recentring that also swung
+   * the view back to some default angle meant re-aiming after every use.
+   *
+   * It glides rather than jumps, unless asked otherwise: a camera that
+   * teleports leaves you working out which way round the model ended up —
+   * the same reason the triad swings.
+   */
+  frameAll(instant = false) {
+    const box = this.bounds();
+    if (!box) return;
+    const target = box.lo.add(box.hi).scale(0.5);
+    const radius = box.hi.subtract(box.lo).length() * 1.8 || 4;
+
+    // A gesture leaves inertia running, and it would go on nudging the camera
+    // while the animation moves it, ending somewhere neither of them meant.
+    this.camera.inertialAlphaOffset = 0;
+    this.camera.inertialBetaOffset = 0;
+    this.camera.inertialRadiusOffset = 0;
+    // And a second recentring replaces the first rather than racing it.
+    this.scene.stopAnimation(this.camera);
+
+    if (instant) {
+      this.camera.target = target;
+      this.camera.radius = radius;
+      return;
     }
-    this.camera.setTarget(lo.add(hi).scale(0.5));
-    this.camera.radius = hi.subtract(lo).length() * 1.8 || 4;
-    this.camera.alpha = -Math.PI / 3;
-    this.camera.beta = Math.PI / 3;
+    glide(this.camera, "target", this.camera.target.clone(), target);
+    glide(this.camera, "radius", this.camera.radius, radius);
+  }
+
+  /** Whether the camera is still being animated somewhere. */
+  get cameraMoving(): boolean {
+    return this.scene.getAllAnimatablesByTarget(this.camera).length > 0;
   }
 
   /** The kernel's names for the nodes on screen. */

@@ -105,5 +105,6 @@ have to re-aim after every edit.
 
 Creating a cube does reframe, because it puts a new block down beside the
 others and a model growing past the edge of the window is no use. For
-everything else there is **Recadrer la vue**, which frames the whole model
-without touching anything else.
+everything else there is
+[**Recadrer la vue**](display.md#recentring), which brings the whole model
+into view without changing the direction you are looking from.
