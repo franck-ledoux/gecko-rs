@@ -1,0 +1,159 @@
+/**
+ * The keyboard, as one table.
+ *
+ * The same list drives what a key does and what the help card says it does,
+ * so the two cannot drift. A shortcut nobody can find is the same as no
+ * shortcut, and a help card that lies is worse than none.
+ */
+
+/**
+ * Everything the interface can be asked to do.
+ *
+ * A list rather than a bare union, so it can be walked at run time: the test
+ * below checks that each one has a key, and `Record<Action, …>` in `main.ts`
+ * makes the compiler check that each one has an implementation. Adding an
+ * action without a key, or without a handler, stops being possible.
+ */
+export const ACTIONS = [
+  "cube",
+  "glue",
+  "remove",
+  "clear",
+  "recentre",
+  "screenshot",
+  "axis-x",
+  "axis-y",
+  "axis-z",
+  "axis--x",
+  "axis--y",
+  "axis--z",
+  "faces",
+  "blocks",
+  "edges",
+  "internal",
+  "triad",
+  "theme",
+  "drawer",
+  "chrome",
+  "help",
+] as const;
+
+export type Action = (typeof ACTIONS)[number];
+
+export interface Shortcut {
+  /** What the help card prints on the key cap. */
+  show: string;
+  does: string;
+  action: Action;
+  group: "Edit" | "View" | "Display" | "Window";
+  /** Matched against `event.key`, lower-cased. */
+  key?: string;
+  /**
+   * Matched against `event.code` instead.
+   *
+   * For keys whose character moves with the layout. On a French keyboard the
+   * digit row is shifted — `event.key` for the key printed `1` is `&` — so
+   * matching the character would make the help card a lie there, while the
+   * physical position is the same key under the same printed digit.
+   */
+  code?: string;
+  shift?: boolean;
+}
+
+export const SHORTCUTS: readonly Shortcut[] = [
+  { show: "C", key: "c", action: "cube", does: "create a cube", group: "Edit" },
+  { show: "G", key: "g", action: "glue", does: "glue the two selected faces", group: "Edit" },
+  {
+    show: "Del",
+    key: "delete",
+    action: "remove",
+    does: "remove the selected block",
+    group: "Edit",
+  },
+  { show: "⌫", key: "backspace", action: "remove", does: "", group: "Edit" },
+  { show: "Esc", key: "escape", action: "clear", does: "clear the selection", group: "Edit" },
+
+  { show: "F", key: "f", action: "recentre", does: "frame everything", group: "View" },
+  { show: "X", key: "x", action: "axis-x", does: "look down X", group: "View" },
+  { show: "Y", key: "y", action: "axis-y", does: "look down Y", group: "View" },
+  { show: "Z", key: "z", action: "axis-z", does: "look down Z", group: "View" },
+  {
+    show: "⇧X",
+    key: "x",
+    shift: true,
+    action: "axis--x",
+    does: "look down −X, and so for Y and Z",
+    group: "View",
+  },
+  { show: "⇧Y", key: "y", shift: true, action: "axis--y", does: "", group: "View" },
+  { show: "⇧Z", key: "z", shift: true, action: "axis--z", does: "", group: "View" },
+  { show: "T", key: "t", action: "triad", does: "show the X/Y/Z triad", group: "View" },
+  { show: "D", key: "d", action: "theme", does: "dark or light", group: "View" },
+
+  { show: "1", code: "Digit1", action: "faces", does: "show faces", group: "Display" },
+  { show: "2", code: "Digit2", action: "blocks", does: "show blocks", group: "Display" },
+  { show: "3", code: "Digit3", action: "edges", does: "show edges", group: "Display" },
+  { show: "I", key: "i", action: "internal", does: "show internal faces", group: "Display" },
+
+  { show: "Tab", key: "tab", action: "drawer", does: "settings", group: "Window" },
+  { show: "⇧Tab", key: "tab", shift: true, action: "chrome", does: "hide everything", group: "Window" },
+  { show: "S", key: "s", action: "screenshot", does: "save a picture", group: "Window" },
+  { show: "H", key: "h", action: "help", does: "this card", group: "Window" },
+  { show: "?", key: "?", action: "help", does: "", group: "Window" },
+];
+
+/** Where a key event came from, as much of it as matching needs. */
+export interface KeyPress {
+  key: string;
+  code: string;
+  shiftKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  altKey: boolean;
+  /** The element the event was aimed at, if there was one. */
+  target?: { tagName?: string; isContentEditable?: boolean } | null;
+}
+
+/**
+ * What a key press asks for, or nothing.
+ *
+ * Two things are deliberately left alone. Anything with ctrl, meta or alt
+ * belongs to the browser or the system — a shortcut that swallowed ⌘S would
+ * be a bug, not a feature. And anything typed into a field is typing: the
+ * colour inputs and the sliders both take arrow keys and characters, and a
+ * slider that jumped to a new view instead of nudging would be unusable.
+ */
+export function actionFor(press: KeyPress): Action | null {
+  if (press.ctrlKey || press.metaKey || press.altKey) return null;
+  if (isTyping(press.target)) return null;
+
+  const key = press.key.toLowerCase();
+  for (const shortcut of SHORTCUTS) {
+    if (!!shortcut.shift !== press.shiftKey) continue;
+    if (shortcut.code ? shortcut.code === press.code : shortcut.key === key) {
+      return shortcut.action;
+    }
+  }
+  return null;
+}
+
+function isTyping(target: KeyPress["target"]): boolean {
+  if (!target) return false;
+  if (target.isContentEditable) return true;
+  const tag = (target.tagName ?? "").toLowerCase();
+  return tag === "input" || tag === "textarea" || tag === "select";
+}
+
+/** The table, grouped, for the help card to print. Rows with nothing to say
+ *  are folded onto the one above them. */
+export function helpRows(): { group: Shortcut["group"]; keys: string[]; does: string }[] {
+  const rows: { group: Shortcut["group"]; keys: string[]; does: string }[] = [];
+  for (const shortcut of SHORTCUTS) {
+    if (!shortcut.does && rows.length) {
+      rows[rows.length - 1].keys.push(shortcut.show);
+      continue;
+    }
+    rows.push({ group: shortcut.group, keys: [shortcut.show], does: shortcut.does });
+  }
+  return rows;
+}

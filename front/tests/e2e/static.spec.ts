@@ -3,6 +3,7 @@
  */
 
 import { expect, test } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 
 /**
  * The two faces looking at each other: the closest pair with one from each
@@ -37,6 +38,19 @@ const CUBE = [
   [0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
   [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1],
 ];
+
+/**
+ * Open the settings drawer.
+ *
+ * It is shut unless asked for — the window belongs to the model — so a test
+ * that reaches for a setting has to open it first, exactly as a reader does.
+ */
+async function openDrawer(page: import("@playwright/test").Page) {
+  if (!(await page.evaluate(() => (window as any).__gecko.chrome().drawer))) {
+    await page.locator("#settings").click();
+  }
+  await expect(page.locator("#drawer")).toBeVisible();
+}
 
 async function boot(page: import("@playwright/test").Page) {
   const errors: string[] = [];
@@ -174,6 +188,7 @@ test("dragging a node with the mouse moves it in the kernel", async ({ page }) =
 
 test("colours can be changed, and are remembered", async ({ page }) => {
   const errors = await boot(page);
+  await openDrawer(page);
 
   // The panel is generated from the theme's keys, so there is one input per
   // colour and no markup to keep in step.
@@ -202,6 +217,7 @@ test("colours can be changed, and are remembered", async ({ page }) => {
 
 test("the triad turns the view, and can be hidden", async ({ page }) => {
   await boot(page);
+  await openDrawer(page);
   await page.locator("#cube").click();
   await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
   await page.evaluate(() => (window as any).__gecko.settled());
@@ -246,6 +262,7 @@ test("the triad turns the view, and can be hidden", async ({ page }) => {
 
 test("faces and blocks are drawn, coloured and faded from the panel", async ({ page }) => {
   const errors = await boot(page);
+  await openDrawer(page);
   await page.locator("#cube").click();
   await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
 
@@ -279,6 +296,7 @@ test("faces and blocks are drawn, coloured and faded from the panel", async ({ p
 
 test("each kind of cell shrinks towards its own centre", async ({ page }) => {
   const errors = await boot(page);
+  await openDrawer(page);
   await page.locator("#cube").click();
   await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
   await page.locator("[data-test=blocks-visible]").check();
@@ -326,6 +344,7 @@ test("each kind of cell shrinks towards its own centre", async ({ page }) => {
 
 test("the display settings survive a reload", async ({ page }) => {
   const errors = await boot(page);
+  await openDrawer(page);
   await page.locator("[data-test=blocks-visible]").check();
   await page.locator("[data-test=faces-id]").check();
   await page.locator("[data-test=edges-shrink]").fill("0.8");
@@ -357,6 +376,7 @@ test("every handle stays grabbable through an opaque surface", async ({ page }) 
   // A real drag each time. Asking `pickNode` would prove nothing: it passes
   // a predicate of its own, and so never travels the path that matters.
   const errors = await boot(page);
+  await openDrawer(page);
   await page.locator("#cube").click();
   await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
   await page.locator("[data-test=blocks-visible]").check();
@@ -644,5 +664,144 @@ test("a block is picked and removed", async ({ page }) => {
   await expect(page.locator("[data-test=faces]")).toHaveText("6");
   expect(await page.evaluate(() => (window as any).__gecko.selection())).toEqual([]);
   await expect(page.locator("#remove")).toBeDisabled();
+  expect(errors).toEqual([]);
+});
+
+test("the toolbar and the keyboard are the same thing", async ({ page }) => {
+  // One definition of each action, reached two ways. A button whose
+  // shortcut did something subtly different would be the worst of both.
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+
+  await page.keyboard.press("c");
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+
+  // And the keys that are not actions are left alone.
+  await page.keyboard.press("q");
+  expect(await page.evaluate(() => (window as any).__gecko.counts().nodes)).toBe(16);
+  expect(errors).toEqual([]);
+});
+
+test("the interface folds away, and remembers that it did", async ({ page }) => {
+  const errors = await boot(page);
+  // Shut to begin with: the window belongs to the model.
+  expect(await page.evaluate(() => (window as any).__gecko.chrome())).toMatchObject({
+    drawer: false,
+    hidden: false,
+  });
+  await expect(page.locator("#drawer")).toBeHidden();
+
+  await page.keyboard.press("Tab");
+  await expect(page.locator("#drawer")).toBeVisible();
+  await expect(page.locator("#settings")).toHaveAttribute("aria-expanded", "true");
+
+  // Everything away, toolbar and readout included.
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.locator("#bar")).toBeHidden();
+  await expect(page.locator("#readout")).toBeHidden();
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.locator("#bar")).toBeVisible();
+
+  await page.reload();
+  await page.waitForSelector("body[data-ready='1']", { timeout: 30_000 });
+  await expect(page.locator("#drawer")).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("the help card lists the keys, and any key dismisses it", async ({ page }) => {
+  const errors = await boot(page);
+  await expect(page.locator("#help")).toBeHidden();
+
+  await page.keyboard.press("h");
+  await expect(page.locator("#help")).toBeVisible();
+  // Written from the same table the keys are read from, so it cannot lie.
+  await expect(page.locator("#help-card")).toContainText("create a cube");
+  await expect(page.locator("#help-card kbd").first()).toHaveText("C");
+
+  // Any key, not a particular one: a card you have to guess your way out of
+  // is a trap. And the key that dismissed it does nothing else.
+  await page.keyboard.press("c");
+  await expect(page.locator("#help")).toBeHidden();
+  expect(await page.evaluate(() => (window as any).__gecko.counts().nodes)).toBe(0);
+  expect(errors).toEqual([]);
+});
+
+test("typing in a field is typing, not a shortcut", async ({ page }) => {
+  // The colour inputs and the sliders take characters and arrow keys. A
+  // slider that jumped to a new view instead of nudging would be unusable.
+  const errors = await boot(page);
+  await openDrawer(page);
+  await page.locator("[data-test=faces-alpha]").focus();
+  await page.keyboard.press("c");
+  expect(await page.evaluate(() => (window as any).__gecko.counts().nodes)).toBe(0);
+
+  // Tab from inside the drawer walks its fields rather than shutting it.
+  await page.keyboard.press("Tab");
+  await expect(page.locator("#drawer")).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+/** Width and height out of a PNG's header, which is all this needs to read. */
+function pngSize(bytes: Buffer): { width: number; height: number } {
+  expect(bytes.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  expect(bytes.subarray(12, 16).toString()).toBe("IHDR");
+  return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+}
+
+test("a picture is saved, at the size the drawer asks for", async ({ page }) => {
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  const canvas = await page.evaluate(() => {
+    const c = document.querySelector("#view") as HTMLCanvasElement;
+    return { width: c.width, height: c.height };
+  });
+
+  const download = page.waitForEvent("download");
+  await page.keyboard.press("s");
+  const saved = await download;
+
+  // Named by the moment, so the files sort the way they were taken.
+  expect(saved.suggestedFilename()).toMatch(/^gecko-\d{4}-\d{2}-\d{2}-\d{6}\.png$/);
+  const where = await saved.path();
+  const size = pngSize(await readFile(where));
+  // Twice the canvas by default: a figure in a paper wants more pixels than
+  // a window has.
+  expect(size).toEqual({ width: canvas.width * 2, height: canvas.height * 2 });
+
+  await expect(page.locator("#status")).toHaveText("picture saved");
+  expect(errors).toEqual([]);
+});
+
+test("a picture can be saved with nothing behind it", async ({ page }) => {
+  // For dropping a figure onto a page whose colour you do not know yet.
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  const cornerAlpha = (transparent: boolean) =>
+    page.evaluate(async (t) => {
+      const url = await (window as any).__gecko.capture({ scale: 1, transparent: t });
+      const image = new Image();
+      await new Promise((done) => {
+        image.onload = done;
+        image.src = url;
+      });
+      const scratch = document.createElement("canvas");
+      scratch.width = image.width;
+      scratch.height = image.height;
+      const flat = scratch.getContext("2d")!;
+      flat.drawImage(image, 0, 0);
+      return flat.getImageData(1, 1, 1, 1).data[3];
+    }, transparent);
+
+  expect(await cornerAlpha(false)).toBe(255);
+  expect(await cornerAlpha(true)).toBe(0);
+  // And the scene is left as it was found, whatever the capture did to it.
+  expect(await page.evaluate(() => (window as any).__gecko.theme().background)).toBe("#15171b");
   expect(errors).toEqual([]);
 });

@@ -31,7 +31,9 @@ import { DEFAULTS, PRESETS } from "../../src/theme";
 import { readProbe } from "../../src/mode";
 import { colourForId, hexToRgb, hslToHex, UNNAMED } from "../../src/palette";
 import { buildSurface, edgeSegments, quadsToDraw } from "../../src/surface";
-import { loadPrefs } from "../../src/theme";
+import { isLight, loadPrefs, SHOT_SCALES } from "../../src/theme";
+import { actionFor, ACTIONS, helpRows, SHORTCUTS } from "../../src/shortcuts";
+import { dataUrlToBlob, shotName } from "../../src/capture";
 import type { View } from "../../src/decode";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
 import type { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
@@ -1144,5 +1146,128 @@ describe("the frame a screen position is reported in", () => {
     expect((await viewerOn(true)).scene.getEngine().getRenderWidth()).toBe(
       (await viewerOn(false)).scene.getEngine().getRenderWidth() * 2,
     );
+  });
+});
+
+describe("the keyboard", () => {
+  const press = (over: Partial<Parameters<typeof actionFor>[0]>) =>
+    actionFor({
+      key: "",
+      code: "",
+      shiftKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      altKey: false,
+      ...over,
+    });
+
+  it("has a key for every action, and no key for two", () => {
+    // Every action reachable, which is what makes the help card the whole
+    // story. The other half — every action implemented — is the compiler's,
+    // through the `Record<Action, …>` the toolbar and the keys share.
+    for (const action of ACTIONS) {
+      expect(
+        SHORTCUTS.some((s) => s.action === action),
+        `${action} has no key`,
+      ).toBe(true);
+    }
+
+    const seen = new Set<string>();
+    for (const shortcut of SHORTCUTS) {
+      const token = `${shortcut.shift ? "shift+" : ""}${shortcut.key ?? shortcut.code}`;
+      expect(seen.has(token), `${token} is bound twice`).toBe(false);
+      seen.add(token);
+    }
+  });
+
+  it("reads a letter by its character", () => {
+    expect(press({ key: "c", code: "KeyC" })).toBe("cube");
+    expect(press({ key: "C", code: "KeyC" })).toBe("cube");
+    expect(press({ key: "x", code: "KeyX" })).toBe("axis-x");
+    expect(press({ key: "x", code: "KeyX", shiftKey: true })).toBe("axis--x");
+  });
+
+  it("reads a digit by its position", () => {
+    // On a French keyboard the digit row is shifted: the key printed `1`
+    // produces `&`. Matching the character would make the help card a lie
+    // there, while the physical key under the printed digit is the same one.
+    expect(press({ key: "&", code: "Digit1" })).toBe("faces");
+    expect(press({ key: "1", code: "Digit1" })).toBe("faces");
+    expect(press({ key: "é", code: "Digit2" })).toBe("blocks");
+  });
+
+  it("leaves the browser's own shortcuts alone", () => {
+    for (const held of ["ctrlKey", "metaKey", "altKey"] as const) {
+      expect(press({ key: "s", code: "KeyS", [held]: true })).toBeNull();
+    }
+    expect(press({ key: "s", code: "KeyS" })).toBe("screenshot");
+  });
+
+  it("leaves typing alone", () => {
+    // The colour inputs and the sliders both take characters and arrow keys.
+    // A slider that jumped to a new view instead of nudging would be unusable.
+    for (const tagName of ["INPUT", "TEXTAREA", "SELECT"]) {
+      expect(press({ key: "c", code: "KeyC", target: { tagName } })).toBeNull();
+    }
+    expect(press({ key: "c", code: "KeyC", target: { isContentEditable: true } })).toBeNull();
+    expect(press({ key: "c", code: "KeyC", target: { tagName: "CANVAS" } })).toBe("cube");
+  });
+
+  it("folds a key with nothing to add onto the row above it", () => {
+    const rows = helpRows();
+    const remove = rows.find((r) => r.does.includes("remove"))!;
+    expect(remove.keys).toEqual(["Del", "⌫"]);
+    expect(rows.every((r) => r.does !== "")).toBe(true);
+  });
+
+});
+
+describe("saving a picture", () => {
+  it("names it by the moment it was taken", () => {
+    expect(shotName(new Date(2026, 9, 9, 18, 30, 12))).toBe("gecko-2026-10-09-183012.png");
+    // Padded, so the names sort the way the pictures were taken.
+    expect(shotName(new Date(2026, 0, 2, 3, 4, 5))).toBe("gecko-2026-01-02-030405.png");
+  });
+
+  it("turns a data url back into its bytes", () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+    const url = `data:image/png;base64,${Buffer.from(png).toString("base64")}`;
+    const blob = dataUrlToBlob(url);
+    expect(blob.type).toBe("image/png");
+    expect(blob.size).toBe(4);
+  });
+});
+
+describe("the interface's own colours", () => {
+  it("follow the scene rather than fighting it", () => {
+    expect(isLight(PRESETS.light.background)).toBe(true);
+    expect(isLight(PRESETS.dark.background)).toBe(false);
+    // Weighted the way the eye is: green carries most of the luminance, so a
+    // saturated green reads as light and a saturated blue does not.
+    expect(isLight("#00ff00")).toBe(true);
+    expect(isLight("#0000ff")).toBe(false);
+  });
+
+  it("remembers whether the drawer was open, and how a picture comes out", () => {
+    const store = new Map<string, string>();
+    (globalThis as unknown as { localStorage: Storage }).localStorage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => store.clear(),
+      key: () => null,
+      length: 0,
+    } as Storage;
+
+    store.set("gecko.view", JSON.stringify({ drawer: true, shot: { scale: 4 } }));
+    const prefs = loadPrefs();
+    expect(prefs.drawer).toBe(true);
+    expect(prefs.chrome).toBe(true);
+    expect(prefs.shot.scale).toBe(4);
+
+    // A size nobody offered is a gigapixel the browser would refuse to make.
+    store.set("gecko.view", JSON.stringify({ shot: { scale: 40 } }));
+    expect(loadPrefs().shot.scale).toBe(DEFAULTS.shot.scale);
+    expect(SHOT_SCALES).toContain(DEFAULTS.shot.scale);
   });
 });

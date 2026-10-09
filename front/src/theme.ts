@@ -13,6 +13,7 @@
  */
 
 import type { Colouring } from "./surface";
+import { hexToRgb } from "./palette";
 
 export interface Theme {
   background: string;
@@ -48,6 +49,19 @@ export const PRESETS: Record<"dark" | "light", Theme> = {
   },
 };
 
+/**
+ * Is this colour light enough to put dark text on?
+ *
+ * Used to decide which way round the interface's own colours go, so that a
+ * light scene does not leave a slab of night floating on top of it. The
+ * coefficients are the usual luminance weights: the eye is far more
+ * sensitive to green than to blue.
+ */
+export function isLight(hex: string): boolean {
+  const [r, g, b] = hexToRgb(hex);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5;
+}
+
 /** How one group of cells is drawn. */
 export interface Layer {
   visible: boolean;
@@ -60,9 +74,17 @@ export interface Layer {
 
 const KEY = "gecko.view";
 
+/** The picture sizes on offer, as multiples of what the canvas renders. */
+export const SHOT_SCALES = [1, 2, 4];
+
 export interface ViewPrefs {
   theme: Theme;
   axes: boolean;
+  /** The settings drawer, and whether the interface is on screen at all. */
+  drawer: boolean;
+  chrome: boolean;
+  /** How a saved picture comes out. */
+  shot: { scale: number; transparent: boolean };
   /** Edges keep one colour — the theme's — so all they carry is how far they
    *  are pulled off the surfaces they would otherwise lie exactly on. */
   edges: { shrink: number };
@@ -73,6 +95,14 @@ export interface ViewPrefs {
 export const DEFAULTS: ViewPrefs = {
   theme: { ...PRESETS.dark },
   axes: true,
+  // Shut, because the whole point of a drawer is that the window belongs to
+  // the model. The toolbar carries the verbs; this carries the settings.
+  drawer: false,
+  chrome: true,
+  // Twice the canvas, which is what a figure in a paper wants. The
+  // background is kept by default: transparency is for dropping a figure
+  // onto a page of unknown colour, and surprises anyone not expecting it.
+  shot: { scale: 2, transparent: false },
   edges: { shrink: 1 },
   // Faces on but well short of opaque, so the wireframe and the handles still
   // read through them. Blocks off: they draw the same surfaces, and two
@@ -116,6 +146,19 @@ export function loadPrefs(): ViewPrefs {
     return {
       theme: { ...DEFAULTS.theme, ...(stored.theme ?? {}) },
       axes: typeof stored.axes === "boolean" ? stored.axes : DEFAULTS.axes,
+      drawer: typeof stored.drawer === "boolean" ? stored.drawer : DEFAULTS.drawer,
+      chrome: typeof stored.chrome === "boolean" ? stored.chrome : DEFAULTS.chrome,
+      shot: {
+        // One of the offered sizes, not whatever is in storage: a scale of
+        // 40 is a request for a gigapixel the browser will refuse to make.
+        scale: SHOT_SCALES.includes(stored.shot?.scale as number)
+          ? (stored.shot!.scale as number)
+          : DEFAULTS.shot.scale,
+        transparent:
+          typeof stored.shot?.transparent === "boolean"
+            ? stored.shot.transparent
+            : DEFAULTS.shot.transparent,
+      },
       edges: { shrink: clamp(stored.edges?.shrink, DEFAULTS.edges.shrink) },
       faces: {
         ...layer(stored.faces, DEFAULTS.faces),

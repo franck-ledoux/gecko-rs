@@ -13,7 +13,17 @@ import type { Kernel } from "./kernel";
 import { initKernel, WasmKernel } from "./kernel-wasm";
 import { RemoteKernel } from "./kernel-remote";
 import { Viewer, type Group, type Pick } from "./viewer";
-import { loadPrefs, savePrefs, PRESETS, SWATCHES, type Theme } from "./theme";
+import {
+  isLight,
+  loadPrefs,
+  savePrefs,
+  PRESETS,
+  SHOT_SCALES,
+  SWATCHES,
+  type Theme,
+} from "./theme";
+import { actionFor, helpRows, type Action } from "./shortcuts";
+import { capture, save, shotName } from "./capture";
 import type { Colouring } from "./surface";
 import type { Axis } from "./axes";
 import "./style.css";
@@ -96,6 +106,7 @@ async function boot() {
   function setTheme(theme: Theme) {
     prefs.theme = { ...theme };
     redraw();
+    applyChrome();
     drawSwatches();
     drawLayers();
   }
@@ -204,6 +215,22 @@ async function boot() {
   $("preset-dark").addEventListener("click", () => setTheme(PRESETS.dark));
   $("preset-light").addEventListener("click", () => setTheme(PRESETS.light));
 
+  // --- how a saved picture comes out --------------------------------------
+  const scale = $<HTMLSelectElement>("shot-scale");
+  scale.value = String(
+    SHOT_SCALES.includes(prefs.shot.scale) ? prefs.shot.scale : SHOT_SCALES[1],
+  );
+  scale.addEventListener("change", () => {
+    prefs.shot.scale = Number(scale.value);
+    savePrefs(prefs);
+  });
+  const transparent = $<HTMLInputElement>("shot-transparent");
+  transparent.checked = prefs.shot.transparent;
+  transparent.addEventListener("change", () => {
+    prefs.shot.transparent = transparent.checked;
+    savePrefs(prefs);
+  });
+
   // Clicking the triad swings the view onto that axis. Checked before
   // anything else: it is an overlay, so it is in front.
   canvas.addEventListener("pointerdown", (e) => {
@@ -264,7 +291,7 @@ async function boot() {
     $("status").textContent = message;
   }
 
-  $("glue").addEventListener("click", async () => {
+  async function glueSelection() {
     const [first, second] = viewer.selection;
     if (first === undefined || second === undefined) return;
     const reply = await kernel.apply({
@@ -282,12 +309,12 @@ async function boot() {
     // is a different question from whether the camera should move — and
     // welding two blocks you are already looking at is no reason to move it.
     await refresh();
-  });
+  }
 
-  // The block the first pick landed on. Not the face's block in general —
-  // once two blocks are glued a face has one on each side — but the pick
-  // knows which side it hit.
-  $("remove").addEventListener("click", async () => {
+  /** The block the first pick landed on. Not the face's block in general —
+   *  once two blocks are glued a face has one on each side — but the pick
+   *  knows which side it hit. */
+  async function removeSelection() {
     const [first] = viewer.selection;
     if (first === undefined) return;
     const reply = await kernel.apply({ op: "remove_block", block: first.block });
@@ -295,16 +322,20 @@ async function boot() {
     message = reply.message;
     // Not framed: taking a block away is no reason to move the camera either.
     await refresh();
-  });
+  }
 
   /** Put everything back in view. Camera state, so it never goes near the
    *  kernel: in station mode two tabs on one session each have their own. */
-  $("recentre").addEventListener("click", () => {
+  function recentre() {
     viewer.frameAll();
+    say("view recentred");
+  }
 
-    message = "view recentred";
-    $("status").textContent = message;
-  });
+  /** Say something in the readout. */
+  function say(what: string) {
+    message = what;
+    $("status").textContent = what;
+  }
 
   /** `frame` is how the camera should get there, not whether the bytes are
    *  stale — they always are by the time this is called. */
@@ -312,14 +343,14 @@ async function boot() {
     const [bytes, stats] = await Promise.all([kernel.view(), kernel.stats()]);
     viewer.setView(decodeView(bytes));
     if (frame) viewer.frameAll(frame === "jump");
-    $("stats").innerHTML = `
-      <dl>
-        <dt>mode</dt><dd data-test="mode">${kernel.mode}</dd>
-        <dt>blocks</dt><dd data-test="blocks">${stats.blocks}</dd>
-        <dt>nodes</dt><dd data-test="nodes">${stats.nodes}</dd>
-        <dt>edges</dt><dd data-test="edges">${stats.edges}</dd>
-        <dt>faces</dt><dd data-test="faces">${stats.faces}</dd>
-      </dl>`;
+    // One line, out of the way. The counts are what you glance at; the mode
+    // matters once, when you are working out which kernel you are talking to.
+    $("stats").innerHTML =
+      `<span><b data-test="blocks">${stats.blocks}</b> blocks</span>` +
+      `<span><b data-test="nodes">${stats.nodes}</b> nodes</span>` +
+      `<span><b data-test="edges">${stats.edges}</b> edges</span>` +
+      `<span><b data-test="faces">${stats.faces}</b> faces</span>` +
+      `<span data-test="mode">${kernel.mode}</span>`;
     $("status").textContent = message;
     revision++;
   }
@@ -331,7 +362,7 @@ async function boot() {
     void refresh();
   });
 
-  $("cube").addEventListener("click", async () => {
+  async function createCube() {
     const stats = await kernel.stats();
     const reply = await kernel.apply({
       op: "create_cube",
@@ -343,7 +374,170 @@ async function boot() {
     // grows past the edge of the window is no use. Gliding, so the view does
     // not lurch every time you press the button.
     await refresh("glide");
+  }
+
+  // --- the chrome ---------------------------------------------------------
+
+  /**
+   * Put the interface into the state the preferences describe.
+   *
+   * Body classes rather than inline styles, so the showing and hiding is the
+   * stylesheet's business and can be animated there. `data-chrome` is how the
+   * panels learn whether they are floating on a light scene or a dark one.
+   */
+  function applyChrome() {
+    document.body.classList.toggle("drawer-open", prefs.drawer);
+    document.body.classList.toggle("chrome-hidden", !prefs.chrome);
+    document.body.dataset.chrome = isLight(prefs.theme.background) ? "light" : "dark";
+    $("settings").setAttribute("aria-expanded", String(prefs.drawer));
+  }
+
+  function showHelp(open: boolean) {
+    document.body.classList.toggle("help-open", open);
+  }
+
+  /** The help card, written out of the same table the keys are read from. */
+  function drawHelp() {
+    const groups = [...new Set(helpRows().map((r) => r.group))];
+    $("help-card").innerHTML =
+      `<div id="help-groups">` +
+      groups
+        .map(
+          (group) =>
+            `<section><h2>${group}</h2><dl>` +
+            helpRows()
+              .filter((r) => r.group === group)
+              .map(
+                (r) =>
+                  `<dt>${r.keys.map((k) => `<kbd>${k}</kbd>`).join("")}</dt>` +
+                  `<dd>${r.does}</dd>`,
+              )
+              .join("") +
+            `</dl></section>`,
+        )
+        .join("") +
+      `</div><p id="help-hint">Click a face to select it. Any key closes this.</p>`;
+  }
+  drawHelp();
+
+  async function screenshot() {
+    say("saving…");
+    try {
+      const picture = await capture(engine, viewer.camera, prefs.shot);
+      save(picture, shotName(new Date()), document);
+      say("picture saved");
+    } catch (e) {
+      say(`could not save a picture: ${e}`);
+    }
+  }
+
+  // --- one definition of what each action does -----------------------------
+  //
+  // The toolbar and the keyboard both come through here, so a button and its
+  // shortcut cannot drift apart: there is only one of each action.
+  const ACTIONS: Record<Action, () => void | Promise<void>> = {
+    cube: createCube,
+    glue: glueSelection,
+    remove: removeSelection,
+    clear: () => choose(null),
+    recentre,
+    screenshot,
+    "axis-x": () => lookDown("+x"),
+    "axis-y": () => lookDown("+y"),
+    "axis-z": () => lookDown("+z"),
+    "axis--x": () => lookDown("-x"),
+    "axis--y": () => lookDown("-y"),
+    "axis--z": () => lookDown("-z"),
+    faces: () => toggleLayer("faces"),
+    blocks: () => toggleLayer("blocks"),
+    edges: () => {
+      // Edges have no visibility of their own; fully shrunk is as good as
+      // gone, and it is one slider rather than a second kind of control.
+      prefs.edges.shrink = prefs.edges.shrink > 0.1 ? 0.1 : 1;
+      redraw();
+      drawLayers();
+      say(`edges ${prefs.edges.shrink > 0.1 ? "shown" : "hidden"}`);
+    },
+    internal: () => {
+      prefs.faces.internal = !prefs.faces.internal;
+      redraw();
+      drawLayers();
+      say(`internal faces ${prefs.faces.internal ? "shown" : "hidden"}`);
+    },
+    triad: () => {
+      prefs.axes = !prefs.axes;
+      viewer.axes.setVisible(prefs.axes);
+      $<HTMLInputElement>("show-axes").checked = prefs.axes;
+      savePrefs(prefs);
+    },
+    theme: () => setTheme(isLight(prefs.theme.background) ? PRESETS.dark : PRESETS.light),
+    drawer: () => {
+      prefs.drawer = !prefs.drawer;
+      applyChrome();
+      savePrefs(prefs);
+    },
+    chrome: () => {
+      prefs.chrome = !prefs.chrome;
+      applyChrome();
+      savePrefs(prefs);
+    },
+    help: () => showHelp(!document.body.classList.contains("help-open")),
+  };
+
+  function run(action: Action) {
+    void ACTIONS[action]();
+  }
+
+  function lookDown(axis: Axis) {
+    viewer.axes.lookDown(axis);
+    say(`looking down ${axis}`);
+  }
+
+  function toggleLayer(group: Group) {
+    prefs[group].visible = !prefs[group].visible;
+    redraw();
+    drawLayers();
+    say(`${group} ${prefs[group].visible ? "shown" : "hidden"}`);
+  }
+
+  for (const [id, action] of [
+    ["cube", "cube"],
+    ["glue", "glue"],
+    ["remove", "remove"],
+    ["recentre", "recentre"],
+    ["shot", "screenshot"],
+    ["settings", "drawer"],
+    ["help-open", "help"],
+  ] as [string, Action][]) {
+    $(id).addEventListener("click", () => run(action));
+  }
+
+  // Any key closes the help card, which is why it is checked before the
+  // table: a card you have to find the right key to dismiss is a trap.
+  window.addEventListener("keydown", (e) => {
+    if (document.body.classList.contains("help-open")) {
+      e.preventDefault();
+      showHelp(false);
+      return;
+    }
+    // Tab inside the drawer is Tab: once it is open it has fields of its own
+    // to walk through, and taking that away would make it unreachable by
+    // keyboard.
+    if (e.key === "Tab" && $("drawer").contains(document.activeElement)) return;
+    const action = actionFor({
+      key: e.key,
+      code: e.code,
+      shiftKey: e.shiftKey,
+      ctrlKey: e.ctrlKey,
+      metaKey: e.metaKey,
+      altKey: e.altKey,
+      target: e.target as unknown as { tagName?: string; isContentEditable?: boolean },
+    });
+    if (!action) return;
+    e.preventDefault();
+    run(action);
   });
+  $("help").addEventListener("click", () => showHelp(false));
 
   // Dropping a node is one command, sent once. The scene has been following
   // the mouse on its own copy; this is where the kernel takes it back over,
@@ -358,6 +552,7 @@ async function boot() {
     viewer.resize();
   });
 
+  applyChrome();
   engine.runRenderLoop(() => viewer.render());
   // Straight there: there is nothing on screen yet to glide away from.
   await refresh("jump");
@@ -375,6 +570,16 @@ async function boot() {
     theme: () => ({ ...prefs.theme }),
     setTheme: (t: Theme) => setTheme(t),
     display: () => viewer.display,
+    prefs: () => structuredClone(prefs),
+    run: (action: Action) => run(action),
+    capture: (options: { scale: number; transparent: boolean }) =>
+      capture(engine, viewer.camera, options),
+    chrome: () => ({
+      drawer: document.body.classList.contains("drawer-open"),
+      hidden: document.body.classList.contains("chrome-hidden"),
+      help: document.body.classList.contains("help-open"),
+      tone: document.body.dataset.chrome,
+    }),
     surface: (group: Group) => {
       const s = viewer.surface(group);
       // Typed arrays do not survive the bridge out of the page; a test wants

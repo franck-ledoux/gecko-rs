@@ -5,10 +5,11 @@ to a station tab alike.
 
 ## Colours
 
-The **Affichage** panel has one swatch per colourable thing — background,
-nodes, edges, faces, blocks — and two presets, **Sombre** and **Clair**. The
-face and block swatches are what the **uniforme** mode below uses; in **par
-id** mode they are ignored. The light preset
+The drawer's **Colours** section has one swatch per colourable thing —
+background, nodes, edges, faces, blocks — and two presets, **Dark** and
+**Light** (`D` swaps them). The face and block swatches are what the
+**uniform** mode below uses; in **by id** mode they are ignored. The light
+preset
 exists because "change the background" nearly always means "I need a light one
 for a figure", and setting three swatches by hand to get there is tedious.
 
@@ -29,13 +30,13 @@ no new markup.
 Each has its own box in the panel, and the two are independent: either, both,
 or neither.
 
-| Control        | What it does                                          |
-| -------------- | ----------------------------------------------------- |
-| **afficher**   | draw this group at all                                |
-| **uniforme**   | one colour for the whole group, taken from its swatch |
-| **par id**     | a colour per cell, from its stable name               |
-| **opacité**    | transparency, per group                               |
-| **rétraction** | pull each cell towards its own centre                 |
+| Control     | What it does                                          |
+| ----------- | ----------------------------------------------------- |
+| **show**    | draw this group at all                                |
+| **uniform** | one colour for the whole group, taken from its swatch |
+| **by id**   | a colour per cell, from its stable name               |
+| **opacity** | transparency, per group                               |
+| **shrink**  | pull each cell towards its own centre                 |
 
 **They are the same surfaces.** A block is bounded by its faces, so with both
 on at full size you are looking at one shape coloured two ways. Shrinking is
@@ -64,7 +65,8 @@ alternative is a palette that renumbers behind you.
 
 ### Internal faces
 
-**faces internes** decides whether faces with a block on each side are drawn.
+**internal faces** (`I`) decides whether faces with a block on each side are
+drawn.
 Blocks are unaffected: each keeps its own six, or shrinking one would open it.
 
 A face is internal when it turns up twice in the surface, once per block —
@@ -113,7 +115,7 @@ being yanked anywhere.
 
 ## Recentring
 
-**Recadrer la vue** brings the whole model into view, and **leaves the
+**Recentre view** (`F`) brings the whole model into view, and **leaves the
 direction alone**. Where the model is and how far away it has to be come
 from its own bounds; which way round you are looking at it from is yours, and
 the triad is what changes that. A recentring that also swung the view back to
@@ -131,7 +133,8 @@ for creating a cube, which glides too.
 
 ## The orientation triad
 
-Bottom right, and switched on and off with **trièdre X/Y/Z**.
+Bottom right, and switched on and off with **X/Y/Z triad** in the drawer, or
+`T`.
 
 It is not a picture of the axes — it is a second camera on a corner viewport,
 sharing the main view's rotation exactly. Which is also what makes it

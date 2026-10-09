@@ -95,7 +95,7 @@ all: everything works, nothing you type reaches it.
 
 That means the page was served by something that is not your station — most
 often the dev server with no station behind it. A tab that reaches a dev server
-before the station is listening now says *en attente de la station Python…*
+before the station is listening now says *waiting for the Python station…*
 and connects by itself as soon as one answers.
 
 What it cannot detect is a dev server left behind by an earlier `./view`: that

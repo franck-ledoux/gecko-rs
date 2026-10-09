@@ -7,7 +7,7 @@ seam moves it for both.
 
 ## In the viewer
 
-Click a face, then another, then **Coller les faces**.
+Click a face, then another, then the glue button — or `G`.
 
 The two are highlighted differently, and the difference matters: **the first
 one is the anchor**. The second face is brought onto it, and the seam ends up
@@ -78,7 +78,8 @@ A refused glue changes nothing at all, and says why.
 
 ## Removing a block
 
-Click any face of it and press **Supprimer le bloc**. One click is enough:
+Click any face of it and press the bin button, or `Del`. One click is
+enough:
 the quadrangles are listed per (face, block) pair, so a pick knows which
 block's side it landed on — even for a face that has one on each. The status
 line names the block before you commit to it.
@@ -106,5 +107,5 @@ have to re-aim after every edit.
 Creating a cube does reframe, because it puts a new block down beside the
 others and a model growing past the edge of the window is no use. For
 everything else there is
-[**Recadrer la vue**](display.md#recentring), which brings the whole model
+[**Recentre view**](display.md#recentring) — `F` — which brings the whole model
 into view without changing the direction you are looking from.
