@@ -647,6 +647,7 @@ function sharedFaceView(): View {
     positions: new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]),
     names: new Uint32Array([0, 1, 2, 3]),
     edges: new Uint32Array([0, 1]),
+    edgeNames: new Uint32Array([5]),
     // The same four corners twice: one face, seen from each of two blocks.
     quads: new Uint32Array([0, 1, 2, 3, 0, 3, 2, 1]),
     quadFaces: new Uint32Array([9, 9]),
@@ -1004,6 +1005,7 @@ describe("how close the camera may get", () => {
       positions: new Float32Array([0, 0, 0]),
       names: new Uint32Array([1]),
       edges: new Uint32Array(0),
+      edgeNames: new Uint32Array(0),
       quads: new Uint32Array(0),
       quadFaces: new Uint32Array(0),
       quadBlocks: new Uint32Array(0),

@@ -107,6 +107,23 @@ impl PySession {
         self.command(serde_json::json!({ "op": "remove_block", "block": block }))
     }
 
+    /// The sheet of hexahedra through an edge: every edge of it, with the
+    /// direction a cut parameter would run in.
+    fn sheet(&self, py: Python<'_>, edge: u32) -> PyResult<PyObject> {
+        let json = self.locked(|s| s.sheet_json(edge));
+        let value: Value =
+            serde_json::from_str(&json).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        if value["ok"].as_bool() != Some(true) {
+            return Err(PyValueError::new_err(
+                value["error"]
+                    .as_str()
+                    .unwrap_or("no such sheet")
+                    .to_string(),
+            ));
+        }
+        to_py(py, &value["edges"])
+    }
+
     /// Every block, as `{"id": …, "centre": [x, y, z]}` — what a script needs
     /// in order to have something to remove.
     #[getter]

@@ -6,7 +6,7 @@
 //! the one thing it cannot do for us is hand out names that survive its own
 //! renumbering.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use honeycomb_core::attributes::AttributeError;
 use honeycomb_core::cmap::{
@@ -53,6 +53,44 @@ pub fn cube_corners(origin: [f64; 3], size: f64) -> [[f64; 3]; 8] {
     ]
 }
 
+/// One edge of a sheet, with the direction the cut parameter runs in.
+///
+/// `from`/`to` are what makes a sheet cuttable at a single parameter: the
+/// same `t` has to mean the same side of the sheet on every edge of it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SheetEdge {
+    pub edge: CellId,
+    pub from: VertexIdType,
+    pub to: VertexIdType,
+}
+
+/// Across a quadrangle: the edge opposite `from`→`to`, oriented to match.
+///
+/// This is the whole orientation question, in one place and with no map in
+/// sight. In a quadrangle A→B→C→D the edge opposite AB is CD — but the
+/// corners that correspond are A↔D and B↔C, so AB traversed A→B matches CD
+/// traversed **D→C**. The opposite edge runs the other way round the cycle.
+///
+/// Getting it wrong does not fail: it cuts alternate cells at `t` and
+/// `1 - t`, and the sheet comes out as a concertina. Which is why it is a
+/// function of four numbers, tested on its own.
+pub fn across(
+    quad: [VertexIdType; 4],
+    from: VertexIdType,
+    to: VertexIdType,
+) -> Option<(VertexIdType, VertexIdType)> {
+    for i in 0..4 {
+        let (a, b) = (quad[i], quad[(i + 1) % 4]);
+        if (a, b) == (from, to) {
+            return Some((quad[(i + 3) % 4], quad[(i + 2) % 4]));
+        }
+        if (a, b) == (to, from) {
+            return Some((quad[(i + 2) % 4], quad[(i + 3) % 4]));
+        }
+    }
+    None
+}
+
 /// One face of one block: the four nodes it runs through, wound outward **as
 /// that block sees it**, with both names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,6 +122,10 @@ pub enum BlockingError {
     NoSuchBlock(CellId),
     #[error("could not free dart {0}")]
     Release(DartIdType),
+    #[error("no edge is named {0:?}")]
+    NoSuchEdge(CellId),
+    #[error("the sheet through edge {0:?} meets itself the wrong way round")]
+    TangledSheet(CellId),
 }
 
 impl From<DartReleaseError> for BlockingError {
@@ -405,13 +447,105 @@ impl Blocking {
             .find(|v| self.block_tag(*v).id == block)
     }
 
+    /// Every edge of the sheet through this one, oriented to agree with it.
+    ///
+    /// A sheet is the transitive closure of "the opposite edge in a
+    /// quadrangle". On a lone block that is the four edges parallel to the
+    /// one you name; across glued blocks it runs on through them.
+    ///
+    /// The orientation is carried along with the walk, so that one cut
+    /// parameter means the same thing everywhere on the sheet. If the closure
+    /// ever comes back to an edge it has already seen and disagrees about
+    /// which way round it runs, the sheet is not orientable — it meets itself
+    /// — and that is refused rather than cut badly.
+    pub fn sheet_through(&self, edge: CellId) -> Result<Vec<SheetEdge>, BlockingError> {
+        let start = self
+            .edge_by_id(edge)
+            .ok_or(BlockingError::NoSuchEdge(edge))?;
+        let (from, to) = self.edge_endpoints(start);
+
+        // Keyed by name and walked in order, so the answer does not depend on
+        // the order a hash map happened to hand things back in.
+        let mut found: BTreeMap<CellId, SheetEdge> = BTreeMap::new();
+        found.insert(edge, SheetEdge { edge, from, to });
+        let mut pending = vec![(start, from, to)];
+
+        while let Some((current, from, to)) = pending.pop() {
+            for face in self.faces_around(current) {
+                let quad = self.face_corners(face);
+                let Some((next_from, next_to)) = across(quad, from, to) else {
+                    continue;
+                };
+                let Some(next) = self.edge_between(face, next_from, next_to) else {
+                    continue;
+                };
+                let name = self.edge_tag(next).id;
+                if let Some(seen) = found.get(&name) {
+                    if (seen.from, seen.to) != (next_from, next_to) {
+                        return Err(BlockingError::TangledSheet(edge));
+                    }
+                    continue;
+                }
+                found.insert(
+                    name,
+                    SheetEdge {
+                        edge: name,
+                        from: next_from,
+                        to: next_to,
+                    },
+                );
+                pending.push((next, next_from, next_to));
+            }
+        }
+        Ok(found.into_values().collect())
+    }
+
+    /// The faces an edge belongs to, by identifier, without repeats.
+    fn faces_around(&self, edge: EdgeIdType) -> Vec<FaceIdType> {
+        let mut faces: Vec<FaceIdType> = self
+            .map
+            .orbit(OrbitPolicy::Edge, edge as DartIdType)
+            .map(|d| self.map.face_id(d))
+            .collect();
+        faces.sort_unstable();
+        faces.dedup();
+        faces
+    }
+
+    /// A face's four corners, in the order β₁ walks them.
+    fn face_corners(&self, face: FaceIdType) -> [VertexIdType; 4] {
+        self.face_darts(face).map(|d| self.map.vertex_id(d))
+    }
+
+    /// The edge of this face joining those two corners.
+    fn edge_between(
+        &self,
+        face: FaceIdType,
+        from: VertexIdType,
+        to: VertexIdType,
+    ) -> Option<EdgeIdType> {
+        self.face_darts(face).into_iter().find_map(|d| {
+            let (a, b) = self.edge_endpoints(self.map.edge_id(d));
+            ((a, b) == (from, to) || (a, b) == (to, from)).then(|| self.map.edge_id(d))
+        })
+    }
+
+    /// The edge a stable name currently stands for. A scan, for the same
+    /// reason [`node_by_id`][Self::node_by_id] is one.
+    pub fn edge_by_id(&self, edge: CellId) -> Option<EdgeIdType> {
+        if edge.is_none() {
+            return None;
+        }
+        self.map.iter_edges().find(|e| self.edge_tag(*e).id == edge)
+    }
+
     /// The four darts of a face, in the order β₁ walks them.
     ///
     /// Only meaningful for a face with one side: for a glued face the
     /// identifier is the smallest dart of an orbit spanning both blocks, and
     /// which of the two you would get is not something a caller should have to
     /// reason about. [`glue_faces`][Self::glue_faces] refuses those anyway.
-    fn face_darts(&self, face: FaceIdType) -> [DartIdType; 4] {
+    pub(crate) fn face_darts(&self, face: FaceIdType) -> [DartIdType; 4] {
         let mut out = [0; 4];
         let mut dart = face as DartIdType;
         for slot in out.iter_mut() {

@@ -233,6 +233,31 @@ impl Session {
         serde_json::Value::Array(faces).to_string()
     }
 
+    /// The sheet through an edge: every edge of it, with the direction the
+    /// cut parameter would run in.
+    ///
+    /// A question, not a change — the same door's read side, like
+    /// [`nodes_json`][Self::nodes_json]. The viewer asks it to light up what
+    /// a cut would touch.
+    pub fn sheet_json(&self, edge: u32) -> String {
+        match self.blocking.sheet_through(CellId::from_raw(edge)) {
+            Ok(sheet) => {
+                let edges: Vec<_> = sheet
+                    .iter()
+                    .map(|s| {
+                        serde_json::json!({
+                            "id": s.edge.get(),
+                            "from": self.blocking.position(s.from).unwrap_or([0.0; 3]),
+                            "to": self.blocking.position(s.to).unwrap_or([0.0; 3]),
+                        })
+                    })
+                    .collect();
+                serde_json::json!({ "ok": true, "edges": edges }).to_string()
+            }
+            Err(e) => serde_json::json!({ "ok": false, "error": e.to_string() }).to_string(),
+        }
+    }
+
     /// Every block, by stable name and centre — enough for a script to name
     /// one to [`Command::RemoveBlock`] without having to see it.
     pub fn blocks_json(&self) -> String {

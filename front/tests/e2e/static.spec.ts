@@ -11,6 +11,7 @@ import { readFile } from "node:fs/promises";
  * so no test quietly depends on where the button happens to put a cube.
  */
 declare function facingPair(): number[];
+declare function edgeNear(want: number[]): number;
 
 const FACING_PAIR = `
 window.facingPair = () => {
@@ -803,5 +804,84 @@ test("a picture can be saved with nothing behind it", async ({ page }) => {
   expect(await cornerAlpha(true)).toBe(0);
   // And the scene is left as it was found, whatever the capture did to it.
   expect(await page.evaluate(() => (window as any).__gecko.theme().background)).toBe("#15171b");
+  expect(errors).toEqual([]);
+});
+
+/** The name of an edge whose midpoint is nearest this model-space point. */
+const EDGE_NEAR = `
+window.edgeNear = (want) => {
+  const g = window.__gecko;
+  const names = g.edgeNames();
+  let best = null, shortest = Infinity;
+  for (const name of names) {
+    const mid = g.edgeMidpoint(name);
+    const d = Math.hypot(mid[0] - want[0], mid[1] - want[1], mid[2] - want[2]);
+    if (d < shortest) { shortest = d; best = name; }
+  }
+  return best;
+};`;
+
+test("clicking an edge lights up its sheet", async ({ page }) => {
+  // Nothing is cut yet. The sheet is what a cut would touch, shown before
+  // there is a cut — because the one thing that cannot be checked after the
+  // fact is whether the sheet was the right set of edges.
+  const errors = await boot(page);
+  await page.evaluate(EDGE_NEAR);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  const edge = (await page.evaluate(() => edgeNear([0.5, 0, 0]))) as number;
+  const at = (await page.evaluate((e) => (window as any).__gecko.edgeScreen(e), edge)) as [
+    number,
+    number,
+  ];
+  const box = (await page.locator("#view").boundingBox())!;
+  await page.mouse.click(box.x + at[0], box.y + at[1]);
+
+  // Four parallel edges on a lone cube, and the one clicked is among them.
+  await page.waitForFunction(() => (window as any).__gecko.sheet().length > 0);
+  const lit = (await page.evaluate(() => (window as any).__gecko.sheet())) as number[];
+  expect(lit).toHaveLength(4);
+  expect(lit).toContain(edge);
+  await expect(page.locator("#status")).toContainText("4 edges");
+
+  // Clicking it again puts it out.
+  await page.mouse.click(box.x + at[0], box.y + at[1]);
+  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 0);
+  expect(errors).toEqual([]);
+});
+
+test("a sheet runs on through a glued block", async ({ page }) => {
+  const errors = await boot(page);
+  await page.evaluate(EDGE_NEAR);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  const facing = (await page.evaluate(() => facingPair())) as number[];
+  await page.evaluate((f) => (window as any).__gecko.choose({ face: f[0], block: 0 }), facing);
+  await page.evaluate((f) => (window as any).__gecko.choose({ face: f[1], block: 1 }), facing);
+  await page.locator("#glue").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 12);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // An edge lying in the seam, parallel to it: its sheet crosses into the
+  // second block. Four and four, sharing the two that lie in the seam.
+  const seam = (await page.evaluate(() => edgeNear([1, 0.5, 0]))) as number;
+  await page.evaluate((e) => (window as any).__gecko.pickEdgeByName(e), seam);
+  await page.waitForFunction(() => (window as any).__gecko.sheet().length > 0);
+  expect(await page.evaluate(() => (window as any).__gecko.sheet())).toHaveLength(6);
+
+  // And one that does not lie in the seam stays in the block it started in.
+  const away = (await page.evaluate(() => edgeNear([0.5, 0, 0]))) as number;
+  await page.evaluate((e) => (window as any).__gecko.pickEdgeByName(e), away);
+  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 4);
+
+  // Esc clears it, as it clears a face selection.
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 0);
   expect(errors).toEqual([]);
 });

@@ -127,17 +127,18 @@ fn the_encoding_is_the_layout_a_client_will_decode() {
     let bytes = s.view_buffer();
 
     assert_eq!(&bytes[0..4], &MAGIC);
-    assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 3);
+    assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 4);
     let n_nodes = u32::from_le_bytes(bytes[32..36].try_into().unwrap()) as usize;
     let n_edges = u32::from_le_bytes(bytes[36..40].try_into().unwrap()) as usize;
     let n_quads = u32::from_le_bytes(bytes[40..44].try_into().unwrap()) as usize;
     assert_eq!((n_nodes, n_edges, n_quads), (8, 12, 6));
     // Exact length, or a client's typed-array views walk off the end.
-    // Per node: three f32 of position and one u32 of name. Per quadrangle:
-    // four corner indices and the two names it is coloured by.
+    // Per node: three f32 of position and one u32 of name. Per edge: two
+    // node indices and a name. Per quadrangle: four corner indices and the
+    // two names it is coloured by.
     assert_eq!(
         bytes.len(),
-        HEADER + n_nodes * 16 + n_edges * 8 + n_quads * 24
+        HEADER + n_nodes * 16 + n_edges * 12 + n_quads * 24
     );
     // Everything after the f64 centre is 4-aligned, so a client can make typed
     // array views over these bytes without copying them first.
@@ -596,5 +597,60 @@ mod removal {
             s
         };
         assert_eq!(build().view_buffer(), build().view_buffer());
+    }
+}
+
+/// The sheet through an edge, as a question asked of the session.
+mod sheets {
+    use super::*;
+
+    #[test]
+    fn a_lone_cube_answers_with_four_edges() {
+        let mut s = Session::new().unwrap();
+        s.apply(Command::CreateCube {
+            origin: [0.0, 0.0, 0.0],
+            size: 1.0,
+        })
+        .unwrap();
+
+        let view = ViewBuffer::of(s.blocking(), None);
+        let answer: serde_json::Value =
+            serde_json::from_str(&s.sheet_json(view.edge_names[0])).unwrap();
+        assert_eq!(answer["ok"], true);
+        let edges = answer["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 4);
+        // Each one says where a cut would run from and to, which is what the
+        // viewer draws and what a cut will use.
+        for edge in edges {
+            assert_eq!(edge["from"].as_array().unwrap().len(), 3);
+            assert_eq!(edge["to"].as_array().unwrap().len(), 3);
+            assert_ne!(edge["from"], edge["to"]);
+        }
+    }
+
+    #[test]
+    fn a_name_no_edge_answers_to_is_reported_rather_than_thrown() {
+        let s = Session::new().unwrap();
+        let answer: serde_json::Value = serde_json::from_str(&s.sheet_json(4242)).unwrap();
+        assert_eq!(answer["ok"], false);
+        assert!(answer["error"].as_str().unwrap().contains("no edge"));
+    }
+
+    #[test]
+    fn the_buffer_names_its_edges_so_a_client_can_ask() {
+        let mut s = Session::new().unwrap();
+        s.apply(Command::CreateCube {
+            origin: [0.0, 0.0, 0.0],
+            size: 1.0,
+        })
+        .unwrap();
+        let view = ViewBuffer::of(s.blocking(), None);
+
+        assert_eq!(view.edge_names.len(), 12);
+        let mut names = view.edge_names.clone();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), 12, "every edge has a name of its own");
+        assert!(names.iter().all(|n| *n != u32::MAX));
     }
 }

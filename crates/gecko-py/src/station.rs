@@ -212,6 +212,16 @@ fn answer(shared: &Arc<Shared>, me: u64, text: &str) -> Vec<Message> {
                     .into(),
             )]
         }
+        Some("sheet") => {
+            let edge = request["edge"].as_u64().unwrap_or(u64::MAX) as u32;
+            let sheet: serde_json::Value = {
+                let session = shared.session.lock().expect("session mutex");
+                serde_json::from_str(&session.sheet_json(edge)).unwrap_or_default()
+            };
+            let mut value = sheet;
+            value["id"] = id.into();
+            vec![Message::Text(value.to_string().into())]
+        }
         Some("view") => {
             let bytes = {
                 let session = shared.session.lock().expect("session mutex");

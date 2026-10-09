@@ -11,7 +11,7 @@
  * Python console, and this tab is being told so.
  */
 
-import type { Kernel, Reply, Stats } from "./kernel";
+import type { Kernel, Reply, Sheet, Stats } from "./kernel";
 
 type Pending = {
   resolve: (value: unknown) => void;
@@ -99,6 +99,10 @@ export class RemoteKernel implements Kernel {
   async stats(): Promise<Stats> {
     const raw = await this.ask<{ stats: Stats }>({ kind: "stats" });
     return raw.stats;
+  }
+
+  sheet(edge: number): Promise<Sheet> {
+    return this.ask<Sheet>({ kind: "sheet", edge });
   }
 
   onChanged(listener: () => void): void {

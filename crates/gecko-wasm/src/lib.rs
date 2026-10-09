@@ -41,6 +41,13 @@ impl WasmSession {
         self.inner.view_buffer()
     }
 
+    /// The sheet through an edge. A question, so it has a reply of its own
+    /// rather than going through `applyJson`.
+    #[wasm_bindgen(js_name = sheetJson)]
+    pub fn sheet_json(&self, edge: u32) -> String {
+        self.inner.sheet_json(edge)
+    }
+
     #[wasm_bindgen(js_name = statsJson)]
     pub fn stats_json(&self) -> String {
         self.inner.stats_json()

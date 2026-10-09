@@ -62,14 +62,15 @@ def test_the_view_buffer_is_the_wire_format():
     buf = bytes(s.view_buffer)
 
     assert buf[:4] == b"GKB1"
-    assert int.from_bytes(buf[4:8], "little") == 3
+    assert int.from_bytes(buf[4:8], "little") == 4
     n_nodes = int.from_bytes(buf[32:36], "little")
     n_edges = int.from_bytes(buf[36:40], "little")
     n_quads = int.from_bytes(buf[40:44], "little")
     assert (n_nodes, n_edges, n_quads) == (8, 12, 6)
-    # Per node: three f32 of position and one u32 of name. Per quadrangle:
-    # four corner indices and the face and block names it can be coloured by.
-    assert len(buf) == 44 + n_nodes * 16 + n_edges * 8 + n_quads * 24
+    # Per node: three f32 of position and one u32 of name. Per edge: two node
+    # indices and a name. Per quadrangle: four corner indices and the face
+    # and block names it can be coloured by.
+    assert len(buf) == 44 + n_nodes * 16 + n_edges * 12 + n_quads * 24
 
 
 def test_show_serves_the_viewer_and_is_idempotent():
@@ -243,3 +244,36 @@ def test_a_refused_removal_raises_and_changes_nothing():
     with pytest.raises(ValueError, match="no block"):
         s.remove_block(4242)
     assert bytes(s.view_buffer) == before
+
+
+def test_the_sheet_through_an_edge():
+    s = gecko.Session()
+    s.create_cube([0.0, 0.0, 0.0], 1.0)
+    s.create_cube([1.0, 0.0, 0.0], 1.0)
+    blocks = [b["id"] for b in s.blocks]
+    seam = [f["id"] for f in s.faces if abs(f["centre"][0] - 1.0) < 1e-9]
+    s.glue_faces(*seam)
+
+    # An edge of the shared face: its sheet runs on into the second block.
+    nodes = {n["id"]: n["pos"] for n in s.nodes}
+    on_seam = [i for i, p in nodes.items() if abs(p[0] - 1.0) < 1e-9]
+    assert len(on_seam) == 4
+
+    # Any edge parallel to y, found through the sheet's own report.
+    sheets = {}
+    for edge in range(40):
+        try:
+            sheets[edge] = s.sheet(edge)
+        except ValueError:
+            pass
+    sizes = sorted({len(v) for v in sheets.values()})
+    # Four for a sheet that stays in one block, six for one that crosses.
+    assert sizes == [4, 6], sizes
+    assert blocks  # two blocks, welded
+
+
+def test_a_sheet_asked_for_by_a_name_no_edge_has():
+    s = gecko.Session()
+    s.create_cube([0.0, 0.0, 0.0], 1.0)
+    with pytest.raises(ValueError, match="no edge"):
+        s.sheet(4242)

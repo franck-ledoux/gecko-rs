@@ -6,7 +6,7 @@
  */
 
 import initWasm, { initSync, Session } from "./pkg/gecko";
-import type { Kernel, Reply, Stats } from "./kernel";
+import type { Kernel, Reply, Sheet, Stats } from "./kernel";
 
 let ready = false;
 
@@ -40,6 +40,10 @@ export class WasmKernel implements Kernel {
 
   async stats(): Promise<Stats> {
     return JSON.parse(this.session.statsJson()) as Stats;
+  }
+
+  async sheet(edge: number): Promise<Sheet> {
+    return JSON.parse(this.session.sheetJson(edge)) as Sheet;
   }
 
   /** Nothing else holds this kernel, so nothing else can change it. */

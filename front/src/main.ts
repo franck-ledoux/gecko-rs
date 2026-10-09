@@ -259,8 +259,47 @@ async function boot() {
     // ended — not a face being chosen. The node wins: it is the smaller
     // target, and the one you had to aim at.
     if (viewer.pickNode(x, y) !== null) return;
+    // Smallest target first: a handle, then a line, then the surface behind
+    // them. Each is the thing you had to aim at to hit it.
+    const edge = viewer.pickEdge(x, y);
+    if (edge !== null) {
+      void chooseEdge(edge);
+      return;
+    }
     choose(viewer.pickSurface(x, y));
   });
+
+  /**
+   * Light up the sheet of hexahedra through an edge.
+   *
+   * Nothing is cut yet: this is the sheet, shown, so that what a cut would
+   * touch is visible before there is a cut. Clicking the same edge again
+   * puts it out.
+   */
+  async function chooseEdge(edge: number) {
+    if (viewer.selectedEdge === edge) {
+      clearSelection();
+      return;
+    }
+    choose(null);
+    const sheet = await kernel.sheet(edge);
+    if (!sheet.ok) {
+      viewer.highlightEdges([]);
+      viewer.selectedEdge = null;
+      say(sheet.error);
+      return;
+    }
+    viewer.selectedEdge = edge;
+    viewer.highlightEdges(sheet.edges.map((e) => e.id));
+    say(`sheet through edge ${edge} — ${sheet.edges.length} edges`);
+  }
+
+  /** Nothing selected: no faces, no sheet. */
+  function clearSelection() {
+    viewer.selectedEdge = null;
+    viewer.highlightEdges([]);
+    choose(null);
+  }
 
   /**
    * Add, remove, or clear.
@@ -439,7 +478,7 @@ async function boot() {
     cube: createCube,
     glue: glueSelection,
     remove: removeSelection,
-    clear: () => choose(null),
+    clear: clearSelection,
     recentre,
     screenshot,
     "axis-x": () => lookDown("+x"),
@@ -608,7 +647,14 @@ async function boot() {
     pickNode: (x: number, y: number) => viewer.pickNode(x, y),
     pickSurface: (x: number, y: number) => viewer.pickSurface(x, y),
     faceScreen: (name: number) => viewer.faceScreen(name),
+    edgeScreen: (name: number) => viewer.edgeScreen(name),
     selection: () => viewer.selection,
+    sheet: () => viewer.highlighted,
+    selectedEdge: () => viewer.selectedEdge,
+    pickEdge: (x: number, y: number) => viewer.pickEdge(x, y),
+    pickEdgeByName: (edge: number) => chooseEdge(edge),
+    edgeNames: () => viewer.edgeNames(),
+    edgeMidpoint: (edge: number) => viewer.edgeMidpoint(edge),
     choose: (pick: Pick | null) => choose(pick),
     nodeScreen: (name: number) => viewer.nodeScreen(name),
     nodePosition: (name: number) => viewer.nodePosition(name),

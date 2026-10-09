@@ -52,6 +52,7 @@ nav:
       - Station mode: user-guide/station.md
       - Appearance: user-guide/display.md
       - Joining and removing blocks: user-guide/gluing.md
+      - Sheets: user-guide/sheets.md
       - Python API: user-guide/python.md
   - Developer Guide:
       - Architecture: developer-guide/architecture.md

@@ -26,6 +26,15 @@ export interface Stats {
   blocks: number;
 }
 
+/** One edge of a sheet, and the way round a cut parameter would run on it. */
+export interface SheetEdge {
+  id: number;
+  from: [number, number, number];
+  to: [number, number, number];
+}
+
+export type Sheet = { ok: true; edges: SheetEdge[] } | { ok: false; error: string };
+
 export type Mode = "static" | "station";
 
 export interface Kernel {
@@ -33,6 +42,8 @@ export interface Kernel {
   apply(command: Record<string, unknown>): Promise<Reply>;
   view(): Promise<Uint8Array>;
   stats(): Promise<Stats>;
+  /** The sheet of hexahedra through an edge. A question, not a change. */
+  sheet(edge: number): Promise<Sheet>;
   /** Register interest in changes this client did not make. */
   onChanged(listener: () => void): void;
   close(): void;

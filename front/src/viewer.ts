@@ -56,6 +56,10 @@ export type Drop = (name: number, to: [number, number, number]) => void;
 /** How many pixels across a node handle should be, whatever the zoom. */
 export const HANDLE_PIXELS = 11;
 
+/** How near a line the pointer has to be to count as on it. Lines are one
+ *  pixel wide and nobody can hit one. */
+export const EDGE_PICK_PIXELS = 7;
+
 /** How long a recentring takes. Long enough to follow the model moving into
  *  place, short enough not to be waiting for it. */
 export const FRAMING_MS = 450;
@@ -159,6 +163,12 @@ export class Viewer {
 
   private nodes: Mesh[] = [];
   private wire?: LinesMesh;
+  /** The sheet the viewer has been asked to light up, by edge name. */
+  private lit: number[] = [];
+  /** The edge that sheet was asked for, so a second click on it can put the
+   *  sheet out again. View state, like the face selection. */
+  selectedEdge: number | null = null;
+  private litWire?: LinesMesh;
   private surfaces: Record<Group, { mesh?: Mesh; data?: SurfaceData }> = {
     faces: {},
     blocks: {},
@@ -260,6 +270,7 @@ export class Viewer {
     }
     if (this.wire) this.wire.color = Color3.FromHexString(theme.edges);
     this.rebuildEdges();
+    this.rebuildHighlight();
     this.rebuildSurface("faces");
     this.rebuildSurface("blocks");
   }
@@ -414,7 +425,10 @@ export class Viewer {
       this.scene,
     );
     this.wire.color = Color3.FromHexString(this.prefs.theme.edges);
-    this.wire.isPickable = false;
+    // Pickable, because an edge is what a sheet is named by. The handles
+    // still win: the scene's pointer predicates only ever see those, and
+    // this is reached by `pickEdge` on a click that missed one.
+    this.wire.isPickable = true;
     this.wire.layerMask = MAIN_LAYER;
   }
 
@@ -441,6 +455,7 @@ export class Viewer {
       positions: Float32Array.from(view.positions),
       names: Uint32Array.from(view.names),
       edges: Uint32Array.from(view.edges),
+      edgeNames: Uint32Array.from(view.edgeNames),
       quads: Uint32Array.from(view.quads),
       quadFaces: Uint32Array.from(view.quadFaces),
       quadBlocks: Uint32Array.from(view.quadBlocks),
@@ -448,6 +463,7 @@ export class Viewer {
     this.nodes.forEach((m) => m.dispose());
     this.nodes = [];
     this.rebuildEdges();
+    this.rebuildHighlight();
     this.rebuildSurface("faces");
     this.rebuildSurface("blocks");
 
@@ -546,19 +562,77 @@ export class Viewer {
    *  handle. */
   nodeScreen(name: number): [number, number] | null {
     const mesh = this.nodes.find((m) => m.metadata.name === name);
-    if (!mesh) return null;
-    const engine = this.scene.getEngine();
-    // The main camera's own matrices, not `scene.getTransformMatrix()`: with
-    // two active cameras that holds whichever rendered last, which is the
-    // corner gizmo.
-    const v = Vector3.Project(
-      mesh.position,
-      Matrix.Identity(),
-      this.camera.getViewMatrix().multiply(this.camera.getProjectionMatrix()),
-      this.camera.viewport.toGlobal(engine.getRenderWidth(), engine.getRenderHeight()),
+    return mesh ? this.toScreen(mesh.position) : null;
+  }
+
+  /**
+   * Screen coordinates -> the name of the edge under them.
+   *
+   * Babylon reports which line segment it hit, and the segments are the
+   * edges in the order the view lists them.
+   */
+  pickEdge(x: number, y: number): number | null {
+    if (!this.wire || !this.view) return null;
+    const hit = this.scene.pick(x, y, (m) => m === this.wire, false, this.camera);
+    if (!hit?.hit || hit.faceId < 0) return null;
+    return hit.faceId < this.view.edgeNames.length ? this.view.edgeNames[hit.faceId] : null;
+  }
+
+  /**
+   * Light up a set of edges by name.
+   *
+   * A second line mesh rather than per-vertex colours on the first: the
+   * wireframe is rebuilt on every drag frame, and this changes only when a
+   * selection does. It is drawn in a later rendering group, so it shows
+   * **through** the model — which is the point, since a sheet runs through
+   * it and where it comes out the far side is what you want to see.
+   */
+  highlightEdges(names: readonly number[]) {
+    this.lit = [...names];
+    this.rebuildHighlight();
+  }
+
+  get highlighted(): number[] {
+    return [...this.lit];
+  }
+
+  private rebuildHighlight() {
+    this.litWire?.dispose();
+    this.litWire = undefined;
+    if (!this.view || !this.lit.length) return;
+
+    const wanted = new Set(this.lit);
+    const flat = edgeSegments(this.view, this.prefs.edges.shrink);
+    const lines: Vector3[][] = [];
+    for (let e = 0; e < this.view.edgeNames.length; e++) {
+      if (!wanted.has(this.view.edgeNames[e])) continue;
+      const at = e * 6;
+      lines.push([
+        new Vector3(flat[at], flat[at + 1], flat[at + 2]),
+        new Vector3(flat[at + 3], flat[at + 4], flat[at + 5]),
+      ]);
+    }
+    if (!lines.length) return;
+    this.litWire = CreateLineSystem("sheet", { lines, updatable: false }, this.scene);
+    this.litWire.color = Color3.FromHexString(ANCHOR);
+    this.litWire.isPickable = false;
+    this.litWire.layerMask = MAIN_LAYER;
+    this.litWire.renderingGroupId = 1;
+  }
+
+  /** The midpoint of an edge, in **CSS pixels** — the inverse of `pickEdge`,
+   *  and what lets a test aim a real mouse at a real line. */
+  edgeScreen(name: number): [number, number] | null {
+    if (!this.view) return null;
+    const at = this.view.edgeNames.indexOf(name);
+    if (at < 0) return null;
+    const flat = edgeSegments(this.view, this.prefs.edges.shrink);
+    const mid = new Vector3(
+      (flat[at * 6] + flat[at * 6 + 3]) / 2,
+      (flat[at * 6 + 1] + flat[at * 6 + 4]) / 2,
+      (flat[at * 6 + 2] + flat[at * 6 + 5]) / 2,
     );
-    const css = engine.getHardwareScalingLevel();
-    return [v.x * css, v.y * css];
+    return this.toScreen(mid);
   }
 
   /** The centre of a drawn face, in **CSS pixels** — the inverse of
@@ -577,17 +651,28 @@ export class Viewer {
           data.positions[v + 2] / 4,
         );
       }
-      const engine = this.scene.getEngine();
-      const at = Vector3.Project(
-        mid,
-        Matrix.Identity(),
-        this.camera.getViewMatrix().multiply(this.camera.getProjectionMatrix()),
-        this.camera.viewport.toGlobal(engine.getRenderWidth(), engine.getRenderHeight()),
-      );
-      const css = engine.getHardwareScalingLevel();
-      return [at.x * css, at.y * css];
+      return this.toScreen(mid);
     }
     return null;
+  }
+
+  /**
+   * A point in the scene, in CSS pixels.
+   *
+   * The main camera's own matrices, not `scene.getTransformMatrix()`: with
+   * two active cameras that holds whichever rendered last, which is the
+   * corner gizmo.
+   */
+  private toScreen(at: Vector3): [number, number] {
+    const engine = this.scene.getEngine();
+    const projected = Vector3.Project(
+      at,
+      Matrix.Identity(),
+      this.camera.getViewMatrix().multiply(this.camera.getProjectionMatrix()),
+      this.camera.viewport.toGlobal(engine.getRenderWidth(), engine.getRenderHeight()),
+    );
+    const css = engine.getHardwareScalingLevel();
+    return [projected.x * css, projected.y * css];
   }
 
   /** Model-space position of a node, as the scene currently shows it. */
@@ -674,6 +759,22 @@ export class Viewer {
     return this.scene.getAllAnimatablesByTarget(this.camera).length > 0;
   }
 
+  /** The kernel's names for the edges on screen. */
+  edgeNames(): number[] {
+    return this.view ? Array.from(this.view.edgeNames) : [];
+  }
+
+  /** An edge's midpoint, in model coordinates. */
+  edgeMidpoint(name: number): [number, number, number] | null {
+    if (!this.view) return null;
+    const at = this.view.edgeNames.indexOf(name);
+    if (at < 0) return null;
+    const [a, b] = [this.view.edges[at * 2] * 3, this.view.edges[at * 2 + 1] * 3];
+    return [0, 1, 2].map(
+      (k) => (this.view!.positions[a + k] + this.view!.positions[b + k]) / 2 + this.centre[k],
+    ) as [number, number, number];
+  }
+
   /** The kernel's names for the nodes on screen. */
   names(): number[] {
     return this.nodes.map((m) => m.metadata.name as number);
@@ -692,9 +793,21 @@ export class Viewer {
    * once, not a loop.
    */
   private rescaleHandles() {
-    if (!this.nodes.length) return;
     const engine = this.scene.getEngine();
     const height = engine.getRenderHeight();
+    if (this.wire) {
+      // Half, because the threshold is a radius about the line. Taken at the
+      // distance to what the camera is looking at: an exact answer would be
+      // per edge, and this is a click tolerance.
+      this.wire.intersectionThreshold =
+        worldSizeForPixels(
+          EDGE_PICK_PIXELS,
+          Vector3.Distance(this.camera.target, this.camera.position),
+          this.camera.fov,
+          height,
+        ) / 2;
+    }
+    if (!this.nodes.length) return;
     for (const mesh of this.nodes) {
       const distance = Vector3.Distance(mesh.position, this.camera.position);
       const wanted = worldSizeForPixels(HANDLE_PIXELS, distance, this.camera.fov, height);

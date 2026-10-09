@@ -14,10 +14,11 @@ use gecko_core::Blocking;
 use std::collections::HashMap;
 
 pub const MAGIC: [u8; 4] = *b"GKB1";
-/// 2 added the node names, 3 the surface. The field is bumped rather than
-/// quietly reused: two independent decoders read this, and a silent change is
-/// how one of them ends up reading the wrong field as a coordinate.
-pub const VERSION: u32 = 3;
+/// 2 added the node names, 3 the surface, 4 the edge names. The field is
+/// bumped rather than quietly reused: three independent decoders read this,
+/// and a silent change is how one of them ends up reading the wrong field as
+/// a coordinate.
+pub const VERSION: u32 = 4;
 /// magic + version + f64 centre + three counts.
 pub const HEADER: usize = 44;
 
@@ -34,6 +35,11 @@ pub struct ViewBuffer {
     pub names: Vec<u32>,
     /// Two indices into `positions` per edge.
     pub edges: Vec<u32>,
+    /// The stable name of each edge, in the order `edges` lists them.
+    ///
+    /// What lets a click on a line say which edge it was — and so what lets
+    /// the viewer ask the kernel for the sheet through it.
+    pub edge_names: Vec<u32>,
     /// Four indices into `positions` per quadrangle, wound outward.
     ///
     /// One quadrangle per **(face, block) pair**, which is why there are two
@@ -80,10 +86,12 @@ impl ViewBuffer {
             .collect();
 
         let mut edges = Vec::new();
+        let mut edge_names = Vec::new();
         for e in blocking.map().iter_edges() {
             let (a, b) = blocking.edge_endpoints(e);
             if let (Some(a), Some(b)) = (at.get(&a), at.get(&b)) {
                 edges.extend_from_slice(&[*a, *b]);
+                edge_names.push(blocking.edge_tag(e).id.get().unwrap_or(u32::MAX));
             }
         }
 
@@ -112,6 +120,7 @@ impl ViewBuffer {
             positions,
             names,
             edges,
+            edge_names,
             quads,
             quad_faces,
             quad_blocks,
@@ -127,6 +136,7 @@ impl ViewBuffer {
                 + (self.positions.len()
                     + self.names.len()
                     + self.edges.len()
+                    + self.edge_names.len()
                     + self.quads.len()
                     + self.quad_faces.len()
                     + self.quad_blocks.len())
@@ -147,6 +157,9 @@ impl ViewBuffer {
             out.extend_from_slice(&x.to_le_bytes());
         }
         for x in &self.edges {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        for x in &self.edge_names {
             out.extend_from_slice(&x.to_le_bytes());
         }
         for x in &self.quads {
