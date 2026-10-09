@@ -277,3 +277,67 @@ def test_a_sheet_asked_for_by_a_name_no_edge_has():
     s.create_cube([0.0, 0.0, 0.0], 1.0)
     with pytest.raises(ValueError, match="no edge"):
         s.sheet(4242)
+
+
+def _sheet(session, edge):
+    """The sheet through an edge, or None if no edge answers to that name."""
+    try:
+        return session.sheet(edge)
+    except ValueError:
+        return None
+
+
+def _edge_along(session, axis, among=200):
+    """An edge whose sheet runs along this axis.
+
+    The sheet reports where a cut would run from and to on each of its
+    edges, so the direction is in the answer rather than worked out from
+    the geometry by hand.
+    """
+    for edge in range(among):
+        sheet = _sheet(session, edge)
+        if not sheet:
+            continue
+        step = [abs(sheet[0]["to"][k] - sheet[0]["from"][k]) for k in range(3)]
+        if max(range(3), key=lambda k: step[k]) == axis:
+            return edge
+    raise AssertionError(f"no edge along axis {axis}")
+
+
+def test_cutting_a_sheet_from_python():
+    s = gecko.Session()
+    s.create_cube([0.0, 0.0, 0.0], 1.0)
+
+    edge = _edge_along(s, 2)
+    assert len(s.sheet(edge)) == 4
+
+    message = s.split_sheet(edge, 0.25)
+    assert "cut at 0.250" in message
+    assert s.stats == {"nodes": 12, "edges": 20, "faces": 11, "blocks": 2}
+
+    # One plane, not two: the parameter runs the same way round on every
+    # edge of the sheet, so all four new nodes land together.
+    heights = sorted({round(n["pos"][2], 9) for n in s.nodes})
+    assert heights in ([0.0, 0.25, 1.0], [0.0, 0.75, 1.0]), heights
+    assert sum(1 for n in s.nodes if abs(n["pos"][2] - heights[1]) < 1e-9) == 4
+
+
+def test_a_cut_can_be_cut_again():
+    # One cut per direction gives a 2x2x2 grid — the strongest sign that
+    # what comes out is a mesh and not merely the right counts.
+    s = gecko.Session()
+    s.create_cube([0.0, 0.0, 0.0], 1.0)
+    for axis in (2, 0, 1):
+        s.split_sheet(_edge_along(s, axis), 0.5)
+    assert s.stats == {"nodes": 27, "edges": 54, "faces": 36, "blocks": 8}
+
+
+def test_a_parameter_outside_the_edge_is_refused():
+    s = gecko.Session()
+    s.create_cube([0.0, 0.0, 0.0], 1.0)
+    before = bytes(s.view_buffer)
+    edge = _edge_along(s, 2)
+    for at in (0.0, 1.0, -0.5, 2.0):
+        with pytest.raises(ValueError, match="strictly inside"):
+            s.split_sheet(edge, at)
+    assert bytes(s.view_buffer) == before

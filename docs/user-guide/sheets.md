@@ -56,8 +56,38 @@ from across the room.
 
 Clicking the same edge again puts it out, as does `Esc`.
 
-## Not yet
+## Cutting
 
-Cutting. This is the half that could be got wrong invisibly, so it is the half
-that went first: if the sheet lighting up is not the set of cells you expect,
-that is worth knowing before the surgery is written rather than after.
+**Press an edge and drag along it.** The sheet lights up as you press, the
+cut follows the pointer, and letting go cuts.
+
+While you drag, every edge of the sheet is drawn in two colours: from its
+start up to the cut in one, beyond it in the other. The join between the two
+*is* the plane. One edge would not be enough — what the parameter does to the
+rest of the sheet is the thing worth seeing before committing to it.
+
+Pressing and letting go without moving selects the sheet rather than cutting
+it. A cut cannot be undone, and a click is cheap to make by accident.
+
+The parameter is clamped just short of either end: a cut at 0 or 1 is not a
+cut, and the kernel refuses it.
+
+From Python:
+
+```python
+s.create_cube([0, 0, 0], 1.0)
+edge = ...                  # a name from s.sheet(...)
+s.split_sheet(edge, 0.25)
+s.stats     # {'nodes': 12, 'edges': 20, 'faces': 11, 'blocks': 2}
+```
+
+## What a cut does to names
+
+Everything the sheet touches is replaced. Each split edge becomes two new
+edges, each crossed face two new faces, each crossed block two new blocks —
+and none of them inherits the name of what it came from. That is what a split
+means here: what comes out is new cells, not a cell and a claimant to an old
+name.
+
+Cells the sheet does not touch keep their names. The corner keys survive
+throughout, so the cells that had a corner go on recognising it.

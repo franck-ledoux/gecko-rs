@@ -886,3 +886,79 @@ test("a sheet runs on through a glued block", async ({ page }) => {
   await page.waitForFunction(() => (window as any).__gecko.sheet().length === 0);
   expect(errors).toEqual([]);
 });
+
+test("dragging along an edge cuts the whole sheet", async ({ page }) => {
+  const errors = await boot(page);
+  await page.evaluate(EDGE_NEAR);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  const edge = (await page.evaluate(() => edgeNear([1, 0.5, 1]))) as number;
+  const at = (await page.evaluate((e) => (window as any).__gecko.edgeScreen(e), edge)) as [
+    number,
+    number,
+  ];
+  const box = (await page.locator("#view").boundingBox())!;
+  const camera = await page.evaluate(() => (window as any).__gecko.camera());
+
+  await page.mouse.move(box.x + at[0], box.y + at[1]);
+  await page.mouse.down();
+  // Pressing lights the sheet; nothing is cut yet.
+  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 4);
+  expect(await page.evaluate(() => (window as any).__gecko.counts().nodes)).toBe(8);
+
+  for (let i = 1; i <= 6; i++) await page.mouse.move(box.x + at[0], box.y + at[1] - i * 12);
+  // Aimed, and said, and still nothing cut.
+  const aimed = (await page.evaluate(() => (window as any).__gecko.aimedAt())) as number;
+  expect(aimed).toBeGreaterThan(0);
+  expect(aimed).toBeLessThan(1);
+  await expect(page.locator("#status")).toContainText("let go to cut");
+  expect(await page.evaluate(() => (window as any).__gecko.counts().nodes)).toBe(8);
+
+  // Aiming is not orbiting: the pointer was taken off the camera.
+  const during = await page.evaluate(() => (window as any).__gecko.camera());
+  expect(during.alpha).toBe(camera.alpha);
+  expect(during.beta).toBe(camera.beta);
+
+  await page.mouse.up();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 12);
+
+  // One cube became two blocks, sharing a face.
+  await expect(page.locator("[data-test=blocks]")).toHaveText("2");
+  await expect(page.locator("[data-test=faces]")).toHaveText("11");
+  expect(await page.evaluate(() => (window as any).__gecko.counts())).toEqual({
+    nodes: 12,
+    edges: 20,
+  });
+  // The sheet is gone with the edge it was named by.
+  expect(await page.evaluate(() => (window as any).__gecko.sheet())).toEqual([]);
+  expect(await page.evaluate(() => (window as any).__gecko.aimedAt())).toBeNull();
+  expect(errors).toEqual([]);
+});
+
+test("pressing an edge without moving selects it rather than cutting", async ({ page }) => {
+  // A cut cannot be undone, and a click is cheap to make by accident.
+  const errors = await boot(page);
+  await page.evaluate(EDGE_NEAR);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  const edge = (await page.evaluate(() => edgeNear([1, 0.5, 1]))) as number;
+  const at = (await page.evaluate((e) => (window as any).__gecko.edgeScreen(e), edge)) as [
+    number,
+    number,
+  ];
+  const box = (await page.locator("#view").boundingBox())!;
+
+  await page.mouse.click(box.x + at[0], box.y + at[1]);
+  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 4);
+  expect(await page.evaluate(() => (window as any).__gecko.counts().nodes)).toBe(8);
+
+  // And clicking it again puts the sheet out, still without cutting.
+  await page.mouse.click(box.x + at[0], box.y + at[1]);
+  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 0);
+  expect(await page.evaluate(() => (window as any).__gecko.counts().nodes)).toBe(8);
+  expect(errors).toEqual([]);
+});

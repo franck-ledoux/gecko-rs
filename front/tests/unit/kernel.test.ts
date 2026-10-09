@@ -1292,11 +1292,11 @@ describe("lighting up a sheet", () => {
     expect(viewer.scene.getMeshByName("sheet")).toBeNull();
 
     const names = viewer.edgeNames().slice(0, 4);
-    viewer.highlightEdges(names);
+    viewer.showSheet(names.map((id) => ({ id, from: [0, 0, 0], to: [1, 0, 0] }) as const));
     expect(viewer.highlighted).toEqual(names);
     expect(viewer.scene.getMeshByName("sheet")).not.toBeNull();
 
-    viewer.highlightEdges([]);
+    viewer.showSheet([]);
     expect(viewer.scene.getMeshByName("sheet")).toBeNull();
   });
 
@@ -1304,7 +1304,7 @@ describe("lighting up a sheet", () => {
     // A node dragged, a setting changed: the sheet is still the sheet.
     const { viewer, kernel } = await cube();
     const names = viewer.edgeNames().slice(0, 2);
-    viewer.highlightEdges(names);
+    viewer.showSheet(names.map((id) => ({ id, from: [0, 0, 0], to: [1, 0, 0] }) as const));
 
     viewer.setView(decodeView(await kernel.view()));
     expect(viewer.highlighted).toEqual(names);

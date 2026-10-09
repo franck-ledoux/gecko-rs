@@ -63,6 +63,14 @@ pub enum Command {
     RemoveBlock {
         block: u32,
     },
+    /// Cut the whole sheet of hexahedra through an edge, `at` along it.
+    ///
+    /// The parameter runs the way the sheet reports, so it means the same
+    /// side of the sheet on every edge of it, and must fall strictly inside.
+    SplitSheet {
+        edge: u32,
+        at: f64,
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -127,6 +135,20 @@ impl Session {
                 Ok(Outcome {
                     message: format!(
                         "block {block:?} removed — {} nodes, {} edges, {} faces, {} blocks",
+                        self.blocking.nb_nodes(),
+                        self.blocking.nb_edges(),
+                        self.blocking.nb_faces(),
+                        self.blocking.nb_blocks(),
+                    ),
+                    view_changed: true,
+                })
+            }
+            Command::SplitSheet { edge, at } => {
+                let edge = CellId::from_raw(edge);
+                self.blocking.split_sheet(edge, at)?;
+                Ok(Outcome {
+                    message: format!(
+                        "sheet through {edge:?} cut at {at:.3} — {} nodes, {} edges, {} faces, {} blocks",
                         self.blocking.nb_nodes(),
                         self.blocking.nb_edges(),
                         self.blocking.nb_faces(),

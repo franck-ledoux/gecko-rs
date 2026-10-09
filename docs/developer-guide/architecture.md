@@ -113,6 +113,48 @@ leaves exactly four candidates, and the one that moves the corners least wins.
 Ties go to the lowest turn, because both modes ship these bytes and compare
 them.
 
+## Cutting a sheet
+
+`CMap3` has no split of any kind — not of an edge, a face or a volume — so a
+sheet cut is dart surgery, in three passes over the whole sheet: every edge,
+then every face it crosses, then every block.
+
+Whole sheet at a time, not cell by cell. Cutting one block and then its
+neighbour would leave their shared face half cut in between, and nothing
+downstream could tell that state from a mistake.
+
+**An edge is a ring of darts**, one per face-side around it, and every one
+becomes two. The β₂ and β₃ partners are then re-paired *crosswise*: if `d`
+runs A→B its partner runs B→A, so after the cut `d` is A→P and the partner's
+new half is P→A — those two go together. Pairing the originals again would
+join A→P to B→P, which share no edge at all.
+
+**A face is cut by the half it keeps.** Which of the two new darts belongs to
+which half is decided by the sheet's own direction: the half entered from a
+`from` node is the `from` half. That is what lets the block split know which
+of its quadrangles are above the cut and which below, without any geometry.
+
+**A block is closed off along its ring of new edges.** Until then its two
+halves are still joined, by the β₂ pairing each ring edge's two darts across
+its own face. The cut face goes between them, β₃ to itself, which is what two
+blocks sharing a face are.
+
+### Why the raw setters
+
+`link` and `unlink` are not the per-dart operations they look like.
+`one_link` also links the β₃ mirror, to keep β₃∘β₁ = β₀∘β₃; `three_link`
+walks whole faces and refuses a pair of different lengths. Both are right for
+editing a finished map and wrong during surgery: halfway through a split the
+two sides of a face genuinely are different lengths, and the mirror is
+something the surgery already knows how to wire. Judged by those operators,
+every intermediate state is invalid — which is how the first attempt failed,
+with `AsymmetricalFaces` on a map that was simply not finished yet.
+
+So the wiring is set outright with `set_beta`, and a coherence check in the
+tests verifies afterwards what those operators would have checked throughout:
+β₀ undoes β₁, β₂ and β₃ are involutions, and each joins the same two nodes
+the other way round.
+
 ## Naming a cell
 
 A combinatorial map names its cells by darts: `vertex_id`, `edge_id` and the

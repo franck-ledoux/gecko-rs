@@ -99,6 +99,15 @@ impl PySession {
         self.command(serde_json::json!({ "op": "glue_faces", "first": first, "second": second }))
     }
 
+    /// Cut the whole sheet of hexahedra through an edge, `at` along it.
+    ///
+    /// `at` runs the way [`Session::sheet`] reports, so it means the same
+    /// side of the sheet on every edge of it, and has to fall strictly
+    /// between the ends.
+    fn split_sheet(&self, edge: u32, at: f64) -> PyResult<String> {
+        self.command(serde_json::json!({ "op": "split_sheet", "edge": edge, "at": at }))
+    }
+
     /// Take one block away.
     ///
     /// Whatever it was glued to keeps its own cells: the shared ones are

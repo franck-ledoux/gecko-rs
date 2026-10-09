@@ -6,7 +6,7 @@
 //! the one thing it cannot do for us is hand out names that survive its own
 //! renumbering.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use honeycomb_core::attributes::AttributeError;
 use honeycomb_core::cmap::{
@@ -126,6 +126,10 @@ pub enum BlockingError {
     NoSuchEdge(CellId),
     #[error("the sheet through edge {0:?} meets itself the wrong way round")]
     TangledSheet(CellId),
+    #[error("a cut has to fall strictly inside the edge, not at {0}")]
+    BadParameter(f64),
+    #[error("the sheet through edge {0:?} does not close into a surface")]
+    BrokenSheet(CellId),
 }
 
 impl From<DartReleaseError> for BlockingError {
@@ -500,6 +504,325 @@ impl Blocking {
         Ok(found.into_values().collect())
     }
 
+    /// Cut one edge in two, putting a node at `at`.
+    ///
+    /// An edge in a 3-map is a ring of darts — one per face-side around it —
+    /// and every one of them has to become two. For a dart running A→B the
+    /// original keeps A→P and a new one takes P→B.
+    ///
+    /// The β₂ and β₃ partners are then re-paired **crosswise**. If `d` runs
+    /// A→B its partner `g` runs B→A, so after the cut `d` is A→P and `g`'s
+    /// new half is P→A: those two are the pair. Pairing `d` with `g` again
+    /// would join A→P to B→P, which share no edge at all.
+    ///
+    /// Both halves come out unnamed, as a split should: what comes out of
+    /// one is two new cells, not a cell and a claimant to the old name.
+    ///
+    /// # Why the raw setters
+    ///
+    /// `link` and `unlink` are not the per-dart operations they look like.
+    /// `one_link` also links the β₃ mirror, to keep β₃∘β₁ = β₀∘β₃; `three_link`
+    /// walks whole faces and refuses a pair of different lengths. Both are
+    /// right for editing a finished map and wrong here: halfway through a
+    /// split the two sides of a face genuinely are different lengths, and the
+    /// mirror is something this already knows how to wire. Judged by those
+    /// operators, every intermediate state is invalid.
+    ///
+    /// So the wiring is set outright, and `is_coherent` in the tests below
+    /// checks afterwards what they would have checked throughout.
+    fn split_edge(
+        &mut self,
+        edge: EdgeIdType,
+        at: [f64; 3],
+    ) -> Result<VertexIdType, BlockingError> {
+        let darts: Vec<DartIdType> = self
+            .map
+            .orbit(OrbitPolicy::Edge, edge as DartIdType)
+            .collect();
+        let base = self.map.allocate_used_darts(darts.len());
+        let fresh: HashMap<DartIdType, DartIdType> = darts
+            .iter()
+            .enumerate()
+            .map(|(i, d)| (*d, base + i as DartIdType))
+            .collect();
+
+        // Read every pairing before any of it is disturbed.
+        let after: HashMap<DartIdType, DartIdType> =
+            darts.iter().map(|&d| (d, self.map.beta::<1>(d))).collect();
+        let two: HashMap<DartIdType, DartIdType> =
+            darts.iter().map(|&d| (d, self.map.beta::<2>(d))).collect();
+        let three: HashMap<DartIdType, DartIdType> =
+            darts.iter().map(|&d| (d, self.map.beta::<3>(d))).collect();
+
+        for &d in &darts {
+            let (n, next) = (fresh[&d], after[&d]);
+            self.map.set_beta::<1>(d, n);
+            self.map.set_beta::<0>(n, d);
+            self.map.set_beta::<1>(n, next);
+            self.map.set_beta::<0>(next, n);
+
+            // Crosswise, and only where there was a partner to begin with.
+            for (i, partner) in [(2u8, two[&d]), (3u8, three[&d])] {
+                if partner == NULL_DART_ID {
+                    continue;
+                }
+                let mirror = fresh[&partner];
+                if i == 2 {
+                    self.map.set_beta::<2>(d, mirror);
+                    self.map.set_beta::<2>(n, partner);
+                } else {
+                    self.map.set_beta::<3>(d, mirror);
+                    self.map.set_beta::<3>(n, partner);
+                }
+            }
+        }
+
+        // The node in the middle, and the two halves left to be named.
+        let middle = self.map.vertex_id(fresh[&darts[0]]);
+        self.map.write_vertex(middle, (at[0], at[1], at[2]));
+        self.map.write_attribute(
+            middle,
+            NodeTag {
+                id: CellId::NONE,
+                corner_key: self.corners.next_corner(),
+            },
+        );
+        for &d in &[darts[0], fresh[&darts[0]]] {
+            let half = self.map.edge_id(d);
+            self.map.write_attribute(half, EdgeTag { id: CellId::NONE });
+        }
+        Ok(middle)
+    }
+
+    /// Cut the whole sheet through an edge, at `t` along it.
+    ///
+    /// Three passes, in this order, because each needs the one before it
+    /// finished across the **whole** sheet rather than cell by cell: split
+    /// every edge, then every face the sheet crosses, then every block.
+    /// Doing one block at a time would leave its neighbour's shared face
+    /// half-cut, and nothing downstream could tell that from a mistake.
+    ///
+    /// `t` runs along the direction [`sheet_through`][Self::sheet_through]
+    /// reports, which is the same way round on every edge of the sheet —
+    /// otherwise one parameter would mean `t` on some cells and `1 - t` on
+    /// the next.
+    pub fn split_sheet(&mut self, edge: CellId, t: f64) -> Result<(), BlockingError> {
+        if !t.is_finite() || t <= 0.0 || t >= 1.0 {
+            return Err(BlockingError::BadParameter(t));
+        }
+        let sheet = self.sheet_through(edge)?;
+        let from_nodes: HashSet<VertexIdType> = sheet.iter().map(|s| s.from).collect();
+
+        // --- the edges ------------------------------------------------
+        let mut fresh: HashSet<VertexIdType> = HashSet::new();
+        for side in &sheet {
+            let target = self
+                .edge_by_id(side.edge)
+                .ok_or(BlockingError::NoSuchEdge(side.edge))?;
+            let p = self.position(side.from).unwrap_or([0.0; 3]);
+            let q = self.position(side.to).unwrap_or([0.0; 3]);
+            let at = [0, 1, 2].map(|k| p[k] + (q[k] - p[k]) * t);
+            fresh.insert(self.split_edge(target, at)?);
+        }
+
+        // --- the faces ------------------------------------------------
+        // Every cycle read first: splitting one face leaves the others
+        // alone, so the list taken now is still the list to work through.
+        let sides = self.face_sides();
+        let mut cuts: Vec<(DartIdType, DartIdType)> = Vec::new();
+        for cycle in &sides {
+            if let Some(pair) = self.split_face_side(cycle, &fresh, &from_nodes) {
+                cuts.push(pair);
+            }
+        }
+        if cuts.is_empty() {
+            return Err(BlockingError::BrokenSheet(edge));
+        }
+
+        // The new darts' β₃, from the invariant β₃∘β₁ = β₀∘β₃: both sides of
+        // a shared face have their new dart by now, so each can find its
+        // opposite number through the dart it was inserted after.
+        for &(u, v) in &cuts {
+            for x in [u, v] {
+                let behind = self.map.beta::<0>(x);
+                let mirror = self.map.beta::<3>(behind);
+                if mirror != NULL_DART_ID {
+                    let partner = self.map.beta::<0>(mirror);
+                    self.map.set_beta::<3>(x, partner);
+                    self.map.set_beta::<3>(partner, x);
+                }
+            }
+        }
+
+        // --- the blocks -----------------------------------------------
+        // Grouped before any of them is split, since splitting one rewrites
+        // its own identifier.
+        let mut rings: BTreeMap<VolumeIdType, Vec<(DartIdType, DartIdType)>> = BTreeMap::new();
+        for &(u, v) in &cuts {
+            rings.entry(self.map.volume_id(u)).or_default().push((u, v));
+        }
+        for (_, ring) in rings {
+            self.insert_cut_face(&ring, edge)?;
+        }
+
+        // What was split is gone: two new cells each, named afresh.
+        for &(u, v) in &cuts {
+            for x in [u, v] {
+                let face = self.map.face_id(x);
+                self.map.write_attribute(face, FaceTag { id: CellId::NONE });
+            }
+        }
+        self.assign_missing_ids();
+        Ok(())
+    }
+
+    /// Close one block off along its ring of new edges, making two.
+    ///
+    /// The ring is the new edge of each side face the sheet crossed. Until
+    /// now the two halves of the block are still joined, through the β₂ that
+    /// pairs each ring edge's two darts across its own face. The cut face
+    /// goes between them: `u` loses `v` as a partner and gains a dart of the
+    /// new face, and `v` likewise, and the two new faces are β₃ to each
+    /// other — which is what two blocks sharing a face are.
+    fn insert_cut_face(
+        &mut self,
+        ring: &[(DartIdType, DartIdType)],
+        edge: CellId,
+    ) -> Result<(), BlockingError> {
+        // Walk the ring by its geometry: the next edge starts where this one
+        // ends. A block the sheet crosses has four, in one closed loop.
+        let starts: HashMap<VertexIdType, usize> = ring
+            .iter()
+            .enumerate()
+            .map(|(k, &(u, _))| (self.map.vertex_id(u), k))
+            .collect();
+        let mut order = vec![0usize];
+        for _ in 1..ring.len() {
+            let last = *order.last().unwrap();
+            let ends_at = self.map.vertex_id(self.map.beta::<1>(ring[last].0));
+            match starts.get(&ends_at) {
+                Some(&next) if !order.contains(&next) => order.push(next),
+                _ => return Err(BlockingError::BrokenSheet(edge)),
+            }
+        }
+        let closes = self
+            .map
+            .vertex_id(self.map.beta::<1>(ring[*order.last().unwrap()].0));
+        if closes != self.map.vertex_id(ring[order[0]].0) {
+            return Err(BlockingError::BrokenSheet(edge));
+        }
+
+        let n = order.len();
+        let base = self.map.allocate_used_darts(n * 2);
+        let (a, b): (Vec<_>, Vec<_>) = (
+            (0..n).map(|k| base + k as DartIdType).collect(),
+            (0..n).map(|k| base + (n + k) as DartIdType).collect(),
+        );
+
+        for k in 0..n {
+            let (u, v) = ring[order[k]];
+            // `a` runs against `u`, so its cycle runs backwards round the
+            // ring; `b` runs with it, so its cycle runs forwards.
+            let behind = a[(k + n - 1) % n];
+            self.map.set_beta::<1>(a[k], behind);
+            self.map.set_beta::<0>(behind, a[k]);
+            let ahead = b[(k + 1) % n];
+            self.map.set_beta::<1>(b[k], ahead);
+            self.map.set_beta::<0>(ahead, b[k]);
+
+            self.map.set_beta::<2>(a[k], u);
+            self.map.set_beta::<2>(u, a[k]);
+            self.map.set_beta::<2>(b[k], v);
+            self.map.set_beta::<2>(v, b[k]);
+            self.map.set_beta::<3>(a[k], b[k]);
+            self.map.set_beta::<3>(b[k], a[k]);
+        }
+
+        // Both halves are new blocks; neither inherits the name.
+        for &d in &[a[0], b[0]] {
+            let block = self.map.volume_id(d);
+            self.map
+                .write_attribute(block, BlockTag { id: CellId::NONE });
+        }
+        Ok(())
+    }
+
+    /// Every β₁ cycle in the map: one per face side.
+    fn face_sides(&self) -> Vec<Vec<DartIdType>> {
+        let mut seen = vec![false; self.map.n_darts()];
+        let mut sides = Vec::new();
+        for start in 1..self.map.n_darts() as DartIdType {
+            if self.map.is_unused(start) || seen[start as usize] {
+                continue;
+            }
+            let mut cycle = Vec::new();
+            let mut d = start;
+            loop {
+                seen[d as usize] = true;
+                cycle.push(d);
+                d = self.map.beta::<1>(d);
+                if d == start || d == NULL_DART_ID {
+                    break;
+                }
+            }
+            sides.push(cycle);
+        }
+        sides
+    }
+
+    /// Cut one face side in two, along a new edge between its two new nodes.
+    ///
+    /// Returns the pair of darts on that new edge: the first lies on the
+    /// **`from`** side of the sheet, the second on the `to` side. Which is
+    /// which is not a detail — it is what tells the block split which half
+    /// of itself each quadrangle belongs to.
+    fn split_face_side(
+        &mut self,
+        cycle: &[DartIdType],
+        fresh: &HashSet<VertexIdType>,
+        from_nodes: &HashSet<VertexIdType>,
+    ) -> Option<(DartIdType, DartIdType)> {
+        let starts: Vec<VertexIdType> = cycle.iter().map(|&d| self.map.vertex_id(d)).collect();
+        let marks: Vec<usize> = (0..cycle.len())
+            .filter(|&k| fresh.contains(&starts[k]))
+            .collect();
+        // Two new nodes, opposite each other: anything else is not a face
+        // this cut touches.
+        if marks.len() != 2
+            || !cycle.len().is_multiple_of(2)
+            || marks[1] - marks[0] != cycle.len() / 2
+        {
+            return None;
+        }
+        // The half that keeps the `from` side is the one entered from a
+        // `from` node, and exactly one of the two is.
+        let n = cycle.len();
+        let i = if from_nodes.contains(&starts[(marks[0] + n - 1) % n]) {
+            marks[0]
+        } else {
+            marks[1]
+        };
+        let j = (i + n / 2) % n;
+
+        let base = self.map.allocate_used_darts(2);
+        let (u, v) = (base, base + 1);
+        let (before_i, before_j) = (cycle[(i + n - 1) % n], cycle[(j + n - 1) % n]);
+
+        self.map.set_beta::<1>(before_i, u);
+        self.map.set_beta::<0>(u, before_i);
+        self.map.set_beta::<1>(u, cycle[j]);
+        self.map.set_beta::<0>(cycle[j], u);
+
+        self.map.set_beta::<1>(before_j, v);
+        self.map.set_beta::<0>(v, before_j);
+        self.map.set_beta::<1>(v, cycle[i]);
+        self.map.set_beta::<0>(cycle[i], v);
+
+        self.map.set_beta::<2>(u, v);
+        self.map.set_beta::<2>(v, u);
+        Some((u, v))
+    }
+
     /// The faces an edge belongs to, by identifier, without repeats.
     fn faces_around(&self, edge: EdgeIdType) -> Vec<FaceIdType> {
         let mut faces: Vec<FaceIdType> = self
@@ -678,5 +1001,320 @@ impl Blocking {
             self.names[2].handed_out(),
             self.names[3].handed_out(),
         ]
+    }
+}
+
+#[cfg(test)]
+mod surgery {
+    //! The dart surgery, tested where it lives.
+    //!
+    //! These reach into private operations on purpose. A sheet cut is three
+    //! of them stacked, and finding out which one is wrong from the shape of
+    //! the finished mesh is exactly the debugging session worth avoiding.
+
+    use super::*;
+
+    fn cube() -> Blocking {
+        let mut b = Blocking::new().unwrap();
+        b.add_block(cube_corners([0.0, 0.0, 0.0], 1.0)).unwrap();
+        b
+    }
+
+    /// Everything a well-formed map owes us, checked over every used dart.
+    pub(super) fn is_coherent(b: &Blocking) {
+        for d in 1..b.map.n_darts() as DartIdType {
+            if b.map.is_unused(d) {
+                continue;
+            }
+            let next = b.map.beta::<1>(d);
+            assert_ne!(next, NULL_DART_ID, "dart {d} has no β₁");
+            assert_eq!(b.map.beta::<0>(next), d, "β₀ does not undo β₁ at {d}");
+            for (i, partner) in [(2, b.map.beta::<2>(d)), (3, b.map.beta::<3>(d))] {
+                if partner == NULL_DART_ID {
+                    continue;
+                }
+                let back = if i == 2 {
+                    b.map.beta::<2>(partner)
+                } else {
+                    b.map.beta::<3>(partner)
+                };
+                assert_eq!(back, d, "β{i} is not an involution at {d}");
+                // And it joins the same two nodes, the other way round.
+                let (u, v) = b.edge_endpoints(b.map.edge_id(d));
+                let (x, y) = b.edge_endpoints(b.map.edge_id(partner));
+                assert_eq!((u, v), (x, y), "β{i} at {d} joins a different edge");
+            }
+        }
+    }
+
+    #[test]
+    fn splitting_an_edge_adds_a_node_and_an_edge() {
+        let mut b = cube();
+        let edge = b.map.iter_edges().next().unwrap();
+        let (u, v) = b.edge_endpoints(edge);
+        let (p, q) = (b.position(u).unwrap(), b.position(v).unwrap());
+        let middle = [0, 1, 2].map(|k| (p[k] + q[k]) / 2.0);
+
+        b.split_edge(edge, middle).unwrap();
+        b.assign_missing_ids();
+
+        assert_eq!(
+            (b.nb_nodes(), b.nb_edges(), b.nb_faces(), b.nb_blocks()),
+            (9, 13, 6, 1)
+        );
+        is_coherent(&b);
+        assert!(
+            b.nodes()
+                .any(|(_, at)| (0..3).all(|k| (at[k] - middle[k]).abs() < 1e-9)),
+            "the new node is not where it was asked for"
+        );
+    }
+
+    #[test]
+    fn the_faces_either_side_grow_by_one() {
+        // The edge's two faces become pentagons. They are still those two
+        // faces: splitting an edge does not split a face.
+        let mut b = cube();
+        let edge = b.map.iter_edges().next().unwrap();
+        let before: Vec<usize> = b
+            .faces_around(edge)
+            .iter()
+            .map(|f| b.map.orbit(OrbitPolicy::Face, *f as DartIdType).count())
+            .collect();
+        assert_eq!(before, vec![4, 4]);
+
+        let (u, v) = b.edge_endpoints(edge);
+        let (p, q) = (b.position(u).unwrap(), b.position(v).unwrap());
+        b.split_edge(edge, [0, 1, 2].map(|k| (p[k] + q[k]) / 2.0))
+            .unwrap();
+        b.assign_missing_ids();
+
+        let after: Vec<usize> = b
+            .map
+            .iter_faces()
+            .map(|f| b.map.orbit(OrbitPolicy::Face, f as DartIdType).count())
+            .collect();
+        assert_eq!(after.iter().filter(|n| **n == 5).count(), 2);
+        assert_eq!(after.iter().filter(|n| **n == 4).count(), 4);
+    }
+
+    #[test]
+    fn both_halves_come_out_unnamed_and_are_then_named_afresh() {
+        let mut b = cube();
+        let edge = b.map.iter_edges().next().unwrap();
+        let was = b.edge_tag(edge).id;
+        let (u, v) = b.edge_endpoints(edge);
+        let (p, q) = (b.position(u).unwrap(), b.position(v).unwrap());
+
+        b.split_edge(edge, [0, 1, 2].map(|k| (p[k] + q[k]) / 2.0))
+            .unwrap();
+        b.assign_missing_ids();
+
+        // What comes out of a split is two new cells, not one of them
+        // inheriting the name.
+        let names: Vec<_> = b.map.iter_edges().map(|e| b.edge_tag(e).id).collect();
+        assert!(!names.contains(&was), "the old name survived the split");
+        assert!(names.iter().all(|n| n.is_some()));
+    }
+
+    #[test]
+    fn an_edge_shared_by_two_blocks_splits_on_both_sides() {
+        // The β₃ path: the ring of darts round the edge spans both blocks,
+        // and every one of them has to be cut.
+        let mut b = cube();
+        b.add_block(cube_corners([1.0, 0.0, 0.0], 1.0)).unwrap();
+        let mut names: Vec<_> = b.block_faces().iter().map(|s| s.block).collect();
+        names.dedup();
+        let seam = |b: &Blocking, block: CellId| {
+            b.block_faces()
+                .iter()
+                .filter(|s| s.block == block)
+                .find(|s| {
+                    s.nodes
+                        .iter()
+                        .all(|n| (b.position(*n).unwrap()[0] - 1.0).abs() < 1e-9)
+                })
+                .unwrap()
+                .face
+        };
+        let (first, second) = (seam(&b, names[0]), seam(&b, names[1]));
+        b.glue_faces(first, second).unwrap();
+
+        // An edge lying in the seam belongs to both blocks: four darts.
+        let shared = b
+            .map
+            .iter_edges()
+            .find(|e| {
+                let (u, v) = b.edge_endpoints(*e);
+                [u, v]
+                    .iter()
+                    .all(|n| (b.position(*n).unwrap()[0] - 1.0).abs() < 1e-9)
+            })
+            .expect("an edge in the seam");
+        assert_eq!(
+            b.map.orbit(OrbitPolicy::Edge, shared as DartIdType).count(),
+            4
+        );
+
+        let (u, v) = b.edge_endpoints(shared);
+        let (p, q) = (b.position(u).unwrap(), b.position(v).unwrap());
+        b.split_edge(shared, [0, 1, 2].map(|k| (p[k] + q[k]) / 2.0))
+            .unwrap();
+        b.assign_missing_ids();
+
+        // One node and one edge more, and the blocks still share what they
+        // shared: the two halves each have four darts round them.
+        assert_eq!((b.nb_nodes(), b.nb_edges(), b.nb_blocks()), (13, 21, 2));
+        is_coherent(&b);
+    }
+}
+
+#[cfg(test)]
+mod cutting {
+    //! Cutting a sheet: the three surgeries stacked.
+
+    use super::*;
+    use crate::blocking::surgery::is_coherent;
+
+    fn cube() -> Blocking {
+        let mut b = Blocking::new().unwrap();
+        b.add_block(cube_corners([0.0, 0.0, 0.0], 1.0)).unwrap();
+        b
+    }
+
+    /// An edge whose ends differ only along this axis.
+    fn along(b: &Blocking, axis: usize) -> CellId {
+        b.map
+            .iter_edges()
+            .find(|e| {
+                let (u, v) = b.edge_endpoints(*e);
+                let (p, q) = (b.position(u).unwrap(), b.position(v).unwrap());
+                (0..3).all(|k| {
+                    if k == axis {
+                        (p[k] - q[k]).abs() > 0.5
+                    } else {
+                        (p[k] - q[k]).abs() < 1e-9
+                    }
+                })
+            })
+            .map(|e| b.edge_tag(e).id)
+            .expect("an edge along that axis")
+    }
+
+    #[test]
+    fn cutting_a_lone_cube_makes_two_blocks() {
+        let mut b = cube();
+        b.split_sheet(along(&b, 2), 0.25).unwrap();
+
+        // Two stacked hexahedra: twelve nodes, twenty edges, eleven faces.
+        // The same counts as two cubes glued, which is what this now is.
+        assert_eq!(
+            (b.nb_nodes(), b.nb_edges(), b.nb_faces(), b.nb_blocks()),
+            (12, 20, 11, 2)
+        );
+        is_coherent(&b);
+        assert!(b.block_faces().len() == 12, "each block a closed surface");
+    }
+
+    #[test]
+    fn the_cut_lands_where_the_parameter_says() {
+        let mut b = cube();
+        b.split_sheet(along(&b, 2), 0.25).unwrap();
+
+        // Four new nodes on the plane, and none anywhere else.
+        let at: Vec<f64> = b.nodes().map(|(_, p)| p[2]).collect();
+        assert_eq!(at.iter().filter(|z| (**z - 0.25).abs() < 1e-9).count(), 4);
+        assert_eq!(at.iter().filter(|z| z.abs() < 1e-9).count(), 4);
+        assert_eq!(at.iter().filter(|z| (**z - 1.0).abs() < 1e-9).count(), 4);
+    }
+
+    #[test]
+    fn one_parameter_means_one_plane_across_the_whole_sheet() {
+        // The concertina test. Two blocks glued, cut along a sheet that
+        // crosses both: an orientation that flipped on the way through would
+        // put half the new nodes at `t` and half at `1 - t`.
+        let mut b = cube();
+        b.add_block(cube_corners([1.0, 0.0, 0.0], 1.0)).unwrap();
+        let mut names: Vec<_> = b.block_faces().iter().map(|s| s.block).collect();
+        names.dedup();
+        let seam = |b: &Blocking, block: CellId| {
+            b.block_faces()
+                .iter()
+                .filter(|s| s.block == block)
+                .find(|s| {
+                    s.nodes
+                        .iter()
+                        .all(|n| (b.position(*n).unwrap()[0] - 1.0).abs() < 1e-9)
+                })
+                .unwrap()
+                .face
+        };
+        let (first, second) = (seam(&b, names[0]), seam(&b, names[1]));
+        b.glue_faces(first, second).unwrap();
+
+        b.split_sheet(along(&b, 2), 0.25).unwrap();
+
+        let at: Vec<f64> = b.nodes().map(|(_, p)| p[2]).collect();
+        assert_eq!(
+            at.iter().filter(|z| (**z - 0.25).abs() < 1e-9).count(),
+            6,
+            "six nodes on one plane, not some at 0.25 and some at 0.75"
+        );
+        assert!(
+            at.iter()
+                .all(|z| z.abs() < 1e-9 || (*z - 0.25).abs() < 1e-9 || (*z - 1.0).abs() < 1e-9),
+            "a node landed off the cut plane: {at:?}"
+        );
+        assert_eq!(b.nb_blocks(), 4);
+        is_coherent(&b);
+    }
+
+    #[test]
+    fn a_cut_can_be_cut_again() {
+        // The strongest check that the result is a proper mesh and not
+        // something that merely counts right.
+        let mut b = cube();
+        b.split_sheet(along(&b, 2), 0.5).unwrap();
+        assert_eq!(b.nb_blocks(), 2);
+        b.split_sheet(along(&b, 0), 0.5).unwrap();
+        assert_eq!(b.nb_blocks(), 4);
+        b.split_sheet(along(&b, 1), 0.5).unwrap();
+        assert_eq!(b.nb_blocks(), 8);
+        assert_eq!(
+            (b.nb_nodes(), b.nb_edges(), b.nb_faces()),
+            (27, 54, 36),
+            "a 2x2x2 grid of hexahedra"
+        );
+        is_coherent(&b);
+    }
+
+    #[test]
+    fn every_name_in_the_cut_is_fresh_and_nothing_is_left_unnamed() {
+        let mut b = cube();
+        let before: Vec<CellId> = b.map.iter_faces().map(|f| b.face_tag(f).id).collect();
+        b.split_sheet(along(&b, 2), 0.5).unwrap();
+
+        let after: Vec<CellId> = b.map.iter_faces().map(|f| b.face_tag(f).id).collect();
+        assert!(after.iter().all(|n| n.is_some()), "a face came out unnamed");
+        // The four faces the sheet crossed are gone, replaced by eight new
+        // ones plus the cut face; the two it did not touch keep their names.
+        assert_eq!(after.iter().filter(|n| before.contains(n)).count(), 2);
+        assert!(b.nodes().all(|(id, _)| id.is_some()));
+    }
+
+    #[test]
+    fn a_parameter_outside_the_edge_is_refused() {
+        for t in [0.0, 1.0, -0.5, 1.5, f64::NAN] {
+            let mut b = cube();
+            let before = (b.nb_nodes(), b.nb_edges(), b.nb_blocks());
+            assert!(
+                matches!(
+                    b.split_sheet(along(&b, 2), t),
+                    Err(BlockingError::BadParameter(_))
+                ),
+                "t = {t} should be refused"
+            );
+            assert_eq!((b.nb_nodes(), b.nb_edges(), b.nb_blocks()), before);
+        }
     }
 }

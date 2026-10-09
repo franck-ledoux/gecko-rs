@@ -654,3 +654,103 @@ mod sheets {
         assert!(names.iter().all(|n| *n != u32::MAX));
     }
 }
+
+/// Cutting a sheet, through the same door.
+mod cutting {
+    use super::*;
+
+    fn cube() -> Session {
+        let mut s = Session::new().unwrap();
+        s.apply(Command::CreateCube {
+            origin: [0.0, 0.0, 0.0],
+            size: 1.0,
+        })
+        .unwrap();
+        s
+    }
+
+    /// The name of an edge running along this axis.
+    fn along(s: &Session, axis: usize) -> u32 {
+        let v = ViewBuffer::of(s.blocking(), None);
+        for e in 0..v.edge_names.len() {
+            let (a, b) = (v.edges[e * 2] as usize * 3, v.edges[e * 2 + 1] as usize * 3);
+            let differs: Vec<usize> = (0..3)
+                .filter(|k| (v.positions[a + k] - v.positions[b + k]).abs() > 0.1)
+                .collect();
+            if differs == vec![axis] {
+                return v.edge_names[e];
+            }
+        }
+        panic!("no edge along axis {axis}");
+    }
+
+    #[test]
+    fn cutting_goes_through_the_json_door_like_everything_else() {
+        let mut s = cube();
+        let edge = along(&s, 2);
+        let raw = s.apply_json(&format!(
+            r#"{{"op":"split_sheet","edge":{edge},"at":0.25}}"#
+        ));
+        let reply: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(reply["ok"], true, "{raw}");
+        assert!(reply["outcome"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("0.250"));
+
+        let stats: serde_json::Value = serde_json::from_str(&s.stats_json()).unwrap();
+        assert_eq!(stats["blocks"], 2);
+        assert_eq!(stats["nodes"], 12);
+        assert_eq!(stats["edges"], 20);
+        assert_eq!(stats["faces"], 11);
+    }
+
+    #[test]
+    fn a_parameter_outside_the_edge_is_reported_and_changes_nothing() {
+        let mut s = cube();
+        let edge = along(&s, 2);
+        let before = s.view_buffer();
+        for at in ["0.0", "1.0", "-0.2", "2.0"] {
+            let raw = s.apply_json(&format!(
+                r#"{{"op":"split_sheet","edge":{edge},"at":{at}}}"#
+            ));
+            let reply: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            assert_eq!(reply["ok"], false, "{at} should be refused");
+            assert!(reply["error"].as_str().unwrap().contains("strictly inside"));
+        }
+        assert_eq!(s.view_buffer(), before);
+    }
+
+    #[test]
+    fn the_surface_comes_back_with_both_halves() {
+        let mut s = cube();
+        let edge = along(&s, 2);
+        s.apply(Command::SplitSheet { edge, at: 0.5 }).unwrap();
+        let v = ViewBuffer::of(s.blocking(), None);
+
+        // Two blocks, each a closed surface of six.
+        assert_eq!(v.quads.len() / 4, 12);
+        let mut blocks = v.quad_blocks.clone();
+        blocks.sort();
+        blocks.dedup();
+        assert_eq!(blocks.len(), 2);
+        // And one face between them, listed once per block.
+        let shared = v
+            .quad_faces
+            .iter()
+            .filter(|n| v.quad_faces.iter().filter(|m| m == n).count() == 2)
+            .count();
+        assert_eq!(shared, 2);
+    }
+
+    #[test]
+    fn two_sessions_cut_the_same_way_ship_the_same_bytes() {
+        let build = || {
+            let mut s = cube();
+            let edge = along(&s, 2);
+            s.apply(Command::SplitSheet { edge, at: 0.3 }).unwrap();
+            s
+        };
+        assert_eq!(build().view_buffer(), build().view_buffer());
+    }
+}

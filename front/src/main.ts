@@ -240,34 +240,100 @@ async function boot() {
     if (!axis) return;
     pressedAt = undefined;
     viewer.axes.lookDown(axis);
-    message = `looking down ${axis}`;
-    $("status").textContent = message;
+    say(`looking down ${axis}`);
   });
 
-  // --- picking faces to glue ---------------------------------------------
+  // Pressing an edge begins a cut: the sheet lights up, and the pointer is
+  // taken off the camera so that dragging sets the parameter rather than
+  // turning the view.
+  canvas.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || aiming !== null) return;
+    if (viewer.axes.pick(e.offsetX, e.offsetY)) return;
+    if (viewer.pickNode(e.offsetX, e.offsetY) !== null) return;
+    const edge = viewer.pickEdge(e.offsetX, e.offsetY);
+    if (edge === null) return;
+
+    aiming = edge;
+    aimingWasSelected = viewer.selectedEdge === edge;
+    canvas.setPointerCapture(e.pointerId);
+    viewer.suspendCamera();
+    // Lit, but not yet aimed: the parameter appears on the first movement.
+    // Aiming on the press would leave a click telling you to let go of a
+    // button you have already let go of.
+    void selectEdge(edge);
+  });
+
+  // --- picking faces, and aiming a cut ------------------------------------
   /** How far the pointer may travel and still count as a click. Dragging from
    *  a face is how you orbit the view, and it must not also select it. */
   const CLICK_SLOP = 4;
+  /** How close to an end a cut may be aimed. The kernel refuses 0 and 1 —
+   *  a cut there is not a cut — so the pointer never asks for them. */
+  const CUT_MARGIN = 0.02;
   let pressedAt: [number, number] | undefined;
+  /** The edge a cut is being aimed along, while the pointer is down on it. */
+  let aiming: number | null = null;
+  let aimingWasSelected = false;
+
+  canvas.addEventListener("pointermove", (e) => {
+    if (aiming !== null) aimAt(e.offsetX, e.offsetY);
+  });
 
   canvas.addEventListener("pointerup", (e) => {
     if (e.button !== 0 || !pressedAt) return;
     const [x, y] = pressedAt;
     pressedAt = undefined;
-    if (Math.hypot(e.offsetX - x, e.offsetY - y) > CLICK_SLOP) return;
-    // A node under the cursor is a drag that is about to start, or has just
-    // ended — not a face being chosen. The node wins: it is the smaller
-    // target, and the one you had to aim at.
-    if (viewer.pickNode(x, y) !== null) return;
-    // Smallest target first: a handle, then a line, then the surface behind
-    // them. Each is the thing you had to aim at to hit it.
-    const edge = viewer.pickEdge(x, y);
-    if (edge !== null) {
-      void chooseEdge(edge);
+    const moved = Math.hypot(e.offsetX - x, e.offsetY - y) > CLICK_SLOP;
+
+    if (aiming !== null) {
+      canvas.releasePointerCapture(e.pointerId);
+      viewer.resumeCamera();
+      const edge = aiming;
+      aiming = null;
+      // Moved along it: that was a cut being aimed. Pressed and released on
+      // the spot: that was a click, and a click on the edge that was already
+      // lit puts it out.
+      if (moved) void cut(edge);
+      else if (aimingWasSelected) clearSelection();
+      else viewer.aimCut(null);
       return;
     }
+    if (moved) return;
+    // Smallest target first: a handle, then a line, then the surface behind
+    // them. Each is the thing you had to aim at to hit it. A node under the
+    // cursor is a drag that has just ended, not a face being chosen.
+    if (viewer.pickNode(x, y) !== null) return;
     choose(viewer.pickSurface(x, y));
   });
+
+  /** Turn a pointer position into a parameter along the edge being aimed. */
+  function aimAt(x: number, y: number) {
+    if (aiming === null) return;
+    const ends = viewer.edgeEndsOnScreen(aiming);
+    if (!ends) return;
+    const [[ax, ay], [bx, by]] = ends;
+    const [dx, dy] = [bx - ax, by - ay];
+    const along = dx * dx + dy * dy;
+    // Seen end-on, an edge has no direction to read a parameter from.
+    if (along < 1) return;
+    const t = Math.min(
+      1 - CUT_MARGIN,
+      Math.max(CUT_MARGIN, ((x - ax) * dx + (y - ay) * dy) / along),
+    );
+    viewer.aimCut(t);
+    say(`cut at ${t.toFixed(2)} — let go to cut`);
+  }
+
+  async function cut(edge: number) {
+    const at = viewer.aimedAt;
+    viewer.aimCut(null);
+    if (at === null) return;
+    const reply = await kernel.apply({ op: "split_sheet", edge, at });
+    // Every name on the sheet means something else now, this edge included.
+    clearSelection();
+    message = reply.message;
+    await refresh();
+  }
 
   /**
    * Light up the sheet of hexahedra through an edge.
@@ -281,23 +347,28 @@ async function boot() {
       clearSelection();
       return;
     }
+    await selectEdge(edge);
+  }
+
+  /** Light the sheet through an edge, whether or not it was already lit. */
+  async function selectEdge(edge: number) {
     choose(null);
     const sheet = await kernel.sheet(edge);
     if (!sheet.ok) {
-      viewer.highlightEdges([]);
+      viewer.showSheet([]);
       viewer.selectedEdge = null;
       say(sheet.error);
       return;
     }
     viewer.selectedEdge = edge;
-    viewer.highlightEdges(sheet.edges.map((e) => e.id));
-    say(`sheet through edge ${edge} — ${sheet.edges.length} edges`);
+    viewer.showSheet(sheet.edges);
+    say(`sheet through edge ${edge} — ${sheet.edges.length} edges, drag along it to cut`);
   }
 
   /** Nothing selected: no faces, no sheet. */
   function clearSelection() {
     viewer.selectedEdge = null;
-    viewer.highlightEdges([]);
+    viewer.showSheet([]);
     choose(null);
   }
 
@@ -653,6 +724,8 @@ async function boot() {
     selectedEdge: () => viewer.selectedEdge,
     pickEdge: (x: number, y: number) => viewer.pickEdge(x, y),
     pickEdgeByName: (edge: number) => chooseEdge(edge),
+    aimedAt: () => viewer.aimedAt,
+    edgeEndsOnScreen: (edge: number) => viewer.edgeEndsOnScreen(edge),
     edgeNames: () => viewer.edgeNames(),
     edgeMidpoint: (edge: number) => viewer.edgeMidpoint(edge),
     choose: (pick: Pick | null) => choose(pick),

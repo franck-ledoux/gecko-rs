@@ -32,6 +32,7 @@ import type { View } from "./decode";
 import { AxisGizmo, MAIN_LAYER } from "./axes";
 import { DEFAULTS, type Layer, type ViewPrefs } from "./theme";
 import { ANCHOR, MATE } from "./palette";
+import type { SheetEdge } from "./kernel";
 import {
   buildSurface,
   edgeSegments,
@@ -175,8 +176,13 @@ export class Viewer {
 
   private nodes: Mesh[] = [];
   private wire?: LinesMesh;
-  /** The sheet the viewer has been asked to light up, by edge name. */
-  private lit: number[] = [];
+  /** The sheet the viewer has been asked to light up: the edge names, and
+   *  where a cut would run from and to on each. */
+  private lit: SheetEdge[] = [];
+  /** Where a cut is being aimed, along the sheet's own direction. */
+  private aim: number | null = null;
+  private aimWire?: Mesh;
+  private held?: HTMLCanvasElement;
   /** The edge that sheet was asked for, so a second click on it can put the
    *  sheet out again. View state, like the face selection. */
   selectedEdge: number | null = null;
@@ -450,7 +456,20 @@ export class Viewer {
   }
 
   attachTo(canvas: HTMLCanvasElement) {
+    this.held = canvas;
     this.camera.attachControl(canvas, true);
+  }
+
+  /** Take the pointer away from the camera, and give it back.
+   *
+   *  Aiming a cut is a drag along an edge, and a drag is also how the view
+   *  is turned. One of them has to stand aside. */
+  suspendCamera() {
+    this.camera.detachControl();
+  }
+
+  resumeCamera() {
+    if (this.held) this.camera.attachControl(this.held, true);
   }
 
   /** Called when a drag ends, with the node's new position in model space. */
@@ -599,21 +618,74 @@ export class Viewer {
    * **through** the model — which is the point, since a sheet runs through
    * it and where it comes out the far side is what you want to see.
    */
-  highlightEdges(names: readonly number[]) {
-    this.lit = [...names];
+  showSheet(edges: readonly SheetEdge[]) {
+    this.lit = edges.map((e) => ({ ...e }));
+    this.aim = null;
     this.rebuildHighlight();
   }
 
   get highlighted(): number[] {
-    return [...this.lit];
+    return this.lit.map((e) => e.id);
+  }
+
+  /**
+   * Show where a cut at `t` would land, on every edge of the sheet at once.
+   *
+   * Drawn as a second ribbon from each edge's `from` end up to the cut, so
+   * the join between the two colours *is* the plane. One edge would not be
+   * enough: what the parameter does to the rest of the sheet is the thing
+   * worth seeing before committing to it.
+   */
+  aimCut(t: number | null) {
+    this.aim = t;
+    this.rebuildAim();
+  }
+
+  get aimedAt(): number | null {
+    return this.aim;
+  }
+
+  /** The two ends of a sheet edge in CSS pixels, `from` first — what turns
+   *  a pointer position into a parameter. */
+  edgeEndsOnScreen(name: number): [[number, number], [number, number]] | null {
+    const edge = this.lit.find((e) => e.id === name);
+    if (!edge) return null;
+    const scene = (p: readonly number[]) =>
+      new Vector3(p[0] - this.centre[0], p[1] - this.centre[1], p[2] - this.centre[2]);
+    return [this.toScreen(scene(edge.from)), this.toScreen(scene(edge.to))];
+  }
+
+  private rebuildAim() {
+    this.aimWire?.dispose();
+    this.aimWire = undefined;
+    if (this.aim === null || !this.lit.length) return;
+    const t = this.aim;
+    const points = this.lit.map((e) => [
+      e.from[0] - this.centre[0],
+      e.from[1] - this.centre[1],
+      e.from[2] - this.centre[2],
+      e.from[0] + (e.to[0] - e.from[0]) * t - this.centre[0],
+      e.from[1] + (e.to[1] - e.from[1]) * t - this.centre[1],
+      e.from[2] + (e.to[2] - e.from[2]) * t - this.centre[2],
+    ]);
+    this.aimWire = CreateGreasedLine(
+      "aim",
+      { points },
+      { color: Color3.FromHexString(MATE), width: SHEET_WIDTH * 1.6, sizeAttenuation: false },
+      this.scene,
+    );
+    this.aimWire.isPickable = false;
+    this.aimWire.layerMask = MAIN_LAYER;
+    this.aimWire.renderingGroupId = 2;
   }
 
   private rebuildHighlight() {
     this.litWire?.dispose();
     this.litWire = undefined;
+    this.rebuildAim();
     if (!this.view || !this.lit.length) return;
 
-    const wanted = new Set(this.lit);
+    const wanted = new Set(this.lit.map((e) => e.id));
     const flat = edgeSegments(this.view, this.prefs.edges.shrink);
     const lines: Vector3[][] = [];
     for (let e = 0; e < this.view.edgeNames.length; e++) {
