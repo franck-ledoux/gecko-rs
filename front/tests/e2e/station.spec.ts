@@ -33,7 +33,7 @@ test("a command typed in Python reaches the browser unasked", async ({ page }) =
 
     await expect(page.locator("[data-test=blocks]")).toHaveText("1");
     await expect(page.locator("[data-test=nodes]")).toHaveText("8");
-    await expect(page.locator("#status")).toHaveText("modifié depuis Python");
+    await expect(page.locator("#status")).toHaveText("changed from Python");
     expect(await page.evaluate(() => (window as any).__gecko.counts())).toEqual({
       nodes: 8,
       edges: 12,
@@ -147,7 +147,7 @@ test("a node moved from Python moves in the browser", async ({ page }) => {
     await station.ask(JSON.stringify({ op: "move_node", node: name, to: [5, 6, 7] }));
 
     // Nothing was clicked and nothing reloaded.
-    await expect(page.locator("#status")).toHaveText("modifié depuis Python");
+    await expect(page.locator("#status")).toHaveText("changed from Python");
     await page.waitForFunction(
       (n) => {
         const p = (window as any).__gecko.nodePosition(n);

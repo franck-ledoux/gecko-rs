@@ -24,11 +24,11 @@ export interface Theme {
 
 /** Order and labels for the generated settings panel. */
 export const SWATCHES: ReadonlyArray<{ key: keyof Theme; label: string }> = [
-  { key: "background", label: "fond" },
-  { key: "nodes", label: "sommets" },
-  { key: "edges", label: "arêtes" },
+  { key: "background", label: "background" },
+  { key: "nodes", label: "nodes" },
+  { key: "edges", label: "edges" },
   { key: "faces", label: "faces" },
-  { key: "blocks", label: "blocs" },
+  { key: "blocks", label: "blocks" },
 ];
 
 export const PRESETS: Record<"dark" | "light", Theme> = {

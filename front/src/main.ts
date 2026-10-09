@@ -69,7 +69,7 @@ async function boot() {
   // the state the page used to hide by pretending to be a static build.
   const kernel = await detectMode(() => {
     document.body.dataset.waiting = "1";
-    $("status").textContent = "en attente de la station Python…";
+    $("status").textContent = "waiting for the Python station…";
   });
   delete document.body.dataset.waiting;
 
@@ -109,7 +109,7 @@ async function boot() {
    */
   const LAYERS: ReadonlyArray<{ group: Group; label: string }> = [
     { group: "faces", label: "Faces" },
-    { group: "blocks", label: "Blocs" },
+    { group: "blocks", label: "Blocks" },
   ];
 
   const slider = (test: string, label: string, min: number, value: number) =>
@@ -128,18 +128,18 @@ async function boot() {
         return (
           `<fieldset class="layer"><legend>${label}</legend>` +
           `<label class="check"><input type="checkbox" data-test="${group}-visible"` +
-          `${layer.visible ? " checked" : ""} /> afficher</label>` +
-          `<div class="row">${mode("uniform", "uniforme")}${mode("id", "par id")}</div>` +
-          slider(`${group}-alpha`, "opacité", 0, layer.alpha) +
-          slider(`${group}-shrink`, "rétraction", 0.1, layer.shrink) +
+          `${layer.visible ? " checked" : ""} /> show</label>` +
+          `<div class="row">${mode("uniform", "uniform")}${mode("id", "by id")}</div>` +
+          slider(`${group}-alpha`, "opacity", 0, layer.alpha) +
+          slider(`${group}-shrink`, "shrink", 0.1, layer.shrink) +
           (group === "faces"
             ? `<label class="check"><input type="checkbox" data-test="faces-internal"` +
-              `${prefs.faces.internal ? " checked" : ""} /> faces internes</label>`
+              `${prefs.faces.internal ? " checked" : ""} /> internal faces</label>`
             : "")
         );
       }).join("") +
-      `<fieldset class="layer"><legend>Arêtes</legend>` +
-      slider("edges-shrink", "rétraction", 0.1, prefs.edges.shrink) +
+      `<fieldset class="layer"><legend>Edges</legend>` +
+      slider("edges-shrink", "shrink", 0.1, prefs.edges.shrink) +
       `</fieldset>`;
 
     for (const { group } of LAYERS) {
@@ -213,7 +213,7 @@ async function boot() {
     if (!axis) return;
     pressedAt = undefined;
     viewer.axes.lookDown(axis);
-    message = `vue selon ${axis}`;
+    message = `looking down ${axis}`;
     $("status").textContent = message;
   });
 
@@ -259,8 +259,8 @@ async function boot() {
       picked.length === 0
         ? ""
         : picked.length === 1
-          ? `face ${picked[0].face} (bloc ${picked[0].block}) — la suivante viendra sur elle`
-          : `face ${picked[1].face} sera collée sur la face ${picked[0].face}`;
+          ? `face ${picked[0].face} (block ${picked[0].block}) — the next one will come to it`
+          : `face ${picked[1].face} will be glued onto face ${picked[0].face}`;
     $("status").textContent = message;
   }
 
@@ -302,7 +302,7 @@ async function boot() {
   $("recentre").addEventListener("click", () => {
     viewer.frameAll();
 
-    message = "vue recadrée";
+    message = "view recentred";
     $("status").textContent = message;
   });
 
@@ -315,9 +315,9 @@ async function boot() {
     $("stats").innerHTML = `
       <dl>
         <dt>mode</dt><dd data-test="mode">${kernel.mode}</dd>
-        <dt>blocs</dt><dd data-test="blocks">${stats.blocks}</dd>
-        <dt>nœuds</dt><dd data-test="nodes">${stats.nodes}</dd>
-        <dt>arêtes</dt><dd data-test="edges">${stats.edges}</dd>
+        <dt>blocks</dt><dd data-test="blocks">${stats.blocks}</dd>
+        <dt>nodes</dt><dd data-test="nodes">${stats.nodes}</dd>
+        <dt>edges</dt><dd data-test="edges">${stats.edges}</dd>
         <dt>faces</dt><dd data-test="faces">${stats.faces}</dd>
       </dl>`;
     $("status").textContent = message;
@@ -327,7 +327,7 @@ async function boot() {
   // In the station the kernel moves without this tab asking: someone typed in
   // the Python console. This is the whole point of the mode.
   kernel.onChanged(() => {
-    message = "modifié depuis Python";
+    message = "changed from Python";
     void refresh();
   });
 

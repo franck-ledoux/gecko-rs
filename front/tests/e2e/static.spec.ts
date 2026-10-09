@@ -457,7 +457,7 @@ test("two faces are picked with the mouse and glued", async ({ page }) => {
 
   // Both picked, in order, and the panel says which one the other comes to.
   expect(await page.evaluate(() => (window as any).__gecko.selection())).toHaveLength(2);
-  await expect(page.locator("#status")).toContainText("sera collée sur");
+  await expect(page.locator("#status")).toContainText("will be glued onto");
   await expect(page.locator("#glue")).toBeEnabled();
 
   await page.locator("#glue").click();
@@ -596,7 +596,7 @@ test("recentring shows everything without changing the direction", async ({ page
   });
   await page.locator("#recentre").click();
   await page.evaluate(() => (window as any).__gecko.settled());
-  await expect(page.locator("#status")).toHaveText("vue recadrée");
+  await expect(page.locator("#status")).toHaveText("view recentred");
 
   // It glided: a cut goes straight from one radius to the other and leaves
   // nothing in between, however the frames happen to fall.
@@ -636,7 +636,7 @@ test("a block is picked and removed", async ({ page }) => {
   await page.mouse.click(box.x + at[0], box.y + at[1]);
 
   await expect(page.locator("#remove")).toBeEnabled();
-  await expect(page.locator("#status")).toContainText("bloc");
+  await expect(page.locator("#status")).toContainText("block");
 
   await page.locator("#remove").click();
   await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
