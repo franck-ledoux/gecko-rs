@@ -19,6 +19,10 @@ command -v uv >/dev/null || {
 export GECKO_PORT="${GECKO_PORT:-8731}"
 export GECKO_VIEW="http://localhost:5173/"
 
+source scripts/ports.sh
+require_free 5173 "the dev server"
+require_free "$GECKO_PORT" "the station"
+
 [ -d node_modules ] || npm install --no-audit --no-fund
 [ -d front/node_modules ] || (cd front && npm install --no-audit --no-fund)
 [ -x .venv/bin/python ] || uv venv --quiet
@@ -33,10 +37,16 @@ echo "── building the kernel ───────────────�
 echo "── starting the dev server ───────────────────────────────────"
 (cd front && npm run dev -- --clearScreen false) &
 VITE=$!
-trap 'kill $VITE 2>/dev/null || true' EXIT
+# INT and TERM as well as EXIT: on EXIT alone a Ctrl-C through to the shell
+# leaves the dev server running, holding 5173 and forwarding to a station that
+# has just died with the console. That is the state this run started in.
+trap 'kill $VITE 2>/dev/null || true' EXIT INT TERM
 
 for _ in $(seq 1 60); do
   curl -sf -o /dev/null "$GECKO_VIEW" && break
+  # The server was started in the background, so it can have exited while we
+  # wait — and then this loop would be answered by somebody else's server.
+  kill -0 $VITE 2>/dev/null || { echo "the dev server stopped before it was ready" >&2; exit 1; }
   sleep 0.5
 done
 

@@ -95,10 +95,17 @@ all: everything works, nothing you type reaches it.
 
 That means the page was served by something that is not your station — most
 often the dev server with no station behind it. A tab that reaches a dev server
-before the station is listening now says *en attente de la station Python…* and
-connects by itself as soon as one answers, so this should only show up if the
-page came from a genuinely static host. Reload it from the address `show()`
-returned, or from the dev server if you are running `./dev`.
+before the station is listening now says *en attente de la station Python…*
+and connects by itself as soon as one answers.
+
+What it cannot detect is a dev server left behind by an earlier `./view`: that
+one has no `mode` route at all, which is indistinguishable from a genuinely
+static host, so the tab is right to carry its own kernel and wrong about which
+session it is showing. `./dev` and `./view` now refuse to start on an occupied
+port and name the process holding it, which is where that is caught.
+
+Either way: reload the page from the address `show()` returned, or from the dev
+server if you are running `./dev`.
 
 ## If the page says the bundle is missing
 

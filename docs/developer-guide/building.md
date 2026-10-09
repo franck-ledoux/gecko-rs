@@ -81,6 +81,34 @@ mode and really drives the Python session.
 `./dev` builds the extension in debug rather than release — this is the
 edit-and-try loop, and the difference is twenty seconds a go.
 
+### Fixed ports, and the leftovers that hold them
+
+Both ports are fixed: 5173 so a bookmark keeps working, and the station's so
+the dev server can be told in advance where to forward. So a process left from
+an earlier run is in the way, and the two ways that went wrong were both
+quiet:
+
+- Vite exits on "port already in use" — but it is started in the background,
+  so the script carried on, and its readiness check was answered by the
+  **leftover** server.
+- That leftover serves the page just as happily and forwards nowhere, so the
+  view came up looking perfectly healthy and ignored every command typed in
+  the console.
+
+The second one is not something the page can detect. A dev server left by
+`./view` has no `mode` route, and "no `mode` route" is exactly what a genuinely
+static host looks like — so the tab is right to start a kernel of its own, and
+wrong about which session it is showing.
+
+Hence `scripts/ports.sh`: both scripts look before they start, and name the
+process holding the port and the command to stop it. The check runs *before*
+the wasm build, so the news arrives in a second rather than a minute.
+`./dev` also traps INT and TERM, not only EXIT, so a Ctrl-C does not leave the
+dev server behind; and `scripts/console.py` checks that the dev server really
+forwards to the station it just started, falling back to the station's own
+page rather than opening one that does not. `python/test_scripts.py` covers
+the guard.
+
 ## Building pieces on their own
 
 ```bash

@@ -7,6 +7,11 @@ set -euo pipefail
 cd "$(dirname "$0")"
 export PATH="$HOME/.cargo/bin:$PATH"
 
+source scripts/ports.sh
+# Before the build, not after: a wasm build to find out the port is busy is a
+# minute of waiting for news that was available immediately.
+require_free 5173 "the viewer's dev server"
+
 [ -d node_modules ] || npm install --no-audit --no-fund
 [ -d front/node_modules ] || (cd front && npm install --no-audit --no-fund)
 
