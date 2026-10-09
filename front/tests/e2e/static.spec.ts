@@ -624,10 +624,11 @@ test("recentring shows everything without changing the direction", async ({ page
   const after = await page.evaluate(() => (window as any).__gecko.camera());
   const between = (await page.evaluate(() => (window as any).__radii)) as number[];
   const partWay = between.filter((r) => r > before.radius + 1e-6 && r < after.radius - 1e-6);
-  // Two, not a dozen: a cut leaves exactly none however the frames fall, so
-  // a low bar still has teeth, and a slow runner drawing a handful of frames
-  // in 450 ms does not make this a lottery.
-  expect(partWay.length, `radii seen: ${between.join(", ")}`).toBeGreaterThanOrEqual(2);
+  // One is the whole claim: it did not get there in a single step. A cut
+  // leaves exactly none however the frames fall, so this still fails on one
+  // — and asking for more was a bet on the frame rate that a CI runner
+  // drawing seven frames in 450 ms, most of them at the eased ends, lost.
+  expect(partWay.length, `radii seen: ${between.join(", ")}`).toBeGreaterThanOrEqual(1);
 
   // Everything in view, and looked at from exactly where it was.
   expect(await offScreen()).toBe(0);
