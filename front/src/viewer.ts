@@ -24,6 +24,7 @@ import { VertexBuffer } from "@babylonjs/core/Buffers/buffer";
 import type { LinesMesh } from "@babylonjs/core/Meshes/linesMesh";
 import { CreateSphere } from "@babylonjs/core/Meshes/Builders/sphereBuilder";
 import { CreateLineSystem } from "@babylonjs/core/Meshes/Builders/linesBuilder";
+import { CreateGreasedLine } from "@babylonjs/core/Meshes/Builders/greasedLineBuilder";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { PointerDragBehavior } from "@babylonjs/core/Behaviors/Meshes/pointerDragBehavior";
 import "@babylonjs/core/Culling/ray";
@@ -59,6 +60,17 @@ export const HANDLE_PIXELS = 11;
 /** How near a line the pointer has to be to count as on it. Lines are one
  *  pixel wide and nobody can hit one. */
 export const EDGE_PICK_PIXELS = 7;
+
+/**
+ * How thick a lit sheet is drawn.
+ *
+ * WebGL caps `lineWidth` at one pixel whatever you ask for, so a thick line
+ * is not a line at all — it is a ribbon built as geometry. That is what
+ * `CreateGreasedLine` makes, and with `sizeAttenuation` off its width is a
+ * share of the screen rather than of the model, so a sheet reads the same
+ * however far away it is.
+ */
+export const SHEET_WIDTH = 0.012;
 
 /** How long a recentring takes. Long enough to follow the model moving into
  *  place, short enough not to be waiting for it. */
@@ -168,7 +180,7 @@ export class Viewer {
   /** The edge that sheet was asked for, so a second click on it can put the
    *  sheet out again. View state, like the face selection. */
   selectedEdge: number | null = null;
-  private litWire?: LinesMesh;
+  private litWire?: Mesh;
   private surfaces: Record<Group, { mesh?: Mesh; data?: SurfaceData }> = {
     faces: {},
     blocks: {},
@@ -613,8 +625,12 @@ export class Viewer {
       ]);
     }
     if (!lines.length) return;
-    this.litWire = CreateLineSystem("sheet", { lines, updatable: false }, this.scene);
-    this.litWire.color = Color3.FromHexString(ANCHOR);
+    this.litWire = CreateGreasedLine(
+      "sheet",
+      { points: lines.map(([a, b]) => [a.x, a.y, a.z, b.x, b.y, b.z]) },
+      { color: Color3.FromHexString(ANCHOR), width: SHEET_WIDTH, sizeAttenuation: false },
+      this.scene,
+    );
     this.litWire.isPickable = false;
     this.litWire.layerMask = MAIN_LAYER;
     this.litWire.renderingGroupId = 1;

@@ -44,9 +44,15 @@ each being the thing you had to aim at to hit it. Lines are one pixel wide, so
 an edge is picked within a few pixels of one, a tolerance kept constant on
 screen however far away you are.
 
-The sheet is drawn over everything else rather than behind the surfaces. A
-sheet runs *through* the model, and where it comes out the far side is the
-part worth seeing.
+The sheet is drawn **thickened**, and over everything else rather than behind
+the surfaces. A sheet runs *through* the model, and where it comes out the
+far side is the part worth seeing.
+
+Thick is not a line. WebGL caps `lineWidth` at one pixel whatever is asked of
+it, so the lit sheet is a ribbon built as geometry rather than a line drawn
+fatter. Its width is a share of the screen, not of the model, so a sheet
+reads the same whether you are up against it or looking at the whole thing
+from across the room.
 
 Clicking the same edge again puts it out, as does `Esc`.
 

@@ -1273,3 +1273,55 @@ describe("the interface's own colours", () => {
     expect(SHOT_SCALES).toContain(DEFAULTS.shot.scale);
   });
 });
+
+describe("lighting up a sheet", () => {
+  const cube = async () => {
+    const viewer = new Viewer(new NullEngine());
+    const kernel = new WasmKernel();
+    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    viewer.applyPrefs(DEFAULTS);
+    viewer.setView(decodeView(await kernel.view()));
+    return { viewer, kernel };
+  };
+
+  it("draws the lit edges as their own thing, and takes it away again", async () => {
+    // A ribbon, not a line: WebGL caps `lineWidth` at one pixel whatever is
+    // asked of it, so a thick line has to be geometry. Built headless here
+    // as well, which is the cheap way to find out it still builds.
+    const { viewer } = await cube();
+    expect(viewer.scene.getMeshByName("sheet")).toBeNull();
+
+    const names = viewer.edgeNames().slice(0, 4);
+    viewer.highlightEdges(names);
+    expect(viewer.highlighted).toEqual(names);
+    expect(viewer.scene.getMeshByName("sheet")).not.toBeNull();
+
+    viewer.highlightEdges([]);
+    expect(viewer.scene.getMeshByName("sheet")).toBeNull();
+  });
+
+  it("keeps the lit edges when the view is redrawn under it", async () => {
+    // A node dragged, a setting changed: the sheet is still the sheet.
+    const { viewer, kernel } = await cube();
+    const names = viewer.edgeNames().slice(0, 2);
+    viewer.highlightEdges(names);
+
+    viewer.setView(decodeView(await kernel.view()));
+    expect(viewer.highlighted).toEqual(names);
+    expect(viewer.scene.getMeshByName("sheet")).not.toBeNull();
+
+    viewer.applyPrefs({ ...DEFAULTS, edges: { shrink: 0.4 } });
+    expect(viewer.scene.getMeshByName("sheet")).not.toBeNull();
+  });
+
+  it("names an edge from where it is, and finds where it is from its name", async () => {
+    const { viewer } = await cube();
+    for (const name of viewer.edgeNames()) {
+      const mid = viewer.edgeMidpoint(name)!;
+      // The unit cube: every edge midpoint has one coordinate at a half and
+      // the other two at a corner.
+      expect(mid.filter((x) => Math.abs(x - 0.5) < 1e-6).length).toBeGreaterThanOrEqual(1);
+    }
+    expect(viewer.edgeMidpoint(999_999)).toBeNull();
+  });
+});
