@@ -34,3 +34,17 @@ h2 { margin: 18px 0 8px; font-size: 11px; color: var(--dim);
           margin: 5px 0; font-size: 12px; color: var(--dim); }
 .swatch input[type=color] { width: 42px; height: 22px; padding: 0; cursor: pointer;
           background: none; border: 1px solid var(--line); border-radius: 4px; }
+
+/* One fieldset per group of cells. The legend carries the name, so a row needs
+   no label of its own and the controls line up across groups. */
+.layer { margin: 10px 0 0; padding: 8px 10px 10px; border: 1px solid var(--line);
+         border-radius: 6px; }
+.layer legend { padding: 0 5px; font-size: 11px; color: var(--dim);
+                text-transform: uppercase; letter-spacing: .06em; }
+.layer .check { margin: 4px 0; }
+.layer .row { margin: 4px 0; }
+.mode { flex: 1; color: var(--dim); font-size: 12px; white-space: nowrap; }
+.slider { display: flex; align-items: center; gap: 8px; margin: 6px 0;
+          font-size: 12px; color: var(--dim); }
+.slider span { flex: none; width: 66px; }
+.slider input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); }

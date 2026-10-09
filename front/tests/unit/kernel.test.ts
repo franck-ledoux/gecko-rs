@@ -13,7 +13,13 @@ import { NullEngine } from "@babylonjs/core/Engines/nullEngine";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { decodeView } from "../../src/decode";
 import { initKernel, WasmKernel } from "../../src/kernel-wasm";
-import { HANDLE_PIXELS, Viewer, worldSizeForPixels } from "../../src/viewer";
+import {
+  CLOSEST_APPROACH,
+  HANDLE_PIXELS,
+  Viewer,
+  worldSizeForPixels,
+  ZOOM_PER_NOTCH,
+} from "../../src/viewer";
 import {
   GIZMO_LAYER,
   MAIN_LAYER,
@@ -21,8 +27,12 @@ import {
   shortestTurn,
   type Axis,
 } from "../../src/axes";
-import { PRESETS } from "../../src/theme";
+import { DEFAULTS, PRESETS } from "../../src/theme";
 import { readProbe } from "../../src/mode";
+import { colourForId, hexToRgb, hslToHex, UNNAMED } from "../../src/palette";
+import { buildSurface, edgeSegments, quadsToDraw } from "../../src/surface";
+import { loadPrefs } from "../../src/theme";
+import type { View } from "../../src/decode";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
 import type { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 
@@ -380,7 +390,7 @@ describe("the theme", () => {
     await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
     viewer.setView(decodeView(await kernel.view()));
 
-    viewer.applyTheme(PRESETS.light);
+    viewer.applyPrefs({ ...DEFAULTS, theme: PRESETS.light });
     expect(viewer.scene.clearColor.toHexString()).toBe(
       Color3.FromHexString(PRESETS.light.background).toColor4(1).toHexString(),
     );
@@ -392,7 +402,7 @@ describe("the theme", () => {
     // And a theme set before there is anything to colour still applies to what
     // arrives afterwards.
     const fresh = new Viewer(new NullEngine());
-    fresh.applyTheme(PRESETS.light);
+    fresh.applyPrefs({ ...DEFAULTS, theme: PRESETS.light });
     fresh.setView(decodeView(await kernel.view()));
     expect(
       (fresh.scene.getMeshByName("node0")!.material as StandardMaterial).emissiveColor.toHexString(),
@@ -500,5 +510,398 @@ describe("reading the mode probe", () => {
     expect(readProbe(502, "Error: connect ECONNREFUSED")).toBe("waiting");
     // And a fetch that threw, which this reports as status 0.
     expect(readProbe(0, "")).toBe("waiting");
+  });
+});
+
+describe("a colour per name", () => {
+  it("gives a name the same colour for ever", () => {
+    // The whole reason not to colour by position in a list: an edit reorders
+    // that list, and the model would repaint itself while you watched.
+    expect(colourForId(7, 2)).toBe(colourForId(7, 2));
+    expect(colourForId(7, 2)).toMatch(/^#[0-9a-f]{6}$/);
+  });
+
+  it("does not depend on how many cells there are", () => {
+    // `hue = name / total` is the obvious formula and the wrong one: adding
+    // one block would recolour every other block in the model.
+    const before = [1, 2, 3].map((n) => colourForId(n, 3));
+    const after = [1, 2, 3].map((n) => colourForId(n, 3));
+    expect(after).toEqual(before);
+    // And it is still spread out: three names, three colours.
+    expect(new Set(before).size).toBe(3);
+  });
+
+  it("keeps a face and a block of the same number apart", () => {
+    expect(colourForId(4, 2)).not.toBe(colourForId(4, 3));
+  });
+
+  it("has something to say about a cell with no name yet", () => {
+    expect(colourForId(UNNAMED, 2)).toBe(colourForId(UNNAMED, 3));
+  });
+
+  it("round-trips through hex the way Babylon reads it", () => {
+    expect(hexToRgb("#000000")).toEqual([0, 0, 0]);
+    expect(hexToRgb("#ffffff")).toEqual([1, 1, 1]);
+    const [r, g, b] = hexToRgb(hslToHex(0, 1, 0.5));
+    expect([r, g, b]).toEqual([1, 0, 0]);
+  });
+});
+
+/** A view with two coplanar quadrangles sharing one face name: what the
+ *  kernel will ship once blocks can be joined, built by hand because today
+ *  it cannot yet produce one. */
+function sharedFaceView(): View {
+  return {
+    centre: [0, 0, 0],
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]),
+    names: new Uint32Array([0, 1, 2, 3]),
+    edges: new Uint32Array([0, 1]),
+    // The same four corners twice: one face, seen from each of two blocks.
+    quads: new Uint32Array([0, 1, 2, 3, 0, 3, 2, 1]),
+    quadFaces: new Uint32Array([9, 9]),
+    quadBlocks: new Uint32Array([100, 200]),
+  };
+}
+
+describe("choosing which quadrangles to draw", () => {
+  it("draws every one of them for blocks", () => {
+    // Each block keeps a closed surface of its own, so a shared face is drawn
+    // once per block. Dropping one would open a shell the moment it shrinks.
+    expect(quadsToDraw(sharedFaceView(), "block", true)).toEqual([0, 1]);
+    expect(quadsToDraw(sharedFaceView(), "block", false)).toEqual([0, 1]);
+  });
+
+  it("draws a shared face once, and only when asked", () => {
+    // It arrives twice and it is still one face.
+    expect(quadsToDraw(sharedFaceView(), "face", true)).toEqual([0]);
+    // Internal, so hidden when internal faces are off.
+    expect(quadsToDraw(sharedFaceView(), "face", false)).toEqual([]);
+  });
+
+  it("keeps a face on the boundary either way", async () => {
+    const kernel = new WasmKernel();
+    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    const view = decodeView(await kernel.view());
+    // A free-standing block has six faces and none of them is shared, so
+    // hiding internal faces hides nothing.
+    expect(quadsToDraw(view, "face", true)).toHaveLength(6);
+    expect(quadsToDraw(view, "face", false)).toHaveLength(6);
+  });
+});
+
+describe("building a surface", () => {
+  const cube = async () => {
+    const kernel = new WasmKernel();
+    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    return decodeView(await kernel.view());
+  };
+
+  const options = (over: Partial<Parameters<typeof buildSurface>[1]> = {}) => ({
+    by: "face" as const,
+    colouring: "uniform" as const,
+    uniform: "#808080",
+    shrink: 1,
+    internal: true,
+    ...over,
+  });
+
+  it("splits a vertex per quadrangle", async () => {
+    // Corners cannot be shared: each one carries its quadrangle's colour and
+    // is pulled towards its quadrangle's centre.
+    const data = buildSurface(await cube(), options());
+    expect(data.positions.length / 3).toBe(6 * 4);
+    expect(data.indices.length).toBe(6 * 6);
+    expect(data.colors.length / 4).toBe(6 * 4);
+  });
+
+  it("uses one colour, or one per name", async () => {
+    const view = await cube();
+    const distinct = (d: ReturnType<typeof buildSurface>) => {
+      const seen = new Set<string>();
+      for (let v = 0; v < d.colors.length; v += 4) seen.add(d.colors.slice(v, v + 3).join(","));
+      return seen.size;
+    };
+    expect(distinct(buildSurface(view, options()))).toBe(1);
+    expect(distinct(buildSurface(view, options({ colouring: "id" })))).toBe(6);
+    // Six faces, one block: by block it is one colour whichever mode.
+    expect(distinct(buildSurface(view, options({ by: "block", colouring: "id" })))).toBe(1);
+  });
+
+  it("leaves the geometry alone at a shrink of 1", async () => {
+    const view = await cube();
+    const data = buildSurface(view, options());
+    // Every corner of the unit cube, rebased, is at ±0.5 on each axis.
+    for (const x of data.positions) expect(Math.abs(x)).toBeCloseTo(0.5, 6);
+  });
+
+  it("pulls a face towards its own centre, and a block towards the block's", async () => {
+    const view = await cube();
+    const faces = buildSurface(view, options({ shrink: 0.5 }));
+    const blocks = buildSurface(view, options({ by: "block", shrink: 0.5 }));
+
+    // A face shrinks in its own plane: the axis it is flat along does not
+    // move, the other two halve. So one coordinate per corner stays at 0.5.
+    for (let v = 0; v < faces.positions.length; v += 3) {
+      const p = [faces.positions[v], faces.positions[v + 1], faces.positions[v + 2]];
+      expect(p.filter((x) => Math.abs(Math.abs(x) - 0.5) < 1e-6)).toHaveLength(1);
+      expect(p.filter((x) => Math.abs(Math.abs(x) - 0.25) < 1e-6)).toHaveLength(2);
+    }
+    // A block shrinks towards one point, so every coordinate halves.
+    for (const x of blocks.positions) expect(Math.abs(x)).toBeCloseTo(0.25, 6);
+  });
+
+  it("collapses to nothing at a shrink of 0, and never moves the centre", async () => {
+    const view = await cube();
+    const blocks = buildSurface(view, options({ by: "block", shrink: 0 }));
+    for (const x of blocks.positions) expect(x).toBeCloseTo(0, 6);
+  });
+
+  it("has nothing to draw when there is nothing to draw", async () => {
+    const empty = buildSurface(await cube(), options({ internal: false, by: "face" }));
+    expect(empty.indices.length).toBe(6 * 6); // a free block is all boundary
+    const shared = buildSurface(sharedFaceView(), options({ internal: false }));
+    expect(shared.indices.length).toBe(0);
+  });
+});
+
+describe("shrinking the edges", () => {
+  it("pulls each one towards its own midpoint", async () => {
+    const kernel = new WasmKernel();
+    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    const view = decodeView(await kernel.view());
+
+    const whole = edgeSegments(view, 1);
+    const half = edgeSegments(view, 0.5);
+    expect(whole.length).toBe(12 * 6);
+
+    for (let s = 0; s < whole.length; s += 6) {
+      for (let axis = 0; axis < 3; axis++) {
+        const mid = (whole[s + axis] + whole[s + 3 + axis]) / 2;
+        // The midpoint is where it was, and both ends are half as far from it.
+        expect((half[s + axis] + half[s + 3 + axis]) / 2).toBeCloseTo(mid, 6);
+        expect(half[s + axis] - mid).toBeCloseTo((whole[s + axis] - mid) / 2, 6);
+      }
+    }
+  });
+});
+
+describe("the surfaces in the scene", () => {
+  const show = async (prefs: Parameters<Viewer["applyPrefs"]>[0]) => {
+    const viewer = new Viewer(new NullEngine());
+    const kernel = new WasmKernel();
+    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    viewer.applyPrefs(prefs);
+    viewer.setView(decodeView(await kernel.view()));
+    return viewer;
+  };
+
+  it("draws the faces and leaves the blocks out by default", async () => {
+    const viewer = await show(DEFAULTS);
+    expect(viewer.surface("faces")?.quads).toBe(6);
+    expect(viewer.surface("blocks")).toBeNull();
+  });
+
+  it("draws both at once when both are asked for", async () => {
+    // Two colourings of one shape, which is the point of having both.
+    const viewer = await show({
+      ...DEFAULTS,
+      faces: { ...DEFAULTS.faces, visible: true, colouring: "id" },
+      blocks: { ...DEFAULTS.blocks, visible: true, colouring: "uniform" },
+    });
+    expect(viewer.surface("faces")?.colours).toBe(6);
+    expect(viewer.surface("blocks")?.colours).toBe(1);
+  });
+
+  it("puts the transparency on the material, not in the colours", async () => {
+    const viewer = await show({
+      ...DEFAULTS,
+      faces: { ...DEFAULTS.faces, alpha: 0.25 },
+    });
+    expect(viewer.surface("faces")?.alpha).toBeCloseTo(0.25, 9);
+  });
+
+  it("never lets a surface answer a pick", async () => {
+    // These sit exactly where the node handles are. A surface that is
+    // pickable is a node that cannot be dragged.
+    const viewer = await show({
+      ...DEFAULTS,
+      blocks: { ...DEFAULTS.blocks, visible: true },
+    });
+    for (const name of ["faces", "blocks"]) {
+      expect(viewer.scene.getMeshByName(name)!.isPickable).toBe(false);
+    }
+  });
+
+  it("follows a node being dragged", async () => {
+    const viewer = await show(DEFAULTS);
+    const before = viewer.surface("faces")!.positions.slice();
+    const node = viewer.scene.getMeshByName("node0")!;
+    node.position.x += 3;
+    // What the drag behaviour calls on every mouse move.
+    (viewer as unknown as { preview: (i: number, to: Vector3) => void }).preview(
+      0,
+      node.position,
+    );
+    const after = viewer.surface("faces")!.positions;
+    expect(after.length).toBe(before.length);
+    expect(Array.from(after)).not.toEqual(Array.from(before));
+  });
+
+  it("takes a setting changed after the view arrived", async () => {
+    const viewer = await show(DEFAULTS);
+    expect(viewer.surface("blocks")).toBeNull();
+    viewer.applyPrefs({
+      ...DEFAULTS,
+      blocks: { ...DEFAULTS.blocks, visible: true, shrink: 0.5 },
+    });
+    expect(viewer.surface("blocks")?.quads).toBe(6);
+    for (const x of viewer.surface("blocks")!.positions) {
+      expect(Math.abs(x)).toBeCloseTo(0.25, 6);
+    }
+  });
+});
+
+describe("preferences that outlive a version", () => {
+  const store = new Map<string, string>();
+  beforeAll(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => store.clear(),
+      key: () => null,
+      length: 0,
+    } as Storage;
+  });
+
+  it("fills in what an older version never wrote", () => {
+    // Exactly what every stored copy held the day faces and blocks arrived.
+    store.set("gecko.view", JSON.stringify({ theme: { background: "#000000" }, axes: false }));
+    const prefs = loadPrefs();
+    expect(prefs.theme.background).toBe("#000000");
+    expect(prefs.axes).toBe(false);
+    expect(prefs.faces).toEqual(DEFAULTS.faces);
+    expect(prefs.blocks).toEqual(DEFAULTS.blocks);
+  });
+
+  it("clamps what someone else wrote", () => {
+    store.set("gecko.view", JSON.stringify({ faces: { alpha: 40, shrink: -2 } }));
+    const prefs = loadPrefs();
+    expect(prefs.faces.alpha).toBe(1);
+    expect(prefs.faces.shrink).toBe(0);
+  });
+
+  it("survives nonsense in storage", () => {
+    store.set("gecko.view", "{ not json");
+    expect(loadPrefs()).toEqual(DEFAULTS);
+  });
+});
+
+describe("changing a setting without rebuilding the scene", () => {
+  const shown = async (blocks = false) => {
+    const viewer = new Viewer(new NullEngine());
+    const kernel = new WasmKernel();
+    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    viewer.applyPrefs({
+      ...DEFAULTS,
+      blocks: { ...DEFAULTS.blocks, visible: blocks },
+    });
+    viewer.setView(decodeView(await kernel.view()));
+    return viewer;
+  };
+
+  /** Identity, not just presence: a mesh thrown away and rebuilt has a new
+   *  one, and that is the thing being tested. */
+  const idOf = (viewer: Viewer, name: string) =>
+    viewer.scene.getMeshByName(name)?.uniqueId ?? null;
+
+  it("keeps the same mesh when only the shrink moves", async () => {
+    // Dragging a slider is one of these per mouse move. Disposing two meshes
+    // and two materials each time is what makes the model blink.
+    const viewer = await shown();
+    const before = idOf(viewer, "faces");
+    const positions = viewer.surface("faces")!.positions.slice();
+
+    for (const shrink of [0.9, 0.8, 0.7, 0.6]) {
+      viewer.applyPrefs({ ...DEFAULTS, faces: { ...DEFAULTS.faces, shrink } });
+    }
+    expect(idOf(viewer, "faces")).toBe(before);
+    // Same mesh, and it really did move.
+    expect(Array.from(viewer.surface("faces")!.positions)).not.toEqual(
+      Array.from(positions),
+    );
+  });
+
+  it("keeps the same mesh when only the transparency or the colouring changes", async () => {
+    const viewer = await shown();
+    const before = idOf(viewer, "faces");
+    viewer.applyPrefs({
+      ...DEFAULTS,
+      faces: { ...DEFAULTS.faces, alpha: 0.1, colouring: "id" },
+    });
+    expect(idOf(viewer, "faces")).toBe(before);
+    expect(viewer.surface("faces")!.alpha).toBeCloseTo(0.1, 9);
+    expect(viewer.surface("faces")!.colours).toBe(6);
+  });
+
+  it("keeps the edges when only their shrink moves", async () => {
+    const viewer = await shown();
+    const before = idOf(viewer, "edges");
+    viewer.applyPrefs({ ...DEFAULTS, edges: { shrink: 0.5 } });
+    expect(idOf(viewer, "edges")).toBe(before);
+    expect(viewer.edgeCount).toBe(12);
+  });
+
+  it("still throws the mesh away when the shape really changes", async () => {
+    // Hiding is hiding, and a different number of quadrangles is a different
+    // mesh. The point is not to never rebuild, it is to never rebuild for
+    // nothing.
+    const viewer = await shown();
+    viewer.applyPrefs({ ...DEFAULTS, faces: { ...DEFAULTS.faces, visible: false } });
+    expect(idOf(viewer, "faces")).toBeNull();
+    expect(viewer.surface("faces")).toBeNull();
+  });
+});
+
+describe("how close the camera may get", () => {
+  it("zooms by a share of the distance rather than a fixed step", async () => {
+    // A fixed step is the same number of world units however near you are,
+    // so one notch close in leaps through the model and out the far side.
+    const viewer = new Viewer(new NullEngine());
+    expect(viewer.camera.wheelDeltaPercentage).toBe(ZOOM_PER_NOTCH);
+    expect(viewer.camera.wheelDeltaPercentage).toBeGreaterThan(0);
+  });
+
+  it("stops short of the model rather than passing through it", async () => {
+    const viewer = new Viewer(new NullEngine());
+    const kernel = new WasmKernel();
+    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    // No frameAll: a station tab is told the kernel moved and redraws
+    // without reframing, and the limits still have to be right.
+    viewer.setView(decodeView(await kernel.view()));
+
+    const diagonal = Math.sqrt(3);
+    expect(viewer.camera.lowerRadiusLimit).toBeCloseTo(diagonal * CLOSEST_APPROACH, 5);
+    // Room to zoom in, and never as far as the centre it orbits.
+    expect(viewer.camera.lowerRadiusLimit!).toBeGreaterThan(0);
+    expect(viewer.camera.lowerRadiusLimit!).toBeLessThan(viewer.camera.radius);
+  });
+
+  it("leaves the limits off when there is nothing to scale them to", async () => {
+    // One node has no diagonal; a limit of zero would be worse than none.
+    const viewer = new Viewer(new NullEngine());
+    viewer.setView({
+      centre: [0, 0, 0],
+      positions: new Float32Array([0, 0, 0]),
+      names: new Uint32Array([1]),
+      edges: new Uint32Array(0),
+      quads: new Uint32Array(0),
+      quadFaces: new Uint32Array(0),
+      quadBlocks: new Uint32Array(0),
+    });
+    viewer.frameAll();
+    expect(viewer.camera.lowerRadiusLimit).toBeNull();
+    expect(viewer.camera.upperRadiusLimit).toBeNull();
+    expect(viewer.camera.radius).toBe(4);
   });
 });

@@ -142,7 +142,7 @@ What the browser draws, in the one shape both modes deliver it. The static page
 reads it straight out of wasm memory; the station sends the identical bytes down
 a WebSocket. One producer, one decoder.
 
-Little-endian throughout. Version 2.
+Little-endian throughout. Version 3.
 
 | Offset | Type  | Count | Meaning                           |
 | ------ | ----- | ----- | --------------------------------- |
@@ -151,9 +151,17 @@ Little-endian throughout. Version 2.
 | 8      | `f64` | 3     | model centre                      |
 | 32     | `u32` | 1     | number of nodes, *N*              |
 | 36     | `u32` | 1     | number of edges, *E*              |
-| 40     | `f32` | 3*N*  | positions, relative to the centre |
+| 40     | `u32` | 1     | number of quadrangles, *Q*        |
+| 44     | `f32` | 3*N*  | positions, relative to the centre |
 | …      | `u32` | *N*   | each node's `CellId`              |
 | …      | `u32` | 2*E*  | node indices, two per edge        |
+| …      | `u32` | 4*Q*  | node indices, four per quadrangle |
+| …      | `u32` | *Q*   | each quadrangle's face `CellId`   |
+| …      | `u32` | *Q*   | each quadrangle's block `CellId`  |
+
+Arrays rather than one interleaved record per quadrangle, like everything
+above them: a client makes a typed-array view over each one instead of walking
+a stride.
 
 The f64 centre sits 8-byte aligned and everything after it 4-byte aligned, so a
 client can view the bytes as typed arrays with no copy.
@@ -171,6 +179,28 @@ not promise.
 
 The node names are there so the browser has something to call a sphere it
 picked. Its position in the array is not a name: edits reorder it.
+
+### One surface, read two ways
+
+A quadrangle is listed **per (face, block) pair**, and carries both names. So
+the faces and the blocks are the same geometry read twice — differing only in
+which name picks the colour, and which centre a shrink pulls towards. That is
+what lets both be on screen at once, each with its own colouring, transparency
+and shrink, without the kernel shipping the surface twice.
+
+Today that distinction has no teeth: `add_block` leaves β₃ unset, so blocks are
+free-standing and no face is shared. It will once blocks can be joined — a
+shared face will then arrive twice, once per block, wound each way, which is
+exactly what gives each block a closed surface of its own. Having the shape
+right now costs nothing and saves a format change then.
+
+It also means **internal is derived, not declared**: a face with a block on
+both sides is one whose name appears twice in the list. No parallel flag to
+disagree with the topology.
+
+The colours themselves are not in here, and never will be. The buffer carries
+names; what colour a name is drawn in is the viewer's business — see
+[Appearance](../user-guide/display.md).
 
 ### The origin stays put
 

@@ -14,12 +14,12 @@ use gecko_core::Blocking;
 use std::collections::HashMap;
 
 pub const MAGIC: [u8; 4] = *b"GKB1";
-/// 2 added the node names. The field is bumped rather than quietly reused: two
-/// independent decoders read this, and a silent change is how one of them ends
-/// up reading the wrong field as a coordinate.
-pub const VERSION: u32 = 2;
-/// magic + version + f64 centre + two counts.
-pub const HEADER: usize = 40;
+/// 2 added the node names, 3 the surface. The field is bumped rather than
+/// quietly reused: two independent decoders read this, and a silent change is
+/// how one of them ends up reading the wrong field as a coordinate.
+pub const VERSION: u32 = 3;
+/// magic + version + f64 centre + three counts.
+pub const HEADER: usize = 44;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ViewBuffer {
@@ -34,6 +34,19 @@ pub struct ViewBuffer {
     pub names: Vec<u32>,
     /// Two indices into `positions` per edge.
     pub edges: Vec<u32>,
+    /// Four indices into `positions` per quadrangle, wound outward.
+    ///
+    /// One quadrangle per **(face, block) pair**, which is why there are two
+    /// name arrays beside it rather than one: the same surface is what the
+    /// viewer draws for faces and for blocks, and only the name it colours by
+    /// differs. Once blocks are joined, a shared face will appear twice here —
+    /// once per block, wound each way — and that is what gives each block a
+    /// closed surface of its own.
+    pub quads: Vec<u32>,
+    /// The face's stable name, one per quadrangle.
+    pub quad_faces: Vec<u32>,
+    /// The block's stable name, one per quadrangle.
+    pub quad_blocks: Vec<u32>,
 }
 
 impl ViewBuffer {
@@ -74,11 +87,34 @@ impl ViewBuffer {
             }
         }
 
+        let sides = blocking.block_faces();
+        let mut quads = Vec::with_capacity(sides.len() * 4);
+        let mut quad_faces = Vec::with_capacity(sides.len());
+        let mut quad_blocks = Vec::with_capacity(sides.len());
+        for side in &sides {
+            // All four or none: a quadrangle missing a corner is not a smaller
+            // quadrangle, it is a hole in the index arithmetic downstream.
+            let Some(corners) = side
+                .nodes
+                .iter()
+                .map(|n| at.get(n).copied())
+                .collect::<Option<Vec<_>>>()
+            else {
+                continue;
+            };
+            quads.extend_from_slice(&corners);
+            quad_faces.push(side.face.get().unwrap_or(u32::MAX));
+            quad_blocks.push(side.block.get().unwrap_or(u32::MAX));
+        }
+
         ViewBuffer {
             centre,
             positions,
             names,
             edges,
+            quads,
+            quad_faces,
+            quad_blocks,
         }
     }
 
@@ -87,7 +123,14 @@ impl ViewBuffer {
     /// arrays without copying.
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(
-            HEADER + (self.positions.len() + self.names.len() + self.edges.len()) * 4,
+            HEADER
+                + (self.positions.len()
+                    + self.names.len()
+                    + self.edges.len()
+                    + self.quads.len()
+                    + self.quad_faces.len()
+                    + self.quad_blocks.len())
+                    * 4,
         );
         out.extend_from_slice(&MAGIC);
         out.extend_from_slice(&VERSION.to_le_bytes());
@@ -96,6 +139,7 @@ impl ViewBuffer {
         }
         out.extend_from_slice(&((self.positions.len() / 3) as u32).to_le_bytes());
         out.extend_from_slice(&((self.edges.len() / 2) as u32).to_le_bytes());
+        out.extend_from_slice(&(self.quad_faces.len() as u32).to_le_bytes());
         for x in &self.positions {
             out.extend_from_slice(&x.to_le_bytes());
         }
@@ -103,6 +147,15 @@ impl ViewBuffer {
             out.extend_from_slice(&x.to_le_bytes());
         }
         for x in &self.edges {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        for x in &self.quads {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        for x in &self.quad_faces {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        for x in &self.quad_blocks {
             out.extend_from_slice(&x.to_le_bytes());
         }
         out

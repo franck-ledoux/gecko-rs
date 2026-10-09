@@ -53,6 +53,15 @@ pub fn cube_corners(origin: [f64; 3], size: f64) -> [[f64; 3]; 8] {
     ]
 }
 
+/// One face of one block: the four nodes it runs through, wound outward **as
+/// that block sees it**, with both names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BlockFace {
+    pub face: CellId,
+    pub block: CellId,
+    pub nodes: [VertexIdType; 4],
+}
+
 #[derive(Debug, Error)]
 pub enum BlockingError {
     #[error("could not build the map: {0}")]
@@ -234,6 +243,51 @@ impl Blocking {
         self.map
             .iter_vertices()
             .map(move |v| (self.node_tag(v).id, self.position(v).unwrap_or([0.0; 3])))
+    }
+
+    /// Every face of every block.
+    ///
+    /// Listed per block *side* rather than per face. Today that is the same
+    /// thing — `add_block` leaves β₃ unset, so no face is shared and this
+    /// yields six entries per block — but once blocks are sewn a face between
+    /// two of them belongs to both, with opposite windings, and each block
+    /// still wants a closed surface of its own. Having the shape right now
+    /// costs nothing and saves a format change then.
+    pub fn block_faces(&self) -> Vec<BlockFace> {
+        let mut out = Vec::new();
+        for volume in self.map.iter_volumes() {
+            let block = self.block_tag(volume).id;
+
+            // The first dart of each face **on this block's side**. `face_id`
+            // alone would not do: it is the smallest dart of the whole face
+            // orbit, which once β₃ is set may well be the other block's.
+            let mut sides: Vec<(FaceIdType, DartIdType)> = Vec::new();
+            for dart in self.map.orbit(OrbitPolicy::Volume, volume as DartIdType) {
+                let face = self.map.face_id(dart);
+                if !sides.iter().any(|(seen, _)| *seen == face) {
+                    sides.push((face, dart));
+                }
+            }
+            // Sorted, so the order cannot depend on how the orbit happened to
+            // be walked. Both modes ship these bytes and compare them.
+            sides.sort_by_key(|(face, _)| *face);
+
+            for (face, dart) in sides {
+                let mut nodes = [0; 4];
+                let mut walk = dart;
+                for slot in nodes.iter_mut() {
+                    *slot = self.map.vertex_id(walk);
+                    walk = self.map.beta::<1>(walk);
+                }
+                debug_assert_eq!(walk, dart, "a block face that is not a quadrangle");
+                out.push(BlockFace {
+                    face: self.face_tag(face).id,
+                    block,
+                    nodes,
+                });
+            }
+        }
+        out
     }
 
     // --- reading ----------------------------------------------------------

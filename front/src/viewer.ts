@@ -15,7 +15,9 @@ import { ArcRotateCamera } from "@babylonjs/core/Cameras/arcRotateCamera";
 import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight";
 import { Matrix, Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { Color3, Color4 } from "@babylonjs/core/Maths/math.color";
-import type { Mesh } from "@babylonjs/core/Meshes/mesh";
+import { Mesh } from "@babylonjs/core/Meshes/mesh";
+import { VertexData } from "@babylonjs/core/Meshes/mesh.vertexData";
+import { VertexBuffer } from "@babylonjs/core/Buffers/buffer";
 import type { LinesMesh } from "@babylonjs/core/Meshes/linesMesh";
 import { CreateSphere } from "@babylonjs/core/Meshes/Builders/sphereBuilder";
 import { CreateLineSystem } from "@babylonjs/core/Meshes/Builders/linesBuilder";
@@ -24,13 +26,46 @@ import { PointerDragBehavior } from "@babylonjs/core/Behaviors/Meshes/pointerDra
 import "@babylonjs/core/Culling/ray";
 import type { View } from "./decode";
 import { AxisGizmo, MAIN_LAYER } from "./axes";
-import { DEFAULTS, type Theme } from "./theme";
+import { DEFAULTS, type Layer, type ViewPrefs } from "./theme";
+import {
+  buildSurface,
+  edgeSegments,
+  type SurfaceData,
+  type SurfaceOptions,
+} from "./surface";
+
+/** The two groups drawn from the same quadrangles. */
+export type Group = "faces" | "blocks";
 
 /** Where a dragged node was let go, in model coordinates. */
 export type Drop = (name: number, to: [number, number, number]) => void;
 
 /** How many pixels across a node handle should be, whatever the zoom. */
 export const HANDLE_PIXELS = 11;
+
+/** How much of the remaining distance one wheel notch covers. Proportional,
+ *  so zooming feels the same at every scale. */
+export const ZOOM_PER_NOTCH = 0.02;
+
+/**
+ * How close the camera may orbit, as a fraction of the model's diagonal.
+ *
+ * An orbit camera that reaches its own target has nothing left to orbit
+ * around, and the view turns inside out. Stopping just short of the model is
+ * what zooming in means for this kind of camera.
+ */
+export const CLOSEST_APPROACH = 0.35;
+
+/**
+ * Depth bias pushing the surfaces back, so the wireframe along their borders
+ * wins the depth test instead of disappearing into them.
+ *
+ * Two numbers because `gl.polygonOffset` takes two, and only the second one
+ * does the work here. The factor multiplies the polygon's depth *slope*,
+ * which is nought for a face square to the camera — exactly the faces whose
+ * edges go missing. The units are a constant, and that is what shifts them.
+ */
+export const SURFACE_DEPTH_BIAS = { factor: 1, units: 4 };
 
 /**
  * The world size that covers `pixels` on screen at this distance.
@@ -56,6 +91,12 @@ export function worldSizeForPixels(
   return (pixels * 2 * Math.tan(fieldOfView / 2) * distance) / renderHeight;
 }
 
+function normalsFor(data: SurfaceData): number[] {
+  const normals: number[] = [];
+  VertexData.ComputeNormals(data.positions, Array.from(data.indices), normals);
+  return normals;
+}
+
 export class Viewer {
   readonly scene: Scene;
   readonly camera: ArcRotateCamera;
@@ -67,11 +108,15 @@ export class Viewer {
 
   private nodes: Mesh[] = [];
   private wire?: LinesMesh;
+  private surfaces: Record<Group, { mesh?: Mesh; data?: SurfaceData }> = {
+    faces: {},
+    blocks: {},
+  };
   /** A working copy of the view: the drag previews against it, so the scene can
    *  follow the mouse without a round trip to the kernel. */
   private view?: View;
   private dropped: Drop[] = [];
-  private theme: Theme = { ...DEFAULTS.theme };
+  private prefs: ViewPrefs = structuredClone(DEFAULTS);
   readonly axes: AxisGizmo;
 
   constructor(engine: AbstractEngine) {
@@ -85,10 +130,20 @@ export class Viewer {
       Vector3.Zero(),
       this.scene,
     );
-    this.camera.wheelPrecision = 40;
+    // Zoom by a percentage of the distance, not a fixed step. With a fixed
+    // step every notch is the same number of world units, so far out it
+    // barely moves and close in a single notch leaps straight through the
+    // model and out the other side. `lowerRadiusLimit` is set when the model
+    // is framed, since what counts as close depends on how big it is.
+    this.camera.wheelDeltaPercentage = ZOOM_PER_NOTCH;
     this.camera.minZ = 0.001;
     this.camera.layerMask = MAIN_LAYER;
-    new HemisphericLight("hemi", new Vector3(0, 1, 0), this.scene).intensity = 0.9;
+    const light = new HemisphericLight("hemi", new Vector3(0, 1, 0), this.scene);
+    light.intensity = 0.9;
+    // Not black underneath: surfaces are lit by this one light, and a face
+    // turned away from it would otherwise be a silhouette with no colour left
+    // to read — which defeats colouring by name.
+    light.groundColor = new Color3(0.42, 0.42, 0.46);
 
     this.scene.onBeforeRenderObservable.add(() => this.rescaleHandles());
     this.axes = new AxisGizmo(this.scene, this.camera);
@@ -106,19 +161,144 @@ export class Viewer {
     // use the main camera, not whichever happens to be active. The gizmo does
     // its own pick, through its own camera.
     this.scene.cameraToUseForPointers = this.camera;
-    this.applyTheme(this.theme);
+    this.applyPrefs(this.prefs);
   }
 
-  /** How the scene looks. Not the kernel's business, so it never goes through
-   *  it: the kernel says what exists, not what colour it is here. */
-  applyTheme(theme: Theme) {
-    this.theme = { ...theme };
+  /**
+   * How the scene looks. Not the kernel's business, so it never goes through
+   * it: the kernel says what exists, not what colour it is here.
+   *
+   * One entry point rather than one per control. Colour, transparency and
+   * shrink are not independent of each other at the mesh level — a shrink
+   * moves vertices, a colouring rewrites the colour buffer — and splitting
+   * them into separate methods only invites two of them to disagree.
+   */
+  applyPrefs(prefs: ViewPrefs) {
+    this.prefs = structuredClone(prefs);
+    const theme = this.prefs.theme;
     this.scene.clearColor = Color3.FromHexString(theme.background).toColor4(1);
     const nodes = Color3.FromHexString(theme.nodes);
     for (const mesh of this.nodes) {
       (mesh.material as StandardMaterial).emissiveColor = nodes;
     }
     if (this.wire) this.wire.color = Color3.FromHexString(theme.edges);
+    this.rebuildEdges();
+    this.rebuildSurface("faces");
+    this.rebuildSurface("blocks");
+  }
+
+  /** What the viewer is currently told to look like. */
+  get display(): ViewPrefs {
+    return structuredClone(this.prefs);
+  }
+
+  private layerOf(group: Group): Layer {
+    return group === "faces" ? this.prefs.faces : this.prefs.blocks;
+  }
+
+  private surfaceOptions(group: Group): SurfaceOptions {
+    const layer = this.layerOf(group);
+    return {
+      by: group === "faces" ? "face" : "block",
+      colouring: layer.colouring,
+      uniform: group === "faces" ? this.prefs.theme.faces : this.prefs.theme.blocks,
+      shrink: layer.shrink,
+      // A block keeps all six of its own faces whatever this says: shrink an
+      // open shell and you are looking into a box with a side missing.
+      internal: group === "faces" ? this.prefs.faces.internal : true,
+    };
+  }
+
+  /**
+   * Bring one of the two surfaces up to date with the view and the settings.
+   *
+   * The mesh is **kept** whenever the new data has the same shape as the old,
+   * and only its buffers are rewritten. Dragging a shrink slider is a stream
+   * of these — one per mouse move — and disposing two meshes and two
+   * materials per move is what makes the model blink and the slider stutter.
+   *
+   * It is thrown away only when the shape really changes: a new view, a group
+   * switched on or off, internal faces hidden. Those remove or add
+   * quadrangles, and there is then nothing to patch.
+   */
+  private rebuildSurface(group: Group) {
+    const slot = this.surfaces[group];
+    const layer = this.layerOf(group);
+    const data =
+      this.view && layer.visible && this.view.quads.length
+        ? buildSurface(this.view, this.surfaceOptions(group))
+        : undefined;
+
+    if (!data?.indices.length) {
+      slot.mesh?.dispose();
+      slot.mesh = undefined;
+      slot.data = undefined;
+      return;
+    }
+
+    if (slot.mesh && slot.data?.positions.length === data.positions.length) {
+      slot.data = data;
+      slot.mesh.updateVerticesData(VertexBuffer.PositionKind, data.positions);
+      slot.mesh.updateVerticesData(VertexBuffer.ColorKind, data.colors);
+      slot.mesh.updateVerticesData(VertexBuffer.NormalKind, normalsFor(data));
+      (slot.mesh.material as StandardMaterial).alpha = layer.alpha;
+      return;
+    }
+
+    slot.mesh?.dispose();
+    const mesh = new Mesh(group, this.scene);
+    const vertices = new VertexData();
+    vertices.positions = data.positions;
+    vertices.indices = data.indices;
+    vertices.colors = data.colors;
+    vertices.normals = normalsFor(data);
+    // Updatable: everything above depends on it.
+    vertices.applyToMesh(mesh, true);
+
+    const material = new StandardMaterial(`${group}Mat`, this.scene);
+    material.specularColor = Color3.Black();
+    // Both sides: a translucent shell you can only see the outside of is a
+    // picture of its silhouette.
+    material.backFaceCulling = false;
+    material.alpha = layer.alpha;
+    // Push the surface a hair away from the camera in depth only. The edges
+    // run exactly along it — they are the same corners — so without this the
+    // depth test decides between them arbitrarily, and at full opacity the
+    // wireframe simply vanishes into the faces it borders.
+    material.zOffset = SURFACE_DEPTH_BIAS.factor;
+    material.zOffsetUnits = SURFACE_DEPTH_BIAS.units;
+    mesh.material = material;
+    // Never pickable. These sit exactly where the node handles are, and a
+    // surface that answers the pick is a node that cannot be dragged.
+    mesh.isPickable = false;
+    mesh.layerMask = MAIN_LAYER;
+
+    slot.mesh = mesh;
+    slot.data = data;
+  }
+
+  /** The same bargain as the surfaces: reuse the mesh while the number of
+   *  segments holds, which is every case except a new view. */
+  private rebuildEdges() {
+    if (!this.view?.edges.length) {
+      this.wire?.dispose();
+      this.wire = undefined;
+      return;
+    }
+    const lines = this.segments();
+    const reusable =
+      this.wire && (this.wire.getIndices()?.length ?? 0) === lines.length * 2
+        ? this.wire
+        : undefined;
+    if (this.wire && !reusable) this.wire.dispose();
+    this.wire = CreateLineSystem(
+      "edges",
+      { lines, updatable: true, instance: reusable },
+      this.scene,
+    );
+    this.wire.color = Color3.FromHexString(this.prefs.theme.edges);
+    this.wire.isPickable = false;
+    this.wire.layerMask = MAIN_LAYER;
   }
 
   /** Keep the corner viewport square when the canvas changes shape. */
@@ -144,23 +324,15 @@ export class Viewer {
       positions: Float32Array.from(view.positions),
       names: Uint32Array.from(view.names),
       edges: Uint32Array.from(view.edges),
+      quads: Uint32Array.from(view.quads),
+      quadFaces: Uint32Array.from(view.quadFaces),
+      quadBlocks: Uint32Array.from(view.quadBlocks),
     };
     this.nodes.forEach((m) => m.dispose());
     this.nodes = [];
-    this.wire?.dispose();
-    this.wire = undefined;
-
-    if (view.edges.length) {
-      // Updatable, so a drag can redraw the edges without rebuilding the mesh.
-      this.wire = CreateLineSystem(
-        "edges",
-        { lines: this.segments(), updatable: true },
-        this.scene,
-      );
-      this.wire.color = Color3.FromHexString(this.theme.edges);
-      this.wire.isPickable = false;
-      this.wire.layerMask = MAIN_LAYER;
-    }
+    this.rebuildEdges();
+    this.rebuildSurface("faces");
+    this.rebuildSurface("blocks");
 
     for (let n = 0; n < view.positions.length / 3; n++) {
       // Unit diameter; the per-frame pass below scales it to a fixed number
@@ -171,13 +343,14 @@ export class Viewer {
       // next edit reorders the view.
       s.metadata = { index: n, name: view.names[n] };
       const m = new StandardMaterial(`nodeMat${n}`, this.scene);
-      m.emissiveColor = Color3.FromHexString(this.theme.nodes);
+      m.emissiveColor = Color3.FromHexString(this.prefs.theme.nodes);
       m.disableLighting = true;
       s.material = m;
       s.layerMask = MAIN_LAYER;
       this.nodes.push(s);
       this.makeDraggable(s, n);
     }
+    this.fitLimits();
   }
 
   /**
@@ -219,13 +392,11 @@ export class Viewer {
     this.view.positions[index * 3] = to.x;
     this.view.positions[index * 3 + 1] = to.y;
     this.view.positions[index * 3 + 2] = to.z;
-    if (this.wire) {
-      this.wire = CreateLineSystem(
-        "edges",
-        { lines: this.segments(), updatable: true, instance: this.wire },
-        this.scene,
-      );
-    }
+    // A drag moves vertices and changes nothing else, so this is the same
+    // in-place path a slider takes.
+    this.rebuildEdges();
+    this.rebuildSurface("faces");
+    this.rebuildSurface("blocks");
   }
 
   private point(i: number): Vector3 {
@@ -234,10 +405,13 @@ export class Viewer {
   }
 
   private segments(): Vector3[][] {
-    const edges = this.view!.edges;
+    const flat = edgeSegments(this.view!, this.prefs.edges.shrink);
     const out: Vector3[][] = [];
-    for (let e = 0; e < edges.length; e += 2) {
-      out.push([this.point(edges[e]), this.point(edges[e + 1])]);
+    for (let s = 0; s < flat.length; s += 6) {
+      out.push([
+        new Vector3(flat[s], flat[s + 1], flat[s + 2]),
+        new Vector3(flat[s + 3], flat[s + 4], flat[s + 5]),
+      ]);
     }
     return out;
   }
@@ -277,6 +451,33 @@ export class Viewer {
       mesh.position.y + this.centre[1],
       mesh.position.z + this.centre[2],
     ];
+  }
+
+  /**
+   * How near and how far the camera may orbit, from the size of the model.
+   *
+   * Set when the view changes rather than when it is framed. A station tab is
+   * told the kernel moved and redraws **without** reframing — that is the
+   * whole point of not yanking the camera about under someone — so limits
+   * that only a reframe set would never be set at all for a model built from
+   * Python.
+   */
+  private fitLimits() {
+    const diagonal = this.modelBounds();
+    // One node has no diagonal, and a limit of zero is worse than none.
+    this.camera.lowerRadiusLimit = diagonal ? diagonal * CLOSEST_APPROACH : null;
+    this.camera.upperRadiusLimit = diagonal ? diagonal * 60 : null;
+  }
+
+  private modelBounds(): number {
+    if (!this.nodes.length) return 0;
+    let lo = new Vector3(Infinity, Infinity, Infinity);
+    let hi = new Vector3(-Infinity, -Infinity, -Infinity);
+    for (const m of this.nodes) {
+      lo = Vector3.Minimize(lo, m.position);
+      hi = Vector3.Maximize(hi, m.position);
+    }
+    return hi.subtract(lo).length();
   }
 
   /** Frame everything. Derived from the bounds alone, never from wherever the
@@ -325,6 +526,35 @@ export class Viewer {
 
   get nodeCount() {
     return this.nodes.length;
+  }
+
+  /**
+   * What one of the two surfaces currently holds.
+   *
+   * How many quadrangles, how many distinct colours, how opaque, and where the
+   * corners ended up — which is everything there is to assert about drawing,
+   * colouring and shrinking without asking a GPU to render anything.
+   */
+  surface(group: Group): {
+    quads: number;
+    alpha: number;
+    colours: number;
+    positions: Float32Array;
+    names: Uint32Array;
+  } | null {
+    const slot = this.surfaces[group];
+    if (!slot.mesh || !slot.data) return null;
+    const seen = new Set<string>();
+    for (let v = 0; v < slot.data.colors.length; v += 4) {
+      seen.add(slot.data.colors.slice(v, v + 3).join(","));
+    }
+    return {
+      quads: slot.data.indices.length / 6,
+      alpha: (slot.mesh.material as StandardMaterial).alpha,
+      colours: seen.size,
+      positions: slot.data.positions,
+      names: slot.data.names,
+    };
   }
 
   get edgeCount() {

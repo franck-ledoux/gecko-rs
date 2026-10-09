@@ -62,12 +62,14 @@ def test_the_view_buffer_is_the_wire_format():
     buf = bytes(s.view_buffer)
 
     assert buf[:4] == b"GKB1"
-    assert int.from_bytes(buf[4:8], "little") == 2
+    assert int.from_bytes(buf[4:8], "little") == 3
     n_nodes = int.from_bytes(buf[32:36], "little")
     n_edges = int.from_bytes(buf[36:40], "little")
-    assert (n_nodes, n_edges) == (8, 12)
-    # Per node: three f32 of position and one u32 of name.
-    assert len(buf) == 40 + n_nodes * 16 + n_edges * 8
+    n_quads = int.from_bytes(buf[40:44], "little")
+    assert (n_nodes, n_edges, n_quads) == (8, 12, 6)
+    # Per node: three f32 of position and one u32 of name. Per quadrangle:
+    # four corner indices and the face and block names it can be coloured by.
+    assert len(buf) == 44 + n_nodes * 16 + n_edges * 8 + n_quads * 24
 
 
 def test_show_serves_the_viewer_and_is_idempotent():

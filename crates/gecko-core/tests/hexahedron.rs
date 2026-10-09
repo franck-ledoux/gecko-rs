@@ -211,3 +211,93 @@ fn splitting_a_node_clears_the_name_and_keeps_the_corner() {
     let (l, r) = FaceTag::split(named).unwrap();
     assert!(l.id.is_none() && r.id.is_none());
 }
+
+/// The surface the viewer draws, as the kernel hands it over.
+mod faces_for_display {
+    use super::*;
+
+    /// Area-weighted normal of a quadrangle, by the shoelace formula in 3D.
+    fn normal(p: [[f64; 3]; 4]) -> [f64; 3] {
+        let mut n = [0.0; 3];
+        for k in 0..4 {
+            let (a, b) = (p[k], p[(k + 1) % 4]);
+            n[0] += (a[1] - b[1]) * (a[2] + b[2]);
+            n[1] += (a[2] - b[2]) * (a[0] + b[0]);
+            n[2] += (a[0] - b[0]) * (a[1] + b[1]);
+        }
+        n
+    }
+
+    #[test]
+    fn a_block_hands_over_its_six_quadrangles() {
+        let b = one_block();
+        let faces = b.block_faces();
+        assert_eq!(faces.len(), 6);
+
+        // One block, so one block name; six faces, so six face names.
+        let blocks: Vec<_> = faces.iter().map(|f| f.block).collect();
+        assert!(blocks.windows(2).all(|w| w[0] == w[1]));
+        let mut names: Vec<_> = faces.iter().map(|f| f.face).collect();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), 6);
+
+        for f in &faces {
+            let mut corners = f.nodes.to_vec();
+            corners.sort();
+            corners.dedup();
+            assert_eq!(corners.len(), 4, "a quadrangle through four distinct nodes");
+        }
+    }
+
+    #[test]
+    fn every_quadrangle_faces_away_from_its_block() {
+        // The winding is what the renderer culls and lights by, so it is not a
+        // detail: wound the other way, a solid block is drawn inside out.
+        let b = one_block();
+        let centre = [0.5, 0.5, 0.5];
+
+        for f in b.block_faces() {
+            let p = f.nodes.map(|n| b.position(n).expect("a placed node"));
+            let n = normal(p);
+            let mid = [
+                p.iter().map(|q| q[0]).sum::<f64>() / 4.0,
+                p.iter().map(|q| q[1]).sum::<f64>() / 4.0,
+                p.iter().map(|q| q[2]).sum::<f64>() / 4.0,
+            ];
+            let out = [mid[0] - centre[0], mid[1] - centre[1], mid[2] - centre[2]];
+            let dot = n[0] * out[0] + n[1] * out[1] + n[2] * out[2];
+            assert!(dot > 0.0, "face {:?} is wound inward: {dot}", f.face);
+        }
+    }
+
+    #[test]
+    fn two_blocks_hand_over_both_surfaces() {
+        let mut b = one_block();
+        b.add_block(gecko_core::cube_corners([4.0, 0.0, 0.0], 1.0))
+            .expect("a second hexahedron");
+        let faces = b.block_faces();
+
+        // Twelve, not six: each block brings a closed surface of its own. And
+        // nothing is shared, because β₃ is unset until blocks are joined.
+        assert_eq!(faces.len(), 12);
+        let mut blocks: Vec<_> = faces.iter().map(|f| f.block).collect();
+        blocks.sort();
+        blocks.dedup();
+        assert_eq!(blocks.len(), 2);
+        let mut names: Vec<_> = faces.iter().map(|f| f.face).collect();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), 12);
+    }
+
+    #[test]
+    fn the_order_is_the_same_every_time() {
+        // Two sessions built the same way must ship identical bytes; the
+        // cross-mode test rests on it, and a HashMap walk once broke exactly
+        // this in an earlier prototype.
+        let first = one_block();
+        let second = one_block();
+        assert_eq!(first.block_faces(), second.block_faces());
+    }
+}

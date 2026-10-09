@@ -105,7 +105,15 @@ test("dragging a node with the mouse moves it in the kernel", async ({ page }) =
   // Dragging a node is not orbiting. Babylon suspends the controls of
   // `scene.activeCamera`, which with two cameras is whichever rendered last —
   // so the view used to turn along with the node.
-  expect(await page.evaluate(() => (window as any).__gecko.camera())).toEqual(camera);
+  //
+  // Where the camera *is*, not everything the camera reports: `closest` is
+  // derived from the size of the model, and a node that moved made the model
+  // a different size. That one is supposed to follow.
+  const stayed = await page.evaluate(() => (window as any).__gecko.camera());
+  expect(stayed.alpha).toBe(camera.alpha);
+  expect(stayed.beta).toBe(camera.beta);
+  expect(stayed.radius).toBe(camera.radius);
+  expect(stayed.closest).not.toBe(camera.closest);
 
   // And it went where the mouse went. The same confusion fed the ray the drag
   // follows, so the node used to travel along a plane belonging to the corner
@@ -139,7 +147,7 @@ test("colours can be changed, and are remembered", async ({ page }) => {
 
   // The panel is generated from the theme's keys, so there is one input per
   // colour and no markup to keep in step.
-  await expect(page.locator("#swatches input[type=color]")).toHaveCount(3);
+  await expect(page.locator("#swatches input[type=color]")).toHaveCount(5);
   expect(await page.evaluate(() => (window as any).__gecko.theme())).toMatchObject({
     background: "#15171b",
   });
@@ -204,4 +212,156 @@ test("the triad turns the view, and can be hidden", async ({ page }) => {
   await page.reload();
   await page.waitForSelector("body[data-ready='1']", { timeout: 30_000 });
   expect(await page.evaluate(() => (window as any).__gecko.axesVisible())).toBe(false);
+});
+
+test("faces and blocks are drawn, coloured and faded from the panel", async ({ page }) => {
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+
+  const surface = (group: string) =>
+    page.evaluate((g) => (window as any).__gecko.surface(g), group);
+
+  // Faces by default; blocks are the same six quadrangles read the other way,
+  // so showing them too is a choice rather than something to default to.
+  expect(await surface("faces")).toMatchObject({ quads: 6, colours: 1 });
+  expect(await surface("blocks")).toBeNull();
+
+  // One colour per face. Six faces, six colours — and the kernel was not
+  // asked anything: these come off the names already in the view buffer.
+  await page.locator("[data-test=faces-id]").check();
+  expect(await surface("faces")).toMatchObject({ quads: 6, colours: 6 });
+
+  // Both at once, each with its own colouring and its own transparency.
+  await page.locator("[data-test=blocks-visible]").check();
+  await page.locator("[data-test=blocks-uniform]").check();
+  expect(await surface("blocks")).toMatchObject({ quads: 6, colours: 1 });
+  expect(await surface("faces")).toMatchObject({ colours: 6 });
+
+  await page.locator("[data-test=faces-alpha]").fill("0.2");
+  await page.waitForFunction(
+    () => (window as any).__gecko.surface("faces").alpha < 0.21,
+  );
+  // One slider per group, so the other one does not move with it.
+  expect((await surface("blocks")).alpha).toBeCloseTo(0.55, 6);
+  expect(errors).toEqual([]);
+});
+
+test("each kind of cell shrinks towards its own centre", async ({ page }) => {
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.locator("[data-test=blocks-visible]").check();
+  // Blocks come up slightly shrunk, because that is what makes them legible
+  // over the faces they are drawn from. Start both at full size, so what the
+  // numbers below say about shrinking is about shrinking.
+  await page.locator("[data-test=blocks-shrink]").fill("1");
+  await page.waitForFunction(() => (window as any).__gecko.display().blocks.shrink === 1);
+
+  const extent = async (group: string) =>
+    page.evaluate((g) => {
+      const p = (window as any).__gecko.surface(g).positions as number[];
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let i = 0; i < p.length; i += 3) {
+        lo = Math.min(lo, p[i]);
+        hi = Math.max(hi, p[i]);
+      }
+      return hi - lo;
+    }, group);
+
+  // The unit cube, as wide as it is.
+  expect(await extent("faces")).toBeCloseTo(1, 5);
+  expect(await extent("blocks")).toBeCloseTo(1, 5);
+
+  // A block pulls towards one point, so the whole thing narrows.
+  await page.locator("[data-test=blocks-shrink]").fill("0.5");
+  await page.waitForFunction(() => {
+    const p = (window as any).__gecko.surface("blocks").positions as number[];
+    return Math.max(...p.map(Math.abs)) < 0.3;
+  });
+  expect(await extent("blocks")).toBeCloseTo(0.5, 5);
+  // And the faces, which were not asked to move, did not.
+  expect(await extent("faces")).toBeCloseTo(1, 5);
+
+  // A face pulls towards its own centre, which is in its own plane: the cube
+  // keeps its width while every face shrinks inside it.
+  await page.locator("[data-test=faces-shrink]").fill("0.5");
+  await page.waitForFunction(
+    () => (window as any).__gecko.display().faces.shrink === 0.5,
+  );
+  expect(await extent("faces")).toBeCloseTo(1, 5);
+  expect(errors).toEqual([]);
+});
+
+test("the display settings survive a reload", async ({ page }) => {
+  const errors = await boot(page);
+  await page.locator("[data-test=blocks-visible]").check();
+  await page.locator("[data-test=faces-id]").check();
+  await page.locator("[data-test=edges-shrink]").fill("0.8");
+  await page.waitForFunction(
+    () => (window as any).__gecko.display().edges.shrink === 0.8,
+  );
+
+  await page.reload();
+  await page.waitForSelector("body[data-ready='1']", { timeout: 30_000 });
+
+  // Still a viewing preference, so it is still the browser's business and
+  // never went near the kernel.
+  const kept = await page.evaluate(() => (window as any).__gecko.display());
+  expect(kept.blocks.visible).toBe(true);
+  expect(kept.faces.colouring).toBe("id");
+  expect(kept.edges.shrink).toBe(0.8);
+  // And the controls came back showing it.
+  await expect(page.locator("[data-test=blocks-visible]")).toBeChecked();
+  await expect(page.locator("[data-test=faces-id]")).toBeChecked();
+  expect(errors).toEqual([]);
+});
+
+test("a surface never swallows the node under it", async ({ page }) => {
+  // The surfaces sit exactly where the handles are. One that answered a pick
+  // would be a node that cannot be dragged — with everything still looking
+  // perfectly normal.
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.locator("[data-test=blocks-visible]").check();
+  await page.locator("[data-test=faces-alpha]").fill("1");
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  const name = (await page.evaluate(() => (window as any).__gecko.names()))[0] as number;
+  const at = (await page.evaluate(
+    (n) => (window as any).__gecko.nodeScreen(n),
+    name,
+  )) as [number, number];
+  expect(await page.evaluate((p) => (window as any).__gecko.pickNode(p[0], p[1]), at)).toBe(
+    name,
+  );
+  expect(errors).toEqual([]);
+});
+
+test("zooming in stops at the model instead of going through it", async ({ page }) => {
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  const camera = () => page.evaluate(() => (window as any).__gecko.camera());
+  const framed = await camera();
+  expect(framed.closest).toBeGreaterThan(0);
+  expect(framed.closest).toBeLessThan(framed.radius);
+
+  // A real wheel, hard, far more than anyone would turn it.
+  const box = (await page.locator("#view").boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  for (let i = 0; i < 60; i++) await page.mouse.wheel(0, -120);
+  await page.evaluate(() => (window as any).__gecko.settled());
+  await page.waitForTimeout(500);
+
+  const close = await camera();
+  // It got closer, and it stopped short. With a fixed step per notch the
+  // radius sails past the target and the view turns inside out.
+  expect(close.radius).toBeLessThan(framed.radius);
+  expect(close.radius).toBeGreaterThanOrEqual(close.closest - 1e-6);
+  expect(errors).toEqual([]);
 });

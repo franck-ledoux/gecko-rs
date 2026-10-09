@@ -78,6 +78,46 @@ fn the_view_buffer_describes_the_block() {
         .all(|i| (*i as usize) < v.positions.len() / 3));
     // Rebased: the unit cube sits in [-0.5, 0.5].
     assert!(v.positions.iter().all(|x| x.abs() <= 0.5 + 1e-6));
+
+    // The surface: six quadrangles, one block, six faces.
+    assert_eq!(v.quads.len() / 4, 6);
+    assert_eq!(v.quad_faces.len(), 6);
+    assert_eq!(v.quad_blocks.len(), 6);
+    assert!(v
+        .quads
+        .iter()
+        .all(|i| (*i as usize) < v.positions.len() / 3));
+    assert!(v.quad_blocks.windows(2).all(|w| w[0] == w[1]));
+    let mut faces = v.quad_faces.clone();
+    faces.sort();
+    faces.dedup();
+    assert_eq!(faces.len(), 6);
+}
+
+#[test]
+fn two_blocks_each_bring_a_closed_surface() {
+    let mut s = Session::new().unwrap();
+    s.apply(Command::CreateCube {
+        origin: [0.0, 0.0, 0.0],
+        size: 1.0,
+    })
+    .unwrap();
+    s.apply(Command::CreateCube {
+        origin: [4.0, 0.0, 0.0],
+        size: 1.0,
+    })
+    .unwrap();
+    let v = ViewBuffer::of(s.blocking(), None);
+
+    assert_eq!(v.quads.len() / 4, 12);
+    let mut blocks = v.quad_blocks.clone();
+    blocks.sort();
+    blocks.dedup();
+    assert_eq!(blocks.len(), 2);
+    // No name is the sentinel: every quadrangle knows what it belongs to, and
+    // the browser colours by these.
+    assert!(v.quad_faces.iter().all(|n| *n != u32::MAX));
+    assert!(v.quad_blocks.iter().all(|n| *n != u32::MAX));
 }
 
 #[test]
@@ -87,13 +127,21 @@ fn the_encoding_is_the_layout_a_client_will_decode() {
     let bytes = s.view_buffer();
 
     assert_eq!(&bytes[0..4], &MAGIC);
-    assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 2);
+    assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 3);
     let n_nodes = u32::from_le_bytes(bytes[32..36].try_into().unwrap()) as usize;
     let n_edges = u32::from_le_bytes(bytes[36..40].try_into().unwrap()) as usize;
-    assert_eq!((n_nodes, n_edges), (8, 12));
+    let n_quads = u32::from_le_bytes(bytes[40..44].try_into().unwrap()) as usize;
+    assert_eq!((n_nodes, n_edges, n_quads), (8, 12, 6));
     // Exact length, or a client's typed-array views walk off the end.
-    // Per node: three f32 of position and one u32 of name.
-    assert_eq!(bytes.len(), HEADER + n_nodes * 16 + n_edges * 8);
+    // Per node: three f32 of position and one u32 of name. Per quadrangle:
+    // four corner indices and the two names it is coloured by.
+    assert_eq!(
+        bytes.len(),
+        HEADER + n_nodes * 16 + n_edges * 8 + n_quads * 24
+    );
+    // Everything after the f64 centre is 4-aligned, so a client can make typed
+    // array views over these bytes without copying them first.
+    assert_eq!(HEADER % 4, 0);
 }
 
 #[test]
