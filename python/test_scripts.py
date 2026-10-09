@@ -12,8 +12,18 @@ This is the check that stops that, so it is worth a test of its own.
 import os
 import socket
 import subprocess
+import sys
+
+import pytest
 
 from conftest import ROOT
+
+# `./dev` and `./view` are POSIX shell scripts, and Windows has no `./dev` to
+# guard. Its `bash` is the WSL launcher, which answers every script with an
+# invitation to install a distribution.
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32", reason="the scripts these guard are POSIX shell"
+)
 
 GUARD = "source scripts/ports.sh; require_free {port} 'the thing'"
 
