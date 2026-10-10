@@ -39,12 +39,25 @@ adding the face normals sends a node in the middle of a flat patch four times
 too far, and averaging them leaves a node on a corner short of both its
 faces.
 
-## What it will not do
+## Inside the model
 
-**Faces inside the model are refused.** Pillowing between two blocks means
-giving each of them its own copy of the shared nodes, and a node that is
-merely *moved* is still shared — so there would be nowhere for a layer to go.
-That one needs the nodes split, and is not built.
+A face with a block on each side works too, and the layer goes between them.
+Which side draws in is the one you clicked on; the other does not move.
+
+That case needs one thing the surface case does not: the two blocks have to
+stop sharing their nodes first. A node that is merely *moved* is still
+shared, so drawing one block in would drag the other with it and leave no
+space at all. Unsewing the face is exactly that — the map splits the shared
+vertices and each side comes away with its own copy — and it is why the
+operation does the unsewing for the whole patch before it reads anything
+again: two blocks joined along several faces keep sharing their nodes until
+the last of those is undone.
+
+Two blocks joined along **another** face as well as the one you picked are
+refused, for the same reason: the nodes stay shared and there is nowhere for
+the layer to go.
+
+## What it will not do
 
 A node on the **rim** of the patch is shared with blocks outside it, and
 moving it takes them with it. The mesh stays conforming and those blocks are

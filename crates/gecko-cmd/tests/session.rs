@@ -804,16 +804,16 @@ mod pillowing {
     }
 
     #[test]
-    fn a_face_inside_the_model_is_reported_and_changes_nothing() {
+    fn a_face_inside_the_model_gets_a_layer_too() {
         let mut s = cube();
         let (face, block) = face_at(&s, 2, 1.0);
         s.apply(Command::Pillow {
             faces: vec![gecko_cmd::PickedFace { face, block }],
         })
         .unwrap();
-        let before = s.view_buffer();
 
-        // The new face between the cube and its layer has two sides.
+        // The new face between the cube and its layer has a block on each
+        // side, and pillowing it puts a layer between those two.
         let faces: serde_json::Value = serde_json::from_str(&s.faces_json()).unwrap();
         let all = faces.as_array().unwrap();
         let inside = all
@@ -825,12 +825,11 @@ mod pillowing {
             inside["id"], inside["block"]
         ));
         let reply: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert_eq!(reply["ok"], false);
-        assert!(reply["error"]
-            .as_str()
-            .unwrap()
-            .contains("inside the model"));
-        assert_eq!(s.view_buffer(), before);
+        assert_eq!(reply["ok"], true, "{raw}");
+
+        let stats: serde_json::Value = serde_json::from_str(&s.stats_json()).unwrap();
+        assert_eq!(stats["blocks"], 3);
+        assert_eq!(stats["nodes"], 16);
     }
 
     #[test]

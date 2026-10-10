@@ -147,23 +147,70 @@ fn pillowing_every_face_wraps_the_block() {
     assert_eq!(on_surface, 8);
 }
 
+/// A face with a block on each side, with the upper or lower block.
+fn inside(b: &Blocking, from_above: bool) -> (CellId, CellId) {
+    let sides = b.block_faces();
+    let height = |block: CellId| {
+        sides
+            .iter()
+            .filter(|o| o.block == block)
+            .flat_map(|o| o.nodes)
+            .map(|n| b.position(n).unwrap()[2])
+            .sum::<f64>()
+            / 24.0
+    };
+    let pick = sides
+        .iter()
+        .filter(|s| sides.iter().filter(|o| o.face == s.face).count() == 2)
+        .max_by(|x, y| {
+            let (a, c) = (height(x.block), height(y.block));
+            if from_above {
+                a.partial_cmp(&c).unwrap()
+            } else {
+                c.partial_cmp(&a).unwrap()
+            }
+        })
+        .expect("an internal face");
+    (pick.face, pick.block)
+}
+
 #[test]
-fn a_face_inside_the_model_is_refused() {
+fn a_face_inside_the_model_gets_a_layer_between_the_two_blocks() {
+    // The case that needs the two blocks to stop sharing their nodes
+    // first: drawing one in would otherwise drag the other with it, and
+    // leave no space for a layer at all.
     let mut b = cube();
     b.pillow(&[face_at(&b, 2, 1.0)]).unwrap();
-    // The face between the cube and its new layer is no longer on the
-    // surface, and pillowing it would need the shared nodes split.
-    let inside = b
-        .block_faces()
-        .into_iter()
-        .find(|s| b.block_faces().iter().filter(|o| o.face == s.face).count() == 2)
-        .expect("an internal face");
-    let before = cells(&b);
-    assert!(matches!(
-        b.pillow(&[(inside.face, inside.block)]),
-        Err(BlockingError::NotOnTheSurface(_))
-    ));
-    assert_eq!(cells(&b), before);
+    assert_eq!(cells(&b), (12, 20, 11, 2));
+
+    let before: Vec<f64> = b.nodes().map(|(_, p)| p[2]).collect();
+    b.pillow(&[inside(&b, true)]).expect("an internal face");
+
+    // Three blocks, and four more nodes: what was one shared face is two.
+    assert_eq!(b.nb_blocks(), 3);
+    assert_eq!(b.nb_nodes(), 16);
+
+    // The far side has not moved: every height below the seam is still
+    // exactly where it was.
+    let after: Vec<f64> = b.nodes().map(|(_, p)| p[2]).collect();
+    for z in before.iter().filter(|z| **z < 0.5) {
+        assert!(
+            after.iter().any(|w| (w - z).abs() < 1e-9),
+            "height {z} moved: {after:?}"
+        );
+    }
+}
+
+#[test]
+fn an_internal_layer_can_be_pillowed_again() {
+    // The real check that what comes out is a mesh: the faces it creates
+    // have to be as workable as the ones they came from.
+    let mut b = cube();
+    b.pillow(&[face_at(&b, 2, 1.0)]).unwrap();
+    b.pillow(&[inside(&b, true)]).unwrap();
+    b.pillow(&[inside(&b, true)]).unwrap();
+    assert_eq!(b.nb_blocks(), 4);
+    assert_eq!(b.nb_nodes(), 20);
 }
 
 #[test]

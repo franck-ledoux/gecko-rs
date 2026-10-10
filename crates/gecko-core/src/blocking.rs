@@ -814,63 +814,59 @@ impl Blocking {
         Ok(())
     }
 
-    /// Insert a layer of hexahedra along a patch of surface faces.
+    /// Insert a layer of hexahedra along a patch of faces.
     ///
     /// Each selected face is given as the pair a click gives: the face, and
-    /// the block it was clicked on. The block's own nodes are drawn inwards
-    /// and one hexahedron is laid into the space that opens up, so **the
-    /// model's surface does not move** — which is the whole point of
-    /// pillowing. What was one block becomes that block, shrunk, plus one
-    /// new one per selected face.
+    /// the block it was clicked on. That block's own nodes are drawn
+    /// inwards and one hexahedron is laid into the space that opens up, so
+    /// **nothing on the far side of the patch moves** — which is the point
+    /// of pillowing.
     ///
-    /// Built from [`add_block`][Self::add_block],
+    /// A face on the model's surface needs only that. A face **inside** the
+    /// model needs the two blocks to stop sharing their nodes first, or
+    /// drawing one block in would drag the other with it and leave no space
+    /// at all. Unsewing the face is exactly that: the map splits the shared
+    /// vertices and each side comes away with its own copy.
+    ///
+    /// Built from unsewing, [`add_block`][Self::add_block],
     /// [`glue_faces`][Self::glue_faces] and moving nodes, rather than from
-    /// dart surgery. The topology is the same either way, and these three
-    /// already have tests behind them.
+    /// dart surgery. The topology is the same either way, and these already
+    /// have tests behind them.
     ///
-    /// # What it will not do
-    ///
-    /// Faces inside the model are refused. Pillowing between two blocks
-    /// means giving each its own copy of the shared nodes, and a node that
-    /// is merely *moved* is still shared — so there would be no space for a
-    /// layer to go into. That one needs the nodes split, and is not here.
-    ///
-    /// A node on the rim of the patch is shared with blocks outside it, and
-    /// moving it takes them with it. The mesh stays conforming and those
+    /// A node on the **rim** of the patch is shared with blocks outside it,
+    /// and moving it takes them with it. The mesh stays conforming and those
     /// blocks are deformed a little; that is the honest consequence of a
     /// shared node being shared.
     pub fn pillow(&mut self, patch: &[(CellId, CellId)]) -> Result<(), BlockingError> {
         if patch.is_empty() {
             return Err(BlockingError::EmptyPatch);
         }
-        let sides = self.block_faces();
 
         // --- read everything before a single node moves ----------------
         struct Plan {
-            face: CellId,
-            nodes: [VertexIdType; 4],
+            block: CellId,
+            behind: Option<CellId>,
             points: [[f64; 3]; 4],
             inward: [f64; 3],
             depth: f64,
         }
+        let sides = self.block_faces();
         let mut plans: Vec<Plan> = Vec::new();
         for &(face, block) in patch {
             let side = sides
                 .iter()
                 .find(|s| s.face == face && s.block == block)
                 .ok_or(BlockingError::FaceNotOnBlock(face, block))?;
-            let at = self
-                .face_by_id(face)
-                .ok_or(BlockingError::NoSuchFace(face))?;
-            if self.map.beta::<3>(at as DartIdType) != NULL_DART_ID {
-                return Err(BlockingError::NotOnTheSurface(face));
-            }
+            let behind = sides
+                .iter()
+                .find(|s| s.face == face && s.block != block)
+                .map(|s| s.block);
 
             let points = side.nodes.map(|n| self.position(n).unwrap_or([0.0; 3]));
             let normal = quad_normal(points);
             let length = (normal[0].powi(2) + normal[1].powi(2) + normal[2].powi(2)).sqrt();
             if length < 1e-12 {
-                return Err(BlockingError::NotOnTheSurface(face));
+                return Err(BlockingError::LostFace);
             }
             // The block's own extent in that direction, from its centre to
             // the face and back again; a third of it is the layer.
@@ -881,23 +877,55 @@ impl Blocking {
                 .sum::<f64>()
                 .sqrt();
             plans.push(Plan {
-                face,
-                nodes: side.nodes,
+                block,
+                behind,
                 points,
                 inward: normal.map(|x| -x / length),
                 depth: 2.0 * reach * PILLOW_SHARE,
             });
         }
 
+        // --- let go of the far side ------------------------------------
+        // All of them before anything is read again: two blocks joined
+        // along several faces keep sharing their nodes until the last of
+        // those is undone, so one at a time would see a half-detached map.
+        for &(face, _) in patch {
+            if let Some(at) = self.face_by_id(face) {
+                if self.map.beta::<3>(at as DartIdType) != NULL_DART_ID {
+                    self.map.unsew::<3>(at as DartIdType)?;
+                }
+            }
+        }
+        // The split left the cells it touched unnamed, and the faces have
+        // to be findable again below.
+        self.assign_missing_ids();
+
         // --- where each node of the patch goes --------------------------
+        let sides = self.block_faces();
         let mut facing: HashMap<VertexIdType, (Vec<[f64; 3]>, f64)> = HashMap::new();
+        let mut near: Vec<BlockFace> = Vec::new();
         for plan in &plans {
-            for node in plan.nodes {
+            let side = self
+                .side_at(&sides, plan.block, &plan.points)
+                .ok_or(BlockingError::LostFace)?;
+            if let Some(behind) = plan.behind {
+                let other = self
+                    .side_at(&sides, behind, &plan.points)
+                    .ok_or(BlockingError::LostFace)?;
+                // Still the same nodes: the two blocks are joined somewhere
+                // else as well, so drawing one in would drag the other.
+                if side.nodes.iter().any(|n| other.nodes.contains(n)) {
+                    return Err(BlockingError::NotOnTheSurface(side.face));
+                }
+            }
+            for node in side.nodes {
                 let entry = facing.entry(node).or_insert((Vec::new(), f64::INFINITY));
                 entry.0.push(plan.inward);
                 entry.1 = entry.1.min(plan.depth);
             }
+            near.push(side);
         }
+
         let mut moved: HashMap<VertexIdType, [f64; 3]> = HashMap::new();
         for (node, (inward, depth)) in &facing {
             let from = self.position(*node).unwrap_or([0.0; 3]);
@@ -914,8 +942,8 @@ impl Blocking {
             shrunk: [[f64; 3]; 4],
         }
         let mut layers: Vec<Layer> = Vec::new();
-        for plan in &plans {
-            let shrunk = plan.nodes.map(|n| moved[&n]);
+        for (plan, side) in plans.iter().zip(&near) {
+            let shrunk = side.nodes.map(|n| moved[&n]);
             // `add_block` wants the far face first, wound so that its own
             // normal points away from the block. The patch face is wound
             // away from **its** block, which is the other way round, and
@@ -930,12 +958,23 @@ impl Blocking {
         }
 
         // Each layer onto the block it came off, the existing face named
-        // first so that its nodes keep the names they had.
-        for (plan, layer) in plans.iter().zip(&layers) {
+        // first so that its nodes keep the names they had — and then onto
+        // whatever was on the far side, which has not moved.
+        for ((plan, side), layer) in plans.iter().zip(&near).zip(&layers) {
             let under = self
                 .face_at(layer.block, &layer.shrunk)
                 .ok_or(BlockingError::LostFace)?;
-            self.glue_faces(plan.face, under)?;
+            self.glue_faces(side.face, under)?;
+            if let Some(behind) = plan.behind {
+                let sides = self.block_faces();
+                let far = self
+                    .side_at(&sides, behind, &plan.points)
+                    .ok_or(BlockingError::LostFace)?;
+                let over = self
+                    .face_at(layer.block, &plan.points)
+                    .ok_or(BlockingError::LostFace)?;
+                self.glue_faces(far.face, over)?;
+            }
         }
 
         // And to each other, wherever two selected faces met along an edge.
@@ -952,20 +991,17 @@ impl Blocking {
                         continue;
                     }
                     let wall = |n: usize, i: usize| {
-                        let plan = &plans[n];
-                        let shrunk = plan.nodes.map(|m| moved[&m]);
                         [
-                            plan.points[i],
-                            plan.points[(i + 1) % 4],
-                            shrunk[(i + 1) % 4],
-                            shrunk[i],
+                            plans[n].points[i],
+                            plans[n].points[(i + 1) % 4],
+                            layers[n].shrunk[(i + 1) % 4],
+                            layers[n].shrunk[i],
                         ]
                     };
                     let here = self.face_at(layers[a].block, &wall(a, i));
                     let there = (0..4).find_map(|j| {
                         self.face_at(layers[b].block, &wall(b, j)).filter(|_| {
-                            let w = wall(b, j);
-                            let m = wall(a, i);
+                            let (w, m) = (wall(b, j), wall(a, i));
                             (0..4).all(|k| m.iter().any(|p| same_point(*p, w[k])))
                         })
                     });
@@ -978,6 +1014,25 @@ impl Blocking {
 
         self.assign_missing_ids();
         Ok(())
+    }
+
+    /// The side of `block` whose four corners are these four points.
+    fn side_at(
+        &self,
+        sides: &[BlockFace],
+        block: CellId,
+        points: &[[f64; 3]; 4],
+    ) -> Option<BlockFace> {
+        sides
+            .iter()
+            .filter(|s| s.block == block)
+            .find(|s| {
+                s.nodes.iter().all(|n| {
+                    let p = self.position(*n).unwrap_or([0.0; 3]);
+                    points.iter().any(|q| same_point(p, *q))
+                })
+            })
+            .copied()
     }
 
     /// The centre of a block: the mean of the corners its faces list, each

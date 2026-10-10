@@ -376,20 +376,20 @@ def test_pillowing_the_whole_surface():
     assert len(corners) == 8, "the original corners are still the original corners"
 
 
-def test_pillowing_inside_the_model_is_refused():
+def test_pillowing_inside_the_model():
     s = gecko.Session()
     s.create_cube([0.0, 0.0, 0.0], 1.0)
     s.pillow([_face_at(s, 2, 1.0)])
-    before = bytes(s.view_buffer)
 
     # The face between the cube and its layer has a block on each side.
     seen = {}
     for f in s.faces:
         seen.setdefault(f["id"], []).append(f["block"])
     inside = next(i for i, blocks in seen.items() if len(blocks) == 2)
-    with pytest.raises(ValueError, match="inside the model"):
-        s.pillow([(inside, seen[inside][0])])
-    assert bytes(s.view_buffer) == before
+    # Pick it on the upper block, so the layer goes between the two.
+    s.pillow([(inside, seen[inside][0])])
+    assert s.stats["blocks"] == 3
+    assert s.stats["nodes"] == 16
 
 
 def test_an_empty_pillow_is_refused():
