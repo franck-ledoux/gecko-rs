@@ -13,7 +13,7 @@ first.
 
 ## `gecko.Session`
 
-### Creating geometry
+### Creating blocks
 
 #### `create_cube(origin=[0, 0, 0], size=1.0)`
 
@@ -92,6 +92,38 @@ ones are split off on the way out rather than going with it.
 s.remove_block(s.blocks[0]["id"])
 ```
 
+### The geometry
+
+#### `load_geometry(path)`
+
+Read a gmsh surface mesh — MSH 2.2 ASCII — as the geometry the blocks are
+meant to follow. Returns a line saying what was in it. See
+[Geometry](geometry.md) for what the file has to say and how it is drawn.
+
+```python
+>>> s.load_geometry("two_cubes.msh")
+'two_cubes.msh loaded — 12 corners, 20 curves, 11 surfaces (286 triangles),
+ 368 elements of other kinds ignored'
+```
+
+The path is read here and the **contents** go into the command, because the
+command set has to be the one the browser can send too and a browser has no
+path to give.
+
+A file that is not a mesh, is not version 2.x, has no triangles, or whose
+triangles carry no entity tag raises `ValueError` with a message that says
+which.
+
+#### `clear_geometry()`
+
+Forget it. The blocks are untouched either way.
+
+#### `geometry_buffer`
+
+The geometry's bytes, as the browser decodes them — a buffer of its own,
+separate from `view_buffer`, because the two change on completely different
+clocks.
+
 ### Looking at the session
 
 #### `faces` and `blocks`
@@ -112,11 +144,18 @@ surface is.
 
 ```python
 >>> s.stats
-{'nodes': 8, 'edges': 12, 'faces': 6, 'blocks': 1}
+{'nodes': 8, 'edges': 12, 'faces': 6, 'blocks': 1,
+ 'geometry': {'generation': 0}}
 ```
 
 Cells exist at all four dimensions, which is the point of the representation:
 only a cell that exists can carry a curve, a surface, or a classification.
+
+`geometry` reports which geometry is loaded, and `generation` counts loads
+rather than describing one: a client holds the number it last drew and
+re-fetches when it differs. Two geometries of identical size are still two
+geometries, which is what comparing the counts would miss. With one loaded it
+also carries `corners`, `curves`, `surfaces`, `segments` and `triangles`.
 
 #### `view_buffer`
 

@@ -218,7 +218,7 @@ What the browser draws, in the one shape both modes deliver it. The static page
 reads it straight out of wasm memory; the station sends the identical bytes down
 a WebSocket. One producer, one decoder.
 
-Little-endian throughout. Version 3.
+Little-endian throughout. Version 4.
 
 | Offset | Type  | Count | Meaning                           |
 | ------ | ----- | ----- | --------------------------------- |
@@ -231,9 +231,13 @@ Little-endian throughout. Version 3.
 | 44     | `f32` | 3*N*  | positions, relative to the centre |
 | …      | `u32` | *N*   | each node's `CellId`              |
 | …      | `u32` | 2*E*  | node indices, two per edge        |
+| …      | `u32` | *E*   | each edge's `CellId`              |
 | …      | `u32` | 4*Q*  | node indices, four per quadrangle |
 | …      | `u32` | *Q*   | each quadrangle's face `CellId`   |
 | …      | `u32` | *Q*   | each quadrangle's block `CellId`  |
+
+The edge names are what let a click on a line say which edge it was, and so
+what lets the viewer ask for the [sheet](../user-guide/sheets.md) through it.
 
 Arrays rather than one interleaved record per quadrangle, like everything
 above them: a client makes a typed-array view over each one instead of walking
@@ -292,6 +296,77 @@ Settled on **edit**, never on read. An origin adopted when someone asks for the
 view would make the bytes depend on how many times they had asked, and the two
 façades — which ask at different moments — would quietly stop agreeing. The
 cross-mode test caught exactly that.
+
+## The geometry buffer
+
+A **second** buffer, `GKG1`, fetched separately. Same encoding rules, same
+rebasing origin, version 1.
+
+| Offset | Type  | Count | Meaning                             |
+| ------ | ----- | ----- | ----------------------------------- |
+| 0      | `u8`  | 4     | magic, `GKG1`                       |
+| 4      | `u32` | 1     | format version                      |
+| 8      | `f64` | 3     | model centre, the view buffer's own |
+| 32     | `u32` | 1     | number of nodes, *N*                |
+| 36     | `u32` | 1     | number of triangles, *T*            |
+| 40     | `u32` | 1     | number of segments, *S*             |
+| 44     | `u32` | 1     | number of corners, *C*              |
+| 48     | `f32` | 3*N*  | positions, relative to the centre   |
+| …      | `u32` | 3*T*  | node indices, three per triangle    |
+| …      | `i32` | *T*   | each triangle's surface tag         |
+| …      | `u32` | 2*S*  | node indices, two per segment       |
+| …      | `i32` | *S*   | each segment's curve tag            |
+| …      | `u32` | *C*   | one node index per corner           |
+| …      | `i32` | *C*   | each corner's tag                   |
+
+Not a section of the view buffer, because **the two change on completely
+different clocks**. The view is rebuilt after every edit and every dragged
+node; a geometry is read once and then sits there. Sending three thousand
+triangles down the socket because somebody moved a corner is the whole cost
+this split avoids.
+
+The tags are signed, because a gmsh tag is. Read as unsigned, a negative one
+would be a four-billion-ish number in the colour palette rather than an
+obvious wrong.
+
+### How a client knows to fetch it
+
+A **generation number**, in `stats`. It counts loads rather than describing
+one; a client holds the number it last drew and re-fetches when it differs.
+
+A flag on the outcome of the command would do for a load this client made
+itself, and nothing at all for one made from the Python console — which the
+station announces only as "something changed". Counts would not do either: two
+geometries of identical size are still two geometries, and a client comparing
+counts would go on drawing the first.
+
+### One origin for both
+
+The rebasing origin is settled over the blocking's nodes **and** the
+geometry's. They share one scene, so they have to share one origin: a geometry
+a kilometre from the blocks, rebased on its own centre, would be drawn on top
+of them.
+
+It also means loading a geometry reports `viewChanged` even though not one
+block moved — the origin the blocks are drawn against may just have moved, and
+a client that redrew only the geometry would leave them rebased on an origin
+nobody uses any more.
+
+## Reading a gmsh file
+
+`gecko-geom` is a crate of its own, in two halves.
+
+`msh` reads the file and **interprets nothing**: nodes, point/line/triangle
+elements with both their tags, physical names, and a count of everything else
+it passed over. `model` is what decides that triangles sharing an elementary
+entity tag are a surface — the rule taken verbatim from the C++
+`FacetedGeometry`, because the same `.msh` has to mean the same model in both.
+
+A crate rather than a module of `gecko-core`, because the dependency has to
+run **geometry ← blocking**: a cell of a block structure will be classified
+onto one of these entities, not the other way round, so the geometry gets to
+be testable with no block structure in sight. And a file reader has no
+business inside a combinatorial map.
 
 ## What does not go through the kernel
 

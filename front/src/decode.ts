@@ -82,3 +82,84 @@ export function decodeView(bytes: Uint8Array): View {
     quadBlocks: new Uint32Array(bytes.buffer, afterEdges + nQuads * 20, nQuads),
   };
 }
+
+/**
+ * The geometry, decoded from its own buffer.
+ *
+ * The mirror of `GeometryBuffer::to_bytes`. A separate buffer from the view,
+ * because the two change on different clocks — see that type.
+ */
+export interface GeometryView {
+  /** The same rebasing origin the view buffer uses. */
+  centre: [number, number, number];
+  /** Three f32 per node, relative to `centre`, shared by everything below. */
+  positions: Float32Array;
+  /** Three node indices per triangle. */
+  triangles: Uint32Array;
+  /** The gmsh entity tag of the surface each triangle is on. */
+  triangleTags: Int32Array;
+  /** Two node indices per segment. */
+  segments: Uint32Array;
+  /** The entity tag of the curve each segment is on. */
+  segmentTags: Int32Array;
+  /** One node index per geometric corner. */
+  corners: Uint32Array;
+  /** The entity tag of each corner. */
+  cornerTags: Int32Array;
+}
+
+const GEOMETRY_MAGIC = 0x3147_4b47; // "GKG1" little-endian
+const GEOMETRY_HEADER = 48;
+
+export function decodeGeometry(bytes: Uint8Array): GeometryView {
+  if (bytes.byteLength < GEOMETRY_HEADER) {
+    throw new Error(`geometry buffer: ${bytes.byteLength} bytes is shorter than a header`);
+  }
+  if (bytes.byteOffset % 8 !== 0) bytes = new Uint8Array(bytes);
+
+  const head = new DataView(bytes.buffer, bytes.byteOffset, GEOMETRY_HEADER);
+  if (head.getUint32(0, true) !== GEOMETRY_MAGIC) throw new Error("geometry buffer: bad magic");
+  const version = head.getUint32(4, true);
+  if (version !== 1) throw new Error(`geometry buffer: version ${version} not understood`);
+
+  const centre: [number, number, number] = [
+    head.getFloat64(8, true),
+    head.getFloat64(16, true),
+    head.getFloat64(24, true),
+  ];
+  const nNodes = head.getUint32(32, true);
+  const nTriangles = head.getUint32(36, true);
+  const nSegments = head.getUint32(40, true);
+  const nCorners = head.getUint32(44, true);
+
+  // Per node three f32. Per triangle three indices and a tag, per segment
+  // two and a tag, per corner one and a tag.
+  const expected =
+    GEOMETRY_HEADER + nNodes * 12 + nTriangles * 16 + nSegments * 12 + nCorners * 8;
+  if (expected !== bytes.byteLength) {
+    throw new Error(
+      `geometry buffer: header declares ${expected} bytes, buffer holds ${bytes.byteLength}`,
+    );
+  }
+
+  let at = bytes.byteOffset + GEOMETRY_HEADER;
+  const take = <T>(make: (buffer: ArrayBufferLike, at: number, n: number) => T, n: number): T => {
+    const made = make(bytes.buffer, at, n);
+    at += n * 4;
+    return made;
+  };
+  const f32 = (b: ArrayBufferLike, o: number, n: number) => new Float32Array(b, o, n);
+  const u32 = (b: ArrayBufferLike, o: number, n: number) => new Uint32Array(b, o, n);
+  const i32 = (b: ArrayBufferLike, o: number, n: number) => new Int32Array(b, o, n);
+
+  return {
+    centre,
+    positions: take(f32, nNodes * 3),
+    triangles: take(u32, nTriangles * 3),
+    triangleTags: take(i32, nTriangles),
+    segments: take(u32, nSegments * 2),
+    segmentTags: take(i32, nSegments),
+    corners: take(u32, nCorners),
+    cornerTags: take(i32, nCorners),
+  };
+}

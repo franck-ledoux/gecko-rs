@@ -16,5 +16,15 @@ def fnv1a(data: bytes) -> int:
     return h
 
 
+def cells(session):
+    """The four cell counts, without the geometry's stats beside them.
+
+    `stats` also reports which geometry is loaded, which almost no test
+    about blocks has an opinion about — and spelling it out in every one of
+    them would bury the counts that are the point.
+    """
+    return {k: v for k, v in session.stats.items() if k != "geometry"}
+
+
 def shifted(dx=0.0, dy=0.0, dz=0.0):
     return [[p[0] + dx, p[1] + dy, p[2] + dz] for p in CUBE]

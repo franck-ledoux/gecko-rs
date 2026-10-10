@@ -7,7 +7,7 @@
  */
 
 import { Engine } from "@babylonjs/core/Engines/engine";
-import { decodeView } from "./decode";
+import { decodeGeometry, decodeView } from "./decode";
 import { readProbe, type Probe } from "./mode";
 import type { Kernel } from "./kernel";
 import { initKernel, WasmKernel } from "./kernel-wasm";
@@ -25,6 +25,7 @@ import {
 import { actionFor, helpRows, type Action } from "./shortcuts";
 import { capture, save, shotName } from "./capture";
 import type { Colouring } from "./surface";
+import { GEOM_GROUPS, type GeomGroup } from "./geometry";
 import type { Axis } from "./axes";
 import "./style.css";
 
@@ -90,6 +91,10 @@ async function boot() {
 
   let message = "";
   let revision = 0;
+  /** The geometry this tab has drawn. Compared with the kernel's, which is
+   *  how a load made from the Python console reaches a browser that never
+   *  asked for one. Starts below zero so the first refresh fetches. */
+  let geometryDrawn = -1;
 
   // --- how it looks: viewer state, never the kernel's ---------------------
   const prefs = loadPrefs();
@@ -109,6 +114,7 @@ async function boot() {
     applyChrome();
     drawSwatches();
     drawLayers();
+    drawGeometryLayers();
   }
 
   /**
@@ -187,6 +193,51 @@ async function boot() {
     });
   }
   drawLayers();
+
+  /**
+   * The geometry's three groups, generated the same way.
+   *
+   * The same three controls each — shown, coloured how, how opaque — and
+   * deliberately no shrink: a geometry is not a decomposition you can
+   * explode, its surfaces meet along the very curves also on screen.
+   */
+  function drawGeometryLayers() {
+    $("geometry").innerHTML = GEOM_GROUPS.map((group) => {
+      const layer = prefs[group];
+      const mode = (value: Colouring, text: string) =>
+        `<label class="mode"><input type="radio" name="${group}-mode" value="${value}"` +
+        ` data-test="${group}-${value}"${layer.colouring === value ? " checked" : ""} />` +
+        `${text}</label>`;
+      return (
+        `<fieldset class="layer"><legend>${group}</legend>` +
+        `<label class="check"><input type="checkbox" data-test="${group}-visible"` +
+        `${layer.visible ? " checked" : ""} /> show</label>` +
+        `<div class="row">${mode("uniform", "uniform")}${mode("id", "by id")}</div>` +
+        slider(`${group}-alpha`, "opacity", 0, layer.alpha) +
+        `</fieldset>`
+      );
+    }).join("");
+
+    for (const group of GEOM_GROUPS) {
+      const find = (test: string) =>
+        $("geometry").querySelector<HTMLInputElement>(`[data-test="${test}"]`)!;
+      find(`${group}-visible`).addEventListener("change", (e) => {
+        prefs[group].visible = (e.target as HTMLInputElement).checked;
+        redraw();
+      });
+      for (const value of ["uniform", "id"] as Colouring[]) {
+        find(`${group}-${value}`).addEventListener("change", () => {
+          prefs[group].colouring = value;
+          redraw();
+        });
+      }
+      find(`${group}-alpha`).addEventListener("input", (e) => {
+        prefs[group].alpha = Number((e.target as HTMLInputElement).value);
+        redraw();
+      });
+    }
+  }
+  drawGeometryLayers();
 
   /** The panel is generated from the theme's own keys, so a colour added later
    *  needs no new markup. */
@@ -478,6 +529,41 @@ async function boot() {
     await refresh();
   }
 
+  /**
+   * Open a gmsh surface mesh as the geometry.
+   *
+   * The file is read **here** and its contents go into the command. A
+   * browser has no path to hand the kernel, and the one command set has to
+   * be the one both modes can send — so there is no path anywhere in it,
+   * not even in the station where there would be a filesystem to name.
+   */
+  function openGeometry() {
+    $<HTMLInputElement>("msh").click();
+  }
+
+  async function loadGeometry(name: string, msh: string) {
+    say(`reading ${name}…`);
+    const reply = await kernel.apply({ op: "load_geometry", msh, name });
+    message = reply.message;
+    // Framed: a geometry you have just opened is the thing to look at, and
+    // it may be nowhere near where the camera was pointing.
+    await refresh("glide");
+  }
+
+  $("msh").addEventListener("change", async (e) => {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    // Cleared whatever happens, so opening the same file twice in a row
+    // still fires a change event the second time.
+    input.value = "";
+    if (!file) return;
+    try {
+      await loadGeometry(file.name, await file.text());
+    } catch (problem) {
+      say(`could not read ${file.name}: ${problem}`);
+    }
+  });
+
   /** Put everything back in view. Camera state, so it never goes near the
    *  kernel: in station mode two tabs on one session each have their own. */
   function recentre() {
@@ -496,6 +582,15 @@ async function boot() {
   async function refresh(frame: false | "jump" | "glide" = false) {
     const [bytes, stats] = await Promise.all([kernel.view(), kernel.stats()]);
     viewer.setView(decodeView(bytes));
+    // Only when it has actually changed. The geometry is the big buffer and
+    // the one that never moves; re-sending it because a node was dragged is
+    // the whole cost this generation number exists to avoid.
+    if (stats.geometry.generation !== geometryDrawn) {
+      geometryDrawn = stats.geometry.generation;
+      viewer.setGeometry(decodeGeometry(await kernel.geometry()));
+    }
+    // After the geometry, not before: framing has to see everything there
+    // is to frame.
     if (frame) viewer.frameAll(frame === "jump");
     // One line, out of the way. The counts are what you glance at; the mode
     // matters once, when you are working out which kernel you are talking to.
@@ -504,6 +599,11 @@ async function boot() {
       `<span><b data-test="nodes">${stats.nodes}</b> nodes</span>` +
       `<span><b data-test="edges">${stats.edges}</b> edges</span>` +
       `<span><b data-test="faces">${stats.faces}</b> faces</span>` +
+      (stats.geometry.surfaces === undefined
+        ? ""
+        : `<span><b data-test="geom-surfaces">${stats.geometry.surfaces}</b> surfaces</span>` +
+          `<span><b data-test="geom-curves">${stats.geometry.curves}</b> curves</span>` +
+          `<span><b data-test="geom-corners">${stats.geometry.corners}</b> corners</span>`) +
       `<span data-test="mode">${kernel.mode}</span>`;
     $("status").textContent = message;
     revision++;
@@ -591,6 +691,7 @@ async function boot() {
   // shortcut cannot drift apart: there is only one of each action.
   const ACTIONS: Record<Action, () => void | Promise<void>> = {
     cube: createCube,
+    open: openGeometry,
     glue: glueSelection,
     remove: removeSelection,
     pillow: pillowSelection,
@@ -613,6 +714,9 @@ async function boot() {
       drawLayers();
       say(`edges ${prefs.edges.shrink > 0.1 ? "shown" : "hidden"}`);
     },
+    corners: () => toggleGeomLayer("corners"),
+    curves: () => toggleGeomLayer("curves"),
+    surfaces: () => toggleGeomLayer("surfaces"),
     internal: () => {
       prefs.faces.internal = !prefs.faces.internal;
       redraw();
@@ -655,8 +759,16 @@ async function boot() {
     say(`${group} ${prefs[group].visible ? "shown" : "hidden"}`);
   }
 
+  function toggleGeomLayer(group: GeomGroup) {
+    prefs[group].visible = !prefs[group].visible;
+    redraw();
+    drawGeometryLayers();
+    say(`geometric ${group} ${prefs[group].visible ? "shown" : "hidden"}`);
+  }
+
   for (const [id, action] of [
     ["cube", "cube"],
+    ["open", "open"],
     ["glue", "glue"],
     ["remove", "remove"],
     ["pillow", "pillow"],
@@ -750,6 +862,12 @@ async function boot() {
       );
     },
     axesVisible: () => viewer.axes.visible,
+    geomCount: (group: GeomGroup) => viewer.geomCount(group),
+    geomTags: (group: GeomGroup) => viewer.geomTags(group),
+    geomLook: (group: GeomGroup, tag: number) => viewer.geomLook(group, tag),
+    /** Load a geometry without a file picker, which a test cannot drive
+     *  from inside the page. The path through the kernel is the same one. */
+    loadGeometry: (name: string, msh: string) => loadGeometry(name, msh),
     /** Jump the camera onto an axis without the animation, so a test asserts
      *  where it landed rather than racing it. */
     snapTo: (axis: Axis) => viewer.axes.snapTo(axis),
@@ -782,6 +900,11 @@ async function boot() {
     apply: (command: Record<string, unknown>) => kernel.apply(command),
     refresh: () => refresh(),
     recentre: () => viewer.frameAll(),
+    /** Put the camera at a distance, without the wheel's thirty-five notches.
+     *  What lets a test say "and from twice as far away it looks the same". */
+    setRadius: (radius: number) => {
+      viewer.camera.radius = radius;
+    },
     /** Stop the camera drifting. Babylon keeps applying inertia for a while
      *  after a gesture, so a test that wants to show nothing *else* moved the
      *  camera has to be able to say that nothing was still moving it. */

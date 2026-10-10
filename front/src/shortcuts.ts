@@ -16,6 +16,7 @@
  */
 export const ACTIONS = [
   "cube",
+  "open",
   "glue",
   "remove",
   "pillow",
@@ -32,6 +33,9 @@ export const ACTIONS = [
   "blocks",
   "edges",
   "internal",
+  "corners",
+  "curves",
+  "surfaces",
   "triad",
   "theme",
   "drawer",
@@ -63,6 +67,7 @@ export interface Shortcut {
 
 export const SHORTCUTS: readonly Shortcut[] = [
   { show: "C", key: "c", action: "cube", does: "create a cube", group: "Edit" },
+  { show: "O", key: "o", action: "open", does: "open a geometry (.msh)", group: "Edit" },
   { show: "G", key: "g", action: "glue", does: "glue the two selected faces", group: "Edit" },
   {
     show: "Del",
@@ -96,6 +101,9 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { show: "2", code: "Digit2", action: "blocks", does: "show blocks", group: "Display" },
   { show: "3", code: "Digit3", action: "edges", does: "show edges", group: "Display" },
   { show: "I", key: "i", action: "internal", does: "show internal faces", group: "Display" },
+  { show: "4", code: "Digit4", action: "surfaces", does: "show geometric surfaces", group: "Display" },
+  { show: "5", code: "Digit5", action: "curves", does: "show geometric curves", group: "Display" },
+  { show: "6", code: "Digit6", action: "corners", does: "show geometric corners", group: "Display" },
 
   { show: "Tab", key: "tab", action: "drawer", does: "settings", group: "Window" },
   { show: "⇧Tab", key: "tab", shift: true, action: "chrome", does: "hide everything", group: "Window" },

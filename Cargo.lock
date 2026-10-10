@@ -275,6 +275,7 @@ name = "gecko-cmd"
 version = "0.1.0"
 dependencies = [
  "gecko-core",
+ "gecko-geom",
  "serde",
  "serde_json",
  "thiserror",
@@ -286,6 +287,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "honeycomb-core",
+ "thiserror",
+]
+
+[[package]]
+name = "gecko-geom"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
  "thiserror",
 ]
 

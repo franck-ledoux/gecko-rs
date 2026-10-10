@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["crates/gecko-core", "crates/gecko-cmd", "crates/gecko-wasm", "crates/gecko-py"]
+members = [
+    "crates/gecko-core",
+    "crates/gecko-geom",
+    "crates/gecko-cmd",
+    "crates/gecko-wasm",
+    "crates/gecko-py",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,6 +17,7 @@ license = "AGPL-3.0-only"
 honeycomb-core = "0.12"
 thiserror = "2"
 gecko-core = { path = "crates/gecko-core" }
+gecko-geom = { path = "crates/gecko-geom" }
 gecko-cmd = { path = "crates/gecko-cmd" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

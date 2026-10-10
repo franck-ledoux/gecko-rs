@@ -54,6 +54,15 @@ fatter. Its width is a share of the screen, not of the model, so a sheet
 reads the same whether you are up against it or looking at the whole thing
 from across the room.
 
+!!! note "Which kind of width, and the name that gets it backwards"
+    Babylon's `sizeAttenuation` is the switch, and it reads the opposite way
+    round from what it sounds like: **off** means the width is in *scene
+    units*, so the ribbon shrinks into the distance like the model does, and
+    **on** means a width in pixels. A sheet is something you are being shown
+    rather than part of the model, so it wants pixels — off, the ribbon's
+    thickness is a reading of how far away the camera happens to be, and
+    since `F` moves the camera, every recentring changed it.
+
 The readout says how far the sheet reaches: how many edges it runs along,
 and **how many blocks** it covers. Only the edges are lit, and a sheet that
 turns a corner through a glued neighbour can reach further than it looks —

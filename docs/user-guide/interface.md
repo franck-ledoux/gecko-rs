@@ -26,6 +26,7 @@ does. Any key dismisses it.
 |             |                                               |
 | ----------- | --------------------------------------------- |
 | `C`         | create a cube                                 |
+| `O`         | open a geometry (`.msh`)                      |
 | `G`         | glue the two selected faces                   |
 | `Del` `⌫`   | remove the selection: a block, or a lit sheet |
 | `P`         | pillow the selected faces                     |
@@ -35,6 +36,7 @@ does. Any key dismisses it.
 | `T`         | the X/Y/Z triad                               |
 | `D`         | dark or light                                 |
 | `1` `2` `3` | faces, blocks, edges                          |
+| `4` `5` `6` | geometric surfaces, curves, corners           |
 | `I`         | internal faces                                |
 | `Tab`       | settings                                      |
 | `⇧Tab`      | hide everything                               |

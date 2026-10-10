@@ -34,8 +34,23 @@ const SATURATION = 0.62;
 const LIGHTNESS = 0.56;
 
 /**
- * The colour for a cell, by its stable name and its dimension (2 for a face,
- * 3 for a block).
+ * Which family a group of cells is coloured in.
+ *
+ * `colourForId` shifts the hue by this, so two cells of the same number in
+ * different groups never come out the same colour. The geometry gets numbers
+ * of its own rather than reusing 0, 1 and 2: a geometric surface and a block
+ * face both called 3 are not the same thing and must not look alike.
+ */
+export const FAMILY = {
+  faces: 2,
+  blocks: 3,
+  corners: 4,
+  curves: 5,
+  surfaces: 6,
+} as const;
+
+/**
+ * The colour for a cell, by its stable name and its [`FAMILY`].
  */
 export function colourForId(name: number, dimension: number): string {
   if (name === UNNAMED) return UNNAMED_COLOUR;

@@ -21,6 +21,12 @@ export interface Theme {
   edges: string;
   faces: string;
   blocks: string;
+  /** The geometry's three groups. A family of their own — green against the
+   *  blocking's blues and browns — so that at a glance you can tell what is
+   *  the model and what is the thing the model is meant to follow. */
+  corners: string;
+  curves: string;
+  surfaces: string;
 }
 
 /** Order and labels for the generated settings panel. */
@@ -30,6 +36,9 @@ export const SWATCHES: ReadonlyArray<{ key: keyof Theme; label: string }> = [
   { key: "edges", label: "edges" },
   { key: "faces", label: "faces" },
   { key: "blocks", label: "blocks" },
+  { key: "corners", label: "corners" },
+  { key: "curves", label: "curves" },
+  { key: "surfaces", label: "surfaces" },
 ];
 
 export const PRESETS: Record<"dark" | "light", Theme> = {
@@ -39,6 +48,9 @@ export const PRESETS: Record<"dark" | "light", Theme> = {
     edges: "#f2f2ff",
     faces: "#4a6b8a",
     blocks: "#8a6b4a",
+    corners: "#6ee7a8",
+    curves: "#2fbf71",
+    surfaces: "#3f7d5e",
   },
   light: {
     background: "#f4f5f7",
@@ -46,6 +58,9 @@ export const PRESETS: Record<"dark" | "light", Theme> = {
     edges: "#2b2f37",
     faces: "#8fb0cc",
     blocks: "#ccae8f",
+    corners: "#1d8a52",
+    curves: "#157f4a",
+    surfaces: "#a8d5bd",
   },
 };
 
@@ -62,12 +77,23 @@ export function isLight(hex: string): boolean {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5;
 }
 
-/** How one group of cells is drawn. */
-export interface Layer {
+/**
+ * How one group of entities is drawn.
+ *
+ * The geometry's three groups take exactly this and no more. There is no
+ * shrink: a geometry is not a cellular decomposition you can explode — its
+ * surfaces meet along the curves that are also in the picture, and pulling
+ * them apart would only break that.
+ */
+export interface GeomLayer {
   visible: boolean;
   colouring: Colouring;
   /** 1 is opaque. */
   alpha: number;
+}
+
+/** How one group of cells of the blocking is drawn. */
+export interface Layer extends GeomLayer {
   /** 1 leaves a cell where it is; smaller pulls it towards its own centre. */
   shrink: number;
 }
@@ -90,6 +116,11 @@ export interface ViewPrefs {
   edges: { shrink: number };
   faces: Layer & { internal: boolean };
   blocks: Layer;
+  /** The geometry, which is not edited and so has no notion of a selection
+   *  or a shrink — only whether you are looking at it and how. */
+  corners: GeomLayer;
+  curves: GeomLayer;
+  surfaces: GeomLayer;
 }
 
 export const DEFAULTS: ViewPrefs = {
@@ -109,6 +140,14 @@ export const DEFAULTS: ViewPrefs = {
   // colourings of one shape at once is a choice rather than a default.
   faces: { visible: true, colouring: "uniform", alpha: 0.35, shrink: 1, internal: true },
   blocks: { visible: false, colouring: "id", alpha: 0.55, shrink: 0.85 },
+  // All three on, because a geometry you have just loaded is a geometry you
+  // want to see. Surfaces by id: telling one CAD patch from the next is the
+  // whole reason the file was read as a model rather than as triangles, and
+  // one colour for the lot would hide exactly that. Translucent, because
+  // what goes inside it is the point.
+  corners: { visible: true, colouring: "uniform", alpha: 1 },
+  curves: { visible: true, colouring: "uniform", alpha: 1 },
+  surfaces: { visible: true, colouring: "id", alpha: 0.3 },
 };
 
 /** Out of range is clamped rather than refused: these come back from storage,
@@ -117,7 +156,7 @@ export const DEFAULTS: ViewPrefs = {
 const clamp = (v: unknown, fallback: number) =>
   typeof v === "number" && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : fallback;
 
-function layer(stored: Partial<Layer> | undefined, fallback: Layer): Layer {
+function geomLayer(stored: Partial<GeomLayer> | undefined, fallback: GeomLayer): GeomLayer {
   return {
     visible: typeof stored?.visible === "boolean" ? stored.visible : fallback.visible,
     colouring:
@@ -125,6 +164,12 @@ function layer(stored: Partial<Layer> | undefined, fallback: Layer): Layer {
         ? stored.colouring
         : fallback.colouring,
     alpha: clamp(stored?.alpha, fallback.alpha),
+  };
+}
+
+function layer(stored: Partial<Layer> | undefined, fallback: Layer): Layer {
+  return {
+    ...geomLayer(stored, fallback),
     shrink: clamp(stored?.shrink, fallback.shrink),
   };
 }
@@ -168,6 +213,9 @@ export function loadPrefs(): ViewPrefs {
             : DEFAULTS.faces.internal,
       },
       blocks: layer(stored.blocks, DEFAULTS.blocks),
+      corners: geomLayer(stored.corners, DEFAULTS.corners),
+      curves: geomLayer(stored.curves, DEFAULTS.curves),
+      surfaces: geomLayer(stored.surfaces, DEFAULTS.surfaces),
     };
   } catch {
     return structuredClone(DEFAULTS);

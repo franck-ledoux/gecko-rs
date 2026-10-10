@@ -17,7 +17,7 @@
  */
 
 import type { View } from "./decode";
-import { colourForId, hexToRgb } from "./palette";
+import { colourForId, FAMILY, hexToRgb } from "./palette";
 
 /** One colour for everything, or one per cell name. */
 export type Colouring = "uniform" | "id";
@@ -153,7 +153,7 @@ function buildFrom(view: View, options: SurfaceOptions, kept: number[]): Surface
   if (!kept.length) return EMPTY;
 
   const names = options.by === "face" ? view.quadFaces : view.quadBlocks;
-  const dimension = options.by === "face" ? 2 : 3;
+  const dimension = options.by === "face" ? FAMILY.faces : FAMILY.blocks;
   const middle = centres(view, options.by);
   const uniform = hexToRgb(options.uniform);
 

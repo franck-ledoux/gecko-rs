@@ -121,12 +121,23 @@ that same script**, so what passes locally passes there.
 
 ## What it can do today
 
-Create a cube, and move a node — from Rust, from Python, and from the page.
+Every one of these from Rust, from Python, and from the page — one command set,
+three ways in:
 
-That is deliberately little: the project is being rebuilt one step at a time,
-and each step settles a design question before the next is piled on top. Not
-there yet: undo, geometric validity, classification, Bézier curves and Coons
-surfaces, any other topological operation, meshing, file reading.
+- **build**: create a cube, move a node, glue two faces together;
+- **edit**: remove a block, cut a sheet of hexahedra, remove a sheet and close
+  the gap behind it, pillow a patch of surface faces;
+- **read a geometry**: a gmsh surface mesh (MSH 2.2) as a boundary
+  representation — surfaces, curves and corners, drawn alongside the blocks;
+- **look at it**: faces, blocks, edges and the geometry's three groups, each
+  shown, coloured, faded and shrunk on its own, with a picture saved at
+  publication size.
+
+The project is being rebuilt one step at a time, and each step settles a design
+question before the next is piled on top. Not there yet: **classification** —
+the blocks and the geometry are two things in one window, and no cell knows
+which surface it is supposed to lie on — undo, geometric validity, Bézier
+curves and Coons surfaces, meshing.
 
 ## Documentation
 

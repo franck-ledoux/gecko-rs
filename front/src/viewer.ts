@@ -13,7 +13,7 @@ import type { AbstractEngine } from "@babylonjs/core/Engines/abstractEngine";
 import { Scene } from "@babylonjs/core/scene";
 import { ArcRotateCamera } from "@babylonjs/core/Cameras/arcRotateCamera";
 import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight";
-import { Matrix, Vector3 } from "@babylonjs/core/Maths/math.vector";
+import { Matrix, Vector2, Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { Animation } from "@babylonjs/core/Animations/animation";
 import { CubicEase, EasingFunction } from "@babylonjs/core/Animations/easing";
 import "@babylonjs/core/Animations/animatable";
@@ -28,13 +28,16 @@ import type { LinesMesh } from "@babylonjs/core/Meshes/linesMesh";
 import { CreateSphere } from "@babylonjs/core/Meshes/Builders/sphereBuilder";
 import { CreateLineSystem } from "@babylonjs/core/Meshes/Builders/linesBuilder";
 import { CreateGreasedLine } from "@babylonjs/core/Meshes/Builders/greasedLineBuilder";
+import type { GreasedLineMesh } from "@babylonjs/core/Meshes/GreasedLine/greasedLineMesh";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { PointerDragBehavior } from "@babylonjs/core/Behaviors/Meshes/pointerDragBehavior";
 import "@babylonjs/core/Culling/ray";
-import type { View } from "./decode";
+import type { GeometryView, View } from "./decode";
+import type { GeomGroup } from "./geometry";
+import { geomBounds, geomCorners, geomCurves, geomSurfaces, GEOM_GROUPS } from "./geometry";
 import { AxisGizmo, MAIN_LAYER } from "./axes";
-import { DEFAULTS, type Layer, type ViewPrefs } from "./theme";
-import { ANCHOR, MATE } from "./palette";
+import { DEFAULTS, type GeomLayer, type Layer, type ViewPrefs } from "./theme";
+import { ANCHOR, FAMILY, MATE, colourForId } from "./palette";
 import type { SheetEdge } from "./kernel";
 import {
   buildSurfaces,
@@ -61,20 +64,44 @@ export type Drop = (name: number, to: [number, number, number]) => void;
 /** How many pixels across a node handle should be, whatever the zoom. */
 export const HANDLE_PIXELS = 11;
 
+/**
+ * And a geometric corner, which is bigger on purpose.
+ *
+ * A corner of the geometry and a node of the blocking are two different
+ * things that will often sit on top of each other — the whole point of the
+ * geometry being there is for the blocking to land on it — so they are told
+ * apart by size as well as by colour.
+ */
+export const CORNER_PIXELS = 15;
+
 /** How near a line the pointer has to be to count as on it. Lines are one
  *  pixel wide and nobody can hit one. */
 export const EDGE_PICK_PIXELS = 7;
 
 /**
- * How thick a lit sheet is drawn.
+ * How thick a lit sheet is drawn, in CSS pixels.
  *
  * WebGL caps `lineWidth` at one pixel whatever you ask for, so a thick line
  * is not a line at all — it is a ribbon built as geometry. That is what
- * `CreateGreasedLine` makes, and with `sizeAttenuation` off its width is a
- * share of the screen rather than of the model, so a sheet reads the same
- * however far away it is.
+ * `CreateGreasedLine` makes.
+ *
+ * `sizeAttenuation` is what decides which kind of width this is, and it is
+ * the opposite way round from what the name suggests: **off** means "width
+ * units are scene units", so the ribbon shrinks into the distance like
+ * anything else in the model, and **on** means a width in pixels of the
+ * material's `resolution`. A sheet is something you are being shown, not
+ * part of the model, so it wants the second — otherwise its thickness is a
+ * reading of how far away the camera happens to be, and every recentring
+ * changes it.
+ *
+ * Seven, which is [`EDGE_PICK_PIXELS`]: the lit sheet comes out exactly as
+ * wide as the target you had to hit to light it.
  */
-export const SHEET_WIDTH = 0.012;
+export const SHEET_PIXELS = 7;
+
+/** The aiming line, drawn over the sheet, is half again as wide so it reads
+ *  against it. */
+export const AIM_SHARE = 1.6;
 
 /** How long a recentring takes. Long enough to follow the model moving into
  *  place, short enough not to be waiting for it. */
@@ -195,6 +222,13 @@ export class Viewer {
     faces: [],
     blocks: [],
   };
+  /** The geometry, if one has been loaded. Read-only here: nothing in the
+   *  viewer edits it, and no operation moves it. */
+  private geometry?: GeometryView;
+  /** One mesh per geometric entity, so each can be coloured, faded and
+   *  hidden as the one thing it is — and so the transparency sorter has
+   *  something to sort. */
+  private geomMeshes: Record<GeomGroup, Mesh[]> = { corners: [], curves: [], surfaces: [] };
   /** A working copy of the view: the drag previews against it, so the scene can
    *  follow the mouse without a round trip to the kernel. */
   private view?: View;
@@ -295,6 +329,7 @@ export class Viewer {
     this.rebuildHighlight();
     this.rebuildSurface("faces");
     this.rebuildSurface("blocks");
+    this.rebuildGeometry();
   }
 
   /** What the viewer is currently told to look like. */
@@ -448,6 +483,155 @@ export class Viewer {
     return mesh;
   }
 
+  /**
+   * Show a geometry, replacing whatever was there.
+   *
+   * Asked for only when the kernel's generation number says it has changed,
+   * which is why this does the whole thing rather than patching: a new
+   * geometry shares nothing with the old one, not even its node numbering.
+   */
+  setGeometry(view: GeometryView) {
+    this.geometry = view;
+    this.rebuildGeometry();
+    // The geometry counts towards the model's extent, so how close the
+    // camera may come has to be worked out again.
+    this.fitLimits();
+  }
+
+  /** What the geometry's three groups currently hold, for a test to read. */
+  geomCount(group: GeomGroup): number {
+    return this.geomMeshes[group].length;
+  }
+
+  /** The entity tags on screen in one group, in the order they are drawn. */
+  geomTags(group: GeomGroup): number[] {
+    return this.geomMeshes[group].map((m) => Number(m.name.split("-").pop()));
+  }
+
+  /** The colour and opacity one geometric entity is drawn in — everything
+   *  there is to assert about a group's display without rendering. */
+  geomLook(group: GeomGroup, tag: number): { colour: string; alpha: number } | null {
+    const mesh = this.geomMeshes[group].find((m) => m.name === `geom-${group}-${tag}`);
+    if (!mesh) return null;
+    const material = mesh.material as StandardMaterial | null;
+    // Where each group keeps the colour it was given: a line mesh has no
+    // material of its own, a corner is unlit and so carries it as its own
+    // light, and a surface is lit and carries it as what the light falls on.
+    const colour =
+      group === "curves"
+        ? (mesh as LinesMesh).color
+        : group === "corners"
+          ? (material?.emissiveColor ?? Color3.Black())
+          : (material?.diffuseColor ?? Color3.Black());
+    return { colour: colour.toHexString().toLowerCase(), alpha: mesh.visibility };
+  }
+
+  private geomColour(group: GeomGroup, tag: number): Color3 {
+    const layer: GeomLayer = this.prefs[group];
+    return Color3.FromHexString(
+      layer.colouring === "id" ? colourForId(tag, FAMILY[group]) : this.prefs.theme[group],
+    );
+  }
+
+  /**
+   * Rebuild all three groups.
+   *
+   * Thrown away and remade rather than patched, unlike the blocking's
+   * surfaces. There is no slider dragging a stream of these: a geometry has
+   * no shrink, so the only things that change are a colour, an opacity and
+   * whether it is on at all — one click each, not one per mouse move.
+   */
+  private rebuildGeometry() {
+    for (const group of GEOM_GROUPS) {
+      for (const mesh of this.geomMeshes[group]) mesh.dispose(false, true);
+      this.geomMeshes[group] = [];
+    }
+    if (!this.geometry) return;
+    if (this.prefs.surfaces.visible) this.buildGeomSurfaces();
+    if (this.prefs.curves.visible) this.buildGeomCurves();
+    if (this.prefs.corners.visible) this.buildGeomCorners();
+  }
+
+  private buildGeomSurfaces() {
+    for (const surface of geomSurfaces(this.geometry!)) {
+      const mesh = new Mesh(`geom-surfaces-${surface.tag}`, this.scene);
+      const vertices = new VertexData();
+      vertices.positions = surface.positions;
+      vertices.indices = surface.indices;
+      const normals: number[] = [];
+      // Averaged over the surface's own triangles and no others, because no
+      // vertex is shared between surfaces: a faceted sphere reads as a
+      // sphere, and the crease where two surfaces meet stays a crease.
+      VertexData.ComputeNormals(surface.positions, Array.from(surface.indices), normals);
+      vertices.normals = normals;
+      vertices.applyToMesh(mesh, false);
+
+      const colour = this.geomColour("surfaces", surface.tag);
+      const material = new StandardMaterial(`geomSurfaceMat${surface.tag}`, this.scene);
+      material.diffuseColor = colour;
+      // A little of its own light, so a patch turned away from the lamp is
+      // still the colour it was given rather than a silhouette.
+      material.emissiveColor = colour.scale(0.35);
+      material.specularColor = Color3.Black();
+      material.backFaceCulling = false;
+      material.separateCullingPass = true;
+      // The curves run exactly along these surfaces, being made of the same
+      // nodes. Same bias as the blocking's faces, for the same reason.
+      material.zOffset = SURFACE_DEPTH_BIAS.factor;
+      material.zOffsetUnits = SURFACE_DEPTH_BIAS.units;
+      mesh.material = material;
+      this.dressGeometry(mesh, "surfaces");
+    }
+  }
+
+  private buildGeomCurves() {
+    for (const curve of geomCurves(this.geometry!)) {
+      const lines: Vector3[][] = [];
+      for (let at = 0; at < curve.segments.length; at += 6) {
+        lines.push([
+          new Vector3(curve.segments[at], curve.segments[at + 1], curve.segments[at + 2]),
+          new Vector3(curve.segments[at + 3], curve.segments[at + 4], curve.segments[at + 5]),
+        ]);
+      }
+      const mesh = CreateLineSystem(`geom-curves-${curve.tag}`, { lines }, this.scene);
+      mesh.color = this.geomColour("curves", curve.tag);
+      this.dressGeometry(mesh, "curves");
+    }
+  }
+
+  private buildGeomCorners() {
+    for (const corner of geomCorners(this.geometry!)) {
+      // Unit diameter; `rescaleHandles` sizes it in pixels every frame, the
+      // same way the node handles are sized.
+      const mesh = CreateSphere(`geom-corners-${corner.tag}`, { diameter: 1, segments: 8 }, this.scene);
+      mesh.position = new Vector3(...corner.at);
+      const material = new StandardMaterial(`geomCornerMat${corner.tag}`, this.scene);
+      material.emissiveColor = this.geomColour("corners", corner.tag);
+      material.disableLighting = true;
+      mesh.material = material;
+      this.dressGeometry(mesh, "corners");
+    }
+  }
+
+  /**
+   * What every piece of geometry has in common.
+   *
+   * **Never pickable**, which is the important one. The geometry is what the
+   * blocking is built against, not something you edit, and a triangle in
+   * front of a block face that answered the click first would make that face
+   * unselectable — the same trap the node handles fell into when surfaces
+   * first became pickable.
+   *
+   * Opacity through `visibility` rather than the material's alpha, because a
+   * `LinesMesh` has no material of its own to set it on.
+   */
+  private dressGeometry(mesh: Mesh | LinesMesh, group: GeomGroup) {
+    mesh.visibility = this.prefs[group].alpha;
+    mesh.isPickable = false;
+    mesh.layerMask = MAIN_LAYER;
+    this.geomMeshes[group].push(mesh as Mesh);
+  }
+
   private rebuildEdges() {
     if (!this.view?.edges.length) {
       this.wire?.dispose();
@@ -473,9 +657,39 @@ export class Viewer {
     this.wire.layerMask = MAIN_LAYER;
   }
 
+  /**
+   * The width and resolution a ribbon is built with.
+   *
+   * In **render** pixels, which is what the material's `resolution` is in,
+   * and which on a high-density display is twice the CSS size — hence the
+   * division, so seven means seven of the pixels a pointer speaks in.
+   */
+  private ribbon(share: number) {
+    const engine = this.scene.getEngine();
+    return {
+      width: (SHEET_PIXELS * share) / engine.getHardwareScalingLevel(),
+      sizeAttenuation: true,
+      resolution: new Vector2(engine.getRenderWidth(), engine.getRenderHeight()),
+    };
+  }
+
   /** Keep the corner viewport square when the canvas changes shape. */
   resize() {
     this.axes.resize();
+    // A ribbon's width is in pixels of the resolution it was built with, and
+    // the material holds that resolution from the moment it was made. Resize
+    // the window with a sheet lit and it would go on measuring itself
+    // against the old one.
+    for (const [mesh, share] of [
+      [this.litWire, 1],
+      [this.aimWire, AIM_SHARE],
+    ] as const) {
+      const material = (mesh as GreasedLineMesh | undefined)?.greasedLineMaterial;
+      if (!material) continue;
+      const { width, resolution } = this.ribbon(share);
+      material.width = width;
+      material.resolution = resolution;
+    }
   }
 
   attachTo(canvas: HTMLCanvasElement) {
@@ -679,7 +893,9 @@ export class Viewer {
   }
 
   private rebuildAim() {
-    this.aimWire?.dispose();
+    // `true` for the material as well: a ribbon is rebuilt on every change
+    // of selection, and the material does not go with the mesh by default.
+    this.aimWire?.dispose(false, true);
     this.aimWire = undefined;
     if (this.aim === null || !this.lit.length) return;
     const t = this.aim;
@@ -694,7 +910,7 @@ export class Viewer {
     this.aimWire = CreateGreasedLine(
       "aim",
       { points },
-      { color: Color3.FromHexString(MATE), width: SHEET_WIDTH * 1.6, sizeAttenuation: false },
+      { color: Color3.FromHexString(MATE), ...this.ribbon(AIM_SHARE) },
       this.scene,
     );
     this.aimWire.isPickable = false;
@@ -703,7 +919,7 @@ export class Viewer {
   }
 
   private rebuildHighlight() {
-    this.litWire?.dispose();
+    this.litWire?.dispose(false, true);
     this.litWire = undefined;
     this.rebuildAim();
     if (!this.view || !this.lit.length) return;
@@ -723,7 +939,7 @@ export class Viewer {
     this.litWire = CreateGreasedLine(
       "sheet",
       { points: lines.map(([a, b]) => [a.x, a.y, a.z, b.x, b.y, b.z]) },
-      { color: Color3.FromHexString(ANCHOR), width: SHEET_WIDTH, sizeAttenuation: false },
+      { color: Color3.FromHexString(ANCHOR), ...this.ribbon(1) },
       this.scene,
     );
     this.litWire.isPickable = false;
@@ -814,16 +1030,30 @@ export class Viewer {
     this.camera.upperRadiusLimit = diagonal ? diagonal * 60 : null;
   }
 
-  /** The model's extent, from the handles, which are on every node there is. */
+  /**
+   * Everything on screen, blocking and geometry together.
+   *
+   * Both, because framing is "show me what there is" and a geometry with no
+   * blocks on it yet is still what there is. The blocking's part comes from
+   * the handles, which sit on every node; the geometry's from its own nodes
+   * rather than from its meshes, which have no handles to read.
+   */
   private bounds(): { lo: Vector3; hi: Vector3 } | null {
-    if (!this.nodes.length) return null;
     let lo = new Vector3(Infinity, Infinity, Infinity);
     let hi = new Vector3(-Infinity, -Infinity, -Infinity);
+    let any = false;
     for (const m of this.nodes) {
       lo = Vector3.Minimize(lo, m.position);
       hi = Vector3.Maximize(hi, m.position);
+      any = true;
     }
-    return { lo, hi };
+    const box = this.geometry && geomBounds(this.geometry);
+    if (box) {
+      lo = Vector3.Minimize(lo, new Vector3(...box.lo));
+      hi = Vector3.Maximize(hi, new Vector3(...box.hi));
+      any = true;
+    }
+    return any ? { lo, hi } : null;
   }
 
   private modelBounds(): number {
@@ -919,11 +1149,14 @@ export class Viewer {
           height,
         ) / 2;
     }
-    if (!this.nodes.length) return;
-    for (const mesh of this.nodes) {
-      const distance = Vector3.Distance(mesh.position, this.camera.position);
-      const wanted = worldSizeForPixels(HANDLE_PIXELS, distance, this.camera.fov, height);
-      mesh.scaling.setAll(wanted);
+    for (const [meshes, pixels] of [
+      [this.nodes, HANDLE_PIXELS],
+      [this.geomMeshes.corners, CORNER_PIXELS],
+    ] as const) {
+      for (const mesh of meshes) {
+        const distance = Vector3.Distance(mesh.position, this.camera.position);
+        mesh.scaling.setAll(worldSizeForPixels(pixels, distance, this.camera.fov, height));
+      }
     }
   }
 

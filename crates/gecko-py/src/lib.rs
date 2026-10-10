@@ -139,6 +139,31 @@ impl PySession {
         self.command(serde_json::json!({ "op": "remove_block", "block": block }))
     }
 
+    /// Read a geometry from a gmsh surface mesh.
+    ///
+    /// MSH 2.2 ASCII, triangles for surfaces, lines for curves and point
+    /// elements for corners, each grouped by its **elementary entity tag**.
+    /// Anything else in the file — tetrahedra, almost always — is skipped
+    /// and counted in the message.
+    ///
+    /// The path is read here and the contents go into the command, because
+    /// the command set has to be the same one the browser can send and a
+    /// browser has no path to give.
+    fn load_geometry(&self, path: &str) -> PyResult<String> {
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| PyValueError::new_err(format!("{path}: {e}")))?;
+        let name = std::path::Path::new(path)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string());
+        self.command(serde_json::json!({ "op": "load_geometry", "msh": text, "name": name }))
+    }
+
+    /// Forget the geometry.
+    fn clear_geometry(&self) -> PyResult<String> {
+        self.command(serde_json::json!({ "op": "clear_geometry" }))
+    }
+
     /// The sheet of hexahedra through an edge: every edge of it, with the
     /// direction a cut parameter would run in.
     fn sheet(&self, py: Python<'_>, edge: u32) -> PyResult<PyObject> {
@@ -205,6 +230,12 @@ impl PySession {
     }
 
     /// The view buffer: the exact bytes the browser decodes, in either mode.
+    /// The geometry, in the bytes the browser decodes.
+    #[getter]
+    fn geometry_buffer(&self) -> Vec<u8> {
+        self.locked(|s| s.geometry_buffer())
+    }
+
     #[getter]
     fn view_buffer(&self) -> Vec<u8> {
         self.locked(|s| s.view_buffer())

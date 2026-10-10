@@ -11,7 +11,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { NullEngine } from "@babylonjs/core/Engines/nullEngine";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
-import { decodeView } from "../../src/decode";
+import { decodeGeometry, decodeView } from "../../src/decode";
 import { initKernel, WasmKernel } from "../../src/kernel-wasm";
 import {
   CLOSEST_APPROACH,
@@ -29,8 +29,9 @@ import {
 } from "../../src/axes";
 import { DEFAULTS, PRESETS } from "../../src/theme";
 import { readProbe } from "../../src/mode";
-import { colourForId, hexToRgb, hslToHex, UNNAMED } from "../../src/palette";
+import { colourForId, FAMILY, hexToRgb, hslToHex, UNNAMED } from "../../src/palette";
 import { buildSurface, edgeSegments, quadsToDraw } from "../../src/surface";
+import { geomBounds, geomCorners, geomCurves, geomSurfaces, GEOM_GROUPS } from "../../src/geometry";
 import { isLight, loadPrefs, SHOT_SCALES } from "../../src/theme";
 import { actionFor, ACTIONS, helpRows, SHORTCUTS } from "../../src/shortcuts";
 import { dataUrlToBlob, shotName } from "../../src/capture";
@@ -94,18 +95,36 @@ describe("the static kernel", () => {
   it("reports what it did, and refuses what it cannot do", async () => {
     const kernel = new WasmKernel();
     expect(kernel.mode).toBe("static");
-    expect(await kernel.stats()).toEqual({ nodes: 0, edges: 0, faces: 0, blocks: 0 });
+    expect(await kernel.stats()).toEqual({
+      nodes: 0,
+      edges: 0,
+      faces: 0,
+      blocks: 0,
+      geometry: { generation: 0 },
+    });
 
     const reply = await kernel.apply({ op: "add_block", corners: CUBE });
     expect(reply.ok).toBe(true);
     expect(reply.viewChanged).toBe(true);
-    expect(await kernel.stats()).toEqual({ nodes: 8, edges: 12, faces: 6, blocks: 1 });
+    expect(await kernel.stats()).toEqual({
+      nodes: 8,
+      edges: 12,
+      faces: 6,
+      blocks: 1,
+      geometry: { generation: 0 },
+    });
 
     const bad = await kernel.apply({ op: "nonesuch" });
     expect(bad.ok).toBe(false);
     expect(bad.viewChanged).toBe(false);
     // A refused command must leave the session alone.
-    expect(await kernel.stats()).toEqual({ nodes: 8, edges: 12, faces: 6, blocks: 1 });
+    expect(await kernel.stats()).toEqual({
+      nodes: 8,
+      edges: 12,
+      faces: 6,
+      blocks: 1,
+      geometry: { generation: 0 },
+    });
   });
 });
 
@@ -1344,5 +1363,241 @@ describe("lighting up a sheet", () => {
       expect(mid.filter((x) => Math.abs(x - 0.5) < 1e-6).length).toBeGreaterThanOrEqual(1);
     }
     expect(viewer.edgeMidpoint(999_999)).toBeNull();
+  });
+});
+
+/**
+ * A unit square: two triangles on one surface, four sides each a curve, four
+ * corners each a point element. Written out rather than loaded, because what
+ * each line means is the point of the tests below.
+ */
+const SQUARE_MSH = `$MeshFormat
+2.2 0 8
+$EndMeshFormat
+$Nodes
+4
+1 0 0 0
+2 1 0 0
+3 1 1 0
+4 0 1 0
+$EndNodes
+$Elements
+10
+1 15 2 0 21 1
+2 15 2 0 22 2
+3 15 2 0 23 3
+4 15 2 0 24 4
+5 1 2 0 11 1 2
+6 1 2 0 12 2 3
+7 1 2 0 13 3 4
+8 1 2 0 14 4 1
+9 2 2 0 1 1 2 3
+10 2 2 0 1 1 3 4
+$EndElements
+`;
+
+async function withGeometry() {
+  const kernel = new WasmKernel();
+  const reply = await kernel.apply({ op: "load_geometry", msh: SQUARE_MSH, name: "square.msh" });
+  expect(reply.ok, reply.message).toBe(true);
+  return kernel;
+}
+
+describe("the geometry's own buffer", () => {
+  it("decodes what the kernel encodes", async () => {
+    const kernel = await withGeometry();
+    const geometry = decodeGeometry(await kernel.geometry());
+
+    expect(geometry.positions.length / 3).toBe(4);
+    expect(geometry.triangles.length / 3).toBe(2);
+    expect(Array.from(geometry.triangleTags)).toEqual([1, 1]);
+    expect(Array.from(geometry.segmentTags)).toEqual([11, 12, 13, 14]);
+    expect(Array.from(geometry.cornerTags)).toEqual([21, 22, 23, 24]);
+    // Rebased like everything else: the square's own centre is the origin.
+    expect(geometry.centre).toEqual([0.5, 0.5, 0]);
+    expect(Array.from(geometry.positions.slice(0, 3))).toEqual([-0.5, -0.5, 0]);
+  });
+
+  it("is only asked for when the kernel says it changed", async () => {
+    // The whole reason for a generation number rather than a flag on an
+    // outcome: it is just as right for a change this client did not make.
+    const kernel = new WasmKernel();
+    expect((await kernel.stats()).geometry.generation).toBe(0);
+    expect((await kernel.stats()).geometry.surfaces).toBeUndefined();
+
+    await kernel.apply({ op: "load_geometry", msh: SQUARE_MSH, name: "square.msh" });
+    expect((await kernel.stats()).geometry).toEqual({
+      generation: 1,
+      corners: 4,
+      curves: 4,
+      surfaces: 1,
+      segments: 4,
+      triangles: 2,
+    });
+
+    await kernel.apply({ op: "clear_geometry" });
+    expect((await kernel.stats()).geometry.generation).toBe(2);
+  });
+
+  it("hands back something decodable even when there is no geometry", async () => {
+    const geometry = decodeGeometry(await new WasmKernel().geometry());
+    expect(geometry.positions.length).toBe(0);
+    expect(geometry.triangles.length).toBe(0);
+  });
+
+  it("refuses a buffer whose header and body disagree", async () => {
+    const kernel = await withGeometry();
+    const bytes = await kernel.geometry();
+    expect(() => decodeGeometry(bytes.slice(0, bytes.length - 4))).toThrow(/bytes/);
+    const wrong = new Uint8Array(bytes);
+    wrong[4] = 9;
+    expect(() => decodeGeometry(wrong)).toThrow(/version 9/);
+  });
+});
+
+describe("a geometry made into meshes", () => {
+  it("gathers triangles into one surface per tag, sharing their nodes", async () => {
+    const kernel = await withGeometry();
+    const view = decodeGeometry(await kernel.geometry());
+    const surfaces = geomSurfaces(view);
+
+    expect(surfaces).toHaveLength(1);
+    expect(surfaces[0].tag).toBe(1);
+    expect(surfaces[0].indices.length / 3).toBe(2);
+    // Four vertices for two triangles, not six: the two share an edge, and
+    // sharing is what makes the normals average across a surface — a
+    // faceted sphere reading as a sphere rather than as its facets.
+    expect(surfaces[0].positions.length / 3).toBe(4);
+  });
+
+  it("keeps each curve and each corner its own thing", async () => {
+    const kernel = await withGeometry();
+    const view = decodeGeometry(await kernel.geometry());
+
+    const curves = geomCurves(view);
+    expect(curves.map((c) => c.tag)).toEqual([11, 12, 13, 14]);
+    expect(curves.every((c) => c.segments.length === 6)).toBe(true);
+    expect(geomCorners(view).map((c) => c.tag)).toEqual([21, 22, 23, 24]);
+  });
+
+  it("reports the extent the camera has to frame", async () => {
+    const kernel = await withGeometry();
+    const box = geomBounds(decodeGeometry(await kernel.geometry()))!;
+    expect(box.lo).toEqual([-0.5, -0.5, 0]);
+    expect(box.hi).toEqual([0.5, 0.5, 0]);
+    expect(geomBounds(decodeGeometry(await new WasmKernel().geometry()))).toBeNull();
+  });
+});
+
+describe("the geometry in the scene", () => {
+  async function scene() {
+    const kernel = await withGeometry();
+    const viewer = new Viewer(new NullEngine());
+    viewer.setView(decodeView(await kernel.view()));
+    viewer.setGeometry(decodeGeometry(await kernel.geometry()));
+    return viewer;
+  }
+
+  it("draws one mesh per entity, so each can be coloured and faded alone", async () => {
+    const viewer = await scene();
+    expect(viewer.geomCount("surfaces")).toBe(1);
+    expect(viewer.geomCount("curves")).toBe(4);
+    expect(viewer.geomCount("corners")).toBe(4);
+    expect(viewer.geomTags("curves")).toEqual([11, 12, 13, 14]);
+  });
+
+  it("hides each group on its own", async () => {
+    const viewer = await scene();
+    for (const group of GEOM_GROUPS) {
+      const prefs = structuredClone(DEFAULTS);
+      prefs[group].visible = false;
+      viewer.applyPrefs(prefs);
+      expect(viewer.geomCount(group), `${group} hidden`).toBe(0);
+      // And the other two are untouched.
+      for (const other of GEOM_GROUPS) {
+        if (other !== group) expect(viewer.geomCount(other), `${other} still shown`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("colours a group one colour, or one colour per tag", async () => {
+    const viewer = await scene();
+    const prefs = structuredClone(DEFAULTS);
+    prefs.curves.colouring = "uniform";
+    prefs.theme.curves = "#123456";
+    viewer.applyPrefs(prefs);
+    expect(viewer.geomLook("curves", 11)!.colour).toBe("#123456");
+    expect(viewer.geomLook("curves", 12)!.colour).toBe("#123456");
+
+    prefs.curves.colouring = "id";
+    viewer.applyPrefs(prefs);
+    const eleven = viewer.geomLook("curves", 11)!.colour;
+    expect(eleven).not.toBe(viewer.geomLook("curves", 12)!.colour);
+    expect(eleven).toBe(colourForId(11, FAMILY.curves).toLowerCase());
+    // And not the colour a *face* of the blocking numbered 11 would be:
+    // two different things with the same number must not look alike.
+    expect(eleven).not.toBe(colourForId(11, FAMILY.faces).toLowerCase());
+  });
+
+  it("gives all three groups the colour they were asked for", async () => {
+    // Each keeps it somewhere different — a line has no material, a corner
+    // is unlit and a surface is lit — so "the colour it is drawn in" is
+    // three different fields and worth asserting on each.
+    const viewer = await scene();
+    const prefs = structuredClone(DEFAULTS);
+    for (const group of GEOM_GROUPS) {
+      prefs[group].colouring = "uniform";
+      prefs.theme[group] = "#abcdef";
+    }
+    viewer.applyPrefs(prefs);
+    expect(viewer.geomLook("surfaces", 1)!.colour).toBe("#abcdef");
+    expect(viewer.geomLook("curves", 11)!.colour).toBe("#abcdef");
+    expect(viewer.geomLook("corners", 21)!.colour).toBe("#abcdef");
+
+    for (const group of GEOM_GROUPS) prefs[group].colouring = "id";
+    viewer.applyPrefs(prefs);
+    expect(viewer.geomLook("surfaces", 1)!.colour).toBe(
+      colourForId(1, FAMILY.surfaces).toLowerCase(),
+    );
+    expect(viewer.geomLook("corners", 21)!.colour).toBe(
+      colourForId(21, FAMILY.corners).toLowerCase(),
+    );
+  });
+
+  it("fades a group without touching the others", async () => {
+    const viewer = await scene();
+    const prefs = structuredClone(DEFAULTS);
+    prefs.surfaces.alpha = 0.25;
+    prefs.curves.alpha = 1;
+    viewer.applyPrefs(prefs);
+    expect(viewer.geomLook("surfaces", 1)!.alpha).toBeCloseTo(0.25);
+    expect(viewer.geomLook("curves", 11)!.alpha).toBeCloseTo(1);
+  });
+
+  it("is never pickable, so it cannot steal a click meant for a block", async () => {
+    // The trap the node handles fell into when surfaces first became
+    // pickable: a triangle in front of a face answered the click, and the
+    // face behind it became unselectable.
+    const viewer = await scene();
+    for (const group of GEOM_GROUPS) {
+      for (const tag of viewer.geomTags(group)) {
+        const mesh = viewer.scene.getMeshByName(`geom-${group}-${tag}`)!;
+        expect(mesh.isPickable, `geom-${group}-${tag}`).toBe(false);
+      }
+    }
+  });
+
+  it("counts towards what the camera frames", async () => {
+    // A geometry with no blocks on it yet is still what there is to see.
+    const kernel = await withGeometry();
+    const viewer = new Viewer(new NullEngine());
+    viewer.setView(decodeView(await kernel.view()));
+    const empty = viewer.camera.radius;
+    viewer.frameAll(true);
+    expect(viewer.camera.radius, "nothing to frame yet").toBe(empty);
+
+    viewer.setGeometry(decodeGeometry(await kernel.geometry()));
+    viewer.frameAll(true);
+    expect(viewer.camera.radius).toBeGreaterThan(1);
   });
 });

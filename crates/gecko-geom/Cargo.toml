@@ -1,0 +1,12 @@
+[package]
+name = "gecko-geom"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Faceted geometric model, read from a gmsh surface mesh."
+
+[dependencies]
+thiserror = { workspace = true }
+
+[dev-dependencies]
+anyhow = "1"

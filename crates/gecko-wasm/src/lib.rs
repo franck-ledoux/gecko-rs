@@ -41,6 +41,15 @@ impl WasmSession {
         self.inner.view_buffer()
     }
 
+    /// The geometry, in the same bytes the station sends down its socket.
+    ///
+    /// Separate from the view because it changes on a different clock: see
+    /// `GeometryBuffer`.
+    #[wasm_bindgen(js_name = geometryBuffer)]
+    pub fn geometry_buffer(&self) -> Vec<u8> {
+        self.inner.geometry_buffer()
+    }
+
     /// The sheet through an edge. A question, so it has a reply of its own
     /// rather than going through `applyJson`.
     #[wasm_bindgen(js_name = sheetJson)]

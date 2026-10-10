@@ -40,4 +40,7 @@ def test_the_two_modes_agree_on_what_they_hold(static_session):
     s = gecko.Session()
     for command in static_session["commands"]:
         s.apply(json.dumps(command))
+    # The whole of `stats`, geometry included: if the two modes disagreed
+    # about which geometry is loaded they would be two different sessions,
+    # whatever the cell counts said.
     assert s.stats == static_session["stats"]

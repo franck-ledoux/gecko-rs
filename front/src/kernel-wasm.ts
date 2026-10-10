@@ -38,6 +38,10 @@ export class WasmKernel implements Kernel {
     return this.session.viewBuffer();
   }
 
+  async geometry(): Promise<Uint8Array> {
+    return this.session.geometryBuffer();
+  }
+
   async stats(): Promise<Stats> {
     return JSON.parse(this.session.statsJson()) as Stats;
   }

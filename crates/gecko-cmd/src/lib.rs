@@ -13,10 +13,12 @@ pub mod view;
 
 use gecko_core::ids::CellId;
 use gecko_core::{cube_corners, Blocking, BlockingError};
+use gecko_geom::model::GeometryError;
+use gecko_geom::Geometry;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub use view::ViewBuffer;
+pub use view::{GeometryBuffer, ViewBuffer};
 
 #[derive(Debug, Error)]
 pub enum SessionError {
@@ -26,6 +28,8 @@ pub enum SessionError {
     BadCommand(String),
     #[error("a cube's size must be strictly positive, not {0}")]
     BadSize(f64),
+    #[error("{0}")]
+    Geometry(#[from] GeometryError),
 }
 
 /// Everything that can change a session.
@@ -86,6 +90,20 @@ pub enum Command {
     Pillow {
         faces: Vec<PickedFace>,
     },
+    /// Read a geometry from a gmsh surface mesh, replacing whatever was
+    /// loaded before.
+    ///
+    /// The **contents** of the file, not a path to it. A browser has no
+    /// filesystem to name, and a command that only one of the two façades
+    /// could carry out is the one thing this set is not allowed to grow.
+    /// `name` is for the message and nothing else.
+    LoadGeometry {
+        msh: String,
+        #[serde(default)]
+        name: String,
+    },
+    /// Forget the geometry.
+    ClearGeometry,
 }
 
 /// A face, and which of its blocks it was picked on.
@@ -106,6 +124,20 @@ pub struct Outcome {
 
 pub struct Session {
     blocking: Blocking,
+    /// The geometry the blocks are meant to follow, once one is loaded.
+    ///
+    /// Beside the blocking rather than inside it: nothing in a combinatorial
+    /// map wants to know about triangles, and the day a cell is classified
+    /// onto a surface it will be the cell that holds the name of the
+    /// surface, not the surface that holds a list of cells.
+    geometry: Option<Geometry>,
+    /// Bumped whenever the geometry is replaced or dropped.
+    ///
+    /// This is how a client knows to re-fetch a buffer it would otherwise
+    /// have to guess about. A number it compares with its own beats a flag
+    /// on an outcome, because it is just as right for a change this client
+    /// did not make — someone typing `load_geometry` into the console.
+    geometry_generation: u32,
     /// Kept between views so the scene does not slide every time something
     /// moves. See [`view::stable_centre`].
     origin: Option<[f64; 3]>,
@@ -115,12 +147,18 @@ impl Session {
     pub fn new() -> Result<Self, SessionError> {
         Ok(Session {
             blocking: Blocking::new()?,
+            geometry: None,
+            geometry_generation: 0,
             origin: None,
         })
     }
 
     pub fn blocking(&self) -> &Blocking {
         &self.blocking
+    }
+
+    pub fn geometry(&self) -> Option<&Geometry> {
+        self.geometry.as_ref()
     }
 
     /// The one mutation path.
@@ -212,6 +250,45 @@ impl Session {
                     view_changed: true,
                 })
             }
+            Command::LoadGeometry { msh, name } => {
+                let geometry = Geometry::read(&msh)?;
+                let what = if name.is_empty() {
+                    "geometry".to_string()
+                } else {
+                    name
+                };
+                let message = format!(
+                    "{what} loaded — {} corner{}, {} curve{}, {} surface{} ({} triangles){}",
+                    geometry.corners().len(),
+                    plural(geometry.corners().len()),
+                    geometry.curves().len(),
+                    plural(geometry.curves().len()),
+                    geometry.surfaces().len(),
+                    plural(geometry.surfaces().len()),
+                    geometry.nb_triangles(),
+                    match geometry.skipped() {
+                        0 => String::new(),
+                        n => format!(", {n} element{} of other kinds ignored", plural(n)),
+                    },
+                );
+                self.geometry = Some(geometry);
+                self.geometry_generation += 1;
+                // The view changes too, even though not one block moved: the
+                // rebasing origin is settled over the geometry as well, and a
+                // geometry far from the blocks moves it.
+                Ok(Outcome {
+                    message,
+                    view_changed: true,
+                })
+            }
+            Command::ClearGeometry => {
+                self.geometry = None;
+                self.geometry_generation += 1;
+                Ok(Outcome {
+                    message: "geometry cleared".to_string(),
+                    view_changed: true,
+                })
+            }
             Command::GlueFaces { first, second } => {
                 let (first, second) = (CellId::from_raw(first), CellId::from_raw(second));
                 self.blocking.glue_faces(first, second)?;
@@ -251,7 +328,19 @@ impl Session {
     /// had been called — and the two façades, which ask at different moments,
     /// would quietly stop agreeing.
     fn settle_origin(&mut self) {
-        let world: Vec<f64> = self.blocking.nodes().flat_map(|(_, p)| p).collect();
+        // Blocks and geometry together. They share one origin because they
+        // share one scene, and an origin settled on the blocks alone would
+        // put a geometry a kilometre away past the end of f32's precision.
+        let world: Vec<f64> = self
+            .blocking
+            .nodes()
+            .flat_map(|(_, p)| p)
+            .chain(
+                self.geometry
+                    .iter()
+                    .flat_map(|g| g.nodes().iter().flatten().copied()),
+            )
+            .collect();
         self.origin = Some(view::stable_centre(&world, self.origin));
     }
 
@@ -269,6 +358,18 @@ impl Session {
 
     pub fn view_buffer(&self) -> Vec<u8> {
         ViewBuffer::of(&self.blocking, self.origin).to_bytes()
+    }
+
+    /// The geometry, in the same shape both transports deliver it.
+    ///
+    /// Rebased on the origin the view buffer last settled on, so the two land
+    /// on top of each other in the scene.
+    pub fn geometry_buffer(&self) -> Vec<u8> {
+        let centre = self.origin.unwrap_or([0.0; 3]);
+        match &self.geometry {
+            Some(geometry) => GeometryBuffer::of(geometry, centre).to_bytes(),
+            None => GeometryBuffer::empty(centre),
+        }
     }
 
     /// Every node, by stable name and position — what a script needs in order
@@ -374,7 +475,35 @@ impl Session {
             "edges": self.blocking.nb_edges(),
             "faces": self.blocking.nb_faces(),
             "blocks": self.blocking.nb_blocks(),
+            "geometry": self.geometry_json(),
         })
         .to_string()
+    }
+
+    /// What there is of a geometry, and **which** geometry.
+    ///
+    /// `generation` counts loads rather than describing one: a client holds
+    /// the number it last drew, and re-fetches the buffer when it differs.
+    /// Two geometries with the same counts are still two geometries.
+    fn geometry_json(&self) -> serde_json::Value {
+        let Some(geometry) = &self.geometry else {
+            return serde_json::json!({ "generation": self.geometry_generation });
+        };
+        serde_json::json!({
+            "generation": self.geometry_generation,
+            "corners": geometry.corners().len(),
+            "curves": geometry.curves().len(),
+            "surfaces": geometry.surfaces().len(),
+            "segments": geometry.nb_segments(),
+            "triangles": geometry.nb_triangles(),
+        })
+    }
+}
+
+fn plural(n: usize) -> &'static str {
+    if n == 1 {
+        ""
+    } else {
+        "s"
     }
 }

@@ -11,6 +11,7 @@
 //! cheaply once a client assumes absolute coordinates.
 
 use gecko_core::Blocking;
+use gecko_geom::Geometry;
 use std::collections::HashMap;
 
 pub const MAGIC: [u8; 4] = *b"GKB1";
@@ -217,5 +218,144 @@ pub fn stable_centre(world: &[f64], previous: Option<[f64; 3]>) -> [f64; 3] {
         previous
     } else {
         centre
+    }
+}
+
+pub const GEOMETRY_MAGIC: [u8; 4] = *b"GKG1";
+pub const GEOMETRY_VERSION: u32 = 1;
+/// magic + version + f64 centre + four counts.
+pub const GEOMETRY_HEADER: usize = 48;
+
+/// What the browser draws of the **geometry** — a buffer of its own.
+///
+/// Not a section of [`ViewBuffer`], on purpose. The two change on completely
+/// different clocks: the blocking's view is rebuilt after every edit and
+/// every dragged node, while a geometry is read once and then sits there.
+/// Shipping three thousand triangles down the socket because somebody moved
+/// a corner is the whole cost of the obvious design, and the client avoids it
+/// by watching a generation number rather than by guessing.
+///
+/// The `centre` is the **same rebasing origin** the view buffer uses. It has
+/// to be: both are drawn in one scene, and two origins would put the geometry
+/// at a different place from the blocks that follow it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GeometryBuffer {
+    pub centre: [f64; 3],
+    /// Three f32 per node, relative to `centre`, shared by everything below.
+    pub positions: Vec<f32>,
+    /// Three node indices per triangle.
+    pub triangles: Vec<u32>,
+    /// The gmsh entity tag of the surface each triangle is on. Signed,
+    /// because a gmsh tag is — and a tag read as unsigned would be a
+    /// four-billion-ish colour in the palette rather than an obvious wrong.
+    pub triangle_tags: Vec<i32>,
+    /// Two node indices per segment.
+    pub segments: Vec<u32>,
+    /// The entity tag of the curve each segment is on.
+    pub segment_tags: Vec<i32>,
+    /// One node index per geometric corner.
+    pub corners: Vec<u32>,
+    /// The entity tag of each corner.
+    pub corner_tags: Vec<i32>,
+}
+
+impl GeometryBuffer {
+    pub fn of(geometry: &Geometry, centre: [f64; 3]) -> GeometryBuffer {
+        let positions = geometry
+            .nodes()
+            .iter()
+            .flat_map(|p| {
+                [
+                    (p[0] - centre[0]) as f32,
+                    (p[1] - centre[1]) as f32,
+                    (p[2] - centre[2]) as f32,
+                ]
+            })
+            .collect();
+
+        let mut triangles = Vec::with_capacity(geometry.nb_triangles() * 3);
+        let mut triangle_tags = Vec::with_capacity(geometry.nb_triangles());
+        for surface in geometry.surfaces() {
+            for t in &surface.triangles {
+                triangles.extend_from_slice(t);
+                triangle_tags.push(surface.tag);
+            }
+        }
+
+        let mut segments = Vec::with_capacity(geometry.nb_segments() * 2);
+        let mut segment_tags = Vec::with_capacity(geometry.nb_segments());
+        for curve in geometry.curves() {
+            for s in &curve.segments {
+                segments.extend_from_slice(s);
+                segment_tags.push(curve.tag);
+            }
+        }
+
+        GeometryBuffer {
+            centre,
+            positions,
+            triangles,
+            triangle_tags,
+            segments,
+            segment_tags,
+            corners: geometry.corners().iter().map(|c| c.node).collect(),
+            corner_tags: geometry.corners().iter().map(|c| c.tag).collect(),
+        }
+    }
+
+    /// The same flat little-endian encoding as [`ViewBuffer::to_bytes`].
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(
+            GEOMETRY_HEADER
+                + (self.positions.len()
+                    + self.triangles.len()
+                    + self.triangle_tags.len()
+                    + self.segments.len()
+                    + self.segment_tags.len()
+                    + self.corners.len()
+                    + self.corner_tags.len())
+                    * 4,
+        );
+        out.extend_from_slice(&GEOMETRY_MAGIC);
+        out.extend_from_slice(&GEOMETRY_VERSION.to_le_bytes());
+        for c in self.centre {
+            out.extend_from_slice(&c.to_le_bytes());
+        }
+        out.extend_from_slice(&((self.positions.len() / 3) as u32).to_le_bytes());
+        out.extend_from_slice(&((self.triangles.len() / 3) as u32).to_le_bytes());
+        out.extend_from_slice(&((self.segments.len() / 2) as u32).to_le_bytes());
+        out.extend_from_slice(&(self.corners.len() as u32).to_le_bytes());
+        for x in &self.positions {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        for x in &self.triangles {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        for x in &self.triangle_tags {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        for x in &self.segments {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        for x in &self.segment_tags {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        for x in &self.corners {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        for x in &self.corner_tags {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        out
+    }
+
+    /// An empty geometry, so a client that has never been given one still
+    /// gets a buffer it can decode rather than a special case.
+    pub fn empty(centre: [f64; 3]) -> Vec<u8> {
+        GeometryBuffer {
+            centre,
+            ..Default::default()
+        }
+        .to_bytes()
     }
 }

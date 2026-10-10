@@ -54,8 +54,14 @@ test("a click in the browser is visible to the same Python session", async ({ pa
     await expect(page.locator("[data-test=blocks]")).toHaveText("1");
 
     // One kernel, two clients: Python must see what the mouse did.
-    const { stats } = await station.ask<{ stats: Record<string, number> }>("stats");
-    expect(stats).toEqual({ nodes: 8, edges: 12, faces: 6, blocks: 1 });
+    const { stats } = await station.ask<{ stats: Record<string, unknown> }>("stats");
+    expect(stats).toEqual({
+      nodes: 8,
+      edges: 12,
+      faces: 6,
+      blocks: 1,
+      geometry: { generation: 0 },
+    });
   } finally {
     station.stop();
   }
@@ -157,6 +163,59 @@ test("a node moved from Python moves in the browser", async ({ page }) => {
       { timeout: 10_000 },
     );
     expect(before).not.toEqual([5, 6, 7]);
+  } finally {
+    station.stop();
+  }
+});
+
+/** The square, as one JSON-safe line. */
+const SQUARE_MSH = [
+  "$MeshFormat",
+  "2.2 0 8",
+  "$EndMeshFormat",
+  "$Nodes",
+  "4",
+  "1 0 0 0",
+  "2 1 0 0",
+  "3 1 1 0",
+  "4 0 1 0",
+  "$EndNodes",
+  "$Elements",
+  "10",
+  "1 15 2 0 21 1",
+  "2 15 2 0 22 2",
+  "3 15 2 0 23 3",
+  "4 15 2 0 24 4",
+  "5 1 2 0 11 1 2",
+  "6 1 2 0 12 2 3",
+  "7 1 2 0 13 3 4",
+  "8 1 2 0 14 4 1",
+  "9 2 2 0 1 1 2 3",
+  "10 2 2 0 1 1 3 4",
+  "$EndElements",
+].join("\n");
+
+test("a geometry loaded from Python appears in a browser that never asked", async ({ page }) => {
+  // The generation number earning its keep: this tab is told only that
+  // *something* changed, and works out for itself that the something was
+  // the geometry and that it has to fetch the big buffer again.
+  const station = await Station.start();
+  try {
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(String(e)));
+    await page.goto(station.url);
+    await page.waitForSelector("body[data-ready='1']", { timeout: 30_000 });
+    expect(await page.evaluate(() => (window as any).__gecko.geomCount("surfaces"))).toBe(0);
+
+    const reply = await station.ask<{ ok: boolean; message: string }>(
+      JSON.stringify({ op: "load_geometry", msh: SQUARE_MSH, name: "square.msh" }),
+    );
+    expect(reply.ok, reply.message).toBe(true);
+
+    await expect(page.locator("[data-test=geom-surfaces]")).toHaveText("1");
+    await expect(page.locator("[data-test=geom-curves]")).toHaveText("4");
+    await page.waitForFunction(() => (window as any).__gecko.geomCount("corners") === 4);
+    expect(errors).toEqual([]);
   } finally {
     station.stop();
   }

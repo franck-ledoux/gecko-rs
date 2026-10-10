@@ -6,7 +6,8 @@ to a station tab alike.
 ## Colours
 
 The drawer's **Colours** section has one swatch per colourable thing —
-background, nodes, edges, faces, blocks — and two presets, **Dark** and
+background, nodes, edges, faces, blocks, and the geometry's corners, curves
+and surfaces — and two presets, **Dark** and
 **Light** (`D` swaps them). The face and block swatches are what the
 **uniform** mode below uses; in **by id** mode they are ignored. The light
 preset
@@ -94,6 +95,13 @@ Nothing is internal until two blocks are [glued](gluing.md).
     has nothing to separate them and the wireframe disappears into the
     surface. The surfaces are drawn with a small depth bias to stop that. If
     you ever see edges flicker in and out, that bias is the thing to look at.
+
+## The geometry
+
+The three groups a [geometry](geometry.md) is drawn in — surfaces, curves and
+corners — take the same **show / uniform / by id / opacity** controls, and no
+shrink. They are on that page rather than this one, because what the tags mean
+is the larger half of the story.
 
 ## Node handles
 

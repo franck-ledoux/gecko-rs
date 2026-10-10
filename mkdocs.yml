@@ -51,6 +51,7 @@ nav:
       - Static mode: user-guide/static.md
       - Station mode: user-guide/station.md
       - Appearance: user-guide/display.md
+      - Geometry: user-guide/geometry.md
       - Joining and removing blocks: user-guide/gluing.md
       - Sheets: user-guide/sheets.md
       - Pillowing: user-guide/pillowing.md

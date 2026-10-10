@@ -12,12 +12,18 @@ import urllib.request
 import pytest
 
 import gecko
-from conftest import CUBE, shifted
+from conftest import CUBE, cells, shifted
 
 
 def test_a_session_starts_empty():
     s = gecko.Session()
-    assert s.stats == {"nodes": 0, "edges": 0, "faces": 0, "blocks": 0}
+    assert s.stats == {
+        "nodes": 0,
+        "edges": 0,
+        "faces": 0,
+        "blocks": 0,
+        "geometry": {"generation": 0},
+    }
     assert s.url is None
     assert "gecko.Session" in repr(s)
 
@@ -26,11 +32,11 @@ def test_adding_a_block_gives_cells_at_every_dimension():
     s = gecko.Session()
     message = s.add_block(CUBE)
     assert "12 edges" in message
-    assert s.stats == {"nodes": 8, "edges": 12, "faces": 6, "blocks": 1}
+    assert cells(s) == {"nodes": 8, "edges": 12, "faces": 6, "blocks": 1}
 
     # A second block, standing apart, is a second component.
     s.add_block(shifted(dx=3))
-    assert s.stats == {"nodes": 16, "edges": 24, "faces": 12, "blocks": 2}
+    assert cells(s) == {"nodes": 16, "edges": 24, "faces": 12, "blocks": 2}
 
 
 def test_the_raw_door_is_the_same_door():
@@ -136,7 +142,7 @@ def test_moving_a_node_moves_exactly_that_one():
         if name != target:
             assert after[name] == was, f"node {name} moved too"
     # Not a topological change.
-    assert s.stats == {"nodes": 8, "edges": 12, "faces": 6, "blocks": 1}
+    assert cells(s) == {"nodes": 8, "edges": 12, "faces": 6, "blocks": 1}
 
 
 def test_a_name_still_means_the_same_node_after_another_edit():
@@ -180,7 +186,7 @@ def test_gluing_two_blocks_through_the_binding():
 
     message = s.glue_faces(first["id"], second["id"])
     assert "glued" in message
-    assert s.stats == {"nodes": 12, "edges": 20, "faces": 11, "blocks": 2}
+    assert cells(s) == {"nodes": 12, "edges": 20, "faces": 11, "blocks": 2}
 
     # The rule: the seam is where the *first* face was, not half way. The map
     # merges two vertices by averaging them, so this would be 1.25 if the
@@ -217,7 +223,7 @@ def test_removing_a_block_through_the_binding():
 
     message = s.remove_block(blocks[1]["id"])
     assert "removed" in message
-    assert s.stats == {"nodes": 16, "edges": 24, "faces": 12, "blocks": 2}
+    assert cells(s) == {"nodes": 16, "edges": 24, "faces": 12, "blocks": 2}
     assert [b["centre"][0] for b in s.blocks] == [0.5, 2.5]
 
 
@@ -228,12 +234,12 @@ def test_removing_a_glued_block_leaves_the_neighbour_whole():
     blocks = [b["id"] for b in s.blocks]
     seam = [f for f in s.faces if abs(f["centre"][0] - 1.0) < 1e-9]
     s.glue_faces(*[f["id"] for f in seam])
-    assert s.stats == {"nodes": 12, "edges": 20, "faces": 11, "blocks": 2}
+    assert cells(s) == {"nodes": 12, "edges": 20, "faces": 11, "blocks": 2}
 
     s.remove_block(blocks[1])
     # A closed hexahedron again: the shared cells were split off on the way
     # out rather than going with it.
-    assert s.stats == {"nodes": 8, "edges": 12, "faces": 6, "blocks": 1}
+    assert cells(s) == {"nodes": 8, "edges": 12, "faces": 6, "blocks": 1}
     assert sorted({round(n["pos"][0], 9) for n in s.nodes}) == [0.0, 1.0]
 
 
@@ -313,7 +319,7 @@ def test_cutting_a_sheet_from_python():
 
     message = s.split_sheet(edge, 0.25)
     assert "cut at 0.250" in message
-    assert s.stats == {"nodes": 12, "edges": 20, "faces": 11, "blocks": 2}
+    assert cells(s) == {"nodes": 12, "edges": 20, "faces": 11, "blocks": 2}
 
     # One plane, not two: the parameter runs the same way round on every
     # edge of the sheet, so all four new nodes land together.
@@ -329,7 +335,7 @@ def test_a_cut_can_be_cut_again():
     s.create_cube([0.0, 0.0, 0.0], 1.0)
     for axis in (2, 0, 1):
         s.split_sheet(_edge_along(s, axis), 0.5)
-    assert s.stats == {"nodes": 27, "edges": 54, "faces": 36, "blocks": 8}
+    assert cells(s) == {"nodes": 27, "edges": 54, "faces": 36, "blocks": 8}
 
 
 def test_a_parameter_outside_the_edge_is_refused():
@@ -357,7 +363,7 @@ def test_pillowing_a_face_from_python():
     s.create_cube([0.0, 0.0, 0.0], 1.0)
     message = s.pillow([_face_at(s, 2, 1.0)])
     assert "pillowed 1 face" in message
-    assert s.stats == {"nodes": 12, "edges": 20, "faces": 11, "blocks": 2}
+    assert cells(s) == {"nodes": 12, "edges": 20, "faces": 11, "blocks": 2}
 
     # The surface has not moved: four nodes still on it, four still on the
     # far side, and one new layer a third of the way in between.
@@ -408,12 +414,12 @@ def test_removing_a_sheet_closes_the_gap():
         pair = [f["id"] for f in s.faces if abs(f["centre"][2] - z) < 1e-9]
         assert len(pair) == 2
         s.glue_faces(*pair)
-    assert s.stats == {"nodes": 16, "edges": 28, "faces": 16, "blocks": 3}
+    assert cells(s) == {"nodes": 16, "edges": 28, "faces": 16, "blocks": 3}
 
     middle = _edge_between(s, 1.0, 2.0)
     message = s.remove_sheet(middle)
     assert "removed" in message
-    assert s.stats == {"nodes": 12, "edges": 20, "faces": 11, "blocks": 2}
+    assert cells(s) == {"nodes": 12, "edges": 20, "faces": 11, "blocks": 2}
 
     # The seam sits half way between where the two faces were.
     heights = sorted({round(n["pos"][2], 9) for n in s.nodes})
@@ -464,3 +470,92 @@ def test_a_sheet_says_how_many_blocks_it_runs_through():
     # Across the seam: one block. Along it: both.
     across = _edge_between(s, 0.0, 1.0)
     assert len(s.sheet(across)) == 4
+
+
+SQUARE_MSH = """$MeshFormat
+2.2 0 8
+$EndMeshFormat
+$Nodes
+4
+1 0 0 0
+2 1 0 0
+3 1 1 0
+4 0 1 0
+$EndNodes
+$Elements
+10
+1 15 2 0 21 1
+2 15 2 0 22 2
+3 15 2 0 23 3
+4 15 2 0 24 4
+5 1 2 0 11 1 2
+6 1 2 0 12 2 3
+7 1 2 0 13 3 4
+8 1 2 0 14 4 1
+9 2 2 0 1 1 2 3
+10 2 2 0 1 1 3 4
+$EndElements
+"""
+
+
+def _square(tmp_path, text=SQUARE_MSH):
+    path = tmp_path / "square.msh"
+    path.write_text(text)
+    return str(path)
+
+
+def test_a_geometry_is_read_from_a_file_on_disk(tmp_path):
+    # The one convenience the Python façade has that the browser cannot: a
+    # path. It reads the file and sends the contents, so the command itself
+    # stays the one both modes can carry.
+    s = gecko.Session()
+    message = s.load_geometry(_square(tmp_path))
+    assert "square.msh" in message
+    assert "4 corners" in message
+    assert "4 curves" in message
+    assert "1 surface" in message
+
+    assert s.stats["geometry"] == {
+        "generation": 1,
+        "corners": 4,
+        "curves": 4,
+        "surfaces": 1,
+        "segments": 4,
+        "triangles": 2,
+    }
+    # And the blocks are untouched by any of it.
+    assert cells(s) == {"nodes": 0, "edges": 0, "faces": 0, "blocks": 0}
+
+
+def test_a_geometry_can_be_dropped_again(tmp_path):
+    s = gecko.Session()
+    s.load_geometry(_square(tmp_path))
+    s.clear_geometry()
+    assert s.stats["geometry"] == {"generation": 2}
+    assert len(bytes(s.geometry_buffer)) == 48, "a header and nothing else"
+
+
+def test_a_file_that_is_not_a_mesh_is_refused_with_its_own_message(tmp_path):
+    s = gecko.Session()
+    with pytest.raises(ValueError, match=r"\$MeshFormat"):
+        s.load_geometry(_square(tmp_path, "hello\n"))
+    # A version gmsh writes by default today, and the message has to say
+    # what to do about it rather than merely that it did not work.
+    with pytest.raises(ValueError, match="-format msh2"):
+        s.load_geometry(_square(tmp_path, SQUARE_MSH.replace("2.2 0 8", "4.1 0 8")))
+    assert s.stats["geometry"] == {"generation": 0}
+
+
+def test_a_path_that_is_not_there_names_itself(tmp_path):
+    s = gecko.Session()
+    with pytest.raises(ValueError, match="nowhere.msh"):
+        s.load_geometry(str(tmp_path / "nowhere.msh"))
+
+
+def test_the_geometry_buffer_is_the_bytes_the_browser_decodes(tmp_path):
+    s = gecko.Session()
+    s.load_geometry(_square(tmp_path))
+    buf = bytes(s.geometry_buffer)
+    assert buf[:4] == b"GKG1"
+    # 4 nodes, 2 triangles, 4 segments, 4 corners — see GeometryBuffer.
+    assert len(buf) == 48 + 4 * 12 + 2 * 16 + 4 * 12 + 4 * 8

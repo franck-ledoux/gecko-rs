@@ -19,11 +19,31 @@ export interface Reply {
   viewChanged: boolean;
 }
 
+/**
+ * What there is of a geometry, and **which** geometry.
+ *
+ * `generation` counts loads rather than describing one. A client holds the
+ * number it last drew and re-fetches when it differs — which is right for a
+ * load it did not make itself, such as one typed into the Python console,
+ * and which two geometries of identical size would defeat if the counts were
+ * what was compared.
+ */
+export interface GeometryStats {
+  generation: number;
+  /** Absent when nothing is loaded. */
+  corners?: number;
+  curves?: number;
+  surfaces?: number;
+  segments?: number;
+  triangles?: number;
+}
+
 export interface Stats {
   nodes: number;
   edges: number;
   faces: number;
   blocks: number;
+  geometry: GeometryStats;
 }
 
 /** One edge of a sheet, and the way round a cut parameter would run on it. */
@@ -43,6 +63,9 @@ export interface Kernel {
   readonly mode: Mode;
   apply(command: Record<string, unknown>): Promise<Reply>;
   view(): Promise<Uint8Array>;
+  /** The geometry, in a buffer of its own. Asked for only when the
+   *  generation in `stats` says it has changed. */
+  geometry(): Promise<Uint8Array>;
   stats(): Promise<Stats>;
   /** The sheet of hexahedra through an edge. A question, not a change. */
   sheet(edge: number): Promise<Sheet>;

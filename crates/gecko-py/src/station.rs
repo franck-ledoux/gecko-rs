@@ -222,10 +222,14 @@ fn answer(shared: &Arc<Shared>, me: u64, text: &str) -> Vec<Message> {
             value["id"] = id.into();
             vec![Message::Text(value.to_string().into())]
         }
-        Some("view") => {
+        Some("view") | Some("geometry") => {
             let bytes = {
                 let session = shared.session.lock().expect("session mutex");
-                session.view_buffer()
+                if request["kind"] == "view" {
+                    session.view_buffer()
+                } else {
+                    session.geometry_buffer()
+                }
             };
             let mut framed = Vec::with_capacity(4 + bytes.len());
             framed.extend_from_slice(&(id as u32).to_le_bytes());

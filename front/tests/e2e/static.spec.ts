@@ -192,8 +192,9 @@ test("colours can be changed, and are remembered", async ({ page }) => {
   await openDrawer(page);
 
   // The panel is generated from the theme's keys, so there is one input per
-  // colour and no markup to keep in step.
-  await expect(page.locator("#swatches input[type=color]")).toHaveCount(5);
+  // colour and no markup to keep in step: background, nodes, edges, faces,
+  // blocks, and the geometry's corners, curves and surfaces.
+  await expect(page.locator("#swatches input[type=color]")).toHaveCount(8);
   expect(await page.evaluate(() => (window as any).__gecko.theme())).toMatchObject({
     background: "#15171b",
   });
@@ -853,6 +854,72 @@ test("clicking an edge lights up its sheet", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+/**
+ * How many pixels on the canvas are the lit-sheet yellow.
+ *
+ * A ribbon's area is its length times its width, and only its length is
+ * supposed to change with distance — which is what makes a count of pixels
+ * enough to tell the two apart.
+ */
+async function litPixels(page: import("@playwright/test").Page) {
+  return page.evaluate(() => {
+    const view = document.querySelector("#view") as HTMLCanvasElement;
+    const flat = document.createElement("canvas");
+    flat.width = view.width;
+    flat.height = view.height;
+    flat.getContext("2d")!.drawImage(view, 0, 0);
+    const pixels = flat.getContext("2d")!.getImageData(0, 0, view.width, view.height).data;
+    let lit = 0;
+    for (let i = 0; i < pixels.length; i += 4) {
+      const [r, g, b] = [pixels[i], pixels[i + 1], pixels[i + 2]];
+      if (r > 200 && g > 150 && g < 230 && b < 120) lit++;
+    }
+    return lit;
+  });
+}
+
+test("a lit sheet is the same thickness however far away it is", async ({ page }) => {
+  // The sheet is something you are being shown, not part of the model, so
+  // its width belongs to the screen. Drawn in scene units instead it reads
+  // as a measure of where the camera happens to be — and every recentring
+  // moves the camera, which is how this was noticed.
+  const errors = await boot(page);
+  await page.evaluate(EDGE_NEAR);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+
+  // Creating a cube glides the camera into place, and that glide writes to
+  // `radius` every frame. Setting a distance while it runs is setting a
+  // value the animation is about to overwrite — which is how this test read
+  // the same distance twice and still looked like it worked.
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  const edge = (await page.evaluate(() => edgeNear([0.5, 0, 0]))) as number;
+  await page.evaluate((e) => (window as any).__gecko.pickEdgeByName(e), edge);
+  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 4);
+
+  const at = async (radius: number) => {
+    await page.evaluate((r) => (window as any).__gecko.setRadius(r), radius);
+    await page.evaluate(() => (window as any).__gecko.settled());
+    expect(await page.evaluate(() => (window as any).__gecko.camera().radius)).toBeCloseTo(
+      radius,
+      3,
+    );
+    return litPixels(page);
+  };
+  const near = await at(6);
+  const far = await at(12);
+
+  // Twice as far away halves the sheet's *length* on screen and nothing
+  // else, so the pixels it covers halve. A width in scene units would halve
+  // too, and the count would come down by four — which is the whole of the
+  // difference between the two, and why the number to assert is a ratio.
+  expect(near, `near ${near}, far ${far}`).toBeGreaterThan(400);
+  expect(near / far, `near ${near}, far ${far}`).toBeGreaterThan(1.6);
+  expect(near / far, `near ${near}, far ${far}`).toBeLessThan(2.6);
+  expect(errors).toEqual([]);
+});
+
 test("a sheet runs on through a glued block", async ({ page }) => {
   const errors = await boot(page);
   await page.evaluate(EDGE_NEAR);
@@ -1195,5 +1262,146 @@ test("a lit sheet says how many blocks it would take", async ({ page }) => {
   const edge = (await page.evaluate(() => edgeNear([1, 0.5, 1]))) as number;
   await page.evaluate((e) => (window as any).__gecko.pickEdgeByName(e), edge);
   await expect(page.locator("#status")).toContainText("across 1 block");
+  expect(errors).toEqual([]);
+});
+
+/**
+ * The square again, as a file: two triangles on one surface, four sides each
+ * a curve of its own, four corners each a point element. Physical tag 0 and
+ * the entity tag carrying the structure, which is how gmsh writes a model
+ * with no physical groups declared.
+ */
+const SQUARE_MSH = `$MeshFormat
+2.2 0 8
+$EndMeshFormat
+$Nodes
+4
+1 0 0 0
+2 1 0 0
+3 1 1 0
+4 0 1 0
+$EndNodes
+$Elements
+10
+1 15 2 0 21 1
+2 15 2 0 22 2
+3 15 2 0 23 3
+4 15 2 0 24 4
+5 1 2 0 11 1 2
+6 1 2 0 12 2 3
+7 1 2 0 13 3 4
+8 1 2 0 14 4 1
+9 2 2 0 1 1 2 3
+10 2 2 0 1 1 3 4
+$EndElements
+`;
+
+async function openSquare(page: import("@playwright/test").Page, msh = SQUARE_MSH) {
+  await page.locator("#msh").setInputFiles({
+    name: "square.msh",
+    mimeType: "text/plain",
+    buffer: Buffer.from(msh),
+  });
+}
+
+test("a geometry is opened from a file and drawn in its three groups", async ({ page }) => {
+  const errors = await boot(page);
+  await openSquare(page);
+
+  await expect(page.locator("#status")).toContainText("square.msh loaded");
+  await expect(page.locator("[data-test=geom-surfaces]")).toHaveText("1");
+  await expect(page.locator("[data-test=geom-curves]")).toHaveText("4");
+  await expect(page.locator("[data-test=geom-corners]")).toHaveText("4");
+
+  // And the scene really drew it, rather than the readout merely saying so.
+  const count = (group: string) =>
+    page.evaluate((g) => (window as any).__gecko.geomCount(g), group);
+  expect(await count("surfaces")).toBe(1);
+  expect(await count("curves")).toBe(4);
+  expect(await count("corners")).toBe(4);
+  expect(errors).toEqual([]);
+});
+
+test("each geometry group is hidden, coloured and faded on its own", async ({ page }) => {
+  const errors = await boot(page);
+  await openSquare(page);
+  await expect(page.locator("[data-test=geom-curves]")).toHaveText("4");
+  await openDrawer(page);
+
+  const count = (group: string) =>
+    page.evaluate((g) => (window as any).__gecko.geomCount(g), group);
+  const look = (group: string, tag: number) =>
+    page.evaluate(([g, t]) => (window as any).__gecko.geomLook(g, t), [group, tag] as const);
+
+  // Hidden from the drawer, and the other two groups stay.
+  await page.locator('[data-test="curves-visible"]').uncheck();
+  expect(await count("curves")).toBe(0);
+  expect(await count("surfaces")).toBe(1);
+  await page.locator('[data-test="curves-visible"]').check();
+  expect(await count("curves")).toBe(4);
+
+  // One colour for the lot, then one per tag.
+  await page.locator('[data-test="curves-uniform"]').check();
+  const uniform = await look("curves", 11);
+  expect((await look("curves", 12))!.colour).toBe(uniform!.colour);
+  await page.locator('[data-test="curves-id"]').check();
+  expect((await look("curves", 12))!.colour).not.toBe((await look("curves", 11))!.colour);
+
+  // And opacity, per group.
+  await page.locator('[data-test="surfaces-alpha"]').fill("0.2");
+  expect((await look("surfaces", 1))!.alpha).toBeCloseTo(0.2, 2);
+  expect((await look("curves", 11))!.alpha).toBeCloseTo(1, 2);
+  expect(errors).toEqual([]);
+});
+
+test("the geometry groups have keys of their own, and they are remembered", async ({ page }) => {
+  const errors = await boot(page);
+  await openSquare(page);
+  await expect(page.locator("[data-test=geom-surfaces]")).toHaveText("1");
+
+  const count = (group: string) =>
+    page.evaluate((g) => (window as any).__gecko.geomCount(g), group);
+  await page.keyboard.press("Digit4");
+  expect(await count("surfaces")).toBe(0);
+  await expect(page.locator("#status")).toContainText("geometric surfaces hidden");
+  await page.keyboard.press("Digit5");
+  expect(await count("curves")).toBe(0);
+  await page.keyboard.press("Digit6");
+  expect(await count("corners")).toBe(0);
+
+  // Reloaded, the settings come back — and the geometry does not, because
+  // it lives in the kernel and a static page's kernel goes with the tab.
+  await page.reload();
+  await page.waitForSelector("body[data-ready='1']");
+  expect(await page.evaluate(() => (window as any).__gecko.prefs().surfaces.visible)).toBe(false);
+  expect(errors).toEqual([]);
+});
+
+test("a file that is not a gmsh mesh is refused and says why", async ({ page }) => {
+  const errors = await boot(page);
+  await openSquare(page, "hello, I am not a mesh\n");
+  await expect(page.locator("#status")).toContainText("$MeshFormat");
+  expect(await page.evaluate(() => (window as any).__gecko.geomCount("surfaces"))).toBe(0);
+
+  // A modern gmsh writes 4.1 by default, so this is the message most likely
+  // to be read in anger: it has to say what to do about it.
+  await openSquare(page, SQUARE_MSH.replace("2.2 0 8", "4.1 0 8"));
+  await expect(page.locator("#status")).toContainText("-format msh2");
+  expect(errors).toEqual([]);
+});
+
+test("framing takes in the geometry as well as the blocks", async ({ page }) => {
+  const errors = await boot(page);
+  // The square sits at the origin; put a cube well away from it.
+  await page.evaluate(() =>
+    (window as any).__gecko.apply({ op: "create_cube", origin: [20, 0, 0], size: 1 }),
+  );
+  await page.evaluate(() => (window as any).__gecko.refresh());
+  await openSquare(page);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // Far enough back to hold both, which is more than either alone needs.
+  const radius = (await page.evaluate(() => (window as any).__gecko.camera().radius)) as number;
+  expect(radius).toBeGreaterThan(20);
   expect(errors).toEqual([]);
 });
