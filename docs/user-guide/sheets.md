@@ -91,6 +91,19 @@ closes from both sides rather than one being dragged onto the other. A cap
 with nothing behind it is a cap on the model's surface — there is nothing to
 close against, so the model simply loses that layer.
 
+Which face meets which is a question about the map, not about where
+anything is. From a dart of one cap, crossing into the lateral face beside
+it and out the far side lands on the cap at the other end, on the matching
+edge; the β₃ of both is the pair the neighbours are sewn along, read before
+the layer goes. Nothing is positioned by hand either: sewing merges two
+vertices by averaging them, so the seam finds the middle of its own accord.
+
+Matching the faces by **where they were** instead is what the first version
+did, and it failed on anything bigger than one block in a layer: the caps
+of neighbouring blocks share their corners, so closing the first pair moved
+the corners the next pair was to be found by. It failed after the blocks
+were already gone, too, which left a hole.
+
 From Python, `s.remove_sheet(edge)`.
 
 A sheet that comes back round onto itself is refused: one of its own blocks

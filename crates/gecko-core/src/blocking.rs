@@ -460,9 +460,18 @@ impl Blocking {
     ///
     /// The sheet is a layer: each of its blocks is capped at either end by
     /// a face the sheet does not cross, and whatever was glued to those two
-    /// caps ends up glued to each other once the layer is gone. The seam
-    /// lands **half way** between where the two caps were, so neither side
-    /// is favoured and the hole closes from both.
+    /// caps ends up glued to each other once the layer is gone.
+    ///
+    /// **Which face meets which is a question about the map, not about
+    /// where anything is.** From a dart of one cap, crossing into the
+    /// lateral face beside it and out the far side lands on the cap at the
+    /// other end, on the matching edge. Taking the β₃ of both gives the two
+    /// darts the neighbours will have to be sewn along — read before the
+    /// layer goes, since they are what the layer was holding together.
+    ///
+    /// Nothing is moved by hand either. Sewing merges the two vertices by
+    /// averaging them, so the seam lands half way between the caps of its
+    /// own accord, and the gap closes from both sides.
     ///
     /// A cap with nothing behind it is a cap on the model's surface; there
     /// is nothing to close against, so the model simply loses that layer.
@@ -471,107 +480,102 @@ impl Blocking {
 
         // Which blocks the sheet runs through, and which of their edges it
         // is made of. A hexahedron the sheet crosses has four.
-        let mut crossing: BTreeMap<CellId, Vec<SheetEdge>> = BTreeMap::new();
+        let mut crossing: BTreeMap<VolumeIdType, Vec<CellId>> = BTreeMap::new();
         for side in &sheet {
             let at = self
                 .edge_by_id(side.edge)
                 .ok_or(BlockingError::NoSuchEdge(side.edge))?;
-            let mut blocks: Vec<CellId> = self
+            let mut blocks: Vec<VolumeIdType> = self
                 .map
                 .orbit(OrbitPolicy::Edge, at as DartIdType)
-                .map(|d| self.block_tag(self.map.volume_id(d)).id)
+                .map(|d| self.map.volume_id(d))
                 .collect();
             blocks.sort();
             blocks.dedup();
             for block in blocks {
-                crossing.entry(block).or_default().push(*side);
+                crossing.entry(block).or_default().push(side.edge);
             }
         }
 
-        /// One block on its way out, and the two faces that will meet.
-        struct Doomed {
-            block: CellId,
-            from: [[f64; 3]; 4],
-            to: [[f64; 3]; 4],
-            behind_from: Option<CellId>,
-            behind_to: Option<CellId>,
-        }
-        let sides = self.block_faces();
-        let mut doomed: Vec<Doomed> = Vec::new();
-        for (block, edges) in &crossing {
+        let doomed: Vec<CellId> = crossing.keys().map(|v| self.block_tag(*v).id).collect();
+        let mut rejoin: Vec<(DartIdType, DartIdType)> = Vec::new();
+
+        for (volume, edges) in &crossing {
             if edges.len() != 4 {
                 return Err(BlockingError::BrokenSheet(edge));
             }
-            let from = edges
-                .iter()
-                .map(|e| self.position(e.from).unwrap_or([0.0; 3]))
-                .collect::<Vec<_>>();
-            let to = edges
-                .iter()
-                .map(|e| self.position(e.to).unwrap_or([0.0; 3]))
-                .collect::<Vec<_>>();
-            let (from, to): ([[f64; 3]; 4], [[f64; 3]; 4]) =
-                (from.try_into().expect("four"), to.try_into().expect("four"));
+            let crossed: HashSet<CellId> = edges.iter().copied().collect();
+            // A cap is a face of this block that the sheet does not cross.
+            let caps: Vec<DartIdType> = self
+                .block_face_darts(*volume)
+                .into_iter()
+                .filter(|d| {
+                    self.face_darts(self.map.face_id(*d))
+                        .iter()
+                        .all(|e| !crossed.contains(&self.edge_tag(self.map.edge_id(*e)).id))
+                })
+                .collect();
+            if caps.len() != 2 {
+                return Err(BlockingError::BrokenSheet(edge));
+            }
 
-            let cap = |points: &[[f64; 3]; 4]| -> Result<_, BlockingError> {
-                let face = self
-                    .side_at(&sides, *block, points)
-                    .ok_or(BlockingError::BrokenSheet(edge))?;
-                let behind = sides
-                    .iter()
-                    .find(|s| s.face == face.face && s.block != *block)
-                    .map(|s| s.block);
-                // A sheet that comes back round onto itself has no outside
-                // to close against.
-                if behind.is_some_and(|b| crossing.contains_key(&b)) {
+            // One dart of one cap, and the dart it answers to on the other.
+            let here = caps[0];
+            let there = self.across_the_block(here);
+            if self.map.face_id(there) != self.map.face_id(caps[1]) {
+                return Err(BlockingError::BrokenSheet(edge));
+            }
+            let (above, below) = (self.map.beta::<3>(here), self.map.beta::<3>(there));
+            if above == NULL_DART_ID || below == NULL_DART_ID {
+                continue;
+            }
+            // A sheet that comes back round onto itself has no outside to
+            // close against.
+            for neighbour in [above, below] {
+                if crossing.contains_key(&self.map.volume_id(neighbour)) {
                     return Err(BlockingError::BrokenSheet(edge));
                 }
-                Ok(behind)
-            };
-            doomed.push(Doomed {
-                block: *block,
-                behind_from: cap(&from)?,
-                behind_to: cap(&to)?,
-                from,
-                to,
-            });
-        }
-
-        for out in &doomed {
-            self.remove_block(out.block)?;
-        }
-
-        // What was on either side of each departed block, brought together.
-        for out in &doomed {
-            let (Some(near), Some(far)) = (out.behind_from, out.behind_to) else {
-                continue;
-            };
-            let sides = self.block_faces();
-            let here = self
-                .side_at(&sides, near, &out.from)
-                .ok_or(BlockingError::BrokenSheet(edge))?;
-            let there = self
-                .side_at(&sides, far, &out.to)
-                .ok_or(BlockingError::BrokenSheet(edge))?;
-
-            // Half way, so the gap closes from both sides rather than one
-            // of them being dragged onto the other.
-            for (points, side) in [(&out.from, &here), (&out.to, &there)] {
-                for node in side.nodes {
-                    let at = self.position(node).unwrap_or([0.0; 3]);
-                    let Some(i) = points.iter().position(|p| same_point(*p, at)) else {
-                        continue;
-                    };
-                    let middle = [0, 1, 2].map(|k| (out.from[i][k] + out.to[i][k]) / 2.0);
-                    self.map
-                        .write_vertex(node, (middle[0], middle[1], middle[2]));
-                }
             }
-            self.glue_faces(here.face, there.face)?;
+            rejoin.push((above, below));
+        }
+
+        for block in doomed {
+            self.remove_block(block)?;
+        }
+        // The darts belong to the blocks that stayed, so they outlived the
+        // layer that was between them.
+        for (above, below) in rejoin {
+            self.map.sew::<3>(above, below)?;
         }
 
         self.assign_missing_ids();
         Ok(())
+    }
+
+    /// One dart per face of a block, on that block's own side.
+    fn block_face_darts(&self, volume: VolumeIdType) -> Vec<DartIdType> {
+        let mut seen: Vec<FaceIdType> = Vec::new();
+        let mut out = Vec::new();
+        for dart in self.map.orbit(OrbitPolicy::Volume, volume as DartIdType) {
+            let face = self.map.face_id(dart);
+            if !seen.contains(&face) {
+                seen.push(face);
+                out.push(dart);
+            }
+        }
+        out
+    }
+
+    /// From a dart of one face of a hexahedron to the matching dart of the
+    /// face opposite.
+    ///
+    /// Out through the lateral face beside this edge — β₂ — along it twice,
+    /// and back in through the far side. The dart that comes out runs the
+    /// other way round, which is exactly what a sew wants of a pair.
+    fn across_the_block(&self, dart: DartIdType) -> DartIdType {
+        let beside = self.map.beta::<2>(dart);
+        let along = self.map.beta::<1>(self.map.beta::<1>(beside));
+        self.map.beta::<2>(along)
     }
 
     /// Remove one block, leaving whatever it was glued to intact.

@@ -296,6 +296,82 @@ mod removal {
         assert_eq!(cells(&b), (0, 0, 0, 0));
     }
 
+    /// An n by n by n grid of unit cubes, every touching pair glued.
+    fn grid(n: usize) -> Blocking {
+        let mut b = Blocking::new().unwrap();
+        for i in 0..n {
+            for j in 0..n {
+                for k in 0..n {
+                    b.add_block(cube_corners([i as f64, j as f64, k as f64], 1.0))
+                        .unwrap();
+                }
+            }
+        }
+        // Every pair of faces sitting on the same four corners.
+        loop {
+            let sides = b.block_faces();
+            let centre = |s: &gecko_core::BlockFace| {
+                let mut at = [0.0; 3];
+                for node in s.nodes {
+                    let p = b.position(node).unwrap();
+                    for k in 0..3 {
+                        at[k] += p[k] / 4.0;
+                    }
+                }
+                at
+            };
+            let pair = sides.iter().enumerate().find_map(|(x, s)| {
+                sides[x + 1..].iter().find_map(|o| {
+                    let (a, c) = (centre(s), centre(o));
+                    ((0..3).all(|k| (a[k] - c[k]).abs() < 1e-9) && s.face != o.face)
+                        .then_some((s.face, o.face))
+                })
+            });
+            match pair {
+                Some((first, second)) => b.glue_faces(first, second).unwrap(),
+                None => break,
+            }
+        }
+        b
+    }
+
+    #[test]
+    fn taking_a_layer_out_of_a_grid_glues_every_pair_it_leaves() {
+        // Nine blocks in the layer, so nine pairs to close. The caps of
+        // neighbouring blocks share their corners, which is what a single
+        // block in a layer never shows.
+        let mut b = grid(3);
+        assert_eq!(b.nb_blocks(), 27);
+        assert_eq!(b.nb_nodes(), 64);
+
+        b.remove_sheet(across(&b, 1.0, 2.0))
+            .expect("the middle layer");
+
+        assert_eq!(b.nb_blocks(), 18);
+        // Three levels of corners left — 0, the seam, and 3 — not four.
+        assert_eq!(b.nb_nodes(), 48);
+        let seam: Vec<f64> = b
+            .nodes()
+            .map(|(_, p)| p[2])
+            .filter(|z| (*z - 1.5).abs() < 1e-9)
+            .collect();
+        assert_eq!(seam.len(), 16, "the seam is one level of corners");
+
+        // And the two halves are welded, not merely touching: nine faces
+        // with a block on each side at the seam.
+        let sides = b.block_faces();
+        let welded = sides
+            .iter()
+            .filter(|s| sides.iter().filter(|o| o.face == s.face).count() == 2)
+            .filter(|s| {
+                s.nodes
+                    .iter()
+                    .all(|n| (b.position(*n).unwrap()[2] - 1.5).abs() < 1e-9)
+            })
+            .count();
+        assert_eq!(welded, 18, "nine faces, listed once per block");
+    }
+
     #[test]
     fn a_name_no_edge_answers_to_is_refused_and_changes_nothing() {
         let mut b = three_slabs();
