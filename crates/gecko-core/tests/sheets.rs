@@ -297,7 +297,7 @@ mod removal {
     }
 
     /// An n by n by n grid of unit cubes, every touching pair glued.
-    fn grid(n: usize) -> Blocking {
+    pub(super) fn grid(n: usize) -> Blocking {
         let mut b = Blocking::new().unwrap();
         for i in 0..n {
             for j in 0..n {
@@ -307,30 +307,35 @@ mod removal {
                 }
             }
         }
-        // Every pair of faces sitting on the same four corners.
-        loop {
-            let sides = b.block_faces();
-            let centre = |s: &gecko_core::BlockFace| {
-                let mut at = [0.0; 3];
-                for node in s.nodes {
-                    let p = b.position(node).unwrap();
-                    for k in 0..3 {
-                        at[k] += p[k] / 4.0;
-                    }
+        // Every pair of faces on the same four corners, worked out in one
+        // pass: gluing one pair leaves the others' names alone, so there is
+        // no need to look again after each.
+        let sides = b.block_faces();
+        let key = |s: &gecko_core::BlockFace| {
+            let mut at = [0.0; 3];
+            for node in s.nodes {
+                let p = b.position(node).unwrap();
+                for k in 0..3 {
+                    at[k] += p[k] / 4.0;
                 }
-                at
-            };
-            let pair = sides.iter().enumerate().find_map(|(x, s)| {
-                sides[x + 1..].iter().find_map(|o| {
-                    let (a, c) = (centre(s), centre(o));
-                    ((0..3).all(|k| (a[k] - c[k]).abs() < 1e-9) && s.face != o.face)
-                        .then_some((s.face, o.face))
-                })
-            });
-            match pair {
-                Some((first, second)) => b.glue_faces(first, second).unwrap(),
-                None => break,
             }
+            at.map(|x| (x * 1e6).round() as i64)
+        };
+        let mut seen: std::collections::HashMap<[i64; 3], CellId> =
+            std::collections::HashMap::new();
+        let mut pairs = Vec::new();
+        for side in &sides {
+            match seen.entry(key(side)) {
+                std::collections::hash_map::Entry::Occupied(e) => {
+                    pairs.push((*e.get(), side.face));
+                }
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    e.insert(side.face);
+                }
+            }
+        }
+        for (first, second) in pairs {
+            b.glue_faces(first, second).unwrap();
         }
         b
     }
@@ -381,5 +386,103 @@ mod removal {
             Err(BlockingError::NoSuchEdge(_))
         ));
         assert_eq!(cells(&b), before);
+    }
+}
+
+/// Peeling a big grid back, a layer at a time.
+mod peeling {
+    use super::removal::*;
+    use gecko_core::ids::CellId;
+    use gecko_core::Blocking;
+
+    /// Any edge whose sheet runs between these two heights along an axis.
+    fn spanning(b: &Blocking, axis: usize, low: f64, high: f64) -> Option<CellId> {
+        b.map()
+            .iter_edges()
+            .map(|e| (e, b.edge_endpoints(e)))
+            .find(|(_, (u, v))| {
+                let (p, q) = (b.position(*u).unwrap(), b.position(*v).unwrap());
+                let mut at = [p[axis], q[axis]];
+                at.sort_by(f64::total_cmp);
+                (at[0] - low).abs() < 1e-9
+                    && (at[1] - high).abs() < 1e-9
+                    && (0..3).all(|k| k == axis || (p[k] - q[k]).abs() < 1e-9)
+            })
+            .map(|(e, _)| b.edge_tag(e).id)
+    }
+
+    #[test]
+    fn a_grid_can_be_peeled_back_to_a_smaller_one() {
+        // Four layers each way, taken down to two, one sheet at a time.
+        // Each removal has to leave a grid the next one can read.
+        let mut b = grid(4);
+        assert_eq!(b.nb_blocks(), 64);
+
+        for axis in 0..3 {
+            for _ in 0..2 {
+                // Whichever layer is still there: the coordinates shift as
+                // the seams close, so each is looked for afresh.
+                let edge = (0..8)
+                    .flat_map(|i| {
+                        let low = i as f64 / 2.0;
+                        spanning(&b, axis, low, low + 0.5)
+                            .or_else(|| spanning(&b, axis, low, low + 1.0))
+                    })
+                    .next()
+                    .expect("a layer to take out");
+                b.remove_sheet(edge).expect("a layer");
+            }
+        }
+
+        assert_eq!(b.nb_blocks(), 8, "a two by two by two grid");
+        assert_eq!(b.nb_nodes(), 27);
+        assert_eq!(b.nb_edges(), 54);
+        assert_eq!(b.nb_faces(), 36);
+    }
+}
+
+/// A grid built the way one is built in the viewer — by cutting.
+mod cut_grid {
+    use gecko_core::ids::CellId;
+    use gecko_core::{cube_corners, Blocking};
+
+    /// An edge running along this axis, anywhere in the model.
+    fn along(b: &Blocking, axis: usize) -> CellId {
+        b.map()
+            .iter_edges()
+            .find(|e| {
+                let (u, v) = b.edge_endpoints(*e);
+                let (p, q) = (b.position(u).unwrap(), b.position(v).unwrap());
+                (0..3).all(|k| {
+                    if k == axis {
+                        (p[k] - q[k]).abs() > 1e-9
+                    } else {
+                        (p[k] - q[k]).abs() < 1e-9
+                    }
+                })
+            })
+            .map(|e| b.edge_tag(e).id)
+            .expect("an edge along that axis")
+    }
+
+    #[test]
+    fn a_grid_made_of_cuts_can_be_taken_apart_again() {
+        let mut b = Blocking::new().unwrap();
+        b.add_block(cube_corners([0.0, 0.0, 0.0], 4.0)).unwrap();
+        for _ in 0..3 {
+            for axis in 0..3 {
+                b.split_sheet(along(&b, axis), 0.5).unwrap();
+            }
+        }
+        assert_eq!(b.nb_blocks(), 64, "four layers each way");
+
+        // And back down again, one layer at a time.
+        for _ in 0..3 {
+            for axis in 0..3 {
+                b.remove_sheet(along(&b, axis)).expect("a layer");
+            }
+        }
+        assert_eq!(b.nb_blocks(), 1);
+        assert_eq!(b.nb_nodes(), 8, "one block, and no stray corners");
     }
 }

@@ -41,6 +41,9 @@ does. Any key dismisses it.
 | `S`         | save a picture                                |
 | `H` `?`     | the card                                      |
 
+Clicking the background clears the selection too — with nothing under the
+pointer there is nothing to pick, so the click means *that one*.
+
 Two things are deliberately left alone. Anything with ctrl, meta or alt
 belongs to the browser or the system: a shortcut that swallowed ⌘S would be a
 bug. And anything typed into a field is typing — the colour inputs and the

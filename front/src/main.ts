@@ -303,7 +303,11 @@ async function boot() {
     // them. Each is the thing you had to aim at to hit it. A node under the
     // cursor is a drag that has just ended, not a face being chosen.
     if (viewer.pickNode(x, y) !== null) return;
-    choose(viewer.pickSurface(x, y));
+    const surface = viewer.pickSurface(x, y);
+    // Nothing under the pointer at all: the background is how you let go of
+    // everything, whichever kind of selection it was.
+    if (surface === null) clearSelection();
+    else choose(surface);
   });
 
   /** Turn a pointer position into a parameter along the edge being aimed. */
@@ -363,7 +367,13 @@ async function boot() {
     viewer.selectedEdge = edge;
     viewer.showSheet(sheet.edges);
     $<HTMLButtonElement>("remove").disabled = false;
-    say(`sheet through edge ${edge} — ${sheet.edges.length} edges, drag along it to cut`);
+    // The block count, not just the edges: it is what a removal would take
+    // away, and taking out more than you meant to looks like a hole.
+    say(
+      `sheet through edge ${edge} — ${sheet.edges.length} edges` +
+        ` across ${sheet.blocks} block${sheet.blocks === 1 ? "" : "s"},` +
+        ` drag along it to cut`,
+    );
   }
 
   /** Nothing selected: no faces, no sheet. */

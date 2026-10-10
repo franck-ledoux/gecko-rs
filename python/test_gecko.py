@@ -452,3 +452,15 @@ def test_removing_a_sheet_by_a_name_no_edge_has():
     with pytest.raises(ValueError, match="no edge"):
         s.remove_sheet(4242)
     assert bytes(s.view_buffer) == before
+
+
+def test_a_sheet_says_how_many_blocks_it_runs_through():
+    s = gecko.Session()
+    for z in (0.0, 1.0):
+        s.create_cube([0.0, 0.0, z], 1.0)
+    pair = [f["id"] for f in s.faces if abs(f["centre"][2] - 1.0) < 1e-9]
+    s.glue_faces(*pair)
+
+    # Across the seam: one block. Along it: both.
+    across = _edge_between(s, 0.0, 1.0)
+    assert len(s.sheet(across)) == 4

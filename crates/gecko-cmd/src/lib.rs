@@ -329,7 +329,11 @@ impl Session {
                         })
                     })
                     .collect();
-                serde_json::json!({ "ok": true, "edges": edges }).to_string()
+                // How many blocks it runs through, which is what a removal
+                // would take away. The edges alone do not say that, and
+                // taking out more than you meant to looks like a hole.
+                let blocks = self.blocking.sheet_blocks(&sheet);
+                serde_json::json!({ "ok": true, "edges": edges, "blocks": blocks }).to_string()
             }
             Err(e) => serde_json::json!({ "ok": false, "error": e.to_string() }).to_string(),
         }

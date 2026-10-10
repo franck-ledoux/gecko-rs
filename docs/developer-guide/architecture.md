@@ -181,10 +181,21 @@ to CGAL: it is inherent to identifiers derived from darts, and honeycomb has it
 too.
 
 !!! note "Resolving a name is a scan"
-    `Blocking::node_by_id` walks the vertices. An index would have to be
-    invalidated by every topological change, and getting that wrong is silent.
-    At this size the scan is not worth the hazard; the comment marks where the
-    index goes when it starts to matter.
+    `Blocking::node_by_id` walks the vertices. An index kept *across*
+    operations would have to be invalidated by every topological change, and
+    getting that wrong is silent — so there is none.
+
+    Where it started to matter is inside one operation. A sheet cut resolves
+    every edge of the sheet, and a scan each made the whole thing quadratic:
+    on a 125-block grid a cut took 1240 ms and a sheet removal 8408 ms. Both
+    now build one `edge_index()` at the top of the operation and look names
+    up in it, which is safe because nothing is renamed while they run, and
+    both came down to about 77 ms.
+
+    The other half of that removal was naming. `remove_sheet` used to call
+    `assign_missing_ids()` once per block it removed, which walks the whole
+    map each time. The private `drop_volume` is the quiet primitive, and the
+    naming pass runs once at the end.
 
 ## What an attribute may hold
 

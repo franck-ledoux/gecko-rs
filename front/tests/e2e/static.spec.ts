@@ -1152,3 +1152,48 @@ test("a lit sheet is what the remove button takes away", async ({ page }) => {
   await expect(page.locator("#remove")).toBeDisabled();
   expect(errors).toEqual([]);
 });
+
+test("clicking the background lets go of everything", async ({ page }) => {
+  const errors = await boot(page);
+  await page.evaluate(EDGE_NEAR);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.evaluate(() => (window as any).__gecko.settled());
+  const box = (await page.locator("#view").boundingBox())!;
+
+  // A face: clicking away clears it.
+  const face = (await page.evaluate(() => {
+    const s = (window as any).__gecko.surface("faces");
+    return { face: s.faces[0], block: s.blocks[0] };
+  })) as { face: number; block: number };
+  await page.evaluate((f) => (window as any).__gecko.choose(f), face);
+  expect(await page.evaluate(() => (window as any).__gecko.selection())).toHaveLength(1);
+  await page.mouse.click(box.x + 20, box.y + box.height - 20);
+  expect(await page.evaluate(() => (window as any).__gecko.selection())).toEqual([]);
+
+  // And a lit sheet, which used to stay lit because only the faces were
+  // being let go of.
+  const edge = (await page.evaluate(() => edgeNear([1, 0.5, 1]))) as number;
+  await page.evaluate((e) => (window as any).__gecko.pickEdgeByName(e), edge);
+  await page.waitForFunction(() => (window as any).__gecko.sheet().length > 0);
+  await page.mouse.click(box.x + 20, box.y + box.height - 20);
+  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 0);
+  expect(await page.evaluate(() => (window as any).__gecko.selectedEdge())).toBeNull();
+  await expect(page.locator("#remove")).toBeDisabled();
+  expect(errors).toEqual([]);
+});
+
+test("a lit sheet says how many blocks it would take", async ({ page }) => {
+  // The edges alone do not say that, and taking out more than you meant to
+  // looks like a hole in the grid.
+  const errors = await boot(page);
+  await page.evaluate(EDGE_NEAR);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  const edge = (await page.evaluate(() => edgeNear([1, 0.5, 1]))) as number;
+  await page.evaluate((e) => (window as any).__gecko.pickEdgeByName(e), edge);
+  await expect(page.locator("#status")).toContainText("across 1 block");
+  expect(errors).toEqual([]);
+});

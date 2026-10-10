@@ -456,6 +456,24 @@ impl Blocking {
         Ok(())
     }
 
+    /// How many blocks a sheet runs through — what a removal would take.
+    pub fn sheet_blocks(&self, sheet: &[SheetEdge]) -> usize {
+        let index = self.edge_index();
+        let mut blocks: Vec<VolumeIdType> = sheet
+            .iter()
+            .filter_map(|side| index.get(&side.edge))
+            .flat_map(|at| {
+                self.map
+                    .orbit(OrbitPolicy::Edge, *at as DartIdType)
+                    .map(|d| self.map.volume_id(d))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        blocks.sort();
+        blocks.dedup();
+        blocks.len()
+    }
+
     /// Take out the whole sheet of blocks through an edge, closing the gap.
     ///
     /// The sheet is a layer: each of its blocks is capped at either end by
@@ -480,10 +498,11 @@ impl Blocking {
 
         // Which blocks the sheet runs through, and which of their edges it
         // is made of. A hexahedron the sheet crosses has four.
+        let index = self.edge_index();
         let mut crossing: BTreeMap<VolumeIdType, Vec<CellId>> = BTreeMap::new();
         for side in &sheet {
-            let at = self
-                .edge_by_id(side.edge)
+            let at = *index
+                .get(&side.edge)
                 .ok_or(BlockingError::NoSuchEdge(side.edge))?;
             let mut blocks: Vec<VolumeIdType> = self
                 .map
@@ -497,7 +516,7 @@ impl Blocking {
             }
         }
 
-        let doomed: Vec<CellId> = crossing.keys().map(|v| self.block_tag(*v).id).collect();
+        let doomed: Vec<VolumeIdType> = crossing.keys().copied().collect();
         let mut rejoin: Vec<(DartIdType, DartIdType)> = Vec::new();
 
         for (volume, edges) in &crossing {
@@ -536,11 +555,25 @@ impl Blocking {
                     return Err(BlockingError::BrokenSheet(edge));
                 }
             }
+            // The sew will refuse a pair that does not run opposite ways,
+            // and by then the layer is gone and the model has a hole in
+            // it. Same test, asked while there is still nothing to undo.
+            let direction = |d: DartIdType| {
+                let at = self.position(self.map.vertex_id(d)).unwrap_or([0.0; 3]);
+                let to = self
+                    .position(self.map.vertex_id(self.map.beta::<1>(d)))
+                    .unwrap_or([0.0; 3]);
+                [0, 1, 2].map(|k| to[k] - at[k])
+            };
+            let (a, c) = (direction(above), direction(below));
+            if (0..3).map(|k| a[k] * c[k]).sum::<f64>() >= 0.0 {
+                return Err(BlockingError::BrokenSheet(edge));
+            }
             rejoin.push((above, below));
         }
 
-        for block in doomed {
-            self.remove_block(block)?;
+        for volume in doomed {
+            self.drop_volume(volume)?;
         }
         // The darts belong to the blocks that stayed, so they outlived the
         // layer that was between them.
@@ -597,6 +630,20 @@ impl Blocking {
         let volume = self
             .block_by_id(block)
             .ok_or(BlockingError::NoSuchBlock(block))?;
+        self.drop_volume(volume)?;
+        // The neighbour's cells came out of the split unnamed.
+        self.assign_missing_ids();
+        Ok(())
+    }
+
+    /// The same, by the map's own identifier and **without** naming what is
+    /// left over.
+    ///
+    /// Naming walks every cell of every dimension. Doing it once per block
+    /// is what made taking a sheet out of a large grid slow: a layer of
+    /// twenty-five blocks paid for twenty-five whole passes over the model
+    /// where one at the end will do.
+    fn drop_volume(&mut self, volume: VolumeIdType) -> Result<(), BlockingError> {
         // Collected first: the orbit is about to stop being walkable. β₃ is
         // not one of its generators, so this is one block's darts, never a
         // neighbour's.
@@ -623,9 +670,6 @@ impl Blocking {
         for &dart in &darts {
             self.map.release_dart(dart)?;
         }
-
-        // The neighbour's cells came out of the split unnamed.
-        self.assign_missing_ids();
         Ok(())
     }
 
@@ -803,10 +847,13 @@ impl Blocking {
         let from_nodes: HashSet<VertexIdType> = sheet.iter().map(|s| s.from).collect();
 
         // --- the edges ------------------------------------------------
+        // Splitting one edge leaves the others' identifiers alone — their
+        // darts are not touched — so one index serves the whole pass.
+        let index = self.edge_index();
         let mut fresh: HashSet<VertexIdType> = HashSet::new();
         for side in &sheet {
-            let target = self
-                .edge_by_id(side.edge)
+            let target = *index
+                .get(&side.edge)
                 .ok_or(BlockingError::NoSuchEdge(side.edge))?;
             let p = self.position(side.from).unwrap_or([0.0; 3]);
             let q = self.position(side.to).unwrap_or([0.0; 3]);
@@ -1293,6 +1340,20 @@ impl Blocking {
             let (a, b) = self.edge_endpoints(self.map.edge_id(d));
             ((a, b) == (from, to) || (a, b) == (to, from)).then(|| self.map.edge_id(d))
         })
+    }
+
+    /// Every edge's name, in one pass.
+    ///
+    /// For when a whole sheet has to be resolved: asking one at a time is a
+    /// scan each, and a sheet across a large grid has as many edges as the
+    /// grid has rows. Built fresh for each operation and thrown away — the
+    /// hazard a standing index carries is that an edit invalidates it
+    /// silently, and this one never outlives the loop it was made for.
+    fn edge_index(&self) -> HashMap<CellId, EdgeIdType> {
+        self.map
+            .iter_edges()
+            .map(|e| (self.edge_tag(e).id, e))
+            .collect()
     }
 
     /// The edge a stable name currently stands for. A scan, for the same

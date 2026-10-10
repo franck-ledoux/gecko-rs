@@ -619,6 +619,9 @@ mod sheets {
         assert_eq!(answer["ok"], true);
         let edges = answer["edges"].as_array().unwrap();
         assert_eq!(edges.len(), 4);
+        // And how many blocks it runs through, which is what a removal
+        // would take away.
+        assert_eq!(answer["blocks"], 1);
         // Each one says where a cut would run from and to, which is what the
         // viewer draws and what a cut will use.
         for edge in edges {

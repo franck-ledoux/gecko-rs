@@ -33,7 +33,9 @@ export interface SheetEdge {
   to: [number, number, number];
 }
 
-export type Sheet = { ok: true; edges: SheetEdge[] } | { ok: false; error: string };
+export type Sheet =
+  | { ok: true; edges: SheetEdge[]; blocks: number }
+  | { ok: false; error: string };
 
 export type Mode = "static" | "station";
 

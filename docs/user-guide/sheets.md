@@ -54,7 +54,14 @@ fatter. Its width is a share of the screen, not of the model, so a sheet
 reads the same whether you are up against it or looking at the whole thing
 from across the room.
 
-Clicking the same edge again puts it out, as does `Esc`.
+The readout says how far the sheet reaches: how many edges it runs along,
+and **how many blocks** it covers. Only the edges are lit, and a sheet that
+turns a corner through a glued neighbour can reach further than it looks —
+the count is there to be read before removing anything.
+
+Clicking the same edge again puts it out, as does `Esc`, as does clicking the
+background: with nothing at all under the pointer, a click lets go of
+whatever was held, sheet or faces alike.
 
 ## Cutting
 
@@ -107,7 +114,9 @@ were already gone, too, which left a hole.
 From Python, `s.remove_sheet(edge)`.
 
 A sheet that comes back round onto itself is refused: one of its own blocks
-is on the far side of a cap, and there is no outside to close against.
+is on the far side of a cap, and there is no outside to close against. That
+is checked for the whole sheet **before** anything is removed, so a refusal
+leaves the model exactly as it was rather than part-way through.
 
 ## What a cut does to names
 
