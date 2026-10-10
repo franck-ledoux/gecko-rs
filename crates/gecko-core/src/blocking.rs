@@ -53,6 +53,65 @@ pub fn cube_corners(origin: [f64; 3], size: f64) -> [[f64; 3]; 8] {
     ]
 }
 
+/// Two points close enough to be the same node.
+fn same_point(a: [f64; 3], b: [f64; 3]) -> bool {
+    (0..3).all(|k| (a[k] - b[k]).abs() < 1e-9)
+}
+
+/// How thick a pillow layer is, as a share of the cell it is cut from.
+pub const PILLOW_SHARE: f64 = 1.0 / 3.0;
+
+/// Where a node of a pillowed patch goes.
+///
+/// A mitre, as in a picture frame. The copy has to end up `depth` clear of
+/// **every** selected face it sits on, and neither of the obvious answers
+/// does that: summing the face normals sends a node in the middle of a flat
+/// patch four times too far, and averaging them leaves a node on a corner
+/// short of both its faces.
+///
+/// So: go along the average direction, and stretch by however much that
+/// direction is tilted away from the worst of the faces. On a flat patch
+/// that factor is one; on a right-angled corner it is √2, which puts the
+/// copy `depth` in along each face, where it belongs.
+///
+/// `inward` are unit normals pointing into the material.
+pub fn mitre(inward: &[[f64; 3]], depth: f64) -> [f64; 3] {
+    let mut sum = [0.0; 3];
+    for n in inward {
+        for k in 0..3 {
+            sum[k] += n[k];
+        }
+    }
+    let length = (sum[0] * sum[0] + sum[1] * sum[1] + sum[2] * sum[2]).sqrt();
+    if length < 1e-12 {
+        return [0.0; 3];
+    }
+    let mean = [sum[0] / length, sum[1] / length, sum[2] / length];
+    let tilt = inward
+        .iter()
+        .map(|n| (0..3).map(|k| mean[k] * n[k]).sum::<f64>())
+        .fold(f64::INFINITY, f64::min);
+    // Faces folded back on each other have no inside to move into.
+    if tilt < 1e-6 {
+        return [0.0; 3];
+    }
+    mean.map(|x| x * depth / tilt)
+}
+
+/// The outward normal of a quadrangle, by the shoelace formula in 3D, and
+/// its centre. Not normalised: the caller decides what to do with a face of
+/// no area.
+pub fn quad_normal(p: [[f64; 3]; 4]) -> [f64; 3] {
+    let mut n = [0.0; 3];
+    for k in 0..4 {
+        let (a, b) = (p[k], p[(k + 1) % 4]);
+        n[0] += (a[1] - b[1]) * (a[2] + b[2]);
+        n[1] += (a[2] - b[2]) * (a[0] + b[0]);
+        n[2] += (a[0] - b[0]) * (a[1] + b[1]);
+    }
+    n
+}
+
 /// One edge of a sheet, with the direction the cut parameter runs in.
 ///
 /// `from`/`to` are what makes a sheet cuttable at a single parameter: the
@@ -130,6 +189,14 @@ pub enum BlockingError {
     BadParameter(f64),
     #[error("the sheet through edge {0:?} does not close into a surface")]
     BrokenSheet(CellId),
+    #[error("nothing was selected to pillow")]
+    EmptyPatch,
+    #[error("face {0:?} is not a face of block {1:?}")]
+    FaceNotOnBlock(CellId, CellId),
+    #[error("face {0:?} is inside the model; only surface faces can be pillowed")]
+    NotOnTheSurface(CellId),
+    #[error("could not find the face a new layer should be glued along")]
+    LostFace,
 }
 
 impl From<DartReleaseError> for BlockingError {
@@ -745,6 +812,204 @@ impl Blocking {
                 .write_attribute(block, BlockTag { id: CellId::NONE });
         }
         Ok(())
+    }
+
+    /// Insert a layer of hexahedra along a patch of surface faces.
+    ///
+    /// Each selected face is given as the pair a click gives: the face, and
+    /// the block it was clicked on. The block's own nodes are drawn inwards
+    /// and one hexahedron is laid into the space that opens up, so **the
+    /// model's surface does not move** — which is the whole point of
+    /// pillowing. What was one block becomes that block, shrunk, plus one
+    /// new one per selected face.
+    ///
+    /// Built from [`add_block`][Self::add_block],
+    /// [`glue_faces`][Self::glue_faces] and moving nodes, rather than from
+    /// dart surgery. The topology is the same either way, and these three
+    /// already have tests behind them.
+    ///
+    /// # What it will not do
+    ///
+    /// Faces inside the model are refused. Pillowing between two blocks
+    /// means giving each its own copy of the shared nodes, and a node that
+    /// is merely *moved* is still shared — so there would be no space for a
+    /// layer to go into. That one needs the nodes split, and is not here.
+    ///
+    /// A node on the rim of the patch is shared with blocks outside it, and
+    /// moving it takes them with it. The mesh stays conforming and those
+    /// blocks are deformed a little; that is the honest consequence of a
+    /// shared node being shared.
+    pub fn pillow(&mut self, patch: &[(CellId, CellId)]) -> Result<(), BlockingError> {
+        if patch.is_empty() {
+            return Err(BlockingError::EmptyPatch);
+        }
+        let sides = self.block_faces();
+
+        // --- read everything before a single node moves ----------------
+        struct Plan {
+            face: CellId,
+            nodes: [VertexIdType; 4],
+            points: [[f64; 3]; 4],
+            inward: [f64; 3],
+            depth: f64,
+        }
+        let mut plans: Vec<Plan> = Vec::new();
+        for &(face, block) in patch {
+            let side = sides
+                .iter()
+                .find(|s| s.face == face && s.block == block)
+                .ok_or(BlockingError::FaceNotOnBlock(face, block))?;
+            let at = self
+                .face_by_id(face)
+                .ok_or(BlockingError::NoSuchFace(face))?;
+            if self.map.beta::<3>(at as DartIdType) != NULL_DART_ID {
+                return Err(BlockingError::NotOnTheSurface(face));
+            }
+
+            let points = side.nodes.map(|n| self.position(n).unwrap_or([0.0; 3]));
+            let normal = quad_normal(points);
+            let length = (normal[0].powi(2) + normal[1].powi(2) + normal[2].powi(2)).sqrt();
+            if length < 1e-12 {
+                return Err(BlockingError::NotOnTheSurface(face));
+            }
+            // The block's own extent in that direction, from its centre to
+            // the face and back again; a third of it is the layer.
+            let centre = self.block_centre(&sides, block);
+            let middle = [0, 1, 2].map(|k| points.iter().map(|p| p[k]).sum::<f64>() / 4.0);
+            let reach = (0..3)
+                .map(|k| (middle[k] - centre[k]).powi(2))
+                .sum::<f64>()
+                .sqrt();
+            plans.push(Plan {
+                face,
+                nodes: side.nodes,
+                points,
+                inward: normal.map(|x| -x / length),
+                depth: 2.0 * reach * PILLOW_SHARE,
+            });
+        }
+
+        // --- where each node of the patch goes --------------------------
+        let mut facing: HashMap<VertexIdType, (Vec<[f64; 3]>, f64)> = HashMap::new();
+        for plan in &plans {
+            for node in plan.nodes {
+                let entry = facing.entry(node).or_insert((Vec::new(), f64::INFINITY));
+                entry.0.push(plan.inward);
+                entry.1 = entry.1.min(plan.depth);
+            }
+        }
+        let mut moved: HashMap<VertexIdType, [f64; 3]> = HashMap::new();
+        for (node, (inward, depth)) in &facing {
+            let from = self.position(*node).unwrap_or([0.0; 3]);
+            let step = mitre(inward, *depth);
+            moved.insert(*node, [0, 1, 2].map(|k| from[k] + step[k]));
+        }
+        for (node, to) in &moved {
+            self.map.write_vertex(*node, (to[0], to[1], to[2]));
+        }
+
+        // --- a block per face, laid into the space that opened ----------
+        struct Layer {
+            block: CellId,
+            shrunk: [[f64; 3]; 4],
+        }
+        let mut layers: Vec<Layer> = Vec::new();
+        for plan in &plans {
+            let shrunk = plan.nodes.map(|n| moved[&n]);
+            // `add_block` wants the far face first, wound so that its own
+            // normal points away from the block. The patch face is wound
+            // away from **its** block, which is the other way round, and
+            // listing the shrunk corners first puts that right.
+            let mut corners = [[0.0; 3]; 8];
+            corners[..4].copy_from_slice(&shrunk);
+            corners[4..].copy_from_slice(&plan.points);
+            layers.push(Layer {
+                block: self.add_block(corners)?,
+                shrunk,
+            });
+        }
+
+        // Each layer onto the block it came off, the existing face named
+        // first so that its nodes keep the names they had.
+        for (plan, layer) in plans.iter().zip(&layers) {
+            let under = self
+                .face_at(layer.block, &layer.shrunk)
+                .ok_or(BlockingError::LostFace)?;
+            self.glue_faces(plan.face, under)?;
+        }
+
+        // And to each other, wherever two selected faces met along an edge.
+        for a in 0..plans.len() {
+            for b in (a + 1)..plans.len() {
+                for i in 0..4 {
+                    let edge = [plans[a].points[i], plans[a].points[(i + 1) % 4]];
+                    let shared = (0..4).any(|j| {
+                        let other = [plans[b].points[j], plans[b].points[(j + 1) % 4]];
+                        same_point(edge[0], other[0]) && same_point(edge[1], other[1])
+                            || same_point(edge[0], other[1]) && same_point(edge[1], other[0])
+                    });
+                    if !shared {
+                        continue;
+                    }
+                    let wall = |n: usize, i: usize| {
+                        let plan = &plans[n];
+                        let shrunk = plan.nodes.map(|m| moved[&m]);
+                        [
+                            plan.points[i],
+                            plan.points[(i + 1) % 4],
+                            shrunk[(i + 1) % 4],
+                            shrunk[i],
+                        ]
+                    };
+                    let here = self.face_at(layers[a].block, &wall(a, i));
+                    let there = (0..4).find_map(|j| {
+                        self.face_at(layers[b].block, &wall(b, j)).filter(|_| {
+                            let w = wall(b, j);
+                            let m = wall(a, i);
+                            (0..4).all(|k| m.iter().any(|p| same_point(*p, w[k])))
+                        })
+                    });
+                    if let (Some(x), Some(y)) = (here, there) {
+                        self.glue_faces(x, y)?;
+                    }
+                }
+            }
+        }
+
+        self.assign_missing_ids();
+        Ok(())
+    }
+
+    /// The centre of a block: the mean of the corners its faces list, each
+    /// of the eight counted once per face it is on, which weighs them all
+    /// the same.
+    fn block_centre(&self, sides: &[BlockFace], block: CellId) -> [f64; 3] {
+        let mut sum = [0.0; 3];
+        let mut n = 0.0_f64;
+        for side in sides.iter().filter(|s| s.block == block) {
+            for node in side.nodes {
+                let p = self.position(node).unwrap_or([0.0; 3]);
+                for k in 0..3 {
+                    sum[k] += p[k];
+                }
+                n += 1.0;
+            }
+        }
+        sum.map(|x| x / n.max(1.0))
+    }
+
+    /// The face of a block whose four corners are these four points.
+    fn face_at(&self, block: CellId, points: &[[f64; 3]; 4]) -> Option<CellId> {
+        self.block_faces()
+            .iter()
+            .filter(|s| s.block == block)
+            .find(|s| {
+                s.nodes.iter().all(|n| {
+                    let p = self.position(*n).unwrap_or([0.0; 3]);
+                    points.iter().any(|q| same_point(p, *q))
+                })
+            })
+            .map(|s| s.face)
     }
 
     /// Every β₁ cycle in the map: one per face side.

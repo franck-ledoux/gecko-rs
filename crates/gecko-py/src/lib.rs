@@ -108,6 +108,20 @@ impl PySession {
         self.command(serde_json::json!({ "op": "split_sheet", "edge": edge, "at": at }))
     }
 
+    /// Lay a layer of hexahedra along a patch of surface faces.
+    ///
+    /// `patch` is a list of `(face, block)` pairs: a face, and which of its
+    /// blocks it belongs to. The blocks are drawn in and the layer fills the
+    /// space, so the model's surface does not move. Faces inside the model
+    /// are refused.
+    fn pillow(&self, patch: Vec<(u32, u32)>) -> PyResult<String> {
+        let faces: Vec<_> = patch
+            .iter()
+            .map(|(face, block)| serde_json::json!({ "face": face, "block": block }))
+            .collect();
+        self.command(serde_json::json!({ "op": "pillow", "faces": faces }))
+    }
+
     /// Take one block away.
     ///
     /// Whatever it was glued to keeps its own cells: the shared ones are

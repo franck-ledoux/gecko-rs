@@ -28,6 +28,7 @@ does. Any key dismisses it.
 | `C`         | create a cube                                |
 | `G`         | glue the two selected faces                  |
 | `Del` `⌫`   | remove the selected block                    |
+| `P`         | pillow the selected faces                    |
 | `Esc`       | clear the selection                          |
 | `F`         | frame everything                             |
 | `X` `Y` `Z` | look down an axis, `⇧` for the negative side |

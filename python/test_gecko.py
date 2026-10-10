@@ -341,3 +341,59 @@ def test_a_parameter_outside_the_edge_is_refused():
         with pytest.raises(ValueError, match="strictly inside"):
             s.split_sheet(edge, at)
     assert bytes(s.view_buffer) == before
+
+
+def _face_at(session, axis, value):
+    """The (face, block) pair whose four corners all sit at this value."""
+    nodes = {n["id"]: n["pos"] for n in session.nodes}
+    for face in session.faces:
+        if abs(face["centre"][axis] - value) < 1e-9:
+            return face["id"], face["block"]
+    raise AssertionError(f"no face at {axis} = {value}; nodes {nodes}")
+
+
+def test_pillowing_a_face_from_python():
+    s = gecko.Session()
+    s.create_cube([0.0, 0.0, 0.0], 1.0)
+    message = s.pillow([_face_at(s, 2, 1.0)])
+    assert "pillowed 1 face" in message
+    assert s.stats == {"nodes": 12, "edges": 20, "faces": 11, "blocks": 2}
+
+    # The surface has not moved: four nodes still on it, four still on the
+    # far side, and one new layer a third of the way in between.
+    heights = sorted({round(n["pos"][2], 9) for n in s.nodes})
+    assert heights == [0.0, round(1.0 - 1.0 / 3.0, 9), 1.0], heights
+
+
+def test_pillowing_the_whole_surface():
+    s = gecko.Session()
+    s.create_cube([0.0, 0.0, 0.0], 1.0)
+    s.pillow([(f["id"], f["block"]) for f in s.faces])
+    # The cube, drawn in, inside a shell of six slabs welded together.
+    assert s.stats["blocks"] == 7
+    assert s.stats["nodes"] == 16
+    corners = [n for n in s.nodes if all(abs(x) < 1e-9 or abs(x - 1.0) < 1e-9 for x in n["pos"])]
+    assert len(corners) == 8, "the original corners are still the original corners"
+
+
+def test_pillowing_inside_the_model_is_refused():
+    s = gecko.Session()
+    s.create_cube([0.0, 0.0, 0.0], 1.0)
+    s.pillow([_face_at(s, 2, 1.0)])
+    before = bytes(s.view_buffer)
+
+    # The face between the cube and its layer has a block on each side.
+    seen = {}
+    for f in s.faces:
+        seen.setdefault(f["id"], []).append(f["block"])
+    inside = next(i for i, blocks in seen.items() if len(blocks) == 2)
+    with pytest.raises(ValueError, match="inside the model"):
+        s.pillow([(inside, seen[inside][0])])
+    assert bytes(s.view_buffer) == before
+
+
+def test_an_empty_pillow_is_refused():
+    s = gecko.Session()
+    s.create_cube([0.0, 0.0, 0.0], 1.0)
+    with pytest.raises(ValueError, match="nothing was selected"):
+        s.pillow([])

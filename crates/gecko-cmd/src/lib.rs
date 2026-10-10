@@ -71,6 +71,21 @@ pub enum Command {
         edge: u32,
         at: f64,
     },
+    /// Lay a layer of hexahedra along a patch of surface faces.
+    ///
+    /// Each entry is a face and the block it was picked on — the pair a
+    /// click gives. The blocks are drawn in and the layer fills the space,
+    /// so the model's surface does not move.
+    Pillow {
+        faces: Vec<PickedFace>,
+    },
+}
+
+/// A face, and which of its blocks it was picked on.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct PickedFace {
+    pub face: u32,
+    pub block: u32,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -149,6 +164,25 @@ impl Session {
                 Ok(Outcome {
                     message: format!(
                         "sheet through {edge:?} cut at {at:.3} — {} nodes, {} edges, {} faces, {} blocks",
+                        self.blocking.nb_nodes(),
+                        self.blocking.nb_edges(),
+                        self.blocking.nb_faces(),
+                        self.blocking.nb_blocks(),
+                    ),
+                    view_changed: true,
+                })
+            }
+            Command::Pillow { faces } => {
+                let patch: Vec<_> = faces
+                    .iter()
+                    .map(|f| (CellId::from_raw(f.face), CellId::from_raw(f.block)))
+                    .collect();
+                self.blocking.pillow(&patch)?;
+                Ok(Outcome {
+                    message: format!(
+                        "pillowed {} face{} — {} nodes, {} edges, {} faces, {} blocks",
+                        faces.len(),
+                        if faces.len() == 1 { "" } else { "s" },
                         self.blocking.nb_nodes(),
                         self.blocking.nb_edges(),
                         self.blocking.nb_faces(),

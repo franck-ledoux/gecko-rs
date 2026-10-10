@@ -384,21 +384,43 @@ async function boot() {
     if (pick === null) picked = [];
     else if (picked.some((p) => p.face === pick.face))
       picked = picked.filter((p) => p.face !== pick.face);
-    else if (picked.length >= 2) picked = [pick];
     else picked = [...picked, pick];
 
     viewer.select(picked);
+    // No cap: a glue wants two and a pillow wants as many as you like, so
+    // the selection just grows and each verb says what it can do with it.
     $<HTMLButtonElement>("glue").disabled = picked.length !== 2;
     $<HTMLButtonElement>("remove").disabled = picked.length === 0;
-    // The block is named as well as the face: it is what the remove button
-    // would act on, and a click that deletes something unnamed is no good.
+    $<HTMLButtonElement>("pillow").disabled = picked.length === 0;
+    // The block is named as well as the face: it is what remove and pillow
+    // both act on, and a click that changes something unnamed is no good.
+    // Two is a glue, and which way round it goes decides where the seam
+    // lands, so that is still said in full. More than two is a pillow.
     message =
       picked.length === 0
         ? ""
         : picked.length === 1
-          ? `face ${picked[0].face} (block ${picked[0].block}) — the next one will come to it`
-          : `face ${picked[1].face} will be glued onto face ${picked[0].face}`;
+          ? `face ${picked[0].face} (block ${picked[0].block}) selected`
+          : picked.length === 2
+            ? `face ${picked[1].face} will be glued onto face ${picked[0].face}` +
+              ` — or pillow both`
+            : `${picked.length} faces — pillow takes them all`;
     $("status").textContent = message;
+  }
+
+  async function pillowSelection() {
+    const picked = viewer.selection;
+    if (!picked.length) return;
+    const reply = await kernel.apply({
+      op: "pillow",
+      faces: picked.map((p) => ({ face: p.face, block: p.block })),
+    });
+    // Every one of those faces is a different cell now.
+    clearSelection();
+    message = reply.message;
+    // Not framed: the model's surface is exactly where it was, which is the
+    // point of the operation.
+    await refresh();
   }
 
   async function glueSelection() {
@@ -549,6 +571,7 @@ async function boot() {
     cube: createCube,
     glue: glueSelection,
     remove: removeSelection,
+    pillow: pillowSelection,
     clear: clearSelection,
     recentre,
     screenshot,
@@ -614,6 +637,7 @@ async function boot() {
     ["cube", "cube"],
     ["glue", "glue"],
     ["remove", "remove"],
+    ["pillow", "pillow"],
     ["recentre", "recentre"],
     ["shot", "screenshot"],
     ["settings", "drawer"],

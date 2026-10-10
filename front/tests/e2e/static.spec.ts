@@ -962,3 +962,81 @@ test("pressing an edge without moving selects it rather than cutting", async ({ 
   expect(await page.evaluate(() => (window as any).__gecko.counts().nodes)).toBe(8);
   expect(errors).toEqual([]);
 });
+
+test("pillowing lays a layer and leaves the surface where it was", async ({ page }) => {
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // The highest face, chosen the way the eye would.
+  const top = (await page.evaluate(() => {
+    const s = (window as any).__gecko.surface("faces");
+    let best = 0;
+    let highest = -Infinity;
+    for (let q = 0; q < s.quads; q++) {
+      let z = 0;
+      for (let k = 0; k < 4; k++) z += s.positions[(q * 4 + k) * 3 + 2] / 4;
+      if (z > highest) {
+        highest = z;
+        best = q;
+      }
+    }
+    return { face: s.faces[best], block: s.blocks[best] };
+  })) as { face: number; block: number };
+
+  const before = (await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    return (g.names() as number[]).map((n) => g.nodePosition(n)[2]).sort();
+  })) as number[];
+
+  await expect(page.locator("#pillow")).toBeDisabled();
+  await page.evaluate((t) => (window as any).__gecko.choose(t), top);
+  await expect(page.locator("#pillow")).toBeEnabled();
+  await page.locator("#pillow").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 12);
+
+  await expect(page.locator("[data-test=blocks]")).toHaveText("2");
+  await expect(page.locator("[data-test=faces]")).toHaveText("11");
+
+  // The whole point: the model's surface has not moved. Every height that
+  // was there is still there, with one new layer between them.
+  const after = (await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    return (g.names() as number[]).map((n) => g.nodePosition(n)[2]);
+  })) as number[];
+  for (const z of before) {
+    expect(after.some((w) => Math.abs(w - z) < 1e-6), `height ${z} went missing`).toBe(true);
+  }
+  expect(new Set(after.map((z) => z.toFixed(6))).size).toBe(3);
+  expect(await page.evaluate(() => (window as any).__gecko.selection())).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+test("the selection grows as far as you like", async ({ page }) => {
+  // Two is what a glue wants; a pillow takes as many as are picked, so the
+  // third click no longer throws the first two away.
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  const faces = (await page.evaluate(() => {
+    const s = (window as any).__gecko.surface("faces");
+    return [0, 1, 2].map((q) => ({ face: s.faces[q], block: s.blocks[q] }));
+  })) as { face: number; block: number }[];
+
+  for (const f of faces) await page.evaluate((t) => (window as any).__gecko.choose(t), f);
+  expect(await page.evaluate(() => (window as any).__gecko.selection())).toHaveLength(3);
+  // Three is too many to glue and fine to pillow.
+  await expect(page.locator("#glue")).toBeDisabled();
+  await expect(page.locator("#pillow")).toBeEnabled();
+  // All three lit, which is what tells you what the layer will cover.
+  expect(await page.evaluate(() => (window as any).__gecko.surface("faces").colours)).toBe(3);
+
+  // Clicking one again takes it out rather than starting over.
+  await page.evaluate((t) => (window as any).__gecko.choose(t), faces[0]);
+  expect(await page.evaluate(() => (window as any).__gecko.selection())).toHaveLength(2);
+  await expect(page.locator("#glue")).toBeEnabled();
+  expect(errors).toEqual([]);
+});

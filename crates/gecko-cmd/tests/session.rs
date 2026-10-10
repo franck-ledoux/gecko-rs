@@ -754,3 +754,96 @@ mod cutting {
         assert_eq!(build().view_buffer(), build().view_buffer());
     }
 }
+
+/// Pillowing, through the same door.
+mod pillowing {
+    use super::*;
+
+    fn cube() -> Session {
+        let mut s = Session::new().unwrap();
+        s.apply(Command::CreateCube {
+            origin: [0.0, 0.0, 0.0],
+            size: 1.0,
+        })
+        .unwrap();
+        s
+    }
+
+    /// The `(face, block)` pair whose centre sits at this value on an axis.
+    fn face_at(s: &Session, axis: usize, value: f64) -> (u32, u32) {
+        let faces: serde_json::Value = serde_json::from_str(&s.faces_json()).unwrap();
+        let found = faces
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| (f["centre"][axis].as_f64().unwrap() - value).abs() < 1e-9)
+            .expect("a face there");
+        (
+            found["id"].as_u64().unwrap() as u32,
+            found["block"].as_u64().unwrap() as u32,
+        )
+    }
+
+    #[test]
+    fn pillowing_goes_through_the_json_door_like_everything_else() {
+        let mut s = cube();
+        let (face, block) = face_at(&s, 2, 1.0);
+        let raw = s.apply_json(&format!(
+            r#"{{"op":"pillow","faces":[{{"face":{face},"block":{block}}}]}}"#
+        ));
+        let reply: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(reply["ok"], true, "{raw}");
+        assert!(reply["outcome"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("1 face"));
+
+        let stats: serde_json::Value = serde_json::from_str(&s.stats_json()).unwrap();
+        assert_eq!(stats["blocks"], 2);
+        assert_eq!(stats["nodes"], 12);
+    }
+
+    #[test]
+    fn a_face_inside_the_model_is_reported_and_changes_nothing() {
+        let mut s = cube();
+        let (face, block) = face_at(&s, 2, 1.0);
+        s.apply(Command::Pillow {
+            faces: vec![gecko_cmd::PickedFace { face, block }],
+        })
+        .unwrap();
+        let before = s.view_buffer();
+
+        // The new face between the cube and its layer has two sides.
+        let faces: serde_json::Value = serde_json::from_str(&s.faces_json()).unwrap();
+        let all = faces.as_array().unwrap();
+        let inside = all
+            .iter()
+            .find(|f| all.iter().filter(|o| o["id"] == f["id"]).count() == 2)
+            .expect("an internal face");
+        let raw = s.apply_json(&format!(
+            r#"{{"op":"pillow","faces":[{{"face":{},"block":{}}}]}}"#,
+            inside["id"], inside["block"]
+        ));
+        let reply: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(reply["ok"], false);
+        assert!(reply["error"]
+            .as_str()
+            .unwrap()
+            .contains("inside the model"));
+        assert_eq!(s.view_buffer(), before);
+    }
+
+    #[test]
+    fn two_sessions_pillowed_the_same_way_ship_the_same_bytes() {
+        let build = || {
+            let mut s = cube();
+            let (face, block) = face_at(&s, 2, 1.0);
+            s.apply(Command::Pillow {
+                faces: vec![gecko_cmd::PickedFace { face, block }],
+            })
+            .unwrap();
+            s
+        };
+        assert_eq!(build().view_buffer(), build().view_buffer());
+    }
+}

@@ -18,6 +18,7 @@ export const ACTIONS = [
   "cube",
   "glue",
   "remove",
+  "pillow",
   "clear",
   "recentre",
   "screenshot",
@@ -71,6 +72,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     group: "Edit",
   },
   { show: "⌫", key: "backspace", action: "remove", does: "", group: "Edit" },
+  { show: "P", key: "p", action: "pillow", does: "pillow the selected faces", group: "Edit" },
   { show: "Esc", key: "escape", action: "clear", does: "clear the selection", group: "Edit" },
 
   { show: "F", key: "f", action: "recentre", does: "frame everything", group: "View" },
