@@ -111,9 +111,10 @@ export interface ViewPrefs {
   chrome: boolean;
   /** How a saved picture comes out. */
   shot: { scale: number; transparent: boolean };
-  /** Edges keep one colour — the theme's — so all they carry is how far they
-   *  are pulled off the surfaces they would otherwise lie exactly on. */
-  edges: { shrink: number };
+  /** Edges keep one colour — the theme's — so all they carry is whether
+   *  they are drawn, and how far they are pulled off the surfaces they
+   *  would otherwise lie exactly on. */
+  edges: { visible: boolean; shrink: number };
   faces: Layer & { internal: boolean };
   blocks: Layer;
   /** The geometry, which is not edited and so has no notion of a selection
@@ -134,7 +135,7 @@ export const DEFAULTS: ViewPrefs = {
   // background is kept by default: transparency is for dropping a figure
   // onto a page of unknown colour, and surprises anyone not expecting it.
   shot: { scale: 2, transparent: false },
-  edges: { shrink: 1 },
+  edges: { visible: true, shrink: 1 },
   // Faces on but well short of opaque, so the wireframe and the handles still
   // read through them. Blocks off: they draw the same surfaces, and two
   // colourings of one shape at once is a choice rather than a default.
@@ -204,7 +205,13 @@ export function loadPrefs(): ViewPrefs {
             ? stored.shot.transparent
             : DEFAULTS.shot.transparent,
       },
-      edges: { shrink: clamp(stored.edges?.shrink, DEFAULTS.edges.shrink) },
+      edges: {
+        visible:
+          typeof stored.edges?.visible === "boolean"
+            ? stored.edges.visible
+            : DEFAULTS.edges.visible,
+        shrink: clamp(stored.edges?.shrink, DEFAULTS.edges.shrink),
+      },
       faces: {
         ...layer(stored.faces, DEFAULTS.faces),
         internal:

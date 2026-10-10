@@ -35,8 +35,10 @@ def forwards_here(view, tries=20, pause=0.25):
     return False
 
 
+# Empty, deliberately. A session starts with nothing in it, the same way
+# the static page does, so the first thing on screen is whatever you asked
+# for rather than a cube somebody else put there.
 s = gecko.Session()
-s.create_cube([0, 0, 0], 1.0)
 
 # The station listens on the port the dev server is told to forward to. The
 # page is served by Vite, not from here, which is what makes a TypeScript edit
@@ -57,11 +59,11 @@ else:
     webbrowser.open(view)
 
 print(f"""
-  gecko — session ready as `s`, already holding one cube.
+  gecko — session ready as `s`, and empty.
 
-      s.create_cube([2, 0, 0], 0.5)
-      n = s.nodes[0]
-      s.move_node(n["id"], [0.5, -0.2, 0])
+      s.create_cube([0, 0, 0], 1.0)
+      s.load_geometry("../gecko/test_data/B48.msh")
+      s.box_geometry()                    # one block round the lot
 
   The view is at {view} and follows every command.
   Drag a node there and `s.nodes` will say so.

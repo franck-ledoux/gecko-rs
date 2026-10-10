@@ -245,3 +245,145 @@ fn loading_a_geometry_makes_the_view_stale_even_though_no_block_moved() {
         out.message
     );
 }
+
+/// A unit cube's surface, each of its six faces an entity of its own.
+const CUBE_MSH: &str = "\
+$MeshFormat
+2.2 0 8
+$EndMeshFormat
+$Nodes
+8
+1 0 0 0
+2 2 0 0
+3 2 1 0
+4 0 1 0
+5 0 0 3
+6 2 0 3
+7 2 1 3
+8 0 1 3
+$EndNodes
+$Elements
+12
+1 2 2 0 1 1 2 3
+2 2 2 0 1 1 3 4
+3 2 2 0 2 5 6 7
+4 2 2 0 2 5 7 8
+5 2 2 0 3 1 2 6
+6 2 2 0 3 1 6 5
+7 2 2 0 4 4 3 7
+8 2 2 0 4 4 7 8
+9 2 2 0 5 1 4 8
+10 2 2 0 5 1 8 5
+11 2 2 0 6 2 3 7
+12 2 2 0 6 2 7 6
+$EndElements
+";
+
+fn corners(session: &Session) -> Vec<[f64; 3]> {
+    let nodes: serde_json::Value = serde_json::from_str(&session.nodes_json()).unwrap();
+    nodes
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| {
+            let p = n["pos"].as_array().unwrap();
+            [0, 1, 2].map(|k| p[k].as_f64().unwrap())
+        })
+        .collect()
+}
+
+fn span(session: &Session, axis: usize) -> (f64, f64) {
+    let all: Vec<f64> = corners(session).iter().map(|p| p[axis]).collect();
+    (
+        all.iter().cloned().fold(f64::INFINITY, f64::min),
+        all.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
+    )
+}
+
+#[test]
+fn a_box_round_the_geometry_is_one_block() {
+    let mut s = Session::new().unwrap();
+    load(&mut s, CUBE_MSH);
+    let out = s
+        .apply(Command::BoxGeometry {
+            surfaces: vec![],
+            frame: gecko_cmd::BoxFrame::Axes,
+            margin: 0.0,
+        })
+        .expect("a box");
+    assert!(
+        out.message.contains("the whole geometry"),
+        "{}",
+        out.message
+    );
+    assert!(
+        out.message.contains("square to the world"),
+        "{}",
+        out.message
+    );
+
+    assert_eq!(stats(&s)["blocks"], 1);
+    assert_eq!(stats(&s)["nodes"], 8);
+    assert_eq!(span(&s, 0), (0.0, 2.0));
+    assert_eq!(span(&s, 1), (0.0, 1.0));
+    assert_eq!(span(&s, 2), (0.0, 3.0));
+}
+
+#[test]
+fn the_default_margin_is_the_one_the_kernel_knows() {
+    // Left out of the command on purpose: one definition of how much room a
+    // box leaves, in the kernel, rather than a copy of it in each façade.
+    let mut s = Session::new().unwrap();
+    load(&mut s, CUBE_MSH);
+    let reply = s.apply_json(r#"{"op":"box_geometry"}"#);
+    assert!(reply.contains(r#""ok":true"#), "{reply}");
+    let (lo, hi) = span(&s, 0);
+    assert!(
+        (lo - -0.1).abs() < 1e-9 && (hi - 2.1).abs() < 1e-9,
+        "{lo}..{hi}"
+    );
+    assert!((gecko_cmd::BOX_MARGIN - 0.1).abs() < 1e-12);
+}
+
+#[test]
+fn a_box_round_a_selection_takes_only_what_is_named() {
+    let mut s = Session::new().unwrap();
+    load(&mut s, CUBE_MSH);
+    // Two opposite sides, which between them reach every corner.
+    let reply = s.apply_json(r#"{"op":"box_geometry","surfaces":[1,2],"margin":0}"#);
+    assert!(reply.contains(r#""ok":true"#), "{reply}");
+    assert!(reply.contains("2 surfaces"), "{reply}");
+    assert_eq!(span(&s, 2), (0.0, 3.0));
+}
+
+#[test]
+fn a_box_with_no_geometry_to_put_it_round_says_so() {
+    let mut s = Session::new().unwrap();
+    let reply = s.apply_json(r#"{"op":"box_geometry"}"#);
+    assert!(reply.contains(r#""ok":false"#), "{reply}");
+    assert!(reply.contains("no geometry is loaded"), "{reply}");
+    assert_eq!(stats(&s)["blocks"], 0);
+}
+
+#[test]
+fn a_flat_selection_is_refused_rather_than_built_flat() {
+    let mut s = Session::new().unwrap();
+    load(&mut s, CUBE_MSH);
+    let reply = s.apply_json(r#"{"op":"box_geometry","surfaces":[1]}"#);
+    assert!(reply.contains(r#""ok":false"#), "{reply}");
+    assert!(reply.contains("flat"), "{reply}");
+    assert_eq!(stats(&s)["blocks"], 0);
+}
+
+#[test]
+fn the_other_frame_comes_through_the_door_by_name() {
+    let mut s = Session::new().unwrap();
+    load(&mut s, CUBE_MSH);
+    let reply = s.apply_json(r#"{"op":"box_geometry","frame":"inertia","margin":0}"#);
+    assert!(reply.contains(r#""ok":true"#), "{reply}");
+    assert!(reply.contains("its own axes"), "{reply}");
+    // Square to the world already, so the box is the same box — to within
+    // the rotation it goes through and comes back from.
+    let (lo, hi) = span(&s, 2);
+    assert!(lo.abs() < 1e-9 && (hi - 3.0).abs() < 1e-9, "{lo}..{hi}");
+}

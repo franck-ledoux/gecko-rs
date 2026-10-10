@@ -27,6 +27,8 @@ does. Any key dismisses it.
 | ----------- | --------------------------------------------- |
 | `C`         | create a cube                                 |
 | `O`         | open a geometry (`.msh`)                      |
+| `M`         | aim at the geometry, or back at the blocks    |
+| `B` `⇧B`    | box the geometry: world's axes, or its own    |
 | `G`         | glue the two selected faces                   |
 | `Del` `⌫`   | remove the selection: a block, or a lit sheet |
 | `P`         | pillow the selected faces                     |

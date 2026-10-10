@@ -49,6 +49,9 @@ import {
 /** The two groups drawn from the same quadrangles. */
 export type Group = "faces" | "blocks";
 
+/** What the mouse is aimed at: the block structure, or the geometry. */
+export type Picking = "blocks" | "geometry";
+
 /** One click on the surface. Both names, because the quadrangles are listed
  *  per (face, block) pair: gluing wants the face, removing wants the block,
  *  and a pick knows which block's side it landed on even when the face has
@@ -273,6 +276,17 @@ export class Viewer {
     faces: [],
     blocks: [],
   };
+  /** Which kind of thing the mouse is aimed at.
+   *
+   *  A mode, because the two overlap: a geometric surface and the block
+   *  faces inside it are at the same pixels, and whichever answered first
+   *  would make the other unreachable. Transient rather than remembered —
+   *  a mode you left on last week and have forgotten is a mystery, not a
+   *  preference. */
+  private picking: Picking = "blocks";
+  /** The geometric surfaces picked, by gmsh tag, in the order they were
+   *  picked. View state, like the face selection. */
+  private pickedSurfaces: number[] = [];
   /** The face being grown, while the pointer is down on it: where it is,
    *  which way is out, and how far the pointer has asked for so far. */
   private growing?: { pick: Pick; centre: Vector3; normal: Vector3; corners: Vector3[] };
@@ -356,10 +370,7 @@ export class Viewer {
     //
     // Faces are picked deliberately instead, by `pickSurface`, on a click that
     // did not land on a handle.
-    const handles = (m: { metadata?: { name?: number } }) => (m.metadata?.name ?? -1) >= 0;
-    this.scene.pointerDownPredicate = handles;
-    this.scene.pointerUpPredicate = handles;
-    this.scene.pointerMovePredicate = handles;
+    this.setPicking("blocks");
     this.applyPrefs(this.prefs);
   }
 
@@ -642,6 +653,53 @@ export class Viewer {
   }
 
   /**
+   * Aim the mouse at the blocks, or at the geometry.
+   *
+   * In geometry mode nothing of the block structure answers a click — not
+   * the node handles either, which Babylon's own pointer system reaches
+   * through the scene's predicates rather than through ours.
+   */
+  setPicking(picking: Picking) {
+    this.picking = picking;
+    const handles = (m: { metadata?: { name?: number } }) =>
+      picking === "blocks" && (m.metadata?.name ?? -1) >= 0;
+    this.scene.pointerDownPredicate = handles;
+    this.scene.pointerUpPredicate = handles;
+    this.scene.pointerMovePredicate = handles;
+  }
+
+  get aimedAtGeometry(): boolean {
+    return this.picking === "geometry";
+  }
+
+  /** The geometric surfaces picked, by tag. */
+  get surfaceSelection(): number[] {
+    return [...this.pickedSurfaces];
+  }
+
+  selectSurfaces(tags: readonly number[]) {
+    this.pickedSurfaces = [...tags];
+    this.rebuildGeometry();
+  }
+
+  /**
+   * Screen coordinates -> the geometric surface under them.
+   *
+   * Through a predicate of its own rather than by making the geometry
+   * pickable: Babylon consults `isPickable` only when no predicate is
+   * given, so the geometry can stay invisible to the pointer system —
+   * which is what keeps it from stealing a click meant for a block — while
+   * still being reachable deliberately, from here.
+   */
+  pickGeometry(x: number, y: number): number | null {
+    const mine = new Set(this.geomMeshes.surfaces.map((m) => m.name));
+    const hit = this.scene.pick(x, y, (m) => mine.has(m.name), false, this.camera);
+    if (!hit?.hit || !hit.pickedMesh) return null;
+    const tag = Number(hit.pickedMesh.name.split("-").pop());
+    return Number.isFinite(tag) ? tag : null;
+  }
+
+  /**
    * Show a geometry, replacing whatever was there.
    *
    * Asked for only when the kernel's generation number says it has changed,
@@ -650,6 +708,7 @@ export class Viewer {
    */
   setGeometry(view: GeometryView) {
     this.geometry = view;
+    this.pickedSurfaces = [];
     this.rebuildGeometry();
     // The geometry counts towards the model's extent, so how close the
     // camera may come has to be worked out again.
@@ -685,6 +744,12 @@ export class Viewer {
   }
 
   private geomColour(group: GeomGroup, tag: number): Color3 {
+    // Picked surfaces take the selection colour, whatever the colouring
+    // says — the same convention as a picked face, so there is one thing
+    // to learn rather than two.
+    if (group === "surfaces" && this.pickedSurfaces.includes(tag)) {
+      return Color3.FromHexString(ANCHOR);
+    }
     const layer: GeomLayer = this.prefs[group];
     return Color3.FromHexString(
       layer.colouring === "id" ? colourForId(tag, FAMILY[group]) : this.prefs.theme[group],
@@ -791,7 +856,7 @@ export class Viewer {
   }
 
   private rebuildEdges() {
-    if (!this.view?.edges.length) {
+    if (!this.view?.edges.length || !this.prefs.edges.visible) {
       this.wire?.dispose();
       this.wire = undefined;
       return;

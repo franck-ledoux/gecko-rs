@@ -156,6 +156,8 @@ async function boot() {
         );
       }).join("") +
       `<fieldset class="layer"><legend>Edges</legend>` +
+      `<label class="check"><input type="checkbox" data-test="edges-visible"` +
+      `${prefs.edges.visible ? " checked" : ""} /> show</label>` +
       slider("edges-shrink", "shrink", 0.1, prefs.edges.shrink) +
       `</fieldset>`;
 
@@ -189,6 +191,11 @@ async function boot() {
     const edges = $("layers").querySelector<HTMLInputElement>('[data-test="edges-shrink"]')!;
     edges.addEventListener("input", (e) => {
       prefs.edges.shrink = Number((e.target as HTMLInputElement).value);
+      redraw();
+    });
+    const wire = $("layers").querySelector<HTMLInputElement>('[data-test="edges-visible"]')!;
+    wire.addEventListener("change", (e) => {
+      prefs.edges.visible = (e.target as HTMLInputElement).checked;
       redraw();
     });
   }
@@ -298,7 +305,7 @@ async function boot() {
   // taken off the camera so that dragging sets the parameter rather than
   // turning the view.
   canvas.addEventListener("pointerdown", (e) => {
-    if (e.button !== 0 || aiming !== null) return;
+    if (e.button !== 0 || aiming !== null || viewer.aimedAtGeometry) return;
     if (viewer.axes.pick(e.offsetX, e.offsetY)) return;
     if (viewer.pickNode(e.offsetX, e.offsetY) !== null) return;
     const edge = viewer.pickEdge(e.offsetX, e.offsetY);
@@ -319,7 +326,7 @@ async function boot() {
   // selection first: a face fills the screen, and a drag from one cannot be
   // both an orbit and an extrusion.
   canvas.addEventListener("pointerdown", (e) => {
-    if (e.button !== 0 || aiming !== null || growing) return;
+    if (e.button !== 0 || aiming !== null || growing || viewer.aimedAtGeometry) return;
     if (viewer.axes.pick(e.offsetX, e.offsetY)) return;
     if (viewer.pickNode(e.offsetX, e.offsetY) !== null) return;
     if (viewer.pickEdge(e.offsetX, e.offsetY) !== null) return;
@@ -391,6 +398,15 @@ async function boot() {
       return;
     }
     if (moved) return;
+    // Aimed at the geometry, the blocks are not there to be clicked at all
+    // — which is the whole reason for the mode: the two are at the same
+    // pixels, and whichever answered first would hide the other.
+    if (viewer.aimedAtGeometry) {
+      const tag = viewer.pickGeometry(x, y);
+      if (tag === null) clearSelection();
+      else toggleSurface(tag);
+      return;
+    }
     // Smallest target first: a handle, then a line, then the surface behind
     // them. Each is the thing you had to aim at to hit it. A node under the
     // cursor is a drag that has just ended, not a face being chosen.
@@ -487,7 +503,50 @@ async function boot() {
   function clearSelection() {
     viewer.selectedEdge = null;
     viewer.showSheet([]);
+    viewer.selectSurfaces([]);
     choose(null);
+  }
+
+  /**
+   * Add a geometric surface to the selection, or take it out again.
+   *
+   * Its own list rather than the face selection's: a surface of the
+   * geometry and a face of the blocking are different things, and the
+   * verbs that act on them are different verbs.
+   */
+  function toggleSurface(tag: number) {
+    const picked = viewer.surfaceSelection;
+    const now = picked.includes(tag) ? picked.filter((t) => t !== tag) : [...picked, tag];
+    viewer.selectSurfaces(now);
+    say(
+      now.length === 0
+        ? "no surface selected — a box would take the whole geometry"
+        : `${now.length} surface${now.length === 1 ? "" : "s"} selected`,
+    );
+  }
+
+  /** Whether the mouse is aimed at the geometry or at the blocks. */
+  function setPicking(at: "blocks" | "geometry") {
+    viewer.setPicking(at);
+    $("picking").setAttribute("aria-pressed", String(at === "geometry"));
+    if (at === "blocks") viewer.selectSurfaces([]);
+    else clearSelection();
+    say(at === "geometry" ? "aiming at the geometry" : "aiming at the blocks");
+  }
+
+  async function boxGeometry(frame: "axes" | "inertia") {
+    // No margin in the command: the kernel's default is the one definition
+    // of how much room a box leaves, and sending a second copy of it from
+    // here is how the two come to disagree.
+    const reply = await kernel.apply({
+      op: "box_geometry",
+      surfaces: viewer.surfaceSelection,
+      frame,
+    });
+    message = reply.message;
+    // Framed, because the box is almost always bigger than anything that
+    // was on screen before it.
+    await refresh(reply.ok ? "glide" : false);
   }
 
   /**
@@ -648,6 +707,12 @@ async function boot() {
     // After the geometry, not before: framing has to see everything there
     // is to frame.
     if (frame) viewer.frameAll(frame === "jump");
+    // Nothing to aim at and nothing to box without one.
+    const loaded = stats.geometry.surfaces !== undefined;
+    for (const id of ["picking", "box", "box-inertia"]) {
+      $<HTMLButtonElement>(id).disabled = !loaded;
+    }
+    if (!loaded && viewer.aimedAtGeometry) setPicking("blocks");
     // One line, out of the way. The counts are what you glance at; the mode
     // matters once, when you are working out which kernel you are talking to.
     $("stats").innerHTML =
@@ -748,6 +813,9 @@ async function boot() {
   const ACTIONS: Record<Action, () => void | Promise<void>> = {
     cube: createCube,
     open: openGeometry,
+    picking: () => setPicking(viewer.aimedAtGeometry ? "blocks" : "geometry"),
+    box: () => boxGeometry("axes"),
+    "box-inertia": () => boxGeometry("inertia"),
     glue: glueSelection,
     remove: removeSelection,
     pillow: pillowSelection,
@@ -763,12 +831,10 @@ async function boot() {
     faces: () => toggleLayer("faces"),
     blocks: () => toggleLayer("blocks"),
     edges: () => {
-      // Edges have no visibility of their own; fully shrunk is as good as
-      // gone, and it is one slider rather than a second kind of control.
-      prefs.edges.shrink = prefs.edges.shrink > 0.1 ? 0.1 : 1;
+      prefs.edges.visible = !prefs.edges.visible;
       redraw();
       drawLayers();
-      say(`edges ${prefs.edges.shrink > 0.1 ? "shown" : "hidden"}`);
+      say(`edges ${prefs.edges.visible ? "shown" : "hidden"}`);
     },
     corners: () => toggleGeomLayer("corners"),
     curves: () => toggleGeomLayer("curves"),
@@ -825,6 +891,9 @@ async function boot() {
   for (const [id, action] of [
     ["cube", "cube"],
     ["open", "open"],
+    ["picking", "picking"],
+    ["box", "box"],
+    ["box-inertia", "box-inertia"],
     ["glue", "glue"],
     ["remove", "remove"],
     ["pillow", "pillow"],
@@ -919,6 +988,10 @@ async function boot() {
     },
     axesVisible: () => viewer.axes.visible,
     grownBy: () => viewer.grownBy,
+    picking: () => (viewer.aimedAtGeometry ? "geometry" : "blocks"),
+    surfaceSelection: () => viewer.surfaceSelection,
+    selectSurfaces: (tags: number[]) => viewer.selectSurfaces(tags),
+    pickGeometry: (x: number, y: number) => viewer.pickGeometry(x, y),
     geomCount: (group: GeomGroup) => viewer.geomCount(group),
     geomTags: (group: GeomGroup) => viewer.geomTags(group),
     geomLook: (group: GeomGroup, tag: number) => viewer.geomLook(group, tag),

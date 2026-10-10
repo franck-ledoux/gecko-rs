@@ -98,7 +98,7 @@ cd crates/gecko-py && maturin develop --release
 ```
 
 `./dev` is the whole loop in one command: it rebuilds what changed, starts a
-Python session with a cube already in it, opens the view, and leaves you at a
+Python session — empty, like the page — opens the view, and leaves you at a
 prompt with that session as `s`. Editing TypeScript reloads the page **without
 losing the session** — the page is served by the dev server, which forwards the
 socket to the Python process behind it.

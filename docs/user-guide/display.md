@@ -73,6 +73,13 @@ Names are never reused, so over a long session the hues drift and two distant
 names can land near each other. That is the trade for stability; the
 alternative is a palette that renumbers behind you.
 
+### Edges
+
+The wireframe has a **show** box of its own and a shrink slider, and `3`
+switches it. Shrinking it to a tenth leaves a dotted outline, which is a
+different thing from no wireframe at all — hence two controls rather than
+one standing in for the other.
+
 ### Internal faces
 
 **internal faces** (`I`) decides whether faces with a block on each side are

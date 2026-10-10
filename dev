@@ -58,7 +58,6 @@ case "${1:-console}" in
 
       import os, gecko
       s = gecko.Session()
-      s.create_cube([0, 0, 0], 1.0)
       s.show(port=int(os.environ["GECKO_PORT"]), open=False)
 
   Open $GECKO_VIEW in a tab to watch it. Before or after the cell: the

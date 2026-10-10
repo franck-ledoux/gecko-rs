@@ -1529,3 +1529,139 @@ test("pressing a selected face without moving lets go of it", async ({ page }) =
   await expect(page.locator("[data-test=blocks]")).toHaveText("1");
   expect(errors).toEqual([]);
 });
+
+/** A 2×1×3 box's surface, each of its six faces an entity of its own. */
+const CUBE_MSH = `$MeshFormat
+2.2 0 8
+$EndMeshFormat
+$Nodes
+8
+1 0 0 0
+2 2 0 0
+3 2 1 0
+4 0 1 0
+5 0 0 3
+6 2 0 3
+7 2 1 3
+8 0 1 3
+$EndNodes
+$Elements
+12
+1 2 2 0 1 1 2 3
+2 2 2 0 1 1 3 4
+3 2 2 0 2 5 6 7
+4 2 2 0 2 5 7 8
+5 2 2 0 3 1 2 6
+6 2 2 0 3 1 6 5
+7 2 2 0 4 4 3 7
+8 2 2 0 4 4 7 8
+9 2 2 0 5 1 4 8
+10 2 2 0 5 1 8 5
+11 2 2 0 6 2 3 7
+12 2 2 0 6 2 7 6
+$EndElements
+`;
+
+async function openCube(page: import("@playwright/test").Page) {
+  await page.locator("#msh").setInputFiles({
+    name: "cube.msh",
+    mimeType: "text/plain",
+    buffer: Buffer.from(CUBE_MSH),
+  });
+  await expect(page.locator("[data-test=geom-surfaces]")).toHaveText("6");
+  await page.evaluate(() => (window as any).__gecko.settled());
+}
+
+test("the geometry buttons wait for a geometry", async ({ page }) => {
+  const errors = await boot(page);
+  for (const id of ["picking", "box", "box-inertia"]) {
+    await expect(page.locator(`#${id}`)).toBeDisabled();
+  }
+  await openCube(page);
+  for (const id of ["picking", "box", "box-inertia"]) {
+    await expect(page.locator(`#${id}`)).toBeEnabled();
+  }
+  expect(errors).toEqual([]);
+});
+
+test("aiming at the geometry picks surfaces, and the blocks stay out of it", async ({ page }) => {
+  const errors = await boot(page);
+  await openCube(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  const box = (await page.locator("#view").boundingBox())!;
+  const middle: [number, number] = [box.x + box.width / 2, box.y + box.height / 2];
+
+  // Blocks first: a click in the middle takes a face of the cube, not the
+  // geometry in front of it.
+  await page.mouse.click(...middle);
+  await page.waitForFunction(() => (window as any).__gecko.selection().length === 1);
+  expect(await page.evaluate(() => (window as any).__gecko.surfaceSelection())).toEqual([]);
+
+  // Switched over, and the same click takes a surface instead.
+  await page.keyboard.press("m");
+  expect(await page.evaluate(() => (window as any).__gecko.picking())).toBe("geometry");
+  await expect(page.locator("#picking")).toHaveAttribute("aria-pressed", "true");
+  expect(await page.evaluate(() => (window as any).__gecko.selection())).toEqual([]);
+
+  await page.mouse.click(...middle);
+  await page.waitForFunction(() => (window as any).__gecko.surfaceSelection().length === 1);
+  const [tag] = (await page.evaluate(() =>
+    (window as any).__gecko.surfaceSelection(),
+  )) as number[];
+  await expect(page.locator("#status")).toContainText("1 surface selected");
+  // And it is drawn in the selection colour, like a picked face.
+  expect(
+    (await page.evaluate((t) => (window as any).__gecko.geomLook("surfaces", t), tag)) as {
+      colour: string;
+    },
+  ).toMatchObject({ colour: "#ffcc33" });
+  // Nothing of the blocking answered the click.
+  expect(await page.evaluate(() => (window as any).__gecko.selection())).toEqual([]);
+
+  // Clicking it again puts it out, and the background lets go of the lot.
+  await page.mouse.click(...middle);
+  await page.waitForFunction(() => (window as any).__gecko.surfaceSelection().length === 0);
+  expect(errors).toEqual([]);
+});
+
+test("a box is built round the geometry, or round what is selected", async ({ page }) => {
+  const errors = await boot(page);
+  await openCube(page);
+
+  // Nothing selected: the whole geometry, with the kernel's own margin.
+  await page.locator("#box").click();
+  await expect(page.locator("[data-test=blocks]")).toHaveText("1");
+  await expect(page.locator("#status")).toContainText("the whole geometry");
+  await expect(page.locator("#status")).toContainText("square to the world");
+
+  // The shape's own axes, from the second button.
+  await page.locator("#box-inertia").click();
+  await expect(page.locator("[data-test=blocks]")).toHaveText("2");
+  await expect(page.locator("#status")).toContainText("its own axes");
+
+  // And one round a selection, which has to be two surfaces at least or
+  // the box has no thickness.
+  await page.keyboard.press("m");
+  await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    g.selectSurfaces([1, 2]);
+  });
+  await page.keyboard.press("b");
+  await expect(page.locator("[data-test=blocks]")).toHaveText("3");
+  await expect(page.locator("#status")).toContainText("2 surfaces");
+  expect(errors).toEqual([]);
+});
+
+test("a box that cannot be built says why and builds nothing", async ({ page }) => {
+  const errors = await boot(page);
+  await openCube(page);
+  await page.keyboard.press("m");
+  await page.evaluate(() => (window as any).__gecko.selectSurfaces([1]));
+  await page.keyboard.press("b");
+  await expect(page.locator("#status")).toContainText("flat");
+  await expect(page.locator("[data-test=blocks]")).toHaveText("0");
+  expect(errors).toEqual([]);
+});

@@ -91,21 +91,77 @@ A geometric corner is drawn larger than a node handle. The two will often sit
 on top of each other — that is what the geometry is there for — so they are
 told apart by size as well as by colour.
 
-!!! note "The geometry is not clickable"
-    Nothing in it can be picked. It is what the blocking is built against,
-    not something you edit, and a triangle in front of a block face that
-    answered the click first would make that face unselectable. A click that
-    lands on the geometry counts as a click on the background, and so clears
-    the selection.
-
 `F` frames the geometry along with the blocks: a geometry with nothing on it
 yet is still what there is to see.
 
+## Selecting surfaces
+
+`M`, or the hexagon button, aims the mouse at the **geometry** instead of at
+the blocks. Clicking a surface then picks it, clicking it again puts it out,
+and the background or `Esc` lets go of the lot. A picked surface turns the
+selection colour, exactly as a picked face does.
+
+It is a mode rather than a priority, because the two really do overlap: a
+geometric surface and the block faces inside it are at the same pixels, and
+whichever answered the click first would make the other unreachable. In
+geometry mode nothing of the block structure answers at all — not the node
+handles either.
+
+The mode is **not remembered** between sessions. A mode you left on last
+week and have forgotten is a mystery rather than a preference.
+
+Curves and corners are not selectable. A surface carries triangles, so it
+has an area and a set of points, which is what the one thing you can do with
+a selection needs.
+
+## A box round it
+
+`B`, or the box button, adds **one block**: a box containing the geometry, or
+containing just the surfaces selected. `⇧B`, or the tilted-box button, does
+the same measured along the shape's **own axes** rather than the world's.
+
+It is almost always the first block of a session: something that contains the
+shape, to be cut and fitted onto it afterwards. The C++ GECKO has the same
+button, and the same margin — each half-side is grown by **10%**, so the box
+stands clear of the geometry rather than resting on it. From Python,
+`s.box_geometry(margin=0)` for one that rests on it exactly.
+
+### Which axes
+
+A part lying at forty degrees gets, from `B`, a box square to the world and
+half full of air; from `⇧B`, a box lying at forty degrees and exactly its own
+size.
+
+The axes are the **principal axes of the selected surfaces, weighted by
+area**. Weighting matters: a faceted CAD surface has wildly uneven triangles
+— a cylinder's flat end is two of them and its round side two hundred — so
+counting corners would measure the mesher's habits rather than the shape.
+Cut one face of a bar into a hundred triangles and the box does not move.
+
+!!! note "Axes of inertia, principal axes, same box"
+    The inertia tensor is `J = tr(C)·I − C`, where `C` is the covariance.
+    Subtracting a matrix from a multiple of the identity leaves the
+    eigen*vectors* alone and only reorders the eigen*values* — the heaviest
+    axis of one is the lightest of the other. So the two give the same three
+    directions and the same box.
+
+!!! warning "A round shape has no axes"
+    A cylinder, or a bar with a square cross-section, has two equal
+    eigenvalues: every direction in that plane is as principal as every
+    other, and the box is free to turn about the shape's length. That is a
+    fact about the shape, not a weakness of the arithmetic — the *smallest*
+    box is a different and much longer question. When it matters, `B` and
+    the world's own axes are the predictable choice.
+
+A selection that is **flat** — one planar surface, say — is refused: a box
+round it would have no thickness, and a block with no volume is not a block.
+Pick something with some depth to it, or add a surface facing another way.
+
 ## What it does not do yet
 
-Nothing is **classified** onto it. The blocks and the geometry are two things
-in one window; no block cell knows which surface it is supposed to lie on, and
-nothing snaps. That is the next thing this exists for.
+Nothing is **classified** onto it. A box round the geometry is a block that
+*contains* the shape; no cell of it knows which surface it is supposed to lie
+on, and nothing snaps. That is the next thing this exists for.
 
 There is also no incidence: which curve bounds which surface is not stated
 anywhere in `$Elements`, and the C++ recovers it from shared mesh nodes

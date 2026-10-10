@@ -998,8 +998,21 @@ describe("changing a setting without rebuilding the scene", () => {
   it("keeps the edges when only their shrink moves", async () => {
     const viewer = await shown();
     const before = idOf(viewer, "edges");
-    viewer.applyPrefs({ ...DEFAULTS, edges: { shrink: 0.5 } });
+    viewer.applyPrefs({ ...DEFAULTS, edges: { visible: true, shrink: 0.5 } });
     expect(idOf(viewer, "edges")).toBe(before);
+    expect(viewer.edgeCount).toBe(12);
+  });
+
+  it("puts the wireframe away when it is switched off", async () => {
+    // Its own switch, rather than a shrink of nearly nothing standing in
+    // for one: a wireframe pulled to a tenth is still a wireframe, just a
+    // dotted one, and there was no way to ask for none at all.
+    const viewer = await shown();
+    viewer.applyPrefs({ ...DEFAULTS, edges: { visible: false, shrink: 1 } });
+    expect(viewer.edgeCount).toBe(0);
+    expect(viewer.scene.getMeshByName("edges")).toBeNull();
+
+    viewer.applyPrefs({ ...DEFAULTS, edges: { visible: true, shrink: 1 } });
     expect(viewer.edgeCount).toBe(12);
   });
 
@@ -1351,7 +1364,7 @@ describe("lighting up a sheet", () => {
     expect(viewer.highlighted).toEqual(names);
     expect(viewer.scene.getMeshByName("sheet")).not.toBeNull();
 
-    viewer.applyPrefs({ ...DEFAULTS, edges: { shrink: 0.4 } });
+    viewer.applyPrefs({ ...DEFAULTS, edges: { visible: true, shrink: 0.4 } });
     expect(viewer.scene.getMeshByName("sheet")).not.toBeNull();
   });
 

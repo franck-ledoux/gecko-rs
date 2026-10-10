@@ -15,8 +15,10 @@
 //! entities, so the block structure gets to depend on the geometry and the
 //! geometry gets to be testable on its own.
 
+pub mod bounds;
 pub mod model;
 pub mod msh;
 
+pub use bounds::{BoundsError, Frame};
 pub use model::{Corner, Curve, Geometry, Surface};
 pub use msh::{Msh, MshError, PhysicalName, LINE, POINT, TRIANGLE};

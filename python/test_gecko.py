@@ -590,3 +590,95 @@ def test_an_extrusion_that_cannot_happen_says_why():
     with pytest.raises(ValueError, match="inside the model"):
         s.extrude_face(inside["id"], inside["block"], 1.0)
     assert cells(s)["blocks"] == 2
+
+
+CUBE_MSH = """$MeshFormat
+2.2 0 8
+$EndMeshFormat
+$Nodes
+8
+1 0 0 0
+2 2 0 0
+3 2 1 0
+4 0 1 0
+5 0 0 3
+6 2 0 3
+7 2 1 3
+8 0 1 3
+$EndNodes
+$Elements
+12
+1 2 2 0 1 1 2 3
+2 2 2 0 1 1 3 4
+3 2 2 0 2 5 6 7
+4 2 2 0 2 5 7 8
+5 2 2 0 3 1 2 6
+6 2 2 0 3 1 6 5
+7 2 2 0 4 4 3 7
+8 2 2 0 4 4 7 8
+9 2 2 0 5 1 4 8
+10 2 2 0 5 1 8 5
+11 2 2 0 6 2 3 7
+12 2 2 0 6 2 7 6
+$EndElements
+"""
+
+
+def _boxed(tmp_path, **kwargs):
+    s = gecko.Session()
+    path = tmp_path / "cube.msh"
+    path.write_text(CUBE_MSH)
+    s.load_geometry(str(path))
+    s.box_geometry(**kwargs)
+    return s
+
+
+def _span(session, axis):
+    all_of = [n["pos"][axis] for n in session.nodes]
+    return min(all_of), max(all_of)
+
+
+def test_a_box_round_the_whole_geometry(tmp_path):
+    s = _boxed(tmp_path, margin=0.0)
+    assert cells(s) == {"nodes": 8, "edges": 12, "faces": 6, "blocks": 1}
+    assert _span(s, 0) == pytest.approx((0.0, 2.0))
+    assert _span(s, 1) == pytest.approx((0.0, 1.0))
+    assert _span(s, 2) == pytest.approx((0.0, 3.0))
+
+
+def test_the_margin_defaults_to_the_one_the_cxx_uses(tmp_path):
+    s = _boxed(tmp_path)
+    # 10% of each half-side, as `BiyApp::create_bounding_box(0.1)`.
+    assert _span(s, 0) == pytest.approx((-0.1, 2.1))
+    assert _span(s, 2) == pytest.approx((-0.15, 3.15))
+
+
+def test_a_box_round_a_selection_of_surfaces(tmp_path):
+    s = _boxed(tmp_path, surfaces=[1, 2], margin=0.0)
+    assert cells(s)["blocks"] == 1
+    assert _span(s, 2) == pytest.approx((0.0, 3.0))
+
+
+def test_a_box_along_the_shapes_own_axes(tmp_path):
+    # Square to the world already, so the answer is the same box — which is
+    # the point: the second frame is not a different shape, it is a
+    # different measuring stick.
+    s = _boxed(tmp_path, frame="inertia", margin=0.0)
+    for axis, want in enumerate([2.0, 1.0, 3.0]):
+        lo, hi = _span(s, axis)
+        assert hi - lo == pytest.approx(want, abs=1e-9)
+
+
+def test_a_box_needs_a_geometry_and_some_depth(tmp_path):
+    s = gecko.Session()
+    with pytest.raises(ValueError, match="no geometry is loaded"):
+        s.box_geometry()
+
+    path = tmp_path / "cube.msh"
+    path.write_text(CUBE_MSH)
+    s.load_geometry(str(path))
+    with pytest.raises(ValueError, match="flat"):
+        s.box_geometry(surfaces=[1])
+    with pytest.raises(ValueError, match="no surface of this geometry is tagged 99"):
+        s.box_geometry(surfaces=[99])
+    assert cells(s)["blocks"] == 0

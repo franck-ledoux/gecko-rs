@@ -23,6 +23,35 @@
           <path d="M3 9.5h18" />
         </svg>
       </button>
+      <button
+        id="picking"
+        disabled
+        title="Aim at the geometry instead of the blocks — M"
+        aria-label="Aim at the geometry"
+        aria-pressed="false"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3.2 20 7.6v8.8L12 20.8 4 16.4V7.6Z" />
+          <circle cx="12" cy="12" r="2.4" class="dot" />
+        </svg>
+      </button>
+      <button id="box" disabled title="Box the geometry — B" aria-label="Bounding box">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 6.5h16v11H4Z" />
+          <circle cx="12" cy="12" r="3" />
+        </svg>
+      </button>
+      <button
+        id="box-inertia"
+        disabled
+        title="Box the geometry along its own axes — ⇧B"
+        aria-label="Bounding box along the shape's axes"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3.4 9.2 14.6 4.3l6.1 10.6L9.4 19.7Z" />
+          <circle cx="12" cy="12" r="3" />
+        </svg>
+      </button>
       <button id="glue" disabled title="Glue the two selected faces — G" aria-label="Glue faces">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M4 5.5h5v13H4ZM15 5.5h5v13h-5Z" />

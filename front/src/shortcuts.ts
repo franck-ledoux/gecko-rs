@@ -17,6 +17,9 @@
 export const ACTIONS = [
   "cube",
   "open",
+  "box",
+  "box-inertia",
+  "picking",
   "glue",
   "remove",
   "pillow",
@@ -68,6 +71,28 @@ export interface Shortcut {
 export const SHORTCUTS: readonly Shortcut[] = [
   { show: "C", key: "c", action: "cube", does: "create a cube", group: "Edit" },
   { show: "O", key: "o", action: "open", does: "open a geometry (.msh)", group: "Edit" },
+  {
+    show: "M",
+    key: "m",
+    action: "picking",
+    does: "aim at the geometry, or back at the blocks",
+    group: "Edit",
+  },
+  {
+    show: "B",
+    key: "b",
+    action: "box",
+    does: "box the selected surfaces, or the whole geometry",
+    group: "Edit",
+  },
+  {
+    show: "⇧B",
+    key: "b",
+    shift: true,
+    action: "box-inertia",
+    does: "the same box, square to the shape's own axes",
+    group: "Edit",
+  },
   { show: "G", key: "g", action: "glue", does: "glue the two selected faces", group: "Edit" },
   {
     show: "Del",
