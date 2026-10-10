@@ -118,8 +118,38 @@ function centres(view: View, by: "face" | "block"): Map<number, [number, number,
   return out;
 }
 
-export function buildSurface(view: View, options: SurfaceOptions): SurfaceData {
+/**
+ * One `SurfaceData` per block.
+ *
+ * Not one for the lot. Babylon sorts transparent **meshes** back to front
+ * and does nothing about the triangles inside one, so a single mesh holding
+ * every cell leaves it nothing to sort: a block behind another could be
+ * drawn over it. A mesh per block gives the sorter something to work with,
+ * at the cost of a draw call each — which is the trade to revisit when
+ * there are thousands of them, not now.
+ */
+export function buildSurfaces(
+  view: View,
+  options: SurfaceOptions,
+): { block: number; data: SurfaceData }[] {
   const kept = quadsToDraw(view, options.by, options.internal);
+  const byBlock = new Map<number, number[]>();
+  for (const q of kept) {
+    const block = view.quadBlocks[q];
+    const already = byBlock.get(block);
+    if (already) already.push(q);
+    else byBlock.set(block, [q]);
+  }
+  return [...byBlock.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([block, quads]) => ({ block, data: buildFrom(view, options, quads) }));
+}
+
+export function buildSurface(view: View, options: SurfaceOptions): SurfaceData {
+  return buildFrom(view, options, quadsToDraw(view, options.by, options.internal));
+}
+
+function buildFrom(view: View, options: SurfaceOptions, kept: number[]): SurfaceData {
   if (!kept.length) return EMPTY;
 
   const names = options.by === "face" ? view.quadFaces : view.quadBlocks;

@@ -17,6 +17,9 @@ import { Matrix, Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { Animation } from "@babylonjs/core/Animations/animation";
 import { CubicEase, EasingFunction } from "@babylonjs/core/Animations/easing";
 import "@babylonjs/core/Animations/animatable";
+// Not for a name: importing it is what installs the depth-peeling renderer.
+// Without it the property below exists, accepts `true`, and leaves the
+// scene rendering nothing at all.
 import { Color3, Color4 } from "@babylonjs/core/Maths/math.color";
 import { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { VertexData } from "@babylonjs/core/Meshes/mesh.vertexData";
@@ -34,7 +37,7 @@ import { DEFAULTS, type Layer, type ViewPrefs } from "./theme";
 import { ANCHOR, MATE } from "./palette";
 import type { SheetEdge } from "./kernel";
 import {
-  buildSurface,
+  buildSurfaces,
   edgeSegments,
   type SurfaceData,
   type SurfaceOptions,
@@ -187,9 +190,10 @@ export class Viewer {
    *  sheet out again. View state, like the face selection. */
   selectedEdge: number | null = null;
   private litWire?: Mesh;
-  private surfaces: Record<Group, { mesh?: Mesh; data?: SurfaceData }> = {
-    faces: {},
-    blocks: {},
+  /** One mesh per block, so that Babylon can sort them back to front. */
+  private surfaces: Record<Group, { mesh: Mesh; data: SurfaceData }[]> = {
+    faces: [],
+    blocks: [],
   };
   /** A working copy of the view: the drag previews against it, so the scene can
    *  follow the mouse without a round trip to the kernel. */
@@ -343,15 +347,25 @@ export class Viewer {
     const hit = this.scene.pick(
       x,
       y,
-      (m) => m.name === "faces" || m.name === "blocks",
+      (m) => this.dataOf(m.name) !== undefined,
       false,
       this.camera,
     );
     if (!hit?.hit || !hit.pickedMesh) return null;
-    const data = this.surfaces[hit.pickedMesh.name as Group].data;
+    const data = this.dataOf(hit.pickedMesh.name);
     const quad = Math.floor(hit.faceId / 2);
     if (!data || quad < 0 || quad >= data.faces.length) return null;
     return { face: data.faces[quad], block: data.blocks[quad] };
+  }
+
+  /** The surface data behind a mesh, by the name it was given. */
+  private dataOf(name: string): SurfaceData | undefined {
+    for (const group of ["faces", "blocks"] as Group[]) {
+      for (const slot of this.surfaces[group]) {
+        if (slot.mesh.name === name) return slot.data;
+      }
+    }
+    return undefined;
   }
 
   /**
@@ -367,31 +381,41 @@ export class Viewer {
    * quadrangles, and there is then nothing to patch.
    */
   private rebuildSurface(group: Group) {
-    const slot = this.surfaces[group];
     const layer = this.layerOf(group);
-    const data =
+    const wanted =
       this.view && layer.visible && this.view.quads.length
-        ? buildSurface(this.view, this.surfaceOptions(group))
-        : undefined;
+        ? buildSurfaces(this.view, this.surfaceOptions(group))
+        : [];
 
-    if (!data?.indices.length) {
-      slot.mesh?.dispose();
-      slot.mesh = undefined;
-      slot.data = undefined;
+    // Same shape as what is already there: rewrite the buffers rather than
+    // throwing the meshes away. Dragging a slider is a stream of these, and
+    // meshes disposed and rebuilt per mouse-move make the model blink.
+    const slots = this.surfaces[group];
+    const sameShape =
+      slots.length === wanted.length &&
+      slots.every((slot, i) => slot.data.positions.length === wanted[i].data.positions.length);
+
+    if (sameShape) {
+      slots.forEach((slot, i) => {
+        const data = wanted[i].data;
+        slot.data = data;
+        slot.mesh.updateVerticesData(VertexBuffer.PositionKind, data.positions);
+        slot.mesh.updateVerticesData(VertexBuffer.ColorKind, data.colors);
+        slot.mesh.updateVerticesData(VertexBuffer.NormalKind, normalsFor(data));
+        (slot.mesh.material as StandardMaterial).alpha = layer.alpha;
+      });
       return;
     }
 
-    if (slot.mesh && slot.data?.positions.length === data.positions.length) {
-      slot.data = data;
-      slot.mesh.updateVerticesData(VertexBuffer.PositionKind, data.positions);
-      slot.mesh.updateVerticesData(VertexBuffer.ColorKind, data.colors);
-      slot.mesh.updateVerticesData(VertexBuffer.NormalKind, normalsFor(data));
-      (slot.mesh.material as StandardMaterial).alpha = layer.alpha;
-      return;
-    }
+    for (const slot of slots) slot.mesh.dispose();
+    this.surfaces[group] = wanted.map(({ block, data }) => ({
+      mesh: this.surfaceMesh(group, block, data, layer),
+      data,
+    }));
+  }
 
-    slot.mesh?.dispose();
-    const mesh = new Mesh(group, this.scene);
+  private surfaceMesh(group: Group, block: number, data: SurfaceData, layer: Layer): Mesh {
+    const mesh = new Mesh(`${group}-${block}`, this.scene);
     const vertices = new VertexData();
     vertices.positions = data.positions;
     vertices.indices = data.indices;
@@ -400,12 +424,15 @@ export class Viewer {
     // Updatable: everything above depends on it.
     vertices.applyToMesh(mesh, true);
 
-    const material = new StandardMaterial(`${group}Mat`, this.scene);
+    const material = new StandardMaterial(`${group}Mat${block}`, this.scene);
     material.specularColor = Color3.Black();
     // Both sides: a translucent shell you can only see the outside of is a
     // picture of its silhouette.
     material.backFaceCulling = false;
     material.alpha = layer.alpha;
+    // And the inside of that shell before the outside, which is the one
+    // ordering a mesh of its own cannot settle on its own.
+    material.separateCullingPass = true;
     // Push the surface a hair away from the camera in depth only. The edges
     // run exactly along it — they are the same corners — so without this the
     // depth test decides between them arbitrarily, and at full opacity the
@@ -414,17 +441,13 @@ export class Viewer {
     material.zOffsetUnits = SURFACE_DEPTH_BIAS.units;
     mesh.material = material;
     // Pickable, because a face is something you choose with the mouse. The
-    // node handles still win where they overlap: a sphere is centred on the
-    // surface, so its near half is in front, and that is the half you aim at.
+    // node handles still win where they overlap: the scene's pointer
+    // predicates only ever see those.
     mesh.isPickable = true;
     mesh.layerMask = MAIN_LAYER;
-
-    slot.mesh = mesh;
-    slot.data = data;
+    return mesh;
   }
 
-  /** The same bargain as the surfaces: reuse the mesh while the number of
-   *  segments holds, which is every case except a new view. */
   private rebuildEdges() {
     if (!this.view?.edges.length) {
       this.wire?.dispose();
@@ -727,19 +750,20 @@ export class Viewer {
    *  `pickSurface`, and what lets a test aim a real mouse at a real face. */
   faceScreen(name: number): [number, number] | null {
     for (const group of ["faces", "blocks"] as Group[]) {
-      const data = this.surfaces[group].data;
-      const quad = data ? data.faces.indexOf(name) : -1;
-      if (!data || quad < 0) continue;
-      const mid = new Vector3(0, 0, 0);
-      for (let k = 0; k < 4; k++) {
-        const v = (quad * 4 + k) * 3;
-        mid.addInPlaceFromFloats(
-          data.positions[v] / 4,
-          data.positions[v + 1] / 4,
-          data.positions[v + 2] / 4,
-        );
+      for (const { data } of this.surfaces[group]) {
+        const quad = data.faces.indexOf(name);
+        if (quad < 0) continue;
+        const mid = new Vector3(0, 0, 0);
+        for (let k = 0; k < 4; k++) {
+          const v = (quad * 4 + k) * 3;
+          mid.addInPlaceFromFloats(
+            data.positions[v] / 4,
+            data.positions[v + 1] / 4,
+            data.positions[v + 2] / 4,
+          );
+        }
+        return this.toScreen(mid);
       }
-      return this.toScreen(mid);
     }
     return null;
   }
@@ -922,20 +946,37 @@ export class Viewer {
     faces: Uint32Array;
     blocks: Uint32Array;
   } | null {
-    const slot = this.surfaces[group];
-    if (!slot.mesh || !slot.data) return null;
+    const slots = this.surfaces[group];
+    if (!slots.length) return null;
+    // The whole group, gathered back together: a test asks about the
+    // surface, not about how many meshes it happens to be drawn in.
     const seen = new Set<string>();
-    for (let v = 0; v < slot.data.colors.length; v += 4) {
-      seen.add(slot.data.colors.slice(v, v + 3).join(","));
+    const positions: number[] = [];
+    const faces: number[] = [];
+    const blocks: number[] = [];
+    let quads = 0;
+    for (const { data } of slots) {
+      for (let v = 0; v < data.colors.length; v += 4) {
+        seen.add(data.colors.slice(v, v + 3).join(","));
+      }
+      quads += data.indices.length / 6;
+      positions.push(...data.positions);
+      faces.push(...data.faces);
+      blocks.push(...data.blocks);
     }
     return {
-      quads: slot.data.indices.length / 6,
-      alpha: (slot.mesh.material as StandardMaterial).alpha,
+      quads,
+      alpha: (slots[0].mesh.material as StandardMaterial).alpha,
       colours: seen.size,
-      positions: slot.data.positions,
-      faces: slot.data.faces,
-      blocks: slot.data.blocks,
+      positions: new Float32Array(positions),
+      faces: new Uint32Array(faces),
+      blocks: new Uint32Array(blocks),
     };
+  }
+
+  /** How many meshes a group is drawn in — one per block. */
+  meshCount(group: Group): number {
+    return this.surfaces[group].length;
   }
 
   get edgeCount() {

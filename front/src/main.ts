@@ -733,6 +733,7 @@ async function boot() {
     snapTo: (axis: Axis) => viewer.axes.snapTo(axis),
     pickAxis: (x: number, y: number) => viewer.axes.pick(x, y),
     axisScreen: (axis: Axis) => viewer.axes.axisScreen(axis),
+    frameTime: () => engine.getDeltaTime(),
     camera: () => ({
       alpha: viewer.camera.alpha,
       beta: viewer.camera.beta,

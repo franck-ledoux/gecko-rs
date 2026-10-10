@@ -49,6 +49,15 @@ face, so it shrinks within its own plane and the model keeps its outline. A
 block pulls towards the middle of the block, so the whole thing narrows. An
 edge pulls towards its own midpoint, leaving a gap at each corner.
 
+!!! note "One mesh per block"
+    Transparency is drawn back to front, and Babylon sorts **meshes** — it
+    does nothing about the triangles inside one. Every cell in a single mesh
+    left it nothing to sort: a block behind another could be drawn over it,
+    and a block's own far side over its near side. Each block is its own
+    mesh now, and each is drawn inside-out before outside-in, which settles
+    the other half. The cost is a draw call per block, which is the trade to
+    revisit when there are thousands of them.
+
 ### Colour by id
 
 The colour comes from the cell's **stable name**, and three things follow from

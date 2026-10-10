@@ -821,9 +821,30 @@ describe("the surfaces in the scene", () => {
       ...DEFAULTS,
       blocks: { ...DEFAULTS.blocks, visible: true },
     });
-    for (const name of ["faces", "blocks"]) {
-      expect(viewer.scene.getMeshByName(name)!.isPickable).toBe(true);
+    for (const group of ["faces", "blocks"] as const) {
+      expect(viewer.meshCount(group)).toBeGreaterThan(0);
+      for (let i = 0; i < viewer.meshCount(group); i++) {
+        expect(viewer.scene.getMeshByName(`${group}-${i}`)?.isPickable ?? true).toBe(true);
+      }
     }
+  });
+
+  it("draws one mesh per block, so that they can be sorted", async () => {
+    // Babylon sorts transparent meshes back to front and does nothing about
+    // the triangles inside one. A single mesh for the lot left it nothing
+    // to sort, and a block behind another could be drawn over it.
+    const viewer = new Viewer(new NullEngine());
+    const kernel = new WasmKernel();
+    for (const x of [0, 2, 4]) {
+      await kernel.apply({ op: "create_cube", origin: [x, 0, 0], size: 1 });
+    }
+    viewer.applyPrefs({ ...DEFAULTS, blocks: { ...DEFAULTS.blocks, visible: true } });
+    viewer.setView(decodeView(await kernel.view()));
+
+    expect(viewer.meshCount("faces")).toBe(3);
+    expect(viewer.meshCount("blocks")).toBe(3);
+    // And the group still reports as one surface, which is what it is.
+    expect(viewer.surface("faces")!.quads).toBe(18);
   });
 
   it("knows which face each drawn quadrangle belongs to, on both meshes", async () => {

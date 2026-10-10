@@ -1040,3 +1040,59 @@ test("the selection grows as far as you like", async ({ page }) => {
   await expect(page.locator("#glue")).toBeEnabled();
   expect(errors).toEqual([]);
 });
+
+/** The colour in the middle of the canvas, as three numbers. */
+async function centrePixel(page: import("@playwright/test").Page) {
+  return page.evaluate(() => {
+    const view = document.querySelector("#view") as HTMLCanvasElement;
+    const flat = document.createElement("canvas");
+    flat.width = view.width;
+    flat.height = view.height;
+    flat.getContext("2d")!.drawImage(view, 0, 0);
+    const at = flat
+      .getContext("2d")!
+      .getImageData(Math.floor(view.width / 2), Math.floor(view.height / 2), 1, 1).data;
+    return [at[0], at[1], at[2]] as [number, number, number];
+  });
+}
+
+const apart = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+
+test("the nearer of two translucent blocks is the one you see", async ({ page }) => {
+  // Which of them is nearer has to follow the camera. It cannot when every
+  // cell is in one mesh: Babylon sorts transparent *meshes* back to front
+  // and leaves the triangles inside one in the order they were built, so
+  // the same cell wins the blend from either side.
+  const errors = await boot(page);
+  await openDrawer(page);
+  await page.locator("[data-test=faces-id]").check();
+  await page.locator("[data-test=faces-alpha]").fill("0.6");
+
+  // One cube, seen from +x: this is what that cube looks like on its own.
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.evaluate(() => (window as any).__gecko.snapTo("+x"));
+  await page.evaluate(() => (window as any).__gecko.settled());
+  const alone = await centrePixel(page);
+
+  // A second cube at a greater x, so it stands between that one and the
+  // camera. Along the row they cover each other exactly.
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+  await page.evaluate(() => (window as any).__gecko.snapTo("+x"));
+  await page.evaluate(() => (window as any).__gecko.settled());
+  const behindIt = await centrePixel(page);
+
+  // From the far side the first cube is the near one again.
+  await page.evaluate(() => (window as any).__gecko.snapTo("-x"));
+  await page.evaluate(() => (window as any).__gecko.settled());
+  const inFront = await centrePixel(page);
+
+  // No threshold to pick: whichever cube is nearer dominates, so the view
+  // that has the first one in front must land closer to how it looks alone.
+  expect(
+    apart(inFront, alone),
+    `alone ${alone}, behind ${behindIt}, in front ${inFront}`,
+  ).toBeLessThan(apart(behindIt, alone));
+  expect(errors).toEqual([]);
+});
