@@ -108,6 +108,15 @@ impl PySession {
         self.command(serde_json::json!({ "op": "split_sheet", "edge": edge, "at": at }))
     }
 
+    /// Take out the whole sheet of blocks through an edge.
+    ///
+    /// Whatever was glued to either end of the layer ends up glued to the
+    /// other, with the seam half way between. A cap on the model's surface
+    /// has nothing to close against, so the model simply loses that layer.
+    fn remove_sheet(&self, edge: u32) -> PyResult<String> {
+        self.command(serde_json::json!({ "op": "remove_sheet", "edge": edge }))
+    }
+
     /// Lay a layer of hexahedra along a patch of surface faces.
     ///
     /// `patch` is a list of `(face, block)` pairs: a face, and which of its

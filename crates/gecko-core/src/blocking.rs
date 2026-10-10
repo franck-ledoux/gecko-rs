@@ -456,6 +456,124 @@ impl Blocking {
         Ok(())
     }
 
+    /// Take out the whole sheet of blocks through an edge, closing the gap.
+    ///
+    /// The sheet is a layer: each of its blocks is capped at either end by
+    /// a face the sheet does not cross, and whatever was glued to those two
+    /// caps ends up glued to each other once the layer is gone. The seam
+    /// lands **half way** between where the two caps were, so neither side
+    /// is favoured and the hole closes from both.
+    ///
+    /// A cap with nothing behind it is a cap on the model's surface; there
+    /// is nothing to close against, so the model simply loses that layer.
+    pub fn remove_sheet(&mut self, edge: CellId) -> Result<(), BlockingError> {
+        let sheet = self.sheet_through(edge)?;
+
+        // Which blocks the sheet runs through, and which of their edges it
+        // is made of. A hexahedron the sheet crosses has four.
+        let mut crossing: BTreeMap<CellId, Vec<SheetEdge>> = BTreeMap::new();
+        for side in &sheet {
+            let at = self
+                .edge_by_id(side.edge)
+                .ok_or(BlockingError::NoSuchEdge(side.edge))?;
+            let mut blocks: Vec<CellId> = self
+                .map
+                .orbit(OrbitPolicy::Edge, at as DartIdType)
+                .map(|d| self.block_tag(self.map.volume_id(d)).id)
+                .collect();
+            blocks.sort();
+            blocks.dedup();
+            for block in blocks {
+                crossing.entry(block).or_default().push(*side);
+            }
+        }
+
+        /// One block on its way out, and the two faces that will meet.
+        struct Doomed {
+            block: CellId,
+            from: [[f64; 3]; 4],
+            to: [[f64; 3]; 4],
+            behind_from: Option<CellId>,
+            behind_to: Option<CellId>,
+        }
+        let sides = self.block_faces();
+        let mut doomed: Vec<Doomed> = Vec::new();
+        for (block, edges) in &crossing {
+            if edges.len() != 4 {
+                return Err(BlockingError::BrokenSheet(edge));
+            }
+            let from = edges
+                .iter()
+                .map(|e| self.position(e.from).unwrap_or([0.0; 3]))
+                .collect::<Vec<_>>();
+            let to = edges
+                .iter()
+                .map(|e| self.position(e.to).unwrap_or([0.0; 3]))
+                .collect::<Vec<_>>();
+            let (from, to): ([[f64; 3]; 4], [[f64; 3]; 4]) =
+                (from.try_into().expect("four"), to.try_into().expect("four"));
+
+            let cap = |points: &[[f64; 3]; 4]| -> Result<_, BlockingError> {
+                let face = self
+                    .side_at(&sides, *block, points)
+                    .ok_or(BlockingError::BrokenSheet(edge))?;
+                let behind = sides
+                    .iter()
+                    .find(|s| s.face == face.face && s.block != *block)
+                    .map(|s| s.block);
+                // A sheet that comes back round onto itself has no outside
+                // to close against.
+                if behind.is_some_and(|b| crossing.contains_key(&b)) {
+                    return Err(BlockingError::BrokenSheet(edge));
+                }
+                Ok(behind)
+            };
+            doomed.push(Doomed {
+                block: *block,
+                behind_from: cap(&from)?,
+                behind_to: cap(&to)?,
+                from,
+                to,
+            });
+        }
+
+        for out in &doomed {
+            self.remove_block(out.block)?;
+        }
+
+        // What was on either side of each departed block, brought together.
+        for out in &doomed {
+            let (Some(near), Some(far)) = (out.behind_from, out.behind_to) else {
+                continue;
+            };
+            let sides = self.block_faces();
+            let here = self
+                .side_at(&sides, near, &out.from)
+                .ok_or(BlockingError::BrokenSheet(edge))?;
+            let there = self
+                .side_at(&sides, far, &out.to)
+                .ok_or(BlockingError::BrokenSheet(edge))?;
+
+            // Half way, so the gap closes from both sides rather than one
+            // of them being dragged onto the other.
+            for (points, side) in [(&out.from, &here), (&out.to, &there)] {
+                for node in side.nodes {
+                    let at = self.position(node).unwrap_or([0.0; 3]);
+                    let Some(i) = points.iter().position(|p| same_point(*p, at)) else {
+                        continue;
+                    };
+                    let middle = [0, 1, 2].map(|k| (out.from[i][k] + out.to[i][k]) / 2.0);
+                    self.map
+                        .write_vertex(node, (middle[0], middle[1], middle[2]));
+                }
+            }
+            self.glue_faces(here.face, there.face)?;
+        }
+
+        self.assign_missing_ids();
+        Ok(())
+    }
+
     /// Remove one block, leaving whatever it was glued to intact.
     ///
     /// Three steps, in this order because each needs what the previous one

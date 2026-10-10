@@ -1096,3 +1096,59 @@ test("the nearer of two translucent blocks is the one you see", async ({ page })
   ).toBeLessThan(apart(behindIt, alone));
   expect(errors).toEqual([]);
 });
+
+test("a lit sheet is what the remove button takes away", async ({ page }) => {
+  // The bin acts on what is selected: faces mean a block, a lit sheet means
+  // the whole layer. One button rather than a ninth icon for a verb that is
+  // the same verb.
+  const errors = await boot(page);
+  await page.evaluate(EDGE_NEAR);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // Cut it in two, so there is a sheet worth removing.
+  const edge = (await page.evaluate(() => edgeNear([1, 0.5, 1]))) as number;
+  const at = (await page.evaluate((e) => (window as any).__gecko.edgeScreen(e), edge)) as [
+    number,
+    number,
+  ];
+  const box = (await page.locator("#view").boundingBox())!;
+  await page.mouse.move(box.x + at[0], box.y + at[1]);
+  await page.mouse.down();
+  for (let i = 1; i <= 6; i++) await page.mouse.move(box.x + at[0], box.y + at[1] - i * 10);
+  await page.mouse.up();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 12);
+
+  // Light the sheet across the upper slab and take it out.
+  await expect(page.locator("#remove")).toBeDisabled();
+  // The sheet across the upper slab, told apart by its size: four edges
+  // stay inside one slab, and the ones that run along the cut go through
+  // both. Picking the highest edge alone would catch one of those.
+  const across = (await page.evaluate(async () => {
+    const g = (window as any).__gecko;
+    let best: number | null = null;
+    let highest = -Infinity;
+    for (const n of g.edgeNames() as number[]) {
+      await g.pickEdgeByName(n);
+      if (g.sheet().length === 4 && g.edgeMidpoint(n)[2] > highest) {
+        highest = g.edgeMidpoint(n)[2];
+        best = n;
+      }
+    }
+    return best;
+  })) as number;
+  await page.keyboard.press("Escape");
+  await page.evaluate((e) => (window as any).__gecko.pickEdgeByName(e), across);
+  await page.waitForFunction(() => (window as any).__gecko.sheet().length > 0);
+  await expect(page.locator("#remove")).toBeEnabled();
+
+  await page.locator("#remove").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+
+  // One block left, and nothing still lit.
+  await expect(page.locator("[data-test=blocks]")).toHaveText("1");
+  expect(await page.evaluate(() => (window as any).__gecko.sheet())).toEqual([]);
+  await expect(page.locator("#remove")).toBeDisabled();
+  expect(errors).toEqual([]);
+});

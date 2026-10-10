@@ -23,23 +23,23 @@ than necessary — see [Pictures](#pictures) below.
 read from: it cannot describe a key that does not exist, or miss one that
 does. Any key dismisses it.
 
-|             |                                              |
-| ----------- | -------------------------------------------- |
-| `C`         | create a cube                                |
-| `G`         | glue the two selected faces                  |
-| `Del` `⌫`   | remove the selected block                    |
-| `P`         | pillow the selected faces                    |
-| `Esc`       | clear the selection                          |
-| `F`         | frame everything                             |
-| `X` `Y` `Z` | look down an axis, `⇧` for the negative side |
-| `T`         | the X/Y/Z triad                              |
-| `D`         | dark or light                                |
-| `1` `2` `3` | faces, blocks, edges                         |
-| `I`         | internal faces                               |
-| `Tab`       | settings                                     |
-| `⇧Tab`      | hide everything                              |
-| `S`         | save a picture                               |
-| `H` `?`     | the card                                     |
+|             |                                               |
+| ----------- | --------------------------------------------- |
+| `C`         | create a cube                                 |
+| `G`         | glue the two selected faces                   |
+| `Del` `⌫`   | remove the selection: a block, or a lit sheet |
+| `P`         | pillow the selected faces                     |
+| `Esc`       | clear the selection                           |
+| `F`         | frame everything                              |
+| `X` `Y` `Z` | look down an axis, `⇧` for the negative side  |
+| `T`         | the X/Y/Z triad                               |
+| `D`         | dark or light                                 |
+| `1` `2` `3` | faces, blocks, edges                          |
+| `I`         | internal faces                                |
+| `Tab`       | settings                                      |
+| `⇧Tab`      | hide everything                               |
+| `S`         | save a picture                                |
+| `H` `?`     | the card                                      |
 
 Two things are deliberately left alone. Anything with ctrl, meta or alt
 belongs to the browser or the system: a shortcut that swallowed ⌘S would be a

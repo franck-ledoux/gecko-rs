@@ -846,3 +846,89 @@ mod pillowing {
         assert_eq!(build().view_buffer(), build().view_buffer());
     }
 }
+
+/// Taking a whole sheet of blocks out, through the same door.
+mod sheet_removal {
+    use super::*;
+
+    /// Three unit slabs stacked along z and glued.
+    fn three_slabs() -> Session {
+        let mut s = Session::new().unwrap();
+        for z in [0.0, 1.0, 2.0] {
+            s.apply(Command::CreateCube {
+                origin: [0.0, 0.0, z],
+                size: 1.0,
+            })
+            .unwrap();
+        }
+        for z in [1.0, 2.0] {
+            let faces: serde_json::Value = serde_json::from_str(&s.faces_json()).unwrap();
+            let pair: Vec<u32> = faces
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|f| (f["centre"][2].as_f64().unwrap() - z).abs() < 1e-9)
+                .map(|f| f["id"].as_u64().unwrap() as u32)
+                .collect();
+            assert_eq!(pair.len(), 2);
+            s.apply(Command::GlueFaces {
+                first: pair[0],
+                second: pair[1],
+            })
+            .unwrap();
+        }
+        s
+    }
+
+    /// An edge whose sheet runs between these two heights.
+    fn between(s: &Session, low: f64, high: f64) -> u32 {
+        let v = ViewBuffer::of(s.blocking(), None);
+        for e in 0..v.edge_names.len() {
+            let (a, b) = (v.edges[e * 2] as usize * 3, v.edges[e * 2 + 1] as usize * 3);
+            let mut z = [
+                v.positions[a + 2] as f64 + v.centre[2],
+                v.positions[b + 2] as f64 + v.centre[2],
+            ];
+            z.sort_by(f64::total_cmp);
+            if (z[0] - low).abs() < 1e-6 && (z[1] - high).abs() < 1e-6 {
+                return v.edge_names[e];
+            }
+        }
+        panic!("no edge from {low} to {high}");
+    }
+
+    #[test]
+    fn removing_goes_through_the_json_door_like_everything_else() {
+        let mut s = three_slabs();
+        let edge = between(&s, 1.0, 2.0);
+        let raw = s.apply_json(&format!(r#"{{"op":"remove_sheet","edge":{edge}}}"#));
+        let reply: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(reply["ok"], true, "{raw}");
+
+        let stats: serde_json::Value = serde_json::from_str(&s.stats_json()).unwrap();
+        assert_eq!(stats["blocks"], 2);
+        assert_eq!(stats["nodes"], 12);
+    }
+
+    #[test]
+    fn a_name_no_edge_answers_to_is_reported_and_changes_nothing() {
+        let mut s = three_slabs();
+        let before = s.view_buffer();
+        let raw = s.apply_json(r#"{"op":"remove_sheet","edge":4242}"#);
+        let reply: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(reply["ok"], false);
+        assert!(reply["error"].as_str().unwrap().contains("no edge"));
+        assert_eq!(s.view_buffer(), before);
+    }
+
+    #[test]
+    fn two_sessions_that_removed_the_same_sheet_ship_the_same_bytes() {
+        let build = || {
+            let mut s = three_slabs();
+            let edge = between(&s, 1.0, 2.0);
+            s.apply(Command::RemoveSheet { edge }).unwrap();
+            s
+        };
+        assert_eq!(build().view_buffer(), build().view_buffer());
+    }
+}

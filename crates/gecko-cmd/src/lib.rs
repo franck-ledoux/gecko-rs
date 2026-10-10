@@ -63,6 +63,13 @@ pub enum Command {
     RemoveBlock {
         block: u32,
     },
+    /// Take out the whole sheet of blocks through an edge.
+    ///
+    /// Whatever was glued to either end of the layer ends up glued to the
+    /// other, with the seam half way between.
+    RemoveSheet {
+        edge: u32,
+    },
     /// Cut the whole sheet of hexahedra through an edge, `at` along it.
     ///
     /// The parameter runs the way the sheet reports, so it means the same
@@ -150,6 +157,20 @@ impl Session {
                 Ok(Outcome {
                     message: format!(
                         "block {block:?} removed — {} nodes, {} edges, {} faces, {} blocks",
+                        self.blocking.nb_nodes(),
+                        self.blocking.nb_edges(),
+                        self.blocking.nb_faces(),
+                        self.blocking.nb_blocks(),
+                    ),
+                    view_changed: true,
+                })
+            }
+            Command::RemoveSheet { edge } => {
+                let edge = CellId::from_raw(edge);
+                self.blocking.remove_sheet(edge)?;
+                Ok(Outcome {
+                    message: format!(
+                        "sheet through {edge:?} removed — {} nodes, {} edges, {} faces, {} blocks",
                         self.blocking.nb_nodes(),
                         self.blocking.nb_edges(),
                         self.blocking.nb_faces(),

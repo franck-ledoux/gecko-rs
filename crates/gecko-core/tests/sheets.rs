@@ -187,3 +187,123 @@ fn a_name_no_edge_answers_to_is_refused() {
         Err(BlockingError::NoSuchEdge(_))
     ));
 }
+
+/// Taking a whole sheet of blocks out, and closing the gap behind it.
+mod removal {
+    use super::*;
+
+    fn cells(b: &Blocking) -> (usize, usize, usize, usize) {
+        (b.nb_nodes(), b.nb_edges(), b.nb_faces(), b.nb_blocks())
+    }
+
+    /// Three unit slabs stacked along z and glued, at z in 0..1, 1..2, 2..3.
+    ///
+    /// Stacked rather than cut: a cut lands at `t` from whichever end the
+    /// sheet calls `from`, which is the map's business and not something a
+    /// test should be predicting.
+    fn three_slabs() -> Blocking {
+        let mut b = Blocking::new().unwrap();
+        for z in [0.0, 1.0, 2.0] {
+            b.add_block(cube_corners([0.0, 0.0, z], 1.0)).unwrap();
+        }
+        for z in [1.0, 2.0] {
+            let pair: Vec<CellId> = b
+                .block_faces()
+                .iter()
+                .filter(|s| {
+                    s.nodes
+                        .iter()
+                        .all(|n| (b.position(*n).unwrap()[2] - z).abs() < 1e-9)
+                })
+                .map(|s| s.face)
+                .collect();
+            assert_eq!(pair.len(), 2, "two faces meet at z = {z}");
+            b.glue_faces(pair[0], pair[1]).unwrap();
+        }
+        b
+    }
+
+    /// An edge running across the slab between these two heights.
+    fn across(b: &Blocking, low: f64, high: f64) -> CellId {
+        b.map()
+            .iter_edges()
+            .map(|e| (e, b.edge_endpoints(e)))
+            .find(|(_, (u, v))| {
+                let (p, q) = (b.position(*u).unwrap(), b.position(*v).unwrap());
+                let mut z = [p[2], q[2]];
+                z.sort_by(f64::total_cmp);
+                (z[0] - low).abs() < 1e-9 && (z[1] - high).abs() < 1e-9
+            })
+            .map(|(e, _)| b.edge_tag(e).id)
+            .unwrap_or_else(|| panic!("an edge from {low} to {high}"))
+    }
+
+    #[test]
+    fn taking_out_the_middle_closes_the_gap() {
+        let mut b = three_slabs();
+        assert_eq!(cells(&b), (16, 28, 16, 3));
+
+        b.remove_sheet(across(&b, 1.0, 2.0))
+            .expect("an interior sheet");
+
+        // Two slabs left, welded: the same shape as two blocks glued.
+        assert_eq!(cells(&b), (12, 20, 11, 2));
+        // And the seam sits half way between where the two faces were.
+        let heights: Vec<f64> = b.nodes().map(|(_, p)| p[2]).collect();
+        assert_eq!(
+            heights.iter().filter(|z| (**z - 1.5).abs() < 1e-9).count(),
+            4
+        );
+        assert_eq!(heights.iter().filter(|z| z.abs() < 1e-9).count(), 4);
+        assert_eq!(
+            heights.iter().filter(|z| (**z - 3.0).abs() < 1e-9).count(),
+            4
+        );
+    }
+
+    #[test]
+    fn taking_out_a_sheet_at_the_surface_just_loses_it() {
+        let mut b = three_slabs();
+        // The bottom slab: one cap is the model's underside, with nothing
+        // behind it to close against.
+        b.remove_sheet(across(&b, 0.0, 1.0))
+            .expect("a sheet at the surface");
+
+        assert_eq!(b.nb_blocks(), 2);
+        let heights: Vec<f64> = b.nodes().map(|(_, p)| p[2]).collect();
+        assert!(
+            heights.iter().all(|z| *z >= 1.0 - 1e-9),
+            "the model should start at z = 1 now: {heights:?}"
+        );
+    }
+
+    #[test]
+    fn taking_out_a_lone_block_empties_the_map() {
+        let mut b = Blocking::new().unwrap();
+        b.add_block(cube_corners([0.0, 0.0, 0.0], 1.0)).unwrap();
+        b.remove_sheet(edge_along(&b, 2, [0.0, 0.0, 0.0])).unwrap();
+        assert_eq!(cells(&b), (0, 0, 0, 0));
+    }
+
+    #[test]
+    fn a_sheet_across_two_glued_blocks_takes_both() {
+        // The sheet runs through both, so both go, and what was above and
+        // below each closes up.
+        let mut b = glued();
+        let along_y = edge_along(&b, 1, [0.0, 0.0, 0.0]);
+        assert_eq!(b.sheet_through(along_y).unwrap().len(), 6);
+        b.remove_sheet(along_y).unwrap();
+        assert_eq!(cells(&b), (0, 0, 0, 0));
+    }
+
+    #[test]
+    fn a_name_no_edge_answers_to_is_refused_and_changes_nothing() {
+        let mut b = three_slabs();
+        let before = cells(&b);
+        assert!(matches!(
+            b.remove_sheet(CellId::from_raw(9999)),
+            Err(BlockingError::NoSuchEdge(_))
+        ));
+        assert_eq!(cells(&b), before);
+    }
+}

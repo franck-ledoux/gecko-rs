@@ -68,7 +68,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     show: "Del",
     key: "delete",
     action: "remove",
-    does: "remove the selected block",
+    does: "remove the selected block, or the lit sheet",
     group: "Edit",
   },
   { show: "⌫", key: "backspace", action: "remove", does: "", group: "Edit" },

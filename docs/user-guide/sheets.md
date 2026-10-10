@@ -81,6 +81,21 @@ s.split_sheet(edge, 0.25)
 s.stats     # {'nodes': 12, 'edges': 20, 'faces': 11, 'blocks': 2}
 ```
 
+## Taking a sheet out
+
+The bin button, or `Del`, with a sheet lit: the whole layer of blocks goes,
+and what was glued to either end of it ends up glued to the other.
+
+The seam lands **half way** between where the two faces were, so the gap
+closes from both sides rather than one being dragged onto the other. A cap
+with nothing behind it is a cap on the model's surface — there is nothing to
+close against, so the model simply loses that layer.
+
+From Python, `s.remove_sheet(edge)`.
+
+A sheet that comes back round onto itself is refused: one of its own blocks
+is on the far side of a cap, and there is no outside to close against.
+
 ## What a cut does to names
 
 Everything the sheet touches is replaced. Each split edge becomes two new

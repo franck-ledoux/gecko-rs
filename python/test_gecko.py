@@ -397,3 +397,58 @@ def test_an_empty_pillow_is_refused():
     s.create_cube([0.0, 0.0, 0.0], 1.0)
     with pytest.raises(ValueError, match="nothing was selected"):
         s.pillow([])
+
+
+def test_removing_a_sheet_closes_the_gap():
+    # Three slabs stacked and glued; take the middle one out.
+    s = gecko.Session()
+    for z in (0.0, 1.0, 2.0):
+        s.create_cube([0.0, 0.0, z], 1.0)
+    for z in (1.0, 2.0):
+        pair = [f["id"] for f in s.faces if abs(f["centre"][2] - z) < 1e-9]
+        assert len(pair) == 2
+        s.glue_faces(*pair)
+    assert s.stats == {"nodes": 16, "edges": 28, "faces": 16, "blocks": 3}
+
+    middle = _edge_between(s, 1.0, 2.0)
+    message = s.remove_sheet(middle)
+    assert "removed" in message
+    assert s.stats == {"nodes": 12, "edges": 20, "faces": 11, "blocks": 2}
+
+    # The seam sits half way between where the two faces were.
+    heights = sorted({round(n["pos"][2], 9) for n in s.nodes})
+    assert heights == [0.0, 1.5, 3.0], heights
+
+
+def _edge_between(session, low, high):
+    """An edge whose sheet runs from one height to the other."""
+    for edge in range(200):
+        sheet = _sheet(session, edge)
+        if not sheet:
+            continue
+        ends = sorted([sheet[0]["from"][2], sheet[0]["to"][2]])
+        if abs(ends[0] - low) < 1e-9 and abs(ends[1] - high) < 1e-9:
+            return edge
+    raise AssertionError(f"no edge from {low} to {high}")
+
+
+def test_removing_a_sheet_at_the_surface_just_loses_it():
+    s = gecko.Session()
+    for z in (0.0, 1.0):
+        s.create_cube([0.0, 0.0, z], 1.0)
+    pair = [f["id"] for f in s.faces if abs(f["centre"][2] - 1.0) < 1e-9]
+    s.glue_faces(*pair)
+
+    s.remove_sheet(_edge_between(s, 0.0, 1.0))
+    # One slab left, where it was: there was nothing below to close against.
+    assert s.stats["blocks"] == 1
+    assert sorted({round(n["pos"][2], 9) for n in s.nodes}) == [1.0, 2.0]
+
+
+def test_removing_a_sheet_by_a_name_no_edge_has():
+    s = gecko.Session()
+    s.create_cube([0.0, 0.0, 0.0], 1.0)
+    before = bytes(s.view_buffer)
+    with pytest.raises(ValueError, match="no edge"):
+        s.remove_sheet(4242)
+    assert bytes(s.view_buffer) == before

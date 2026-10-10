@@ -362,6 +362,7 @@ async function boot() {
     }
     viewer.selectedEdge = edge;
     viewer.showSheet(sheet.edges);
+    $<HTMLButtonElement>("remove").disabled = false;
     say(`sheet through edge ${edge} — ${sheet.edges.length} edges, drag along it to cut`);
   }
 
@@ -390,7 +391,7 @@ async function boot() {
     // No cap: a glue wants two and a pillow wants as many as you like, so
     // the selection just grows and each verb says what it can do with it.
     $<HTMLButtonElement>("glue").disabled = picked.length !== 2;
-    $<HTMLButtonElement>("remove").disabled = picked.length === 0;
+    $<HTMLButtonElement>("remove").disabled = picked.length === 0 && viewer.selectedEdge === null;
     $<HTMLButtonElement>("pillow").disabled = picked.length === 0;
     // The block is named as well as the face: it is what remove and pillow
     // both act on, and a click that changes something unnamed is no good.
@@ -443,16 +444,27 @@ async function boot() {
     await refresh();
   }
 
-  /** The block the first pick landed on. Not the face's block in general —
-   *  once two blocks are glued a face has one on each side — but the pick
-   *  knows which side it hit. */
+  /**
+   * Take away whatever is selected.
+   *
+   * A lit sheet means the whole layer; otherwise the block the first pick
+   * landed on. Not the face's block in general — once two blocks are glued
+   * a face has one on each side — but the pick knows which side it hit.
+   */
   async function removeSelection() {
+    const edge = viewer.selectedEdge;
     const [first] = viewer.selection;
-    if (first === undefined) return;
-    const reply = await kernel.apply({ op: "remove_block", block: first.block });
-    choose(null);
+    const command =
+      edge !== null
+        ? { op: "remove_sheet", edge }
+        : first !== undefined
+          ? { op: "remove_block", block: first.block }
+          : null;
+    if (!command) return;
+    const reply = await kernel.apply(command);
+    clearSelection();
     message = reply.message;
-    // Not framed: taking a block away is no reason to move the camera either.
+    // Not framed: taking something away is no reason to move the camera.
     await refresh();
   }
 
