@@ -90,6 +90,16 @@ pub enum Command {
     Pillow {
         faces: Vec<PickedFace>,
     },
+    /// Grow a new block out of a face, along the normal at its centre.
+    ///
+    /// The face is given as the pair a click gives — the face and the block
+    /// it was picked on — and does not move: the new block is laid against
+    /// it and welded on.
+    ExtrudeFace {
+        face: u32,
+        block: u32,
+        height: f64,
+    },
     /// Read a geometry from a gmsh surface mesh, replacing whatever was
     /// loaded before.
     ///
@@ -242,6 +252,25 @@ impl Session {
                         "pillowed {} face{} — {} nodes, {} edges, {} faces, {} blocks",
                         faces.len(),
                         if faces.len() == 1 { "" } else { "s" },
+                        self.blocking.nb_nodes(),
+                        self.blocking.nb_edges(),
+                        self.blocking.nb_faces(),
+                        self.blocking.nb_blocks(),
+                    ),
+                    view_changed: true,
+                })
+            }
+            Command::ExtrudeFace {
+                face,
+                block,
+                height,
+            } => {
+                let (face, block) = (CellId::from_raw(face), CellId::from_raw(block));
+                let grown = self.blocking.extrude_face(face, block, height)?;
+                Ok(Outcome {
+                    message: format!(
+                        "block {grown:?} grown from face {face:?} by {height:.3} — \
+                         {} nodes, {} edges, {} faces, {} blocks",
                         self.blocking.nb_nodes(),
                         self.blocking.nb_edges(),
                         self.blocking.nb_faces(),

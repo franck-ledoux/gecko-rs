@@ -1405,3 +1405,127 @@ test("framing takes in the geometry as well as the blocks", async ({ page }) => 
   expect(radius).toBeGreaterThan(20);
   expect(errors).toEqual([]);
 });
+
+/**
+ * Where the picked face is on screen, and which way **out of the model** is
+ * on screen from there.
+ *
+ * Read from the face opposite it: on a cube the line between the two face
+ * centres is the normal, so the direction from the far one to the picked one
+ * is outward, whatever angle the camera happens to be at. Guessing instead —
+ * "up the screen is up the model" — is wrong here, because the scene's up is
+ * Y and the model's is Z.
+ */
+const OUTWARD = `
+window.outward = (picked) => {
+  const s = window.__gecko.surface("faces");
+  const centre = (q) => {
+    const at = [0, 0, 0];
+    for (let k = 0; k < 4; k++)
+      for (let axis = 0; axis < 3; axis++) at[axis] += s.positions[(q * 4 + k) * 3 + axis] / 4;
+    return at;
+  };
+  let mine = 0;
+  for (let q = 0; q < s.quads; q++) if (s.faces[q] === picked) mine = q;
+  let far = mine;
+  const gap = (q) => {
+    const [a, b] = [centre(q), centre(mine)];
+    return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+  };
+  for (let q = 0; q < s.quads; q++) if (gap(q) > gap(far)) far = q;
+  const here = window.__gecko.faceScreen(picked);
+  const behind = window.__gecko.faceScreen(s.faces[far]);
+  const length = Math.hypot(here[0] - behind[0], here[1] - behind[1]) || 1;
+  return { at: here, dir: [(here[0] - behind[0]) / length, (here[1] - behind[1]) / length] };
+};`;
+
+declare function outward(face: number): { at: [number, number]; dir: [number, number] };
+
+/** The model's longest side, which an extrusion along a cube's face normal
+ *  lengthens by exactly the height asked for. */
+const SPAN = `
+window.span = () => {
+  const g = window.__gecko;
+  const points = g.names().map((n) => g.nodePosition(n));
+  return Math.max(...[0, 1, 2].map((k) => {
+    const all = points.map((p) => p[k]);
+    return Math.max(...all) - Math.min(...all);
+  }));
+};`;
+
+declare function span(): number;
+
+test("a selected face is dragged out into a new block", async ({ page }) => {
+  const errors = await boot(page);
+  await page.evaluate(OUTWARD);
+  await page.evaluate(SPAN);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // Clicked first, which is what arms the gesture: an unselected face is
+  // how you turn the view, and a face fills the screen. Which face it is
+  // comes from the click rather than from this test's idea of the angle.
+  const box = (await page.locator("#view").boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await page.waitForFunction(() => (window as any).__gecko.selection().length === 1);
+  const picked = (await page.evaluate(() => (window as any).__gecko.selection()[0])) as {
+    face: number;
+  };
+  const out = (await page.evaluate((f) => outward(f), picked.face)) as {
+    at: [number, number];
+    dir: [number, number];
+  };
+
+  const before = (await page.evaluate(() => (window as any).__gecko.camera())) as {
+    alpha: number;
+    beta: number;
+  };
+  await page.mouse.move(box.x + out.at[0], box.y + out.at[1]);
+  await page.mouse.down();
+  for (const step of [20, 50, 90]) {
+    await page.mouse.move(box.x + out.at[0] + out.dir[0] * step, box.y + out.at[1] + out.dir[1] * step);
+  }
+  // The preview says how far before anything is built.
+  const asked = (await page.evaluate(() => (window as any).__gecko.grownBy())) as number;
+  expect(asked).toBeGreaterThan(0.2);
+  await expect(page.locator("#status")).toContainText("let go to build");
+  await page.mouse.up();
+
+  await expect(page.locator("[data-test=blocks]")).toHaveText("2");
+  await expect(page.locator("[data-test=nodes]")).toHaveText("12");
+  // Welded, not merely standing on it: eleven faces, not twelve.
+  await expect(page.locator("[data-test=faces]")).toHaveText("11");
+
+  // And it grew by what the preview promised, along the face's own normal —
+  // which for a cube lengthens exactly one side of the model.
+  expect((await page.evaluate(() => span())) as number).toBeCloseTo(1 + asked, 3);
+
+  // The view did not turn while the face was being dragged.
+  const after = (await page.evaluate(() => (window as any).__gecko.camera())) as {
+    alpha: number;
+    beta: number;
+  };
+  expect(after.alpha).toBeCloseTo(before.alpha, 6);
+  expect(after.beta).toBeCloseTo(before.beta, 6);
+  expect(errors).toEqual([]);
+});
+
+test("pressing a selected face without moving lets go of it", async ({ page }) => {
+  // The gesture has to leave the plain click alone: press and release on
+  // the spot is how a selection is undone, extrusion or no extrusion.
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  const box = (await page.locator("#view").boundingBox())!;
+  const middle: [number, number] = [box.x + box.width / 2, box.y + box.height / 2];
+  await page.mouse.click(...middle);
+  await page.waitForFunction(() => (window as any).__gecko.selection().length === 1);
+
+  await page.mouse.click(...middle);
+  await page.waitForFunction(() => (window as any).__gecko.selection().length === 0);
+  await expect(page.locator("[data-test=blocks]")).toHaveText("1");
+  expect(errors).toEqual([]);
+});

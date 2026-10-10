@@ -314,6 +314,26 @@ async function boot() {
     void selectEdge(edge);
   });
 
+  // Pressing a face that is **already selected** grows a block out of it.
+  // Any other face is how you turn the view, which is why this asks for a
+  // selection first: a face fills the screen, and a drag from one cannot be
+  // both an orbit and an extrusion.
+  canvas.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || aiming !== null || growing) return;
+    if (viewer.axes.pick(e.offsetX, e.offsetY)) return;
+    if (viewer.pickNode(e.offsetX, e.offsetY) !== null) return;
+    if (viewer.pickEdge(e.offsetX, e.offsetY) !== null) return;
+    const surface = viewer.pickSurface(e.offsetX, e.offsetY);
+    const [first] = viewer.selection;
+    if (!surface || !first || first.face !== surface.face || first.block !== surface.block) {
+      return;
+    }
+    if (!viewer.beginExtrusion(surface)) return;
+    growing = true;
+    canvas.setPointerCapture(e.pointerId);
+    viewer.suspendCamera();
+  });
+
   // --- picking faces, and aiming a cut ------------------------------------
   /** How far the pointer may travel and still count as a click. Dragging from
    *  a face is how you orbit the view, and it must not also select it. */
@@ -325,9 +345,15 @@ async function boot() {
   /** The edge a cut is being aimed along, while the pointer is down on it. */
   let aiming: number | null = null;
   let aimingWasSelected = false;
+  /** Whether a face is being pulled out into a block. */
+  let growing = false;
 
   canvas.addEventListener("pointermove", (e) => {
     if (aiming !== null) aimAt(e.offsetX, e.offsetY);
+    if (growing) {
+      const height = viewer.aimExtrusion(e.offsetX, e.offsetY);
+      if (height !== null) say(`extruding ${height.toFixed(2)} — let go to build`);
+    }
   });
 
   canvas.addEventListener("pointerup", (e) => {
@@ -336,6 +362,21 @@ async function boot() {
     pressedAt = undefined;
     const moved = Math.hypot(e.offsetX - x, e.offsetY - y) > CLICK_SLOP;
 
+    if (growing) {
+      canvas.releasePointerCapture(e.pointerId);
+      viewer.resumeCamera();
+      growing = false;
+      const from = viewer.growingFrom;
+      const height = viewer.grownBy;
+      viewer.endExtrusion();
+      // Pressed and let go on the spot is a click, not an extrusion, and
+      // falls through to the selection below — a selected face you click
+      // again is a face you are letting go of.
+      if (moved && from && height !== null) {
+        void extrude(from, height);
+        return;
+      }
+    }
     if (aiming !== null) {
       canvas.releasePointerCapture(e.pointerId);
       viewer.resumeCamera();
@@ -377,6 +418,21 @@ async function boot() {
     );
     viewer.aimCut(t);
     say(`cut at ${t.toFixed(2)} — let go to cut`);
+  }
+
+  async function extrude(from: Pick, height: number) {
+    const reply = await kernel.apply({
+      op: "extrude_face",
+      face: from.face,
+      block: from.block,
+      height,
+    });
+    // That face has a block on each side now, so holding it selected would
+    // leave the panel offering to grow from something that cannot be.
+    clearSelection();
+    message = reply.message;
+    // Not framed: you are looking at the thing you just built.
+    await refresh();
   }
 
   async function cut(edge: number) {
@@ -862,6 +918,7 @@ async function boot() {
       );
     },
     axesVisible: () => viewer.axes.visible,
+    grownBy: () => viewer.grownBy,
     geomCount: (group: GeomGroup) => viewer.geomCount(group),
     geomTags: (group: GeomGroup) => viewer.geomTags(group),
     geomLook: (group: GeomGroup, tag: number) => viewer.geomLook(group, tag),

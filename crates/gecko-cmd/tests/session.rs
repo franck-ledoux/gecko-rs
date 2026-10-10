@@ -935,3 +935,44 @@ mod sheet_removal {
         assert_eq!(build().view_buffer(), build().view_buffer());
     }
 }
+
+#[test]
+fn a_face_is_grown_into_a_block_through_the_door() {
+    let mut s = Session::new().unwrap();
+    s.apply(Command::AddBlock { corners: UNIT_CUBE }).unwrap();
+
+    // The face on top, named the way a script would have to name it.
+    let faces: serde_json::Value = serde_json::from_str(&s.faces_json()).unwrap();
+    let top = faces
+        .as_array()
+        .unwrap()
+        .iter()
+        .max_by(|a, b| {
+            let z = |f: &serde_json::Value| f["centre"][2].as_f64().unwrap();
+            z(a).partial_cmp(&z(b)).unwrap()
+        })
+        .unwrap()
+        .clone();
+
+    let reply = s.apply_json(&format!(
+        r#"{{"op":"extrude_face","face":{},"block":{},"height":2.0}}"#,
+        top["id"].as_u64().unwrap(),
+        top["block"].as_u64().unwrap(),
+    ));
+    assert!(reply.contains(r#""ok":true"#), "{reply}");
+    assert!(reply.contains("grown from face"), "{reply}");
+
+    let stats: serde_json::Value = serde_json::from_str(&s.stats_json()).unwrap();
+    assert_eq!(stats["blocks"], 2);
+    assert_eq!(stats["nodes"], 12);
+    assert_eq!(stats["faces"], 11);
+}
+
+#[test]
+fn a_refused_extrusion_comes_back_as_a_refusal_rather_than_a_panic() {
+    let mut s = Session::new().unwrap();
+    s.apply(Command::AddBlock { corners: UNIT_CUBE }).unwrap();
+    let reply = s.apply_json(r#"{"op":"extrude_face","face":0,"block":0,"height":0}"#);
+    assert!(reply.contains(r#""ok":false"#), "{reply}");
+    assert!(reply.contains("positive distance"), "{reply}");
+}

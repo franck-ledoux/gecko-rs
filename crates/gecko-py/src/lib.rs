@@ -139,6 +139,18 @@ impl PySession {
         self.command(serde_json::json!({ "op": "remove_block", "block": block }))
     }
 
+    /// Grow a new block out of a face, along the normal at its centre.
+    ///
+    /// `face` and `block` are the pair a click gives: a face, and which of
+    /// its blocks it belongs to. The face does not move — the new block is
+    /// laid against it and welded on. A face inside the model is refused;
+    /// it has a block on each side already.
+    fn extrude_face(&self, face: u32, block: u32, height: f64) -> PyResult<String> {
+        self.command(serde_json::json!({
+            "op": "extrude_face", "face": face, "block": block, "height": height,
+        }))
+    }
+
     /// Read a geometry from a gmsh surface mesh.
     ///
     /// MSH 2.2 ASCII, triangles for surfaces, lines for curves and point

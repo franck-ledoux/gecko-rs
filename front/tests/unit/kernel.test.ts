@@ -16,6 +16,7 @@ import { initKernel, WasmKernel } from "../../src/kernel-wasm";
 import {
   CLOSEST_APPROACH,
   HANDLE_PIXELS,
+  heightAlong,
   Viewer,
   worldSizeForPixels,
   ZOOM_PER_NOTCH,
@@ -1599,5 +1600,75 @@ describe("the geometry in the scene", () => {
     viewer.setGeometry(decodeGeometry(await kernel.geometry()));
     viewer.frameAll(true);
     expect(viewer.camera.radius).toBeGreaterThan(1);
+  });
+});
+
+describe("aiming an extrusion", () => {
+  const Z: [number, number, number] = [0, 0, 1];
+  const ORIGIN: [number, number, number] = [0, 0, 0];
+
+  it("reads the height off the point of the axis nearest the ray", () => {
+    // Looking along −y, the ray is a horizontal line at its own height, so
+    // the nearest point of the z axis is at exactly that height.
+    expect(heightAlong([0, 5, 3], [0, -1, 0], ORIGIN, Z)).toBeCloseTo(3);
+    expect(heightAlong([0, 5, 0], [0, -1, 0], ORIGIN, Z)).toBeCloseTo(0);
+    expect(heightAlong([0, 5, -2], [0, -1, 0], ORIGIN, Z)).toBeCloseTo(-2);
+    // Measured from the face, not from the world: the axis starts where the
+    // face is, so the same ray reads lower from a face higher up.
+    expect(heightAlong([0, 5, 3], [0, -1, 0], [0, 0, 1], Z)).toBeCloseTo(2);
+  });
+
+  it("gives up when the ray runs down the extrusion", () => {
+    // Looking straight along it, every distance is as plausible as every
+    // other, and the closed form says so by dividing by nothing.
+    expect(heightAlong([0, 0, 9], [0, 0, -1], ORIGIN, Z)).toBeNull();
+    expect(heightAlong([1, 1, 9], [0, 0, 1], ORIGIN, Z)).toBeNull();
+    // A hair off parallel is still an answer.
+    const slant = Math.hypot(0.01, 1);
+    expect(heightAlong([0, 1, 9], [0, -0.01 / slant, -1 / slant], ORIGIN, Z)).not.toBeNull();
+  });
+});
+
+describe("growing a block out of a face", () => {
+  async function cubeScene() {
+    const kernel = new WasmKernel();
+    await kernel.apply({ op: "add_block", corners: CUBE });
+    const viewer = new Viewer(new NullEngine());
+    viewer.setView(decodeView(await kernel.view()));
+    return { kernel, viewer };
+  }
+
+  it("takes a picked face and nothing else", async () => {
+    const { viewer } = await cubeScene();
+    const pick = viewer.surface("faces")!;
+    const face = { face: pick.faces[0], block: pick.blocks[0] };
+    expect(viewer.beginExtrusion(face)).toBe(true);
+    expect(viewer.growingFrom).toEqual(face);
+    // Nothing is asked for until the pointer moves: a press that has not
+    // moved is a click, and a preview before the first movement would be a
+    // block you have to undo by letting go of a button you already have.
+    expect(viewer.grownBy).toBeNull();
+
+    viewer.endExtrusion();
+    expect(viewer.growingFrom).toBeNull();
+    expect(viewer.beginExtrusion({ face: 999, block: 999 })).toBe(false);
+  });
+
+  it("never asks for a block of no thickness", async () => {
+    // Dragging the wrong way holds the preview at its thinnest rather than
+    // letting it vanish: the kernel refuses a height of nought, and there
+    // would be nothing on screen to tell you why.
+    const { viewer } = await cubeScene();
+    const pick = viewer.surface("faces")!;
+    viewer.beginExtrusion({ face: pick.faces[0], block: pick.blocks[0] });
+    for (const [x, y] of [
+      [10, 10],
+      [400, 300],
+      [0, 0],
+      [511, 255],
+    ]) {
+      const height = viewer.aimExtrusion(x, y);
+      if (height !== null) expect(height).toBeGreaterThan(0);
+    }
   });
 });

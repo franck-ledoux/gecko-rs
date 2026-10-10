@@ -109,3 +109,35 @@ others and a model growing past the edge of the window is no use. For
 everything else there is
 [**Recentre view**](display.md#recentring) — `F` — which brings the whole model
 into view without changing the direction you are looking from.
+
+## Growing a block out of a face
+
+Click a face to select it, then **drag that same face**: a new block grows
+out of it, along the normal at its centre, as far as you pull. Let go and it
+is built, welded to the face it came from.
+
+Selecting first is what arms the gesture, and it is not ceremony. A face
+fills the screen, and dragging anywhere on the model is how the view is
+turned — one drag cannot be both. Every face but the selected one still
+orbits; press and release on the selected one without moving and that is a
+click, which lets go of it as usual.
+
+The face **does not move**. The new block's four near corners are built on
+it and welded to it, so the weld averages each pair of coincident points and
+lands back where it started.
+
+!!! note "Two operations you already have"
+    An extrusion is [`add_block`](../developer-guide/api.md) followed by a
+    glue. Nothing new is cut or sewn, which is the point: the dart surgery
+    in this project is where the bugs have been, and this needed none of it.
+
+    Which of the new block's six faces to weld is known because the block
+    was built here — it is the one its first dart is on. Not the one nearest
+    the old face: for a thin extrusion the far face is just as near, and
+    matching by position is exactly what the sheet removal got wrong.
+
+A face inside the model is refused. It has a block on each side already, and
+nothing left to be glued to.
+
+From Python, `s.extrude_face(face, block, height)`, with the `(face, block)`
+pair `s.faces` reports.

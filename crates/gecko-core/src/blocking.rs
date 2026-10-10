@@ -193,10 +193,12 @@ pub enum BlockingError {
     EmptyPatch,
     #[error("face {0:?} is not a face of block {1:?}")]
     FaceNotOnBlock(CellId, CellId),
-    #[error("face {0:?} is inside the model; only surface faces can be pillowed")]
+    #[error("face {0:?} is inside the model, with a block on each side")]
     NotOnTheSurface(CellId),
     #[error("could not find the face a new layer should be glued along")]
     LostFace,
+    #[error("an extrusion has to go somewhere: {0} is not a positive distance")]
+    BadHeight(f64),
 }
 
 impl From<DartReleaseError> for BlockingError {
@@ -262,6 +264,20 @@ impl Blocking {
     /// closed volume bounded by the model's exterior until something is sewn to
     /// it. Joining blocks is a separate operation, and a later step.
     pub fn add_block(&mut self, corners: [[f64; 3]; 8]) -> Result<CellId, BlockingError> {
+        Ok(self.build_block(corners)?.0)
+    }
+
+    /// The same, and **which dart each face starts at**.
+    ///
+    /// The darts are allocated in one run, [`HEX_FACES`] in order, four to a
+    /// face — so a caller that built the corners itself knows which of the
+    /// six faces is which without going looking for one by where it is. That
+    /// matters: matching a face by position is what the sheet removal got
+    /// wrong, and it was wrong for the same reason it would be wrong here.
+    fn build_block(
+        &mut self,
+        corners: [[f64; 3]; 8],
+    ) -> Result<(CellId, DartIdType), BlockingError> {
         let base = self.map.allocate_used_darts(DARTS_PER_BLOCK);
         let dart = |face: usize, slot: usize| base + (face * 4 + slot) as DartIdType;
 
@@ -316,7 +332,7 @@ impl Blocking {
         }
 
         self.assign_missing_ids();
-        Ok(self.block_tag(self.map.volume_id(base)).id)
+        Ok((self.block_tag(self.map.volume_id(base)).id, base))
     }
 
     /// Hand a name to every cell that does not have one.
@@ -981,6 +997,72 @@ impl Blocking {
                 .write_attribute(block, BlockTag { id: CellId::NONE });
         }
         Ok(())
+    }
+
+    /// Grow a new block out of a face, along the normal at its centre.
+    ///
+    /// The face stays exactly where it is and the new block is laid against
+    /// it: four corners copied, four more `height` away along the outward
+    /// normal, and the two welded together. Which is literally what it does
+    /// — [`add_block`](Self::add_block) then
+    /// [`glue_faces`](Self::glue_faces), two operations that were already
+    /// here and already tested, rather than a third piece of dart surgery to
+    /// get wrong.
+    ///
+    /// The weld moves nothing: the new block's own corners were built *on*
+    /// the old face's, so averaging each pair lands back where it started.
+    ///
+    /// Only a face on the surface can be grown from. One with a block on
+    /// each side already has everything it can be glued to.
+    ///
+    /// Returns the new block.
+    pub fn extrude_face(
+        &mut self,
+        face: CellId,
+        block: CellId,
+        height: f64,
+    ) -> Result<CellId, BlockingError> {
+        // Finite first, because NaN passes `<= 0.0`: every comparison with
+        // it is false.
+        if !height.is_finite() || height <= 0.0 {
+            return Err(BlockingError::BadHeight(height));
+        }
+
+        let sides = self.block_faces();
+        let side = sides
+            .iter()
+            .find(|s| s.face == face && s.block == block)
+            .ok_or(BlockingError::FaceNotOnBlock(face, block))?;
+        if sides.iter().any(|s| s.face == face && s.block != block) {
+            return Err(BlockingError::NotOnTheSurface(face));
+        }
+
+        let base = side.nodes.map(|n| self.position(n).unwrap_or([0.0; 3]));
+        let normal = quad_normal(base);
+        let length = (normal[0].powi(2) + normal[1].powi(2) + normal[2].powi(2)).sqrt();
+        // A face with no area has no normal to grow along, and nothing
+        // sensible to do about it.
+        if length < 1e-12 {
+            return Err(BlockingError::LostFace);
+        }
+        let step = normal.map(|x| x * height / length);
+
+        // `block_faces` winds a face outward from its own block, so the four
+        // corners in that order are the new block's **first** face — the one
+        // `HEX_FACES[0]` describes, whose own outward normal points back the
+        // way we came. The other four are those, moved along.
+        let mut corners = [[0.0; 3]; 8];
+        corners[..4].copy_from_slice(&base);
+        for k in 0..4 {
+            corners[4 + k] = [0, 1, 2].map(|axis| base[k][axis] + step[axis]);
+        }
+
+        let (grown, first) = self.build_block(corners)?;
+        // Which face to weld is known because we built the block: it is the
+        // one the first dart is on. Nothing is searched for by position.
+        let against = self.face_tag(self.map.face_id(first)).id;
+        self.glue_faces(face, against)?;
+        Ok(grown)
     }
 
     /// Insert a layer of hexahedra along a patch of faces.

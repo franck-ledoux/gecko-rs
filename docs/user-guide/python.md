@@ -83,6 +83,18 @@ s.glue_faces(seam[0]["id"], seam[1]["id"])
 s.stats    # {'nodes': 12, 'edges': 20, 'faces': 11, 'blocks': 2}
 ```
 
+#### `extrude_face(face, block, height)`
+
+Grow a new block out of a face, along the normal at its centre. The face does
+not move; the new block is laid against it and welded on. A face inside the
+model is refused.
+
+```python
+>>> top = max(s.faces, key=lambda f: f["centre"][2])
+>>> s.extrude_face(top["id"], top["block"], 2.0)
+'block CellId(1) grown from face CellId(5) by 2.000 — 12 nodes, 20 edges, …'
+```
+
 #### `remove_block(block)`
 
 Take one block away. Whatever it was glued to keeps its own cells: the shared

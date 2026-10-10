@@ -132,6 +132,57 @@ export const CLOSEST_APPROACH = 0.35;
 export const SURFACE_DEPTH_BIAS = { factor: 1, units: 4 };
 
 /**
+ * The shortest extrusion the pointer can ask for, as a share of the face it
+ * grows from.
+ *
+ * Never nought: a block of no thickness is not a block, and the kernel
+ * refuses one. Dragging the wrong way should hold the preview at its
+ * thinnest rather than make it vanish and leave nothing to let go of.
+ */
+export const THINNEST = 0.02;
+
+/**
+ * How far along an axis the pointer is aiming.
+ *
+ * The pointer gives a *ray* and the extrusion runs along a *line*; the
+ * answer is the point of the line closest to that ray, which is the usual
+ * closest-approach-of-two-lines and has a closed form. `towards` and
+ * `normal` are unit vectors, so the determinant below is `1 - cos²` of the
+ * angle between them.
+ *
+ * Nothing when the two are near enough parallel — looking straight down the
+ * extrusion, where every distance is as plausible as every other and the
+ * arithmetic says so by dividing by nothing.
+ */
+export function heightAlong(
+  origin: readonly [number, number, number],
+  towards: readonly [number, number, number],
+  centre: readonly [number, number, number],
+  normal: readonly [number, number, number],
+): number | null {
+  const dot = (a: readonly number[], b: readonly number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const gap = [0, 1, 2].map((k) => origin[k] - centre[k]);
+  const slant = dot(towards, normal);
+  const denominator = 1 - slant * slant;
+  if (Math.abs(denominator) < 1e-6) return null;
+  return (dot(normal, gap) - slant * dot(towards, gap)) / denominator;
+}
+
+/** Newell's normal of a quadrangle — the same arithmetic as the kernel's
+ *  `quad_normal`, so the two agree about which way is out. */
+function quadNormal(corners: readonly Vector3[]): Vector3 {
+  const n = new Vector3(0, 0, 0);
+  for (let k = 0; k < 4; k++) {
+    const a = corners[k];
+    const b = corners[(k + 1) % 4];
+    n.x += (a.y - b.y) * (a.z + b.z);
+    n.y += (a.z - b.z) * (a.x + b.x);
+    n.z += (a.x - b.x) * (a.y + b.y);
+  }
+  return n;
+}
+
+/**
  * The world size that covers `pixels` on screen at this distance.
  *
  * Sizing handles in world units is wrong in both directions: tied to the
@@ -222,6 +273,11 @@ export class Viewer {
     faces: [],
     blocks: [],
   };
+  /** The face being grown, while the pointer is down on it: where it is,
+   *  which way is out, and how far the pointer has asked for so far. */
+  private growing?: { pick: Pick; centre: Vector3; normal: Vector3; corners: Vector3[] };
+  private grownWire?: Mesh;
+  private grown: number | null = null;
   /** The geometry, if one has been loaded. Read-only here: nothing in the
    *  viewer edits it, and no operation moves it. */
   private geometry?: GeometryView;
@@ -481,6 +537,108 @@ export class Viewer {
     mesh.isPickable = true;
     mesh.layerMask = MAIN_LAYER;
     return mesh;
+  }
+
+  /**
+   * Begin growing a block out of a face.
+   *
+   * Reads the face's own corners from the view — not from the drawn
+   * surface, whose corners have been pulled about by the shrink slider.
+   * What is grown has to be the face the kernel holds, not the picture of
+   * it.
+   */
+  beginExtrusion(pick: Pick): boolean {
+    const quad = this.quadOf(pick);
+    if (quad === null || !this.view) return false;
+    const corners = [0, 1, 2, 3].map((k) => this.point(this.view!.quads[quad * 4 + k]));
+    const normal = quadNormal(corners);
+    if (normal.length() < 1e-12) return false;
+    const centre = corners
+      .reduce((at, p) => at.addInPlace(p), new Vector3(0, 0, 0))
+      .scale(0.25);
+    this.growing = { pick, centre, normal: normal.normalize(), corners };
+    this.grown = null;
+    this.rebuildGrown();
+    return true;
+  }
+
+  /** How far the pointer is asking for, and the preview to match. */
+  aimExtrusion(x: number, y: number): number | null {
+    if (!this.growing) return null;
+    const { centre, normal, corners } = this.growing;
+    const ray = this.scene.createPickingRay(x, y, Matrix.Identity(), this.camera);
+    const towards = ray.direction.normalizeToNew();
+    const asked = heightAlong(
+      [ray.origin.x, ray.origin.y, ray.origin.z],
+      [towards.x, towards.y, towards.z],
+      [centre.x, centre.y, centre.z],
+      [normal.x, normal.y, normal.z],
+    );
+    // Looking straight down the extrusion: hold what we had rather than
+    // jump to whatever a near-singular division produced.
+    if (asked === null) return this.grown;
+    const across = Vector3.Distance(corners[0], corners[2]);
+    this.grown = Math.max(asked, across * THINNEST);
+    this.rebuildGrown();
+    return this.grown;
+  }
+
+  /** The height the pointer last asked for, or nothing if none is being
+   *  grown. */
+  get grownBy(): number | null {
+    return this.grown;
+  }
+
+  /** What is being grown, as the pair the kernel wants. */
+  get growingFrom(): Pick | null {
+    return this.growing ? { ...this.growing.pick } : null;
+  }
+
+  endExtrusion() {
+    this.growing = undefined;
+    this.grown = null;
+    this.rebuildGrown();
+  }
+
+  /**
+   * The preview: the twelve edges of the block that would be built.
+   *
+   * A wireframe rather than a solid, for the same reason the aimed cut is
+   * drawn as a line — what you are judging is where it reaches, and a
+   * translucent box over a translucent model is two things to see through.
+   */
+  private rebuildGrown() {
+    this.grownWire?.dispose(false, true);
+    this.grownWire = undefined;
+    if (!this.growing || this.grown === null) return;
+    const { normal, corners } = this.growing;
+    const far = corners.map((p) => p.add(normal.scale(this.grown!)));
+    const points: number[][] = [];
+    for (let k = 0; k < 4; k++) {
+      const next = (k + 1) % 4;
+      points.push([...corners[k].asArray(), ...far[k].asArray()]);
+      points.push([...far[k].asArray(), ...far[next].asArray()]);
+    }
+    this.grownWire = CreateGreasedLine(
+      "grown",
+      { points },
+      { color: Color3.FromHexString(MATE), ...this.ribbon(1) },
+      this.scene,
+    );
+    this.grownWire.isPickable = false;
+    this.grownWire.layerMask = MAIN_LAYER;
+    this.grownWire.renderingGroupId = 2;
+  }
+
+  /** Which quadrangle of the view a pick names. */
+  private quadOf(pick: Pick): number | null {
+    if (!this.view) return null;
+    for (let q = 0; q < this.view.quadFaces.length; q++) {
+      if (this.view.quadFaces[q] === pick.face && this.view.quadBlocks[q] === pick.block) {
+        return q;
+      }
+    }
+    return null;
   }
 
   /**

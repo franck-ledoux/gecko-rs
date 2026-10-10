@@ -559,3 +559,34 @@ def test_the_geometry_buffer_is_the_bytes_the_browser_decodes(tmp_path):
     assert buf[:4] == b"GKG1"
     # 4 nodes, 2 triangles, 4 segments, 4 corners — see GeometryBuffer.
     assert len(buf) == 48 + 4 * 12 + 2 * 16 + 4 * 12 + 4 * 8
+
+
+def test_a_face_is_grown_into_a_block():
+    s = gecko.Session()
+    s.create_cube([0.0, 0.0, 0.0], 1.0)
+    top = max(s.faces, key=lambda f: f["centre"][2])
+
+    message = s.extrude_face(top["id"], top["block"], 2.0)
+    assert "grown from face" in message
+    # Welded, not standing on it: eleven faces rather than twelve.
+    assert cells(s) == {"nodes": 12, "edges": 20, "faces": 11, "blocks": 2}
+    assert max(n["pos"][2] for n in s.nodes) == pytest.approx(3.0)
+    # And the face it grew from has not moved.
+    assert sorted({round(n["pos"][2], 9) for n in s.nodes}) == [0.0, 1.0, 3.0]
+
+
+def test_an_extrusion_that_cannot_happen_says_why():
+    s = gecko.Session()
+    s.create_cube([0.0, 0.0, 0.0], 1.0)
+    top = max(s.faces, key=lambda f: f["centre"][2])
+    with pytest.raises(ValueError, match="positive distance"):
+        s.extrude_face(top["id"], top["block"], 0.0)
+
+    s.extrude_face(top["id"], top["block"], 1.0)
+    inside = max(
+        (f for f in s.faces if abs(f["centre"][2] - 1.0) < 1e-9),
+        key=lambda f: f["block"],
+    )
+    with pytest.raises(ValueError, match="inside the model"):
+        s.extrude_face(inside["id"], inside["block"], 1.0)
+    assert cells(s)["blocks"] == 2
