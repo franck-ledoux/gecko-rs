@@ -152,7 +152,12 @@ async function boot() {
           (group === "faces"
             ? `<label class="check"><input type="checkbox" data-test="faces-internal"` +
               `${prefs.faces.internal ? " checked" : ""} /> internal faces</label>`
-            : "")
+            : "") +
+          // Closed, and it matters: an unclosed fieldset is not a parse
+          // error, it is a fieldset that swallows everything after it. The
+          // three boxes came out nested one inside the next, which read as
+          // though edges were part of blocks were part of faces.
+          `</fieldset>`
         );
       }).join("") +
       `<fieldset class="layer"><legend>Edges</legend>` +

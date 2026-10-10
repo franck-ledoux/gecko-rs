@@ -1665,3 +1665,24 @@ test("a box that cannot be built says why and builds nothing", async ({ page }) 
   await expect(page.locator("[data-test=blocks]")).toHaveText("0");
   expect(errors).toEqual([]);
 });
+
+test("each group of cells is its own box, not nested inside the last", async ({ page }) => {
+  // An unclosed `<fieldset>` is not a parse error — it is a fieldset that
+  // swallows whatever comes after it. The three boxes came out one inside
+  // the next, which reads as though edges were part of blocks were part of
+  // faces, and they are nothing of the sort.
+  const errors = await boot(page);
+  await openDrawer(page);
+
+  await expect(page.locator("#layers > fieldset")).toHaveCount(3);
+  expect(await page.locator("#layers fieldset fieldset").count()).toBe(0);
+  await expect(page.locator("#geometry > fieldset")).toHaveCount(3);
+  expect(await page.locator("#geometry fieldset fieldset").count()).toBe(0);
+
+  // Side by side, so they all start at the same place on screen.
+  const lefts = await page
+    .locator("#layers > fieldset")
+    .evaluateAll((all) => all.map((f) => f.getBoundingClientRect().left));
+  expect(new Set(lefts).size).toBe(1);
+  expect(errors).toEqual([]);
+});
