@@ -175,6 +175,13 @@ export function heightAlong(
  *  volume, little enough to see the model through. */
 export const GROWN_ALPHA = 0.3;
 
+/** Which group of the geometry a classification's dimension names. */
+const GEOM_GROUPS_BY_DIM: Record<number, GeomGroup | undefined> = {
+  0: "corners",
+  1: "curves",
+  2: "surfaces",
+};
+
 /**
  * The six quadrangles of the preview box, as 24 vertices.
  *
@@ -347,6 +354,10 @@ export class Viewer {
   /** The geometric surfaces picked, by gmsh tag, in the order they were
    *  picked. View state, like the face selection. */
   private pickedSurfaces: number[] = [];
+  /** The node picked, by the kernel's name for it. One, not a list: what
+   *  you do with a picked node — freeze it, take it off the model — is one
+   *  node's business. */
+  private pickedNode: number | null = null;
   /** The face being grown, while the pointer is down on it: where it is,
    *  which way is out, and how far the pointer has asked for so far. */
   private growing?: { pick: Pick; centre: Vector3; normal: Vector3; corners: Vector3[] };
@@ -448,10 +459,7 @@ export class Viewer {
     this.prefs = structuredClone(prefs);
     const theme = this.prefs.theme;
     this.scene.clearColor = Color3.FromHexString(theme.background).toColor4(1);
-    const nodes = Color3.FromHexString(theme.nodes);
-    for (const mesh of this.nodes) {
-      (mesh.material as StandardMaterial).emissiveColor = nodes;
-    }
+    this.paintNodes();
     if (this.wire) this.wire.color = Color3.FromHexString(theme.edges);
     this.rebuildEdges();
     this.rebuildHighlight();
@@ -852,9 +860,42 @@ export class Viewer {
     if (group === "surfaces" && this.pickedSurfaces.includes(tag)) {
       return Color3.FromHexString(ANCHOR);
     }
+    return this.entityColour(group, tag);
+  }
+
+  /** What a geometric entity is drawn in: one colour for its group, or one
+   *  per entity, as that group's own setting says. */
+  private entityColour(group: GeomGroup, tag: number): Color3 {
     const layer: GeomLayer = this.prefs[group];
     return Color3.FromHexString(
       layer.colouring === "id" ? colourForId(tag, FAMILY[group]) : this.prefs.theme[group],
+    );
+  }
+
+  /**
+   * The colour of a cell of the **blocking**, by what it is classified on.
+   *
+   * It wears the colour of the entity it follows, under that entity group's
+   * own setting — so with "by id" a node on curve 12 comes out exactly the
+   * colour of curve 12, and the pairing is readable at a glance rather than
+   * by clicking things. Unclassified, it keeps the blocking's own colour.
+   */
+  private classColour(dim: number, tag: number, free: string): Color3 {
+    const group = GEOM_GROUPS_BY_DIM[dim];
+    return group ? this.entityColour(group, tag) : Color3.FromHexString(free);
+  }
+
+  /** The colour of one node handle: picked, frozen, classified, or plain —
+   *  in that order, each being more urgent than the next. */
+  private nodeColour(index: number): Color3 {
+    if (this.view && this.view.names[index] === this.pickedNode) {
+      return Color3.FromHexString(ANCHOR);
+    }
+    if (this.view?.nodeFrozen[index]) return Color3.FromHexString(this.prefs.theme.frozen);
+    return this.classColour(
+      this.view?.nodeClassDim[index] ?? -1,
+      this.view?.nodeClassTag[index] ?? 0,
+      this.prefs.theme.nodes,
     );
   }
 
@@ -964,6 +1005,7 @@ export class Viewer {
       return;
     }
     const lines = this.segments();
+    const colors = this.edgeColours();
     const reusable =
       this.wire && (this.wire.getIndices()?.length ?? 0) === lines.length * 2
         ? this.wire
@@ -971,10 +1013,13 @@ export class Viewer {
     if (this.wire && !reusable) this.wire.dispose();
     this.wire = CreateLineSystem(
       "edges",
-      { lines, updatable: true, instance: reusable },
+      { lines, colors, updatable: true, instance: reusable },
       this.scene,
     );
-    this.wire.color = Color3.FromHexString(this.prefs.theme.edges);
+    // A colour per vertex, because an edge wears what it is classified on
+    // and the wireframe is one mesh. Reusing the instance only rewrites
+    // the positions, so the colours are written here either way.
+    this.wire.updateVerticesData(VertexBuffer.ColorKind, colors.flat().flatMap((c) => c.asArray()));
     // Pickable, because an edge is what a sheet is named by. The handles
     // still win: the scene's pointer predicates only ever see those, and
     // this is reached by `pickEdge` on a click that missed one.
@@ -1074,7 +1119,7 @@ export class Viewer {
       // next edit reorders the view.
       s.metadata = { index: n, name: view.names[n] };
       const m = new StandardMaterial(`nodeMat${n}`, this.scene);
-      m.emissiveColor = Color3.FromHexString(this.prefs.theme.nodes);
+      m.emissiveColor = this.nodeColour(n);
       m.disableLighting = true;
       s.material = m;
       s.layerMask = MAIN_LAYER;
@@ -1103,10 +1148,22 @@ export class Viewer {
     // the node lands wherever the easing had got to rather than where you
     // pointed — and placing a vertex is exactly the case where that matters.
     drag.dragDeltaRatio = 1;
+    // A frozen node is not draggable at all. Letting it be dragged and
+    // having the kernel refuse would show it moving and then snapping
+    // back, which looks like a bug rather than like a locked node.
+    drag.enabled = this.view?.nodeFrozen[index] !== 1;
     sphere.addBehavior(drag);
+    let from = sphere.position.clone();
+    drag.onDragStartObservable.add(() => {
+      from = sphere.position.clone();
+    });
     drag.onDragObservable.add(() => this.preview(index, sphere.position));
     drag.onDragEndObservable.add(() => {
       const p = sphere.position;
+      // A press and release on the spot is a click, not a move. Without
+      // this it is a command all the same — and now a command that would
+      // pin the node to whatever it happens to be near.
+      if (Vector3.Distance(from, p) < 1e-9) return;
       const name = sphere.metadata.name as number;
       const to: [number, number, number] = [
         p.x + this.centre[0],
@@ -1135,6 +1192,27 @@ export class Viewer {
     return new Vector3(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]);
   }
 
+  /**
+   * A colour per end of every edge.
+   *
+   * Classified, an edge wears the colour of the curve or surface it
+   * follows; unclassified, the wireframe's own. Both ends the same: an
+   * edge is on one entity or none, and a gradient would suggest otherwise.
+   */
+  private edgeColours(): Color4[][] {
+    const plain = this.prefs.theme.edges;
+    const out: Color4[][] = [];
+    for (let e = 0; e < (this.view?.edgeNames.length ?? 0); e++) {
+      const colour = this.classColour(
+        this.view!.edgeClassDim[e],
+        this.view!.edgeClassTag[e],
+        plain,
+      ).toColor4(1);
+      out.push([colour, colour]);
+    }
+    return out;
+  }
+
   private segments(): Vector3[][] {
     const flat = edgeSegments(this.view!, this.prefs.edges.shrink);
     const out: Vector3[][] = [];
@@ -1145,6 +1223,36 @@ export class Viewer {
       ]);
     }
     return out;
+  }
+
+  /** Give every handle the colour its node has earned. */
+  private paintNodes() {
+    this.nodes.forEach((mesh, n) => {
+      (mesh.material as StandardMaterial).emissiveColor = this.nodeColour(n);
+    });
+  }
+
+  /** The node picked, by the kernel's name, or nothing. */
+  get selectedNode(): number | null {
+    return this.pickedNode;
+  }
+
+  selectNode(name: number | null) {
+    this.pickedNode = name;
+    this.paintNodes();
+  }
+
+  /** What a node is classified on, and whether it may move — for the
+   *  readout and for the keys that act on a picked node. */
+  nodeState(name: number): { on: { dim: number; tag: number } | null; frozen: boolean } | null {
+    if (!this.view) return null;
+    const at = this.view.names.indexOf(name);
+    if (at < 0) return null;
+    const dim = this.view.nodeClassDim[at];
+    return {
+      on: dim < 0 ? null : { dim, tag: this.view.nodeClassTag[at] },
+      frozen: this.view.nodeFrozen[at] === 1,
+    };
   }
 
   /** Screen coordinates -> the kernel's name for the node under them. */

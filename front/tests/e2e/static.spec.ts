@@ -193,8 +193,8 @@ test("colours can be changed, and are remembered", async ({ page }) => {
 
   // The panel is generated from the theme's keys, so there is one input per
   // colour and no markup to keep in step: background, nodes, edges, faces,
-  // blocks, and the geometry's corners, curves and surfaces.
-  await expect(page.locator("#swatches input[type=color]")).toHaveCount(8);
+  // blocks, the geometry's corners, curves and surfaces, and frozen.
+  await expect(page.locator("#swatches input[type=color]")).toHaveCount(9);
   expect(await page.evaluate(() => (window as any).__gecko.theme())).toMatchObject({
     background: "#15171b",
   });
@@ -1687,5 +1687,138 @@ test("each group of cells is its own box, not nested inside the last", async ({ 
     .locator("#layers > fieldset")
     .evaluateAll((all) => all.map((f) => f.getBoundingClientRect().left));
   expect(new Set(lefts).size).toBe(1);
+  expect(errors).toEqual([]);
+});
+
+/** The unit cube's boundary, every entity of it named: eight corners
+ *  (101..108), twelve curves (201..212), six surfaces (1..6). */
+const BOX_MSH = `$MeshFormat
+2.2 0 8
+$EndMeshFormat
+$Nodes
+8
+1 0 0 0
+2 1 0 0
+3 1 1 0
+4 0 1 0
+5 0 0 1
+6 1 0 1
+7 1 1 1
+8 0 1 1
+$EndNodes
+$Elements
+32
+1 15 2 0 101 1
+2 15 2 0 102 2
+3 15 2 0 103 3
+4 15 2 0 104 4
+5 15 2 0 105 5
+6 15 2 0 106 6
+7 15 2 0 107 7
+8 15 2 0 108 8
+9 1 2 0 201 1 2
+10 1 2 0 202 2 3
+11 1 2 0 203 3 4
+12 1 2 0 204 4 1
+13 1 2 0 205 5 6
+14 1 2 0 206 6 7
+15 1 2 0 207 7 8
+16 1 2 0 208 8 5
+17 1 2 0 209 1 5
+18 1 2 0 210 2 6
+19 1 2 0 211 3 7
+20 1 2 0 212 4 8
+21 2 2 0 1 1 2 3
+22 2 2 0 1 1 3 4
+23 2 2 0 2 5 6 7
+24 2 2 0 2 5 7 8
+25 2 2 0 3 1 2 6
+26 2 2 0 3 1 6 5
+27 2 2 0 4 2 3 7
+28 2 2 0 4 2 7 6
+29 2 2 0 5 3 4 8
+30 2 2 0 5 3 8 7
+31 2 2 0 6 4 1 5
+32 2 2 0 6 4 5 8
+$EndElements
+`;
+
+async function boxedAndPinned(page: import("@playwright/test").Page) {
+  await page.locator("#msh").setInputFiles({
+    name: "box.msh",
+    mimeType: "text/plain",
+    buffer: Buffer.from(BOX_MSH),
+  });
+  await expect(page.locator("[data-test=geom-surfaces]")).toHaveText("6");
+  // A box resting exactly on it, so every corner is already where it
+  // belongs and the tolerance has nothing to forgive.
+  await page.evaluate(() =>
+    (window as any).__gecko.apply({ op: "box_geometry", surfaces: [], margin: 0 }),
+  );
+  await page.evaluate(() => (window as any).__gecko.refresh());
+  await page.evaluate(() => (window as any).__gecko.settled());
+}
+
+test("the blocking is put on the geometry and wears what it follows", async ({ page }) => {
+  const errors = await boot(page);
+  await boxedAndPinned(page);
+  await expect(page.locator("[data-test=pinned]")).toHaveText("0");
+
+  await page.keyboard.press("k");
+  await expect(page.locator("#status")).toContainText("8 nodes and 12 edges");
+  await expect(page.locator("[data-test=pinned]")).toHaveText("8");
+
+  // Every corner of the block is on a corner of the model, and wears its
+  // colour rather than the wireframe's.
+  const state = (await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    return g.names().map((n: number) => g.nodeState(n));
+  })) as { on: { dim: number; tag: number } | null; frozen: boolean }[];
+  expect(state.every((s) => s.on?.dim === 0)).toBe(true);
+  expect(state.every((s) => !s.frozen)).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test("a node is picked, locked, and taken off the model", async ({ page }) => {
+  const errors = await boot(page);
+  await boxedAndPinned(page);
+  await page.keyboard.press("k");
+  await expect(page.locator("[data-test=pinned]")).toHaveText("8");
+
+  // There was no such thing as a picked node until freezing needed one:
+  // a press and release on a handle, which the drag behaviour has already
+  // decided was not a drag.
+  const name = (await page.evaluate(() => (window as any).__gecko.names()[0])) as number;
+  const at = (await page.evaluate(
+    (n) => (window as any).__gecko.nodeScreen(n),
+    name,
+  )) as [number, number];
+  const box = (await page.locator("#view").boundingBox())!;
+  await page.mouse.click(box.x + at[0], box.y + at[1]);
+  await page.waitForFunction((n) => (window as any).__gecko.selectedNode() === n, name);
+  await expect(page.locator("#status")).toContainText("on corner");
+
+  // Locked, and it stays locked until it is let go.
+  await page.keyboard.press("l");
+  await expect(page.locator("#status")).toContainText("frozen");
+  await page.waitForFunction((n) => (window as any).__gecko.nodeState(n).frozen, name);
+  await page.keyboard.press("l");
+  await page.waitForFunction((n) => !(window as any).__gecko.nodeState(n).frozen, name);
+
+  // And off the model, which is something you say rather than something
+  // that happens to you by dragging.
+  await page.keyboard.press("u");
+  await page.waitForFunction((n) => (window as any).__gecko.nodeState(n).on === null, name);
+  await expect(page.locator("[data-test=pinned]")).toHaveText("7");
+  expect(errors).toEqual([]);
+});
+
+test("the classify button waits for a geometry", async ({ page }) => {
+  const errors = await boot(page);
+  await expect(page.locator("#classify")).toBeDisabled();
+  await boxedAndPinned(page);
+  await expect(page.locator("#classify")).toBeEnabled();
+  await page.locator("#classify").click();
+  await expect(page.locator("[data-test=pinned]")).toHaveText("8");
   expect(errors).toEqual([]);
 });

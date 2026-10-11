@@ -9,6 +9,37 @@ Once a cell is classified, it stays there. Moving a node classified on a
 surface slides it over that surface; moving one classified on a corner does
 not move it at all, its entity being a single point.
 
+## With the mouse
+
+|                           |                                          |
+| ------------------------- | ---------------------------------------- |
+| `K`, or the magnet button | put the whole blocking on the geometry   |
+| click a node              | pick it — the readout says what it is on |
+| `L`                       | lock the picked node, or let it go       |
+| `U`                       | take the picked node off the geometry    |
+
+Picking a node is new: until now a node was something you dragged and
+nothing else. Locking and unclassifying are things you *say* about a node,
+so one has to be nameable without being moved. A press and release on a
+handle without moving it is a pick; anything further is still a drag.
+
+### Reading it off the screen
+
+A classified node or edge **wears the colour of what it follows**, under
+that entity group's own setting in the drawer. With surfaces coloured *by
+id*, a node on surface 12 comes out exactly the colour of surface 12 — the
+pairing reads at a glance rather than by clicking things. Unclassified, a
+cell keeps the blocking's own colour.
+
+A **frozen** node is grey, whatever it is classified on: it is not a kind of
+classification, it is a cell out of play, and that is the more urgent thing
+to see. It cannot be dragged at all — letting it be dragged and having the
+kernel refuse would show it moving and snapping back, which reads as a bug
+rather than as a locked node.
+
+The readout counts how many nodes are on the model, which is the thing you
+are working towards.
+
 ## Putting the blocking on the model
 
 The usual order is: [box the geometry](geometry.md#a-box-round-it), pull the

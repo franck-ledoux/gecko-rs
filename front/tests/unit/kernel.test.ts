@@ -1734,3 +1734,109 @@ describe("growing a block out of a face", () => {
     }
   });
 });
+
+describe("wearing what it follows", () => {
+  async function pinned() {
+    const kernel = new WasmKernel();
+    await kernel.apply({ op: "load_geometry", msh: SQUARE_MSH, name: "square.msh" });
+    await kernel.apply({ op: "add_block", corners: CUBE });
+    const viewer = new Viewer(new NullEngine());
+    viewer.setView(decodeView(await kernel.view()));
+    viewer.setGeometry(decodeGeometry(await kernel.geometry()));
+    return { kernel, viewer };
+  }
+
+  const handle = (viewer: Viewer, at: number) =>
+    (viewer.scene.getMeshByName(`node${at}`)!.material as StandardMaterial).emissiveColor
+      .toHexString()
+      .toLowerCase();
+
+  async function redraw(kernel: WasmKernel, viewer: Viewer) {
+    viewer.setView(decodeView(await kernel.view()));
+  }
+
+  it("gives a classified node the colour of what it is classified on", async () => {
+    const { kernel, viewer } = await pinned();
+    const names = viewer.names();
+    expect(handle(viewer, 0)).toBe(DEFAULTS.theme.nodes.toLowerCase());
+
+    // On a curve, under that group's own setting: one colour for all
+    // curves by default, and a colour per curve when asked.
+    await kernel.apply({ op: "classify_node", node: names[0], on: { dim: 1, tag: 11 } });
+    await redraw(kernel, viewer);
+    expect(handle(viewer, 0)).toBe(DEFAULTS.theme.curves.toLowerCase());
+
+    const prefs = structuredClone(DEFAULTS);
+    prefs.curves.colouring = "id";
+    viewer.applyPrefs(prefs);
+    expect(handle(viewer, 0)).toBe(colourForId(11, FAMILY.curves).toLowerCase());
+    // Exactly the colour curve 11 itself is drawn in, which is the whole
+    // point: the pairing reads at a glance rather than by clicking.
+    expect(handle(viewer, 0)).toBe(viewer.geomLook("curves", 11)!.colour);
+
+    // And the nodes that were not classified are untouched.
+    expect(handle(viewer, 1)).toBe(DEFAULTS.theme.nodes.toLowerCase());
+  });
+
+  it("gives a frozen node a colour of its own, whatever it is on", async () => {
+    // A frozen node is not a kind of classification: it is a cell out of
+    // play, and that is the more urgent thing to see.
+    const { kernel, viewer } = await pinned();
+    const names = viewer.names();
+    await kernel.apply({ op: "classify_node", node: names[0], on: { dim: 2, tag: 1 } });
+    await kernel.apply({ op: "freeze_node", node: names[0], frozen: true });
+    await redraw(kernel, viewer);
+    expect(handle(viewer, 0)).toBe(DEFAULTS.theme.frozen.toLowerCase());
+    expect(viewer.nodeState(names[0])).toEqual({ on: { dim: 2, tag: 1 }, frozen: true });
+  });
+
+  it("will not let a frozen node be dragged at all", async () => {
+    // The kernel refuses the move either way; without this the handle
+    // would visibly go and come back, which reads as a bug rather than as
+    // a locked node.
+    const { kernel, viewer } = await pinned();
+    const names = viewer.names();
+    const dragging = () =>
+      viewer.scene
+        .getMeshByName("node0")!
+        .behaviors.filter((b) => b.name === "PointerDrag")
+        .map((b) => (b as unknown as { enabled: boolean }).enabled);
+
+    expect(dragging()).toEqual([true]);
+    await kernel.apply({ op: "freeze_node", node: names[0], frozen: true });
+    await redraw(kernel, viewer);
+    expect(dragging()).toEqual([false]);
+  });
+
+  it("marks the picked node, over everything else it might be", async () => {
+    const { kernel, viewer } = await pinned();
+    const names = viewer.names();
+    await kernel.apply({ op: "freeze_node", node: names[0], frozen: true });
+    await redraw(kernel, viewer);
+
+    viewer.selectNode(names[0]);
+    expect(viewer.selectedNode).toBe(names[0]);
+    expect(handle(viewer, 0)).toBe("#ffcc33");
+    viewer.selectNode(null);
+    expect(handle(viewer, 0)).toBe(DEFAULTS.theme.frozen.toLowerCase());
+  });
+
+  it("colours the wireframe edge by edge", async () => {
+    // One mesh for the lot, so this is a colour per vertex rather than a
+    // colour per mesh — and both ends of an edge the same, an edge being
+    // on one entity or none.
+    const { kernel, viewer } = await pinned();
+    const names = viewer.names();
+    const colours = () =>
+      Array.from(viewer.scene.getMeshByName("edges")!.getVerticesData("color") ?? []);
+    const plain = colours();
+
+    // Two corners of the cube on one curve puts every edge between them
+    // on that curve.
+    for (const node of [names[0], names[1]]) {
+      await kernel.apply({ op: "classify_node", node, on: { dim: 1, tag: 11 } });
+    }
+    await redraw(kernel, viewer);
+    expect(colours()).not.toEqual(plain);
+  });
+});

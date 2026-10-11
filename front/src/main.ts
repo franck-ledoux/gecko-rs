@@ -413,9 +413,14 @@ async function boot() {
       return;
     }
     // Smallest target first: a handle, then a line, then the surface behind
-    // them. Each is the thing you had to aim at to hit it. A node under the
-    // cursor is a drag that has just ended, not a face being chosen.
-    if (viewer.pickNode(x, y) !== null) return;
+    // them. Each is the thing you had to aim at to hit it. A press and
+    // release on a handle without moving is a click on that node, which
+    // picks it — the drag behaviour has already decided it was not a drag.
+    const node = viewer.pickNode(x, y);
+    if (node !== null) {
+      pickNode(node);
+      return;
+    }
     const surface = viewer.pickSurface(x, y);
     // Nothing under the pointer at all: the background is how you let go of
     // everything, whichever kind of selection it was.
@@ -509,7 +514,32 @@ async function boot() {
     viewer.selectedEdge = null;
     viewer.showSheet([]);
     viewer.selectSurfaces([]);
+    viewer.selectNode(null);
     choose(null);
+  }
+
+  /**
+   * Pick a node, or put it out again.
+   *
+   * There was no such thing until now: a node was something you dragged
+   * and nothing else. Freezing and unclassifying are things you say about
+   * one, so one has to be nameable without being moved.
+   */
+  function pickNode(name: number) {
+    const already = viewer.selectedNode === name;
+    viewer.selectNode(already ? null : name);
+    if (already) {
+      say("");
+      return;
+    }
+    const state = viewer.nodeState(name);
+    const on = state?.on ? ` on ${nameOf(state.on)}` : " on nothing";
+    say(`node ${name}${on}${state?.frozen ? ", frozen" : ""}`);
+  }
+
+  /** How a classification reads, the same way the kernel says it. */
+  function nameOf(on: { dim: number; tag: number }) {
+    return `${["corner", "curve", "surface"][on.dim] ?? "?"} ${on.tag}`;
   }
 
   /**
@@ -548,6 +578,50 @@ async function boot() {
     $("aim").textContent = at === "geometry" ? "picking geometry" : "picking blocks";
     if (at === "blocks") viewer.selectSurfaces([]);
     else clearSelection();
+  }
+
+  /** Put the whole blocking on the geometry. */
+  async function classify() {
+    const reply = await kernel.apply({ op: "classify" });
+    message = reply.message;
+    await refresh();
+  }
+
+  /**
+   * Lock the picked node, or let it go.
+   *
+   * On the picked node rather than on a drag, because freezing is a thing
+   * you say about a node and dragging is a thing you do to one — and a
+   * frozen node cannot be dragged at all, so the gesture would have
+   * nothing to attach to.
+   */
+  async function freezeNode() {
+    const node = viewer.selectedNode;
+    if (node === null) {
+      say("pick a node first — click one");
+      return;
+    }
+    const was = viewer.nodeState(node)?.frozen ?? false;
+    const reply = await kernel.apply({ op: "freeze_node", node, frozen: !was });
+    message = reply.message;
+    await refresh();
+  }
+
+  /** Take the picked node off the geometry. It stays where it is; what
+   *  changes is that it may now go anywhere. */
+  async function unclassifyNode() {
+    const node = viewer.selectedNode;
+    if (node === null) {
+      say("pick a node first — click one");
+      return;
+    }
+    if (!viewer.nodeState(node)?.on) {
+      say(`node ${node} is on nothing already`);
+      return;
+    }
+    const reply = await kernel.apply({ op: "classify_node", node });
+    message = reply.message;
+    await refresh();
   }
 
   async function boxGeometry() {
@@ -722,9 +796,9 @@ async function boot() {
     // After the geometry, not before: framing has to see everything there
     // is to frame.
     if (frame) viewer.frameAll(frame === "jump");
-    // Nothing to aim at and nothing to box without one.
+    // Nothing to aim at, box or classify onto without one.
     const loaded = stats.geometry.surfaces !== undefined;
-    for (const id of ["picking", "box"]) {
+    for (const id of ["picking", "box", "classify"]) {
       $<HTMLButtonElement>(id).disabled = !loaded;
     }
     if (!loaded && viewer.aimedAtGeometry) setPicking("blocks");
@@ -739,7 +813,11 @@ async function boot() {
         ? ""
         : `<span><b data-test="geom-surfaces">${stats.geometry.surfaces}</b> surfaces</span>` +
           `<span><b data-test="geom-curves">${stats.geometry.curves}</b> curves</span>` +
-          `<span><b data-test="geom-corners">${stats.geometry.corners}</b> corners</span>`) +
+          `<span><b data-test="geom-corners">${stats.geometry.corners}</b> corners</span>` +
+          // How much of the blocking is on the model, which is the thing
+          // you are working towards and so the thing to glance at.
+          `<span><b data-test="pinned">${stats.classified.nodes}</b>/` +
+          `${stats.nodes} pinned</span>`) +
       `<span data-test="mode">${kernel.mode}</span>`;
     $("status").textContent = message;
     revision++;
@@ -806,7 +884,7 @@ async function boot() {
             `</dl></section>`,
         )
         .join("") +
-      `</div><p id="help-hint">Click a face to select it. Any key closes this.</p>`;
+      `</div><p id="help-hint">Click a node, an edge or a face to pick it; <kbd>M</kbd> aims at the geometry instead. Any key closes this.</p>`;
   }
   drawHelp();
 
@@ -830,6 +908,9 @@ async function boot() {
     open: openGeometry,
     picking: () => setPicking(viewer.aimedAtGeometry ? "blocks" : "geometry"),
     box: () => boxGeometry(),
+    classify,
+    freeze: freezeNode,
+    unclassify: unclassifyNode,
     glue: glueSelection,
     remove: removeSelection,
     pillow: pillowSelection,
@@ -907,6 +988,7 @@ async function boot() {
     ["open", "open"],
     ["picking", "picking"],
     ["box", "box"],
+    ["classify", "classify"],
     ["glue", "glue"],
     ["remove", "remove"],
     ["pillow", "pillow"],
@@ -1029,6 +1111,8 @@ async function boot() {
     faceScreen: (name: number) => viewer.faceScreen(name),
     edgeScreen: (name: number) => viewer.edgeScreen(name),
     selection: () => viewer.selection,
+    selectedNode: () => viewer.selectedNode,
+    nodeState: (name: number) => viewer.nodeState(name),
     sheet: () => viewer.highlighted,
     selectedEdge: () => viewer.selectedEdge,
     pickEdge: (x: number, y: number) => viewer.pickEdge(x, y),

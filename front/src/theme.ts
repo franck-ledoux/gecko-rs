@@ -27,6 +27,9 @@ export interface Theme {
   corners: string;
   curves: string;
   surfaces: string;
+  /** A node nothing may move. Grey, and nothing else is: a frozen node is
+   *  not a kind of classification, it is a cell that is out of play. */
+  frozen: string;
 }
 
 /** Order and labels for the generated settings panel. */
@@ -39,6 +42,7 @@ export const SWATCHES: ReadonlyArray<{ key: keyof Theme; label: string }> = [
   { key: "corners", label: "corners" },
   { key: "curves", label: "curves" },
   { key: "surfaces", label: "surfaces" },
+  { key: "frozen", label: "frozen" },
 ];
 
 export const PRESETS: Record<"dark" | "light", Theme> = {
@@ -51,6 +55,7 @@ export const PRESETS: Record<"dark" | "light", Theme> = {
     corners: "#6ee7a8",
     curves: "#2fbf71",
     surfaces: "#3f7d5e",
+    frozen: "#9aa0a8",
   },
   light: {
     background: "#f4f5f7",
@@ -61,6 +66,7 @@ export const PRESETS: Record<"dark" | "light", Theme> = {
     corners: "#1d8a52",
     curves: "#157f4a",
     surfaces: "#a8d5bd",
+    frozen: "#6b7280",
   },
 };
 
