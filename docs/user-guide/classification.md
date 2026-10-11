@@ -117,19 +117,15 @@ the same empty label a classification without a projection always is.
 Cutting a face does the same one dimension up: the edge and the two faces
 that replace it are on whatever the face was on.
 
-!!! note "Said once, and followed from"
-    Only the **node** is written down. A node has no boundary to infer
-    from, so inheriting is the only thing that could tell it where it
-    belongs. Everything else falls out of the rule that was already there:
-    the two half-edges have that node at one end and a corner of the old
-    edge at the other, and those agree about the curve; the new edge of a
-    face cut has a node from each of two curves of one surface, and those
-    agree about the surface; the half-faces follow from their four edges.
+!!! note "Written down for the node and the new edge"
+    Those two are the ones nothing else could work out. A node has no
+    boundary to infer from at all. A new edge across a face has both ends
+    on that face's boundary, and a boundary shared with whatever else it
+    bounds says nothing about which side of it the edge is on — which is
+    exactly the cylinder's end disc.
 
-    So the three entities do inherit, and they inherit by being asked the
-    same question every other cell is asked. The alternative — writing the
-    inheritance onto each of them — would be a second source of truth, and
-    the first thing it would do is disagree with the boundary.
+    The halves follow from the rule already there: they have the inherited
+    cell at one end and an old corner at the other, and those agree.
 
 Where the boundary is **not** fully classified the inference says so rather
 than guessing: cut a face with an unclassified edge and the pieces are on

@@ -112,6 +112,25 @@ pub fn quad_normal(p: [[f64; 3]; 4]) -> [f64; 3] {
     n
 }
 
+/// A cell asking where it belongs, and everything there is to answer with.
+///
+/// The last two fields are what makes the difference between a rule that
+/// works on a box and one that works on a cylinder. A boundary all on one
+/// circle leaves a cell free to be the circle, the disc it bounds, or the
+/// tube it bounds — so what the cell already claims is believed when it is
+/// still possible, and otherwise where the cell *is* decides.
+pub struct Settling<'a> {
+    /// What each cell of the boundary is classified on.
+    pub boundary: &'a [On],
+    /// The cell's own dimension. It may not be classified below this.
+    pub at_least: u8,
+    /// What the cell is classified on as things stand.
+    pub already: Option<On>,
+    /// The middle of the cell, for deciding between candidates that the
+    /// boundary cannot tell apart.
+    pub middle: [f64; 3],
+}
+
 /// One edge of a sheet, with the direction the cut parameter runs in.
 ///
 /// `from`/`to` are what makes a sheet cuttable at a single parameter: the
@@ -595,14 +614,17 @@ impl Blocking {
     /// every face's from its four edges.
     ///
     /// In that order, because each level consumes the one below it.
-    /// `common` answers the one question the block structure cannot: given
-    /// what the cells of a boundary are on, and the dimension this cell
-    /// may not go below, what contains them all.
+    ///
+    /// `settle` answers the one question the block structure cannot. It is
+    /// given what the cells of the boundary are on, the dimension this
+    /// cell may not go below, **what the cell already claims**, and where
+    /// the cell is — and it needs all four, because a boundary says which
+    /// entities a cell could be on and never which one it is.
     ///
     /// No name is resolved anywhere in here. It runs after everything that
     /// touches the model, so quadratic was not an option: at sixty-four
     /// blocks it had moving one node taking a tenth of a second.
-    pub fn reclassify(&mut self, common: impl Fn(&[On], u8) -> Option<On>) {
+    pub fn reclassify(&mut self, settle: impl Fn(Settling<'_>) -> Option<On>) {
         let edges: Vec<(EdgeIdType, Option<On>)> = self
             .map
             .iter_edges()
@@ -611,7 +633,12 @@ impl Blocking {
                 let on = match (self.node_tag(a).on, self.node_tag(b).on) {
                     // An edge is never pinned to a point, which would
                     // over-constrain it.
-                    (Some(a), Some(b)) => common(&[a, b], 1),
+                    (Some(x), Some(y)) => settle(Settling {
+                        boundary: &[x, y],
+                        at_least: 1,
+                        already: self.edge_tag(e).on,
+                        middle: self.middle(&[a, b]),
+                    }),
                     _ => None,
                 };
                 (e, on)
@@ -626,19 +653,57 @@ impl Blocking {
             .map
             .iter_faces()
             .map(|f| {
-                let boundary: Option<Vec<On>> = self
-                    .face_darts(f)
+                let darts = self.face_darts(f);
+                let boundary: Option<Vec<On>> = darts
                     .iter()
                     .map(|d| self.edge_tag(self.map.edge_id(*d)).on)
                     .collect();
-                // Nor a face to a curve.
-                (f, boundary.and_then(|b| common(&b, 2)))
+                let corners = darts.map(|d| self.map.vertex_id(d));
+                let on = boundary.and_then(|b| {
+                    settle(Settling {
+                        boundary: &b,
+                        // Nor a face to a curve.
+                        at_least: 2,
+                        already: self.face_tag(f).on,
+                        middle: self.middle(&corners),
+                    })
+                });
+                (f, on)
             })
             .collect();
         for (f, on) in faces {
             let tag = self.face_tag(f);
             self.map.write_attribute(f, FaceTag { on, ..tag });
         }
+    }
+
+    /// Forget what every edge and face is classified on.
+    ///
+    /// What makes a global [`Session::classify`][] a fresh start rather
+    /// than a confirmation of what is already there: the settling keeps a
+    /// classification that is still consistent with its boundary, which is
+    /// right while editing and wrong when the whole point is to decide
+    /// again.
+    pub fn unclassify_cells(&mut self) {
+        for e in self.map.iter_edges().collect::<Vec<_>>() {
+            let tag = self.edge_tag(e);
+            self.map.write_attribute(e, EdgeTag { on: None, ..tag });
+        }
+        for f in self.map.iter_faces().collect::<Vec<_>>() {
+            let tag = self.face_tag(f);
+            self.map.write_attribute(f, FaceTag { on: None, ..tag });
+        }
+    }
+
+    fn middle(&self, nodes: &[VertexIdType]) -> [f64; 3] {
+        let mut at = [0.0; 3];
+        for n in nodes {
+            let p = self.position(*n).unwrap_or([0.0; 3]);
+            for k in 0..3 {
+                at[k] += p[k] / nodes.len() as f64;
+            }
+        }
+        at
     }
 
     /// The cell a stable name currently stands for.
@@ -1655,6 +1720,13 @@ impl Blocking {
         };
         let j = (i + n / 2) % n;
 
+        // What the face was on, read before the surgery takes it apart.
+        // The new edge runs across the inside of that face, so that is
+        // where it is — and nothing about its two ends would say so: both
+        // of them are on the boundary of the face, which the face shares
+        // with whatever else that boundary bounds.
+        let was = self.face_tag(self.map.face_id(cycle[0])).on;
+
         let base = self.map.allocate_used_darts(2);
         let (u, v) = (base, base + 1);
         let (before_i, before_j) = (cycle[(i + n - 1) % n], cycle[(j + n - 1) % n]);
@@ -1671,6 +1743,14 @@ impl Blocking {
 
         self.map.set_beta::<2>(u, v);
         self.map.set_beta::<2>(v, u);
+        let fresh = self.map.edge_id(u);
+        self.map.write_attribute(
+            fresh,
+            EdgeTag {
+                id: CellId::NONE,
+                on: was,
+            },
+        );
         Some((u, v))
     }
 

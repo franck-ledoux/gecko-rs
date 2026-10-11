@@ -15,6 +15,6 @@ pub mod ids;
 pub use attributes::{BlockTag, EdgeTag, FaceTag, NodeTag, On};
 pub use blocking::{
     across, best_pairing, cube_corners, mitre, quad_normal, BlockFace, Blocking, BlockingError,
-    SheetEdge, HEX_FACES, PILLOW_SHARE,
+    Settling, SheetEdge, HEX_FACES, PILLOW_SHARE,
 };
 pub use ids::{CellId, CornerKey};

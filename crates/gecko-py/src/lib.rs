@@ -271,6 +271,19 @@ impl PySession {
 
     /// Every node, as `{"id": …, "pos": [x, y, z]}` — what a script needs in
     /// order to have something to move.
+    /// Every entity of the loaded geometry, by dimension and tag — what
+    /// you name to `classify_node`.
+    ///
+    /// ```python
+    /// >>> s.entities[:2]
+    /// [{'dim': 0, 'tag': 1}, {'dim': 0, 'tag': 2}]
+    /// ```
+    #[getter]
+    fn entities(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let json = self.locked(|s| s.entities_json());
+        to_py(py, &serde_json::from_str(&json).unwrap_or_default())
+    }
+
     /// Every edge, by stable name, with its two ends and what it is
     /// classified on.
     #[getter]

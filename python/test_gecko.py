@@ -919,3 +919,19 @@ def test_cutting_a_classified_edge_leaves_a_node_on_the_curve(tmp_path):
     assert on_curve[0]["pos"] == pytest.approx([0.4, 0.2, 0.0])
     # And both halves of the edge are on it too.
     assert len([e for e in s.edges if e["on"] == {"dim": 1, "tag": 201}]) == 2
+
+
+def test_the_geometrys_entities_can_be_listed(tmp_path):
+    # There was no way to find out what a `.msh` called things, which
+    # makes `classify_node` unusable from a script.
+    s = gecko.Session()
+    assert s.entities == []
+    path = tmp_path / "box.msh"
+    path.write_text(BOX_MSH)
+    s.load_geometry(str(path))
+
+    assert [e for e in s.entities if e["dim"] == 0] == [
+        {"dim": 0, "tag": t} for t in range(101, 109)
+    ]
+    assert [e["tag"] for e in s.entities if e["dim"] == 1] == list(range(201, 213))
+    assert [e["tag"] for e in s.entities if e["dim"] == 2] == list(range(1, 7))

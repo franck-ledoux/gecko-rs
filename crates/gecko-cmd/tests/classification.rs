@@ -658,3 +658,147 @@ fn cutting_a_face_leaves_an_edge_and_two_faces_on_what_the_face_was_on() {
     // new ones — on surfaces, not curves.
     assert_eq!(classified(&s)["edges"], 20, "every edge of the outside");
 }
+
+/// A lid and the tube it closes: one curve, 201, bounding **both**.
+///
+/// The shape the cylinder has and the box does not. A cell with its
+/// whole boundary on that curve could be on the lid or on the tube, and
+/// nothing about the boundary says which. The lid is surface **2** and
+/// the tube surface 1 on purpose: the lower tag is the wrong answer, so
+/// a rule that reaches for it is caught here.
+const LID: &str = "\
+$MeshFormat\n\
+2.2 0 8\n\
+$EndMeshFormat\n\
+$Nodes\n\
+8\n\
+1 0 0 0\n\
+2 1 0 0\n\
+3 1 1 0\n\
+4 0 1 0\n\
+5 0 0 1\n\
+6 1 0 1\n\
+7 1 1 1\n\
+8 0 1 1\n\
+$EndNodes\n\
+$Elements\n\
+14\n\
+1 1 2 0 201 1 2\n\
+2 1 2 0 201 2 3\n\
+3 1 2 0 201 3 4\n\
+4 1 2 0 201 4 1\n\
+5 2 2 0 1 1 2 6\n\
+6 2 2 0 1 1 6 5\n\
+7 2 2 0 1 2 3 7\n\
+8 2 2 0 1 2 7 6\n\
+9 2 2 0 1 3 4 8\n\
+10 2 2 0 1 3 8 7\n\
+11 2 2 0 1 4 1 5\n\
+12 2 2 0 1 4 5 8\n\
+13 2 2 0 2 1 2 3\n\
+14 2 2 0 2 1 3 4\n\
+$EndElements\n";
+
+/// A cube sitting in the tube, its bottom four corners on the rim.
+fn under_the_lid() -> Session {
+    let mut s = Session::new().unwrap();
+    s.apply(Command::LoadGeometry {
+        msh: LID.to_string(),
+        name: "lid.msh".to_string(),
+    })
+    .expect("a geometry");
+    s.apply(Command::CreateCube {
+        origin: [0.0, 0.0, 0.0],
+        size: 1.0,
+    })
+    .expect("a cube");
+    for node in nodes(&s) {
+        let p = node["pos"].as_array().unwrap();
+        if p[2].as_f64().unwrap().abs() > 1e-9 {
+            continue;
+        }
+        s.apply(Command::ClassifyNode {
+            node: node["id"].as_u64().unwrap() as u32,
+            on: Some(Spot { dim: 1, tag: 201 }),
+        })
+        .unwrap();
+    }
+    s
+}
+
+/// The face whose centre is nearest a point, and what it is on.
+fn face_at(session: &Session, at: [f64; 3]) -> serde_json::Value {
+    serde_json::from_str::<Vec<serde_json::Value>>(&session.faces_json())
+        .unwrap()
+        .into_iter()
+        .min_by(|a, b| {
+            let far = |f: &serde_json::Value| {
+                let c = f["centre"].as_array().unwrap();
+                (0..3)
+                    .map(|k| (c[k].as_f64().unwrap() - at[k]).powi(2))
+                    .sum::<f64>()
+            };
+            far(a).partial_cmp(&far(b)).unwrap()
+        })
+        .expect("a face")
+}
+
+#[test]
+fn a_cell_bounded_by_one_curve_lands_on_the_surface_it_is_nearest() {
+    // The boundary cannot tell the lid from the tube: all four edges are
+    // on the rim, and the rim bounds both. Where the face **is** can, and
+    // is the only thing that can.
+    let s = under_the_lid();
+    let lid = face_at(&s, [0.5, 0.5, 0.0]);
+    assert_eq!(
+        lid["on"],
+        serde_json::json!({ "dim": 2, "tag": 2 }),
+        "the bottom face should be on the lid, not the tube"
+    );
+}
+
+#[test]
+fn a_cut_across_a_surface_stays_on_that_surface() {
+    // The bug this whole arrangement is here for. Cut the lid in half and
+    // the new edge runs across the **inside** of it — but both its ends
+    // are on the rim, so asking its boundary would put it on the rim.
+    // Cut again, through the sheet that edge is part of, and the node in
+    // the middle of the lid would be flung out to the rim with it.
+    let mut s = under_the_lid();
+    let edge = edges(&s)
+        .into_iter()
+        .find(|e| e["on"] == serde_json::json!({ "dim": 1, "tag": 201 }))
+        .expect("an edge on the rim");
+    s.apply(Command::SplitSheet {
+        edge: edge["id"].as_u64().unwrap() as u32,
+        at: 0.5,
+    })
+    .expect("the first cut");
+
+    // The edge the cut laid across the lid is on the lid.
+    let across = edges(&s)
+        .into_iter()
+        .find(|e| e["on"] == serde_json::json!({ "dim": 2, "tag": 2 }))
+        .expect("an edge across the lid");
+
+    s.apply(Command::SplitSheet {
+        edge: across["id"].as_u64().unwrap() as u32,
+        at: 0.5,
+    })
+    .expect("the second cut");
+
+    // A node in the middle of the lid, on the lid, and still in the
+    // middle of it.
+    let middle: Vec<_> = nodes(&s)
+        .into_iter()
+        .filter(|n| n["on"] == serde_json::json!({ "dim": 2, "tag": 2 }))
+        .collect();
+    assert_eq!(middle.len(), 1, "one node inside the lid: {middle:?}");
+    let p = middle[0]["pos"].as_array().unwrap();
+    for (k, want) in [0.5, 0.5, 0.0].iter().enumerate() {
+        assert!(
+            (p[k].as_f64().unwrap() - want).abs() < 1e-9,
+            "the node was pulled off the lid, to {p:?}"
+        );
+    }
+}

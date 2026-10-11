@@ -154,6 +154,17 @@ size. See [Classification](classification.md).
 'classified 8 nodes and 12 edges onto the geometry'
 ```
 
+#### `entities`
+
+Every entity of the loaded geometry, by dimension and tag — what you name
+to `classify_node`, and the only way to find out what a `.msh` called
+things.
+
+```python
+>>> [e for e in s.entities if e["dim"] == 1]
+[{'dim': 1, 'tag': 201}, {'dim': 1, 'tag': 202}, …]
+```
+
 #### `classify_node(node, dim, tag)` and `unclassify_node(node)`
 
 Put one node on an entity by hand — `dim` 0 a corner, 1 a curve, 2 a surface

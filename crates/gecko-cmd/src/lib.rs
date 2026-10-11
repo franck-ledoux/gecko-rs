@@ -524,6 +524,10 @@ impl Session {
                 |on, at| geometry.project(on.dim, on.tag, at),
             );
         }
+        // A fresh start, not a confirmation: the settling keeps a
+        // classification its boundary still allows, which is right while
+        // editing and wrong when the whole point is to decide again.
+        self.blocking.unclassify_cells();
         // Here as well as in `apply`, because the count below is of what
         // this pass achieved and the caller's message says so.
         self.settle_classification();
@@ -598,6 +602,22 @@ impl Session {
     /// table lookups and an intersection per cell, and no geometry is
     /// measured. A boundary cell that is on nothing leaves the cell above
     /// it on nothing — there is nothing to infer from.
+    /// Settle every edge's and then every face's classification.
+    ///
+    /// The boundary says which entities a cell **could** be on, never
+    /// which one it is: the rim of a disc is on the disc and on the tube
+    /// it bounds, so an edge with both ends on that rim could be the rim,
+    /// a chord across the disc, or a line up the tube. Two things settle
+    /// it, in this order:
+    ///
+    /// 1. **What the cell already claims**, if the boundary still allows
+    ///    it. A cut hands the pieces what was cut, and that is the only
+    ///    thing that knows a new edge runs across the inside of a disc
+    ///    rather than round its edge.
+    /// 2. **Where the cell is**, among the candidates at the lowest
+    ///    dimension the boundary leaves open. That is what puts the end
+    ///    face of a box on the disc rather than on the tube, both of
+    ///    which its four edges bound.
     fn settle_classification(&mut self) {
         let Session {
             blocking, geometry, ..
@@ -605,11 +625,27 @@ impl Session {
         let Some(geometry) = geometry.as_ref() else {
             return;
         };
-        blocking.reclassify(|boundary, at_least| {
-            let pairs: Vec<(u8, i32)> = boundary.iter().map(|on| (on.dim, on.tag)).collect();
-            geometry
-                .common_of(&pairs, at_least)
-                .map(|(dim, tag)| On { dim, tag })
+        blocking.reclassify(|cell| {
+            let pairs: Vec<(u8, i32)> = cell.boundary.iter().map(|on| (on.dim, on.tag)).collect();
+            let shared = geometry.shared(&pairs);
+            let open = |on: On| on.dim >= cell.at_least && shared.contains(&(on.dim, on.tag));
+            if let Some(on) = cell.already.filter(|on| open(*on)) {
+                return Some(on);
+            }
+            let lowest = shared.iter().map(|e| e.0).find(|d| *d >= cell.at_least)?;
+            shared
+                .iter()
+                .filter(|e| e.0 == lowest)
+                .min_by(|a, b| {
+                    let far = |e: &(u8, i32)| {
+                        geometry.distance(e.0, e.1, cell.middle).unwrap_or(f64::MAX)
+                    };
+                    far(a).partial_cmp(&far(b)).expect("a finite distance")
+                })
+                .map(|(dim, tag)| On {
+                    dim: *dim,
+                    tag: *tag,
+                })
         });
     }
 
@@ -755,6 +791,35 @@ impl Session {
             }
             Err(e) => serde_json::json!({ "ok": false, "error": e.to_string() }).to_string(),
         }
+    }
+
+    /// Every entity of the geometry, by dimension and tag.
+    ///
+    /// What a script needs in order to name one to
+    /// [`Command::ClassifyNode`] — there being no other way to find out
+    /// what a `.msh` called things.
+    pub fn entities_json(&self) -> String {
+        let Some(geometry) = &self.geometry else {
+            return "[]".to_string();
+        };
+        let of = |dim: u8, tags: Vec<i32>| {
+            tags.into_iter()
+                .map(move |tag| serde_json::json!({ "dim": dim, "tag": tag }))
+        };
+        let all: Vec<_> = of(
+            gecko_geom::CORNER,
+            geometry.corners().iter().map(|c| c.tag).collect(),
+        )
+        .chain(of(
+            gecko_geom::CURVE,
+            geometry.curves().iter().map(|c| c.tag).collect(),
+        ))
+        .chain(of(
+            gecko_geom::SURFACE,
+            geometry.surfaces().iter().map(|s| s.tag).collect(),
+        ))
+        .collect();
+        serde_json::Value::Array(all).to_string()
     }
 
     /// Every block, by stable name and centre — enough for a script to name

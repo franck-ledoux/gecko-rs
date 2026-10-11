@@ -111,6 +111,34 @@ impl Geometry {
             .unwrap_or(&[])
     }
 
+    /// Everything containing **every** one of a set of classifications.
+    ///
+    /// What a cell's boundary can tell you about where the cell is: not
+    /// which entity it is on, but which entities it *could* be on. Often
+    /// several, and the difference matters — the rim of a disc is on the
+    /// disc and on the cylinder it bounds, so an edge with both ends on
+    /// that rim could be the rim itself, or a chord across the disc, or a
+    /// line on the cylinder, and no amount of looking at its ends will
+    /// say which.
+    ///
+    /// Sorted by dimension and then tag.
+    pub fn shared(&self, boundary: &[(u8, i32)]) -> Vec<(u8, i32)> {
+        let Some((first, rest)) = boundary.split_first() else {
+            return Vec::new();
+        };
+        let mut common: BTreeSet<(u8, i32)> =
+            self.containing(first.0, first.1).iter().copied().collect();
+        for other in rest {
+            let theirs: BTreeSet<(u8, i32)> =
+                self.containing(other.0, other.1).iter().copied().collect();
+            common.retain(|e| theirs.contains(e));
+            if common.is_empty() {
+                break;
+            }
+        }
+        common.into_iter().collect()
+    }
+
     /// The lowest-dimensional entity containing **every** one of a set of
     /// classifications — what a cell bounded by them lies on.
     ///
