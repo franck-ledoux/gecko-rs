@@ -376,8 +376,9 @@ impl Blocking {
             .filter(|f| self.face_tag(*f).id.is_none())
             .collect();
         for f in faces {
+            let tag = self.face_tag(f);
             let id = self.names[2].next_cell();
-            self.map.write_attribute(f, FaceTag { id });
+            self.map.write_attribute(f, FaceTag { id, ..tag });
         }
 
         let blocks: Vec<_> = self
@@ -466,6 +467,33 @@ impl Blocking {
         let tag = self.edge_tag(id);
         self.map.write_attribute(id, EdgeTag { on, ..tag });
         Ok(())
+    }
+
+    /// Where a face is classified, if anywhere.
+    pub fn face_class(&self, face: CellId) -> Option<On> {
+        self.face_by_id(face).and_then(|f| self.face_tag(f).on)
+    }
+
+    /// Put a face on a geometric entity, or take it off one. Inferred from
+    /// its four edges, never measured.
+    pub fn set_face_class(&mut self, face: CellId, on: Option<On>) -> Result<(), BlockingError> {
+        let id = self
+            .face_by_id(face)
+            .ok_or(BlockingError::NoSuchFace(face))?;
+        let tag = self.face_tag(id);
+        self.map.write_attribute(id, FaceTag { on, ..tag });
+        Ok(())
+    }
+
+    /// Every face by name, with the names of its four edges — what the
+    /// inference walks, one dimension up.
+    pub fn faces(&self) -> impl Iterator<Item = (CellId, [CellId; 4])> + '_ {
+        self.map.iter_faces().map(move |f| {
+            let edges = self
+                .face_darts(f)
+                .map(|d| self.edge_tag(self.map.edge_id(d)).id);
+            (self.face_tag(f).id, edges)
+        })
     }
 
     /// Every edge by name, with the names of its two ends — what the
@@ -1017,11 +1045,20 @@ impl Blocking {
             self.insert_cut_face(&ring, edge)?;
         }
 
-        // What was split is gone: two new cells each, named afresh.
+        // What was split is gone: two new cells each, named afresh, and
+        // each still lying where the whole did until the inference says
+        // otherwise.
         for &(u, v) in &cuts {
             for x in [u, v] {
                 let face = self.map.face_id(x);
-                self.map.write_attribute(face, FaceTag { id: CellId::NONE });
+                let on = self.face_tag(face).on;
+                self.map.write_attribute(
+                    face,
+                    FaceTag {
+                        id: CellId::NONE,
+                        on,
+                    },
+                );
             }
         }
         self.assign_missing_ids();

@@ -218,7 +218,7 @@ What the browser draws, in the one shape both modes deliver it. The static page
 reads it straight out of wasm memory; the station sends the identical bytes down
 a WebSocket. One producer, one decoder.
 
-Little-endian throughout. Version 5.
+Little-endian throughout. Version 6.
 
 | Offset | Type  | Count | Meaning                                                     |
 | ------ | ----- | ----- | ----------------------------------------------------------- |

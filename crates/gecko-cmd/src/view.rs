@@ -16,10 +16,11 @@ use std::collections::HashMap;
 
 pub const MAGIC: [u8; 4] = *b"GKB1";
 /// 2 added the node names, 3 the surface, 4 the edge names, 5 what each
-/// node and edge is classified on. The field is bumped rather than quietly
-/// reused: three independent decoders read this, and a silent change is how
-/// one of them ends up reading the wrong field as a coordinate.
-pub const VERSION: u32 = 5;
+/// node and edge is classified on, 6 the same for each face. The field is
+/// bumped rather than quietly reused: three independent decoders read this,
+/// and a silent change is how one of them ends up reading the wrong field
+/// as a coordinate.
+pub const VERSION: u32 = 6;
 /// magic + version + f64 centre + three counts.
 pub const HEADER: usize = 44;
 
@@ -65,6 +66,10 @@ pub struct ViewBuffer {
     /// The same two for each edge.
     pub edge_class_dim: Vec<i32>,
     pub edge_class_tag: Vec<i32>,
+    /// And for each **quadrangle**, which is where a face is drawn. A face
+    /// shared by two blocks appears twice and says the same thing twice.
+    pub quad_class_dim: Vec<i32>,
+    pub quad_class_tag: Vec<i32>,
 }
 
 impl ViewBuffer {
@@ -123,6 +128,8 @@ impl ViewBuffer {
         let mut quads = Vec::with_capacity(sides.len() * 4);
         let mut quad_faces = Vec::with_capacity(sides.len());
         let mut quad_blocks = Vec::with_capacity(sides.len());
+        let mut quad_class_dim = Vec::with_capacity(sides.len());
+        let mut quad_class_tag = Vec::with_capacity(sides.len());
         for side in &sides {
             // All four or none: a quadrangle missing a corner is not a smaller
             // quadrangle, it is a hole in the index arithmetic downstream.
@@ -137,6 +144,9 @@ impl ViewBuffer {
             quads.extend_from_slice(&corners);
             quad_faces.push(side.face.get().unwrap_or(u32::MAX));
             quad_blocks.push(side.block.get().unwrap_or(u32::MAX));
+            let on = blocking.face_class(side.face);
+            quad_class_dim.push(on.map(|on| on.dim as i32).unwrap_or(-1));
+            quad_class_tag.push(on.map(|on| on.tag).unwrap_or(0));
         }
 
         ViewBuffer {
@@ -153,6 +163,8 @@ impl ViewBuffer {
             node_frozen,
             edge_class_dim,
             edge_class_tag,
+            quad_class_dim,
+            quad_class_tag,
         }
     }
 
@@ -173,7 +185,9 @@ impl ViewBuffer {
                     + self.node_class_tag.len()
                     + self.node_frozen.len()
                     + self.edge_class_dim.len()
-                    + self.edge_class_tag.len())
+                    + self.edge_class_tag.len()
+                    + self.quad_class_dim.len()
+                    + self.quad_class_tag.len())
                     * 4,
         );
         out.extend_from_slice(&MAGIC);
@@ -222,6 +236,12 @@ impl ViewBuffer {
             out.extend_from_slice(&x.to_le_bytes());
         }
         for x in &self.edge_class_tag {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        for x in &self.quad_class_dim {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        for x in &self.quad_class_tag {
             out.extend_from_slice(&x.to_le_bytes());
         }
         out

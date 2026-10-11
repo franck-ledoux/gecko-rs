@@ -123,6 +123,35 @@ fn a_block_resting_on_the_geometry_lands_on_its_corners_and_curves() {
         })
         .collect();
     assert_eq!(curves, (201..213).collect());
+
+    // And every face on a surface, from its four edges rather than from
+    // any measurement of its own.
+    let faces: Vec<_> = serde_json::from_str::<Vec<serde_json::Value>>(&s.faces_json()).unwrap();
+    let surfaces: std::collections::BTreeSet<i64> = faces
+        .iter()
+        .map(|f| {
+            assert_eq!(f["on"]["dim"], 2, "{f}");
+            f["on"]["tag"].as_i64().unwrap()
+        })
+        .collect();
+    assert_eq!(surfaces, (1..7).collect());
+}
+
+#[test]
+fn a_face_goes_where_its_four_edges_agree_and_nowhere_else() {
+    // One dimension up, the same rule and the same reason. A face is
+    // never pinned below its own dimension either: four edges all on one
+    // curve would otherwise put the face on that curve.
+    let mut s = on_the_box();
+    s.apply(Command::Classify { tolerance: 0.02 }).unwrap();
+    assert_eq!(classified(&s)["faces"], 6);
+
+    // Take one node off the model and the three faces that touch it lose
+    // the edges they were inferring from, and so lose their own footing.
+    let node = nodes(&s)[0]["id"].as_u64().unwrap() as u32;
+    s.apply(Command::ClassifyNode { node, on: None }).unwrap();
+    assert_eq!(classified(&s)["edges"], 9, "the three edges at that corner");
+    assert_eq!(classified(&s)["faces"], 3, "and the three faces at it");
 }
 
 #[test]
@@ -405,13 +434,15 @@ fn the_classification_travels_in_the_view_buffer() {
     assert_eq!(v.edge_class_dim.len(), 12);
     assert!(v.edge_class_dim.iter().all(|d| *d == 1));
     assert!(v.edge_class_tag.iter().all(|t| (201..213).contains(t)));
+    assert_eq!(v.quad_class_dim.len(), 6);
+    assert!(v.quad_class_dim.iter().all(|d| *d == 2));
 
     // Exact length, or a client's typed-array views walk off the end. Per
-    // node three more words than before, per edge two.
+    // node three more words than before, per edge two, per quadrangle two.
     let bytes = s.view_buffer();
     assert_eq!(
         bytes.len(),
-        gecko_cmd::view::HEADER + 8 * 28 + 12 * 20 + 6 * 24
+        gecko_cmd::view::HEADER + 8 * 28 + 12 * 20 + 6 * 32
     );
 }
 

@@ -1765,7 +1765,7 @@ test("the blocking is put on the geometry and wears what it follows", async ({ p
   await expect(page.locator("[data-test=pinned]")).toHaveText("0");
 
   await page.keyboard.press("k");
-  await expect(page.locator("#status")).toContainText("8 nodes and 12 edges");
+  await expect(page.locator("#status")).toContainText("8 nodes, 12 edges and 6 faces");
   await expect(page.locator("[data-test=pinned]")).toHaveText("8");
 
   // Every corner of the block is on a corner of the model, and wears its

@@ -488,7 +488,22 @@ export class Viewer {
       // open shell and you are looking into a box with a side missing.
       internal: group === "faces" ? this.prefs.faces.internal : true,
       highlight: new Map(this.picked.map((p, n) => [p.face, n === 0 ? ANCHOR : MATE])),
+      classified: this.classifiedFaces(),
     };
+  }
+
+  /** The colour each classified face wears, by face name. */
+  private classifiedFaces(): Map<number, string> {
+    const out = new Map<number, string>();
+    for (let q = 0; q < (this.view?.quadFaces.length ?? 0); q++) {
+      const dim = this.view!.quadClassDim[q];
+      if (dim < 0) continue;
+      out.set(
+        this.view!.quadFaces[q],
+        this.classColour(dim, this.view!.quadClassTag[q], this.prefs.theme.faces).toHexString(),
+      );
+    }
+    return out;
   }
 
   /**
@@ -1102,6 +1117,8 @@ export class Viewer {
       nodeFrozen: Uint32Array.from(view.nodeFrozen),
       edgeClassDim: Int32Array.from(view.edgeClassDim),
       edgeClassTag: Int32Array.from(view.edgeClassTag),
+      quadClassDim: Int32Array.from(view.quadClassDim),
+      quadClassTag: Int32Array.from(view.quadClassTag),
     };
     this.nodes.forEach((m) => m.dispose());
     this.nodes = [];

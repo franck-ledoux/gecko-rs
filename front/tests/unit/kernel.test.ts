@@ -102,7 +102,7 @@ describe("the static kernel", () => {
       faces: 0,
       blocks: 0,
       geometry: { generation: 0 },
-      classified: { nodes: 0, edges: 0, frozen: 0 },
+      classified: { nodes: 0, edges: 0, faces: 0, frozen: 0 },
     });
 
     const reply = await kernel.apply({ op: "add_block", corners: CUBE });
@@ -114,7 +114,7 @@ describe("the static kernel", () => {
       faces: 6,
       blocks: 1,
       geometry: { generation: 0 },
-      classified: { nodes: 0, edges: 0, frozen: 0 },
+      classified: { nodes: 0, edges: 0, faces: 0, frozen: 0 },
     });
 
     const bad = await kernel.apply({ op: "nonesuch" });
@@ -127,7 +127,7 @@ describe("the static kernel", () => {
       faces: 6,
       blocks: 1,
       geometry: { generation: 0 },
-      classified: { nodes: 0, edges: 0, frozen: 0 },
+      classified: { nodes: 0, edges: 0, faces: 0, frozen: 0 },
     });
   });
 });
@@ -676,6 +676,8 @@ function sharedFaceView(): View {
     edgeNames: new Uint32Array([5]),
     edgeClassDim: new Int32Array([-1]),
     edgeClassTag: new Int32Array([0]),
+    quadClassDim: new Int32Array([-1, -1]),
+    quadClassTag: new Int32Array([0, 0]),
     // The same four corners twice: one face, seen from each of two blocks.
     quads: new Uint32Array([0, 1, 2, 3, 0, 3, 2, 1]),
     quadFaces: new Uint32Array([9, 9]),
@@ -1071,6 +1073,8 @@ describe("how close the camera may get", () => {
       nodeFrozen: new Uint32Array([0]),
       edgeClassDim: new Int32Array([]),
       edgeClassTag: new Int32Array([]),
+      quadClassDim: new Int32Array([]),
+      quadClassTag: new Int32Array([]),
       edges: new Uint32Array(0),
       edgeNames: new Uint32Array(0),
       quads: new Uint32Array(0),

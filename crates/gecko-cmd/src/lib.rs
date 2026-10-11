@@ -244,7 +244,7 @@ impl Session {
             // out of date the moment either of them is — and a cut makes
             // edges nobody has ever classified. Two table lookups apiece,
             // no geometry measured.
-            self.settle_edges();
+            self.settle_classification();
         }
         Ok(outcome)
     }
@@ -383,12 +383,14 @@ impl Session {
                 })
             }
             Command::Classify { tolerance } => {
-                let (nodes, edges) = self.classify(tolerance)?;
+                let (nodes, edges, faces) = self.classify(tolerance)?;
                 Ok(Outcome {
                     message: format!(
-                        "classified {nodes} node{} and {edges} edge{} onto the geometry",
+                        "classified {nodes} node{}, {edges} edge{} and {faces} face{} \
+                         onto the geometry",
                         plural(nodes),
                         plural(edges),
+                        plural(faces),
                     ),
                     view_changed: true,
                 })
@@ -496,7 +498,7 @@ impl Session {
     /// projection is a move.
     ///
     /// Returns how many of each ended up on something.
-    fn classify(&mut self, tolerance: f64) -> Result<(usize, usize), SessionError> {
+    fn classify(&mut self, tolerance: f64) -> Result<(usize, usize, usize), SessionError> {
         let geometry = self.geometry.as_ref().ok_or(SessionError::NoGeometry)?;
         let reach = [tolerance.max(0.0) * geometry.span(); 3];
 
@@ -517,7 +519,7 @@ impl Session {
         }
         // Here as well as in `apply`, because the count below is of what
         // this pass achieved and the caller's message says so.
-        self.settle_edges();
+        self.settle_classification();
 
         let nodes = self
             .blocking
@@ -529,7 +531,12 @@ impl Session {
             .edges()
             .filter(|(e, _, _)| self.blocking.edge_class(*e).is_some())
             .count();
-        Ok((nodes, edges))
+        let faces = self
+            .blocking
+            .faces()
+            .filter(|(f, _)| self.blocking.face_class(*f).is_some())
+            .count();
+        Ok((nodes, edges, faces))
     }
 
     /// Put a node where its classification says it is.
@@ -590,17 +597,20 @@ impl Session {
         Ok(to)
     }
 
-    /// Put every edge on what its two ends agree about.
+    /// Put every edge on what its two ends agree about, then every face on
+    /// what its four edges agree about.
     ///
-    /// Cheap enough to run after anything that touches the model: two
-    /// table lookups and an intersection per edge, and no geometry is
-    /// measured. An end that is on nothing leaves its edge on nothing —
-    /// there is nothing to infer from.
-    fn settle_edges(&mut self) {
+    /// In that order, because each level consumes the one below it. Cheap
+    /// enough to run after anything that touches the model: a couple of
+    /// table lookups and an intersection per cell, and no geometry is
+    /// measured. A boundary cell that is on nothing leaves the cell above
+    /// it on nothing — there is nothing to infer from.
+    fn settle_classification(&mut self) {
         let Some(geometry) = self.geometry.as_ref() else {
             return;
         };
-        let found: Vec<(CellId, Option<On>)> = self
+
+        let edges: Vec<(CellId, Option<On>)> = self
             .blocking
             .edges()
             .map(|(edge, a, b)| {
@@ -613,8 +623,27 @@ impl Session {
                 (edge, on)
             })
             .collect();
-        for (edge, on) in found {
+        for (edge, on) in edges {
             let _ = self.blocking.set_edge_class(edge, on);
+        }
+
+        let geometry = self.geometry.as_ref().expect("still there");
+        let faces: Vec<(CellId, Option<On>)> = self
+            .blocking
+            .faces()
+            .map(|(face, edges)| {
+                let boundary: Option<Vec<(u8, i32)>> = edges
+                    .iter()
+                    .map(|e| self.blocking.edge_class(*e).map(|on| (on.dim, on.tag)))
+                    .collect();
+                let on = boundary
+                    .and_then(|b| geometry.common_of(&b, gecko_geom::SURFACE))
+                    .map(|(dim, tag)| On { dim, tag });
+                (face, on)
+            })
+            .collect();
+        for (face, on) in faces {
+            let _ = self.blocking.set_face_class(face, on);
         }
     }
 
@@ -726,6 +755,7 @@ impl Session {
                     "id": side.face.get(),
                     "block": side.block.get(),
                     "centre": centre,
+                    "on": self.blocking.face_class(side.face).map(spot_json),
                 })
             })
             .collect();
@@ -807,6 +837,11 @@ impl Session {
                     .blocking
                     .edges()
                     .filter(|(e, _, _)| self.blocking.edge_class(*e).is_some())
+                    .count(),
+                "faces": self
+                    .blocking
+                    .faces()
+                    .filter(|(f, _)| self.blocking.face_class(*f).is_some())
                     .count(),
                 "frozen": self
                     .blocking

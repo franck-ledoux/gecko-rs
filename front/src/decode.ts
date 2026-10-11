@@ -41,6 +41,9 @@ export interface View {
   /** The same two per edge. */
   edgeClassDim: Int32Array;
   edgeClassTag: Int32Array;
+  /** And per quadrangle, which is where a face is drawn. */
+  quadClassDim: Int32Array;
+  quadClassTag: Int32Array;
 }
 
 const MAGIC = 0x3142_4b47; // "GKB1" little-endian
@@ -57,7 +60,7 @@ export function decodeView(bytes: Uint8Array): View {
   const head = new DataView(bytes.buffer, bytes.byteOffset, HEADER);
   if (head.getUint32(0, true) !== MAGIC) throw new Error("view buffer: bad magic");
   const version = head.getUint32(4, true);
-  if (version !== 5) throw new Error(`view buffer: version ${version} not understood`);
+  if (version !== 6) throw new Error(`view buffer: version ${version} not understood`);
 
   const centre: [number, number, number] = [
     head.getFloat64(8, true),
@@ -73,8 +76,9 @@ export function decodeView(bytes: Uint8Array): View {
   // Per node: three f32 of position, one u32 of name, and three more for
   // what it is classified on and whether it is frozen. Per edge: two node
   // indices, a name, and two for its classification. Per quadrangle: four
-  // corner indices and the two names it can be coloured by.
-  const expected = HEADER + nNodes * 28 + nEdges * 20 + nQuads * 24;
+  // corner indices, the two names it can be coloured by, and two for its
+  // classification.
+  const expected = HEADER + nNodes * 28 + nEdges * 20 + nQuads * 32;
   if (expected !== bytes.byteLength) {
     throw new Error(
       `view buffer: header declares ${expected} bytes, buffer holds ${bytes.byteLength}`,
@@ -107,6 +111,8 @@ export function decodeView(bytes: Uint8Array): View {
     nodeFrozen: take(u32, nNodes),
     edgeClassDim: take(i32, nEdges),
     edgeClassTag: take(i32, nEdges),
+    quadClassDim: take(i32, nQuads),
+    quadClassTag: take(i32, nQuads),
   };
 }
 

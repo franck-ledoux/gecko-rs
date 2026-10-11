@@ -127,7 +127,7 @@ fn the_encoding_is_the_layout_a_client_will_decode() {
     let bytes = s.view_buffer();
 
     assert_eq!(&bytes[0..4], &MAGIC);
-    assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 5);
+    assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 6);
     let n_nodes = u32::from_le_bytes(bytes[32..36].try_into().unwrap()) as usize;
     let n_edges = u32::from_le_bytes(bytes[36..40].try_into().unwrap()) as usize;
     let n_quads = u32::from_le_bytes(bytes[40..44].try_into().unwrap()) as usize;
@@ -136,10 +136,11 @@ fn the_encoding_is_the_layout_a_client_will_decode() {
     // Per node: three f32 of position, one u32 of name, and three more for
     // what it is classified on and whether it is frozen. Per edge: two
     // node indices, a name, and two for its classification. Per
-    // quadrangle: four corner indices and the two names it is coloured by.
+    // quadrangle: four corner indices, the two names it is coloured by,
+    // and two for its own classification.
     assert_eq!(
         bytes.len(),
-        HEADER + n_nodes * 28 + n_edges * 20 + n_quads * 24
+        HEADER + n_nodes * 28 + n_edges * 20 + n_quads * 32
     );
     // Everything after the f64 centre is 4-aligned, so a client can make typed
     // array views over these bytes without copying them first.

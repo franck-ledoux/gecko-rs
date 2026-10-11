@@ -25,7 +25,7 @@ handle without moving it is a pick; anything further is still a drag.
 
 ### Reading it off the screen
 
-A classified node or edge **wears the colour of what it follows**, under
+A classified node, edge or face **wears the colour of what it follows**, under
 that entity group's own setting in the drawer. With surfaces coloured *by
 id*, a node on surface 12 comes out exactly the colour of surface 12 — the
 pairing reads at a glance rather than by clicking things. Unclassified, a
@@ -135,7 +135,8 @@ could not rely on.
 
 ## What is not classified
 
-Faces and blocks. The rule extends to them unchanged — a face on the
-lowest-dimensional entity containing all four of its edges' — and they will
-follow. Nothing fits a curved edge onto its curve yet either: a classified
+Blocks. The rule extends to them unchanged — a block on the
+lowest-dimensional entity containing all six of its faces' — though with
+only volumes at that dimension there is little to say until the geometry
+has any. Nothing fits a curved edge onto its curve yet either: a classified
 edge is still a straight line between its two ends.

@@ -40,6 +40,13 @@ export interface SurfaceOptions {
    *  what the user has picked. Keyed by face name, so a selected face stands
    *  out on both meshes at once. */
   highlight?: ReadonlyMap<number, string>;
+  /** The colour a face wears for the geometric surface it is classified
+   *  on, keyed by face name. Beaten by `highlight` — what you have picked
+   *  is more urgent than what it follows — and beating the colouring
+   *  below, which is about telling cells apart rather than about where
+   *  they belong. Only meaningful for `by: "face"`: a block is not
+   *  classified on anything. */
+  classified?: ReadonlyMap<number, string>;
 }
 
 export interface SurfaceData {
@@ -169,11 +176,14 @@ function buildFrom(view: View, options: SurfaceOptions, kept: number[]): Surface
     blocks[i] = view.quadBlocks[q];
     const c = middle.get(name) ?? [0, 0, 0];
     const picked = options.highlight?.get(view.quadFaces[q]);
+    const follows = options.by === "face" ? options.classified?.get(view.quadFaces[q]) : undefined;
     const rgb = picked
       ? hexToRgb(picked)
-      : options.colouring === "id"
-        ? hexToRgb(colourForId(name, dimension))
-        : uniform;
+      : follows
+        ? hexToRgb(follows)
+        : options.colouring === "id"
+          ? hexToRgb(colourForId(name, dimension))
+          : uniform;
 
     for (let k = 0; k < 4; k++) {
       const p = view.quads[q * 4 + k] * 3;

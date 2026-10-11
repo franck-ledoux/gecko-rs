@@ -111,26 +111,39 @@ impl Geometry {
             .unwrap_or(&[])
     }
 
-    /// The lowest-dimensional entity containing **both** of two
-    /// classifications, which is what an edge between them lies on.
+    /// The lowest-dimensional entity containing **every** one of a set of
+    /// classifications — what a cell bounded by them lies on.
     ///
-    /// Topological throughout: no point of the edge is ever measured. An
+    /// Topological throughout: no point of the cell is ever measured. An
     /// edge whose two corners sit on one curve belongs on that curve; one
-    /// whose corners sit on two curves bounding a common surface belongs on
-    /// that surface; one whose corners have nothing in common belongs
-    /// nowhere, and says so.
+    /// whose corners sit on two curves bounding a common surface belongs
+    /// on that surface; a face whose four edges all lie on one surface
+    /// belongs on that surface. A cell whose boundary has nothing in
+    /// common belongs nowhere, and says so.
     ///
-    /// `at_least` is the cell's own dimension — an edge is never pinned to a
-    /// single point, which would over-constrain it.
+    /// `at_least` is the cell's own dimension — an edge is never pinned to
+    /// a single point, nor a face to a curve, which would over-constrain
+    /// them.
+    pub fn common_of(&self, boundary: &[(u8, i32)], at_least: u8) -> Option<(u8, i32)> {
+        let (first, rest) = boundary.split_first()?;
+        let mut common: BTreeSet<(u8, i32)> =
+            self.containing(first.0, first.1).iter().copied().collect();
+        for other in rest {
+            let theirs: BTreeSet<(u8, i32)> =
+                self.containing(other.0, other.1).iter().copied().collect();
+            common.retain(|e| theirs.contains(e));
+            if common.is_empty() {
+                return None;
+            }
+        }
+        // The set is ordered by (dimension, tag), so the first entry at or
+        // above the cell's own dimension is already the lowest.
+        common.into_iter().find(|e| e.0 >= at_least)
+    }
+
+    /// [`common_of`](Self::common_of) for the two ends of an edge.
     pub fn common(&self, a: (u8, i32), b: (u8, i32), at_least: u8) -> Option<(u8, i32)> {
-        let theirs: BTreeSet<(u8, i32)> = self.containing(b.0, b.1).iter().copied().collect();
-        self.containing(a.0, a.1)
-            .iter()
-            .filter(|e| e.0 >= at_least && theirs.contains(e))
-            // The lists are built lowest dimension first, so the first match
-            // is already the lowest — but say so rather than rely on it.
-            .min_by_key(|e| (e.0, e.1))
-            .copied()
+        self.common_of(&[a, b], at_least)
     }
 
     /// The point of an entity nearest `p`, or nothing when no entity answers

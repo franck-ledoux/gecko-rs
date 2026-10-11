@@ -23,7 +23,7 @@ def test_a_session_starts_empty():
         "faces": 0,
         "blocks": 0,
         "geometry": {"generation": 0},
-        "classified": {"nodes": 0, "edges": 0, "frozen": 0},
+        "classified": {"nodes": 0, "edges": 0, "faces": 0, "frozen": 0},
     }
     assert s.url is None
     assert "gecko.Session" in repr(s)
@@ -69,7 +69,7 @@ def test_the_view_buffer_is_the_wire_format():
     buf = bytes(s.view_buffer)
 
     assert buf[:4] == b"GKB1"
-    assert int.from_bytes(buf[4:8], "little") == 5
+    assert int.from_bytes(buf[4:8], "little") == 6
     n_nodes = int.from_bytes(buf[32:36], "little")
     n_edges = int.from_bytes(buf[36:40], "little")
     n_quads = int.from_bytes(buf[40:44], "little")
@@ -77,8 +77,9 @@ def test_the_view_buffer_is_the_wire_format():
     # Per node: three f32 of position, one u32 of name, and three more for
     # what it is classified on and whether it is frozen. Per edge: two node
     # indices, a name, and two for its classification. Per quadrangle: four
-    # corner indices and the face and block names it can be coloured by.
-    assert len(buf) == 44 + n_nodes * 28 + n_edges * 20 + n_quads * 24
+    # corner indices, the face and block names it can be coloured by, and
+    # two for its classification.
+    assert len(buf) == 44 + n_nodes * 28 + n_edges * 20 + n_quads * 32
 
 
 def test_show_serves_the_viewer_and_is_idempotent():
@@ -740,11 +741,11 @@ def _on_the_box(tmp_path):
 
 def test_classifying_puts_the_blocking_on_the_geometry(tmp_path):
     s = _on_the_box(tmp_path)
-    assert s.stats["classified"] == {"nodes": 0, "edges": 0, "frozen": 0}
+    assert s.stats["classified"] == {"nodes": 0, "edges": 0, "faces": 0, "frozen": 0}
 
     message = s.classify()
-    assert "8 nodes" in message and "12 edges" in message
-    assert s.stats["classified"] == {"nodes": 8, "edges": 12, "frozen": 0}
+    assert "8 nodes" in message and "12 edges" in message and "6 faces" in message
+    assert s.stats["classified"] == {"nodes": 8, "edges": 12, "faces": 6, "frozen": 0}
 
     # Nodes on corners — the lowest dimension with anything in range, not
     # the curves and surfaces that also pass through them.
@@ -753,6 +754,10 @@ def test_classifying_puts_the_blocking_on_the_geometry(tmp_path):
     # Edges on curves, inferred from their two ends rather than measured.
     assert all(e["on"]["dim"] == 1 for e in s.edges)
     assert sorted(e["on"]["tag"] for e in s.edges) == list(range(201, 213))
+    # And faces on surfaces, from their four edges — one dimension up, the
+    # same rule and the same reason.
+    assert all(f["on"]["dim"] == 2 for f in s.faces)
+    assert sorted(f["on"]["tag"] for f in s.faces) == list(range(1, 7))
 
 
 def test_a_node_slides_on_what_it_is_classified_on(tmp_path):

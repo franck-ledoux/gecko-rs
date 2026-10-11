@@ -58,6 +58,9 @@ pub struct EdgeTag {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FaceTag {
     pub id: CellId,
+    /// The geometric entity this face is classified on, if any. Inferred
+    /// from its four edges, never measured.
+    pub on: Option<On>,
 }
 
 /// Attribute of a 3-cell: a block.
@@ -116,32 +119,42 @@ impl AttributeBind for NodeTag {
     const BIND_POLICY: OrbitPolicy = OrbitPolicy::Vertex;
 }
 
-impl AttributeUpdate for EdgeTag {
-    fn merge(a: Self, b: Self) -> Result<Self, AttributeError> {
-        Ok(Self {
-            id: a.id,
-            on: a.on.or(b.on),
-        })
-    }
+/// The same two rules for the cells that carry a classification as well as
+/// a name: a merge keeps one from either side, a split keeps it on both.
+///
+/// A cell cut in two gives two new cells — new names, and the same
+/// classification, because both halves lie where the whole did. A later
+/// pass re-infers it from the boundary either way; this is what keeps the
+/// picture right in between.
+macro_rules! classified_cell {
+    ($t:ty, $id:ty, $policy:expr) => {
+        impl AttributeUpdate for $t {
+            fn merge(a: Self, b: Self) -> Result<Self, AttributeError> {
+                Ok(Self {
+                    id: a.id,
+                    on: a.on.or(b.on),
+                })
+            }
 
-    /// An edge cut in two gives two new edges — new names, and the same
-    /// classification, because both halves lie where the whole did. A later
-    /// pass re-infers it from the ends either way; this is what keeps the
-    /// picture right in between.
-    fn split(a: Self) -> Result<(Self, Self), AttributeError> {
-        let fresh = Self {
-            id: CellId::NONE,
-            on: a.on,
-        };
-        Ok((fresh, fresh))
-    }
+            fn split(a: Self) -> Result<(Self, Self), AttributeError> {
+                let fresh = Self {
+                    id: CellId::NONE,
+                    on: a.on,
+                };
+                Ok((fresh, fresh))
+            }
+        }
+
+        impl AttributeBind for $t {
+            type StorageType = AttrSparseVec<Self>;
+            type IdentifierType = $id;
+            const BIND_POLICY: OrbitPolicy = $policy;
+        }
+    };
 }
 
-impl AttributeBind for EdgeTag {
-    type StorageType = AttrSparseVec<Self>;
-    type IdentifierType = EdgeIdType;
-    const BIND_POLICY: OrbitPolicy = OrbitPolicy::Edge;
-}
+classified_cell!(EdgeTag, EdgeIdType, OrbitPolicy::Edge);
+classified_cell!(FaceTag, FaceIdType, OrbitPolicy::Face);
 
 /// The same rule for the cells that have only a name: keep the first on a
 /// merge, clear both on a split.
@@ -166,5 +179,4 @@ macro_rules! named_cell {
     };
 }
 
-named_cell!(FaceTag, FaceIdType, OrbitPolicy::Face);
 named_cell!(BlockTag, VolumeIdType, OrbitPolicy::Volume);
