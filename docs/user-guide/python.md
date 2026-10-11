@@ -186,6 +186,36 @@ The geometry's bytes, as the browser decodes them — a buffer of its own,
 separate from `view_buffer`, because the two change on completely different
 clocks.
 
+### Going back
+
+#### `undo()`
+
+Puts the block structure back the way it was before the last command that
+changed it — up to `set_history` steps, five by default.
+
+```python
+>>> s.create_cube()
+>>> s.create_cube(origin=[2, 0, 0])
+>>> s.undo()
+'undone — 8 nodes, 12 edges, 6 faces, 1 blocks, 0 steps back left'
+>>> s.undo()
+'nothing to undo'
+```
+
+The bottom of the stack is an answer, not an error. The names come back with
+the positions: a node id you were holding before the command still means that
+node, and an edge you cut can be cut again.
+
+Everything that changes the model is a step, loading a geometry included —
+the geometry comes back with the blocks. `undo()` is itself not a step, so
+pressing it twice goes back two.
+
+#### `set_history(steps=5)`
+
+How many steps back `undo()` can go; 0 turns it off, 50 is the most it will
+take. Shortening it drops the oldest states there and then. Each step is a
+copy of the whole block structure, which is why there is a number at all.
+
 ### Looking at the session
 
 #### `edges`
@@ -216,7 +246,9 @@ surface is.
 ```python
 >>> s.stats
 {'nodes': 8, 'edges': 12, 'faces': 6, 'blocks': 1,
- 'geometry': {'generation': 0}}
+ 'geometry': {'generation': 0},
+ 'history': {'steps': 5, 'back': 1},
+ 'classified': {'nodes': 0, 'edges': 0, 'faces': 0, 'frozen': 0}}
 ```
 
 Cells exist at all four dimensions, which is the point of the representation:
@@ -227,6 +259,10 @@ rather than describing one: a client holds the number it last drew and
 re-fetches when it differs. Two geometries of identical size are still two
 geometries, which is what comparing the counts would miss. With one loaded it
 also carries `corners`, `curves`, `surfaces`, `segments` and `triangles`.
+
+`history` says how far back the session can go — `steps` as set, `back` as
+there actually are — and `classified` how much of the blocking is pinned to
+the geometry.
 
 #### `view_buffer`
 

@@ -46,6 +46,9 @@ export interface Stats {
   geometry: GeometryStats;
   /** How much of the blocking is pinned to the geometry. */
   classified: { nodes: number; edges: number; faces: number; frozen: number };
+  /** How far back the session can go, and how far back it can go *now*.
+   *  `back` is what decides whether the undo button is live. */
+  history: { steps: number; back: number };
 }
 
 /** One edge of a sheet, and the way round a cut parameter would run on it. */

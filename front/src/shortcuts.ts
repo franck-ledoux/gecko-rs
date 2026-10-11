@@ -16,6 +16,7 @@
  */
 export const ACTIONS = [
   "cube",
+  "undo",
   "open",
   "box",
   "picking",
@@ -59,6 +60,16 @@ export interface Shortcut {
   group: "Edit" | "View" | "Display" | "Window";
   /** Matched against `event.key`, lower-cased. */
   key?: string;
+  /**
+   * Needs ctrl, or ⌘ on a Mac.
+   *
+   * The one shortcut that takes a modifier, and it takes one because it is
+   * the one everybody already knows: ⌘Z is undo in every application anyone
+   * has ever used, and binding it to a bare letter instead would be a
+   * surprise with nothing to gain. Everything else is left to the browser,
+   * which is what the test below checks.
+   */
+  mod?: boolean;
   /**
    * Matched against `event.code` instead.
    *
@@ -119,6 +130,14 @@ export const SHORTCUTS: readonly Shortcut[] = [
     does: "take the selected node off the geometry",
     group: "Edit",
   },
+  {
+    show: "⌘Z",
+    key: "z",
+    mod: true,
+    action: "undo",
+    does: "take back the last change (ctrl Z on a PC)",
+    group: "Edit",
+  },
   { show: "Esc", key: "escape", action: "clear", does: "clear the selection", group: "Edit" },
 
   { show: "F", key: "f", action: "recentre", does: "frame everything", group: "View" },
@@ -175,18 +194,25 @@ export interface KeyPress {
 /**
  * What a key press asks for, or nothing.
  *
- * Two things are deliberately left alone. Anything with ctrl, meta or alt
- * belongs to the browser or the system — a shortcut that swallowed ⌘S would
- * be a bug, not a feature. And anything typed into a field is typing: the
- * colour inputs and the sliders both take arrow keys and characters, and a
- * slider that jumped to a new view instead of nudging would be unusable.
+ * Two things are deliberately left alone. A combination nothing in the table
+ * claims belongs to the browser or the system — a shortcut that swallowed ⌘S
+ * would be a bug, not a feature — and alt is left out of the table
+ * altogether, being how several keyboards type the characters above the
+ * digits. And anything typed into a field is typing: the colour inputs and
+ * the sliders both take arrow keys and characters, and a slider that jumped
+ * to a new view instead of nudging would be unusable.
  */
 export function actionFor(press: KeyPress): Action | null {
-  if (press.ctrlKey || press.metaKey || press.altKey) return null;
+  if (press.altKey) return null;
   if (isTyping(press.target)) return null;
 
+  // Ctrl and ⌘ are one thing here. The table says which shortcuts want it,
+  // and a press that has it can only match one of those: ⌘Z is undo and Z
+  // is a view down the Z axis, and neither is ever the other.
+  const held = press.ctrlKey || press.metaKey;
   const key = press.key.toLowerCase();
   for (const shortcut of SHORTCUTS) {
+    if (!!shortcut.mod !== held) continue;
     if (!!shortcut.shift !== press.shiftKey) continue;
     if (shortcut.code ? shortcut.code === press.code : shortcut.key === key) {
       return shortcut.action;

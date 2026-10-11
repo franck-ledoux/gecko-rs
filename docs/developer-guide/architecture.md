@@ -192,7 +192,7 @@ too.
     and a single refresh of sixty-four blocks took nine seconds.
 
     The cure both times was the same: read what is wanted in **one pass**
-    over the map. `nodes_in_full`, `edges`, `nb_classified`, `reclassify`
+    over the map. `nodes_in_full`, `edges`, `census`, `reclassify`
     and `classify_nodes` exist for that reason, and `BlockFace` carries
     what its face is classified on rather than leaving the caller to look
     it up. There is a budget test in `python/test_gecko.py` that fails by
@@ -209,6 +209,65 @@ too.
     `assign_missing_ids()` once per block it removed, which walks the whole
     map each time. The private `drop_volume` is the quiet primitive, and the
     naming pass runs once at the end.
+
+## Going back
+
+Undo is a **stack of previous states**, five deep by default and settable
+from 0 to 50 (`Command::SetHistory`). A state is the block structure, the
+geometry handle and the rebasing origin; the session keeps the last few in a
+`VecDeque`, pushes one before any command that turns out to have changed
+something, and pops one on `Command::Undo`.
+
+`CMap3` is not `Clone`, and its `serialize` is one-way — there is no reader,
+and none that would know about our attributes. So `Blocking::snapshot` writes
+the copy out by hand. That is less of an imposition than it sounds: the map is
+four things — the β functions, the vertex positions, the attribute storages
+and the record of which darts are in use — and all four can be read and
+written from outside. Nothing is re-sewn and nothing is re-derived. Darts are
+allocated in runs of used and unused so that **each one lands on its own
+number**, β is set before anything that hangs off it, the attributes are
+copied cell by cell, and the name counters come across as they stand.
+
+!!! note "Why not replay the commands"
+    The obvious alternative is to keep the journal and replay it from the
+    start, which this crate is unusually well set up for: every change is a
+    `Command`, and a session is exactly the sum of the commands applied to
+    it. It would even come back with the same names, because the dart
+    allocator and the name counters are deterministic functions of the
+    command sequence.
+
+    Two things decide against it. The first is cost, in the wrong place: a
+    copy is O(darts) and happens once per command — about 9 ms before a cut
+    that itself takes 80 ms at fifty blocks — while a replay is O(the whole
+    session) per undo, and so gets slower the longer you have been working,
+    which is precisely when you most want to take something back.
+
+    The second is that the replay is only right while every operation is
+    deterministic down to the order darts come out in. It is today. An
+    earlier prototype's `HashSet` in the gluing is why there is a
+    cross-mode byte-comparison test, and that is the kind of change that
+    would silently make a replay land somewhere else. A copy does not care.
+
+    What both designs *must* do is bring the names back. `CellId`s are what
+    a client holds between operations — the selected face, the lit sheet —
+    and a model that came back renumbered would leave every one of them
+    meaning something else, or nothing. The copy gets that structurally
+    rather than as a consequence of determinism, which is the whole reason
+    it is worth writing out by hand.
+
+Two things are deliberately **not** on the stack. `Command::Undo` itself
+leaves no state behind — an undo that remembered what it undid would be a
+toggle rather than a step — and neither does `Command::SetHistory`, a
+setting being not a change to the model. Nor is anything under [what does not
+go through the kernel](#what-does-not-go-through-the-kernel): colours and the
+camera are not changes to anything.
+
+The geometry is **shared**, not copied (`Option<Arc<Geometry>>`). It is
+read-only once loaded and only a load can replace it, so five steps cost five
+block structures and no triangles. An undo that puts a different geometry
+back still moves `geometry_generation` **forwards**: the number means "not the
+one you last drew", and a client that saw it fall would have no reason to
+trust it the next time it rose.
 
 ## What an attribute may hold
 

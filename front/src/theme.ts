@@ -126,6 +126,12 @@ const KEY = "gecko.view";
 /** The picture sizes on offer, as multiples of what the canvas renders. */
 export const SHOT_SCALES = [1, 2, 4];
 
+/** How many steps of undo to ask the kernel for, and the most the drawer
+ *  offers. Each step is a copy of the whole block structure, which is why
+ *  there is a number here at all rather than an unbounded stack. */
+export const HISTORY_STEPS = 5;
+export const MAX_HISTORY = 20;
+
 export interface ViewPrefs {
   theme: Theme;
   axes: boolean;
@@ -136,6 +142,10 @@ export interface ViewPrefs {
   quad: boolean;
   /** How a saved picture comes out. */
   shot: { scale: number; transparent: boolean };
+  /** How many steps back the kernel is asked to keep. Kept here with the
+   *  rest of what a viewer prefers, and sent to the kernel on boot: the
+   *  kernel holds the states, so it is the kernel that has to be told. */
+  history: number;
   /** Nodes are always drawn — they are what you grab — so all they carry
    *  is how they are coloured. */
   nodes: { colouring: Colouring };
@@ -165,6 +175,7 @@ export const DEFAULTS: ViewPrefs = {
   // background is kept by default: transparency is for dropping a figure
   // onto a page of unknown colour, and surprises anyone not expecting it.
   shot: { scale: 2, transparent: false },
+  history: HISTORY_STEPS,
   // Both plain to begin with. Colouring by what a cell follows is a
   // question you ask once the blocking is on the model, not while you are
   // still putting it there.
@@ -245,6 +256,13 @@ export function loadPrefs(): ViewPrefs {
             ? stored.shot.transparent
             : DEFAULTS.shot.transparent,
       },
+      // Whole steps, within the range the drawer can show: this comes back
+      // from storage, which anyone can edit, and a thousand steps would be
+      // a thousand copies asked for by a typo.
+      history:
+        typeof stored.history === "number" && Number.isFinite(stored.history)
+          ? Math.min(MAX_HISTORY, Math.max(0, Math.round(stored.history)))
+          : DEFAULTS.history,
       nodes: { colouring: colouring(stored.nodes?.colouring, DEFAULTS.nodes.colouring) },
       edges: {
         visible:

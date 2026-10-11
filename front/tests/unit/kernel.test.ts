@@ -109,6 +109,7 @@ describe("the static kernel", () => {
       faces: 0,
       blocks: 0,
       geometry: { generation: 0 },
+      history: { steps: 5, back: 0 },
       classified: { nodes: 0, edges: 0, faces: 0, frozen: 0 },
     });
 
@@ -121,6 +122,7 @@ describe("the static kernel", () => {
       faces: 6,
       blocks: 1,
       geometry: { generation: 0 },
+      history: { steps: 5, back: 1 },
       classified: { nodes: 0, edges: 0, faces: 0, frozen: 0 },
     });
 
@@ -134,6 +136,7 @@ describe("the static kernel", () => {
       faces: 6,
       blocks: 1,
       geometry: { generation: 0 },
+      history: { steps: 5, back: 1 },
       classified: { nodes: 0, edges: 0, faces: 0, frozen: 0 },
     });
   });
@@ -283,6 +286,23 @@ describe("the contract the other mode has to meet", () => {
     const remove = { op: "remove_block", block: lonely };
     expect((await kernel.apply(remove)).ok).toBe(true);
     commands.push(remove);
+
+    // And a cut taken back. An undo puts a copy of the whole structure
+    // back, down to the dart numbers the names are derived from — so a
+    // façade that rebuilt the model instead of restoring it would arrive
+    // here with different bytes, and only this test would see it.
+    const cut = {
+      op: "split_sheet",
+      edge: decodeView(await kernel.view()).edgeNames[0],
+      at: 0.5,
+    };
+    expect((await kernel.apply(cut)).ok).toBe(true);
+    commands.push(cut);
+    expect((await kernel.stats()).blocks).toBe(4);
+
+    const undo = { op: "undo" };
+    expect((await kernel.apply(undo)).ok).toBe(true);
+    commands.push(undo);
 
     const bytes = await kernel.view();
     const stats = await kernel.stats();
@@ -1254,7 +1274,9 @@ describe("the keyboard", () => {
 
     const seen = new Set<string>();
     for (const shortcut of SHORTCUTS) {
-      const token = `${shortcut.shift ? "shift+" : ""}${shortcut.key ?? shortcut.code}`;
+      const token =
+        `${shortcut.mod ? "mod+" : ""}${shortcut.shift ? "shift+" : ""}` +
+        `${shortcut.key ?? shortcut.code}`;
       expect(seen.has(token), `${token} is bound twice`).toBe(false);
       seen.add(token);
     }
@@ -1281,6 +1303,20 @@ describe("the keyboard", () => {
       expect(press({ key: "s", code: "KeyS", [held]: true })).toBeNull();
     }
     expect(press({ key: "s", code: "KeyS" })).toBe("screenshot");
+  });
+
+  it("takes ⌘Z and ctrl Z, and leaves bare Z to the view", () => {
+    // The one shortcut with a modifier, because it is the one everybody
+    // already knows. Bare Z is a view down the Z axis and must stay one.
+    expect(press({ key: "z", code: "KeyZ", metaKey: true })).toBe("undo");
+    expect(press({ key: "z", code: "KeyZ", ctrlKey: true })).toBe("undo");
+    expect(press({ key: "Z", code: "KeyZ", metaKey: true })).toBe("undo");
+    expect(press({ key: "z", code: "KeyZ" })).toBe("axis-z");
+    // Alt is how several keyboards type the characters above the digits, so
+    // it is left out of the table altogether — ⌥⌘Z included.
+    expect(press({ key: "z", code: "KeyZ", metaKey: true, altKey: true })).toBeNull();
+    // And a modifier on a key that does not ask for one is the browser's.
+    expect(press({ key: "c", code: "KeyC", metaKey: true })).toBeNull();
   });
 
   it("leaves typing alone", () => {

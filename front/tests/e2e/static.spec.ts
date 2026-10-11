@@ -2043,3 +2043,90 @@ test("an edge is picked and its sheet cut from an axis view", async ({ page }) =
   await expect(page.locator("[data-test=blocks]")).toHaveText("2");
   expect(errors).toEqual([]);
 });
+
+test("a change can be taken back, and the button says when there is one", async ({ page }) => {
+  const errors = await boot(page);
+  // Nothing has happened, so there is nothing to take back.
+  await expect(page.locator("#undo")).toBeDisabled();
+
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await expect(page.locator("#undo")).toBeEnabled();
+
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+
+  // The keyboard, with the modifier everybody already knows. Bare Z is a
+  // view down the Z axis and has to stay one.
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(page.locator("[data-test=blocks]")).toHaveText("1");
+  await expect(page.locator("#status")).toContainText("undone");
+
+  await page.locator("#undo").click();
+  await expect(page.locator("[data-test=blocks]")).toHaveText("0");
+  // Back at the beginning, and the button has nothing left to offer.
+  await expect(page.locator("#undo")).toBeDisabled();
+  expect(errors).toEqual([]);
+});
+
+test("a cut is taken back whole, and the names come back with it", async ({ page }) => {
+  // The point of keeping states rather than replaying commands: the cells
+  // answer to the same numbers afterwards. A model rebuilt from a
+  // description of itself would renumber them, and every name this page is
+  // holding — the lit sheet, the selected node — would come to mean
+  // something else.
+  const errors = await boot(page);
+  await page.evaluate(EDGE_NEAR);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+
+  // Every node's name, and where the scene has it.
+  const dump = () =>
+    page.evaluate(() => {
+      const g = (window as any).__gecko;
+      return (g.names() as number[])
+        .sort((a, b) => a - b)
+        .map((n) => `${n} ${g.nodePosition(n)}`);
+    });
+  const before = await dump();
+  const edge = (await page.evaluate(() => edgeNear([0.5, 0, 0]))) as number;
+  await page.evaluate((e) => (window as any).__gecko.apply({ op: "split_sheet", edge: e, at: 0.5 }), edge);
+  await page.evaluate(() => (window as any).__gecko.refresh());
+  await expect(page.locator("[data-test=blocks]")).toHaveText("2");
+
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(page.locator("[data-test=blocks]")).toHaveText("1");
+  expect(await dump()).toEqual(before);
+
+  // And the same cut again, on the same edge, which still names it.
+  await page.evaluate((e) => (window as any).__gecko.apply({ op: "split_sheet", edge: e, at: 0.5 }), edge);
+  await page.evaluate(() => (window as any).__gecko.refresh());
+  await expect(page.locator("[data-test=blocks]")).toHaveText("2");
+  expect(errors).toEqual([]);
+});
+
+test("how far back it goes is a setting, and it is remembered", async ({ page }) => {
+  const errors = await boot(page);
+  await openDrawer(page);
+  await expect(page.locator("[data-test=history-steps]")).toHaveText("5");
+
+  // One step, and then two changes: only the second can be taken back.
+  await page.locator("[data-test=history]").fill("1");
+  await page.locator("[data-test=history]").dispatchEvent("input");
+  await expect(page.locator("[data-test=history-steps]")).toHaveText("1");
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+
+  await page.locator("#undo").click();
+  await expect(page.locator("[data-test=blocks]")).toHaveText("1");
+  await expect(page.locator("#undo")).toBeDisabled();
+
+  // And the setting outlives the page, like every other preference.
+  await page.reload();
+  await page.waitForSelector("body[data-ready='1']");
+  await openDrawer(page);
+  await expect(page.locator("[data-test=history-steps]")).toHaveText("1");
+  expect(errors).toEqual([]);
+});

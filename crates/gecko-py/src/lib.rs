@@ -231,6 +231,29 @@ impl PySession {
         }))
     }
 
+    /// Put the block structure back the way it was before the last command
+    /// that changed it.
+    ///
+    /// Up to [`set_history`] steps back — five by default. The states are
+    /// copies of the structure, so the names come back with it: a node id
+    /// you were holding before the command still means that node.
+    ///
+    /// Returns what it did, or "nothing to undo" at the bottom of the
+    /// stack. Reaching the bottom is not an error; it is an answer.
+    fn undo(&self) -> PyResult<String> {
+        self.command(serde_json::json!({ "op": "undo" }))
+    }
+
+    /// How many steps back [`undo`] can go. 0 turns it off.
+    ///
+    /// Shortening it drops the oldest states there and then. Every step is
+    /// a copy of the whole block structure, which is why this is a setting
+    /// and not simply unbounded.
+    #[pyo3(signature = (steps=5))]
+    fn set_history(&self, steps: usize) -> PyResult<String> {
+        self.command(serde_json::json!({ "op": "set_history", "steps": steps }))
+    }
+
     /// The sheet of hexahedra through an edge: every edge of it, with the
     /// direction a cut parameter would run in.
     fn sheet(&self, py: Python<'_>, edge: u32) -> PyResult<PyObject> {

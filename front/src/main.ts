@@ -9,7 +9,7 @@
 import { Engine } from "@babylonjs/core/Engines/engine";
 import { decodeGeometry, decodeView } from "./decode";
 import { readProbe, type Probe } from "./mode";
-import type { Kernel } from "./kernel";
+import type { Kernel, Stats } from "./kernel";
 import { initKernel, WasmKernel } from "./kernel-wasm";
 import { RemoteKernel } from "./kernel-remote";
 import { Viewer, type Group, type Pick } from "./viewer";
@@ -17,6 +17,7 @@ import {
   isLight,
   loadPrefs,
   savePrefs,
+  MAX_HISTORY,
   PRESETS,
   SHOT_SCALES,
   SWATCHES,
@@ -323,6 +324,18 @@ async function boot() {
   });
   $("preset-dark").addEventListener("click", () => setTheme(PRESETS.dark));
   $("preset-light").addEventListener("click", () => setTheme(PRESETS.light));
+
+  // --- how far back it can go ---------------------------------------------
+  const history = $<HTMLInputElement>("history");
+  history.max = String(MAX_HISTORY);
+  history.value = String(prefs.history);
+  $("history-n").textContent = String(prefs.history);
+  history.addEventListener("input", () => {
+    prefs.history = Number(history.value);
+    $("history-n").textContent = String(prefs.history);
+    savePrefs(prefs);
+    void setHistory();
+  });
 
   // --- how a saved picture comes out --------------------------------------
   const scale = $<HTMLSelectElement>("shot-scale");
@@ -848,6 +861,7 @@ async function boot() {
       $<HTMLButtonElement>(id).disabled = !loaded;
     }
     if (!loaded && viewer.aimedAtGeometry) setPicking("blocks");
+    showHistory(stats);
     // One line, out of the way. The counts are what you glance at; the mode
     // matters once, when you are working out which kernel you are talking to.
     $("stats").innerHTML =
@@ -888,6 +902,39 @@ async function boot() {
     // grows past the edge of the window is no use. Gliding, so the view does
     // not lurch every time you press the button.
     await refresh("glide");
+  }
+
+  /**
+   * Take back the last change.
+   *
+   * The selection goes with it. What is selected is named by number, and a
+   * block that no longer exists cannot stay lit — nor can the node a cut
+   * made, which after the cut is taken back is a name nothing answers to.
+   */
+  async function undoLast() {
+    const reply = await kernel.apply({ op: "undo" });
+    clearSelection();
+    message = reply.message;
+    await refresh();
+  }
+
+  /**
+   * Tell the kernel how many steps to keep.
+   *
+   * The states live in the kernel — it is the kernel that has the model to
+   * copy — so this is the one preference that is not purely this tab's. In
+   * the station that means the two tabs on one session share it, last one
+   * to move the slider winning, which is the same bargain as every other
+   * thing the session holds.
+   */
+  async function setHistory() {
+    await kernel.apply({ op: "set_history", steps: prefs.history });
+    showHistory(await kernel.stats());
+  }
+
+  /** The undo button is live exactly when there is something to undo. */
+  function showHistory(stats: Stats) {
+    $<HTMLButtonElement>("undo").disabled = stats.history.back === 0;
   }
 
   // --- the chrome ---------------------------------------------------------
@@ -980,6 +1027,7 @@ async function boot() {
   // shortcut cannot drift apart: there is only one of each action.
   const ACTIONS: Record<Action, () => void | Promise<void>> = {
     cube: createCube,
+    undo: undoLast,
     open: openGeometry,
     picking: () => setPicking(viewer.aimedAtGeometry ? "blocks" : "geometry"),
     box: () => boxGeometry(),
@@ -1017,14 +1065,7 @@ async function boot() {
     },
     quad: () => {
       prefs.quad = !prefs.quad;
-      /** The split, in the three places that have to agree about it. */
-  function showQuad() {
-    viewer.setQuad(prefs.quad);
-    document.body.classList.toggle("quad", prefs.quad);
-    $("quad").setAttribute("aria-pressed", String(prefs.quad));
-  }
-  showQuad();
-      $("quad").setAttribute("aria-pressed", String(prefs.quad));
+      showQuad();
       savePrefs(prefs);
       say(prefs.quad ? "split into four views" : "one view");
     },
@@ -1080,6 +1121,7 @@ async function boot() {
     ["glue", "glue"],
     ["remove", "remove"],
     ["pillow", "pillow"],
+    ["undo", "undo"],
     ["quad", "quad"],
     ["recentre", "recentre"],
     ["shot", "screenshot"],
@@ -1130,6 +1172,9 @@ async function boot() {
   });
 
   applyChrome();
+  // The kernel starts with its own default; this is the one in the drawer,
+  // which is the one the person using it last chose.
+  await setHistory();
   $("aim").textContent = "picking blocks";
   engine.runRenderLoop(() => viewer.render());
   // Straight there: there is nothing on screen yet to glide away from.

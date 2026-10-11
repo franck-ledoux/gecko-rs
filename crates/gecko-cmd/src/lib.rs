@@ -11,6 +11,9 @@
 
 pub mod view;
 
+use std::collections::VecDeque;
+use std::sync::Arc;
+
 use gecko_core::ids::CellId;
 use gecko_core::{cube_corners, Blocking, BlockingError, On};
 use gecko_geom::model::GeometryError;
@@ -39,6 +42,18 @@ pub enum SessionError {
 /// How much room a bounding box leaves round the geometry, as a share of
 /// each half-side. The C++'s own default.
 pub const BOX_MARGIN: f64 = 0.1;
+
+/// How many steps back the session can go, out of the box.
+///
+/// Five, as in the C++. Every step is a copy of the whole block structure,
+/// which is a few hundred kilobytes on a model of any size anyone edits by
+/// hand — so the number is a matter of taste rather than of memory, and
+/// [`Command::SetHistory`] changes it.
+pub const HISTORY_STEPS: usize = 5;
+
+/// The most it can be set to. Not a technical limit: a hundred thousand
+/// steps would be a hundred thousand copies, asked for by a typo.
+pub const MAX_HISTORY_STEPS: usize = 50;
 
 /// How near a node has to be to a geometric entity to be classified on it,
 /// as a share of the geometry's own size.
@@ -168,6 +183,22 @@ pub enum Command {
         node: u32,
         frozen: bool,
     },
+    /// Put the block structure back the way it was before the last command
+    /// that changed it.
+    ///
+    /// A command like any other, so that both façades get it for nothing and
+    /// neither can implement its own. It is the one command that is not
+    /// itself undoable: it takes a state off the stack rather than putting
+    /// one on, which is what makes pressing it twice go back two steps.
+    Undo,
+    /// How many steps back [`Command::Undo`] can go.
+    ///
+    /// Shortening the history throws away the oldest states at once rather
+    /// than waiting for them to fall off the end: a setting that only takes
+    /// effect later is a setting nobody can tell the effect of.
+    SetHistory {
+        steps: usize,
+    },
     /// Add one block: a box round the geometry, or round part of it.
     ///
     /// An empty `surfaces` means all of them.
@@ -203,7 +234,7 @@ pub struct Session {
     /// map wants to know about triangles, and the day a cell is classified
     /// onto a surface it will be the cell that holds the name of the
     /// surface, not the surface that holds a list of cells.
-    geometry: Option<Geometry>,
+    geometry: Option<Arc<Geometry>>,
     /// Bumped whenever the geometry is replaced or dropped.
     ///
     /// This is how a client knows to re-fetch a buffer it would otherwise
@@ -214,6 +245,30 @@ pub struct Session {
     /// Kept between views so the scene does not slide every time something
     /// moves. See [`view::stable_centre`].
     origin: Option<[f64; 3]>,
+    /// What the session looked like before each of the last few commands,
+    /// oldest at the front.
+    ///
+    /// Whole states rather than a journal of commands to replay. Both would
+    /// give the right answer, and the state is the one that gives it in the
+    /// same *names*: a replay rebuilds the model, and a rebuilt model hands
+    /// out fresh identifiers, so every name a client was holding — the node
+    /// it has selected, the face it has lit — would quietly come to mean
+    /// something else, or nothing. See [`Blocking::snapshot`].
+    past: VecDeque<State>,
+    /// How many of those to keep.
+    steps: usize,
+}
+
+/// A session as it stood, as far as anything outside can tell.
+///
+/// The geometry is shared rather than copied: it is the big object, it is
+/// read-only once loaded, and loading one is the only thing that can replace
+/// it. Five undo steps therefore cost five block structures and no
+/// triangles at all.
+struct State {
+    blocking: Blocking,
+    geometry: Option<Arc<Geometry>>,
+    origin: Option<[f64; 3]>,
 }
 
 impl Session {
@@ -223,6 +278,8 @@ impl Session {
             geometry: None,
             geometry_generation: 0,
             origin: None,
+            past: VecDeque::new(),
+            steps: HISTORY_STEPS,
         })
     }
 
@@ -231,13 +288,36 @@ impl Session {
     }
 
     pub fn geometry(&self) -> Option<&Geometry> {
-        self.geometry.as_ref()
+        self.geometry.as_deref()
+    }
+
+    /// How many steps back it can go, and how many it has.
+    pub fn history(&self) -> (usize, usize) {
+        (self.steps, self.past.len())
     }
 
     /// The one mutation path.
     pub fn apply(&mut self, command: Command) -> Result<Outcome, SessionError> {
+        // The two that are about the history rather than about the model.
+        // Neither leaves a state behind: an undo that remembered what it
+        // undid would be a toggle, and a setting is not a step.
+        match command {
+            Command::Undo => return self.undo(),
+            Command::SetHistory { steps } => return Ok(self.set_history(steps)),
+            _ => {}
+        }
+
+        // Before the command, because that is the state being left; kept in
+        // hand rather than pushed, because a command that fails or changes
+        // nothing is not a step back either. Copying the structure costs
+        // about what one refresh of the view costs, which is the right price
+        // for being able to take a thing back.
+        let before = (self.steps > 0).then(|| self.capture()).transpose()?;
         let outcome = self.run(command)?;
         if outcome.view_changed {
+            if let Some(state) = before {
+                self.push(state);
+            }
             self.settle_origin();
             // Every edge, after anything that touched the model. An edge's
             // classification is a statement about its two ends, so it is
@@ -247,6 +327,76 @@ impl Session {
             self.settle_classification();
         }
         Ok(outcome)
+    }
+
+    /// The session as it stands, ready to be put back.
+    fn capture(&self) -> Result<State, SessionError> {
+        Ok(State {
+            blocking: self.blocking.snapshot()?,
+            geometry: self.geometry.clone(),
+            origin: self.origin,
+        })
+    }
+
+    fn push(&mut self, state: State) {
+        self.past.push_back(state);
+        while self.past.len() > self.steps {
+            self.past.pop_front();
+        }
+    }
+
+    /// Put the last state back.
+    ///
+    /// Nothing is settled afterwards. The state was settled when it was
+    /// taken, and running the classification over it again would be a
+    /// chance for it to come out differently — which is the one thing an
+    /// undo must not do.
+    fn undo(&mut self) -> Result<Outcome, SessionError> {
+        let Some(state) = self.past.pop_back() else {
+            return Ok(Outcome {
+                message: "nothing to undo".to_string(),
+                view_changed: false,
+            });
+        };
+        let was = self.geometry.as_ref().map(Arc::as_ptr);
+        self.blocking = state.blocking;
+        self.geometry = state.geometry;
+        self.origin = state.origin;
+        // Forwards even when the geometry goes backwards: the number says
+        // "not the one you last drew", and a client that saw it fall would
+        // have no reason to trust it the next time it rose.
+        if was != self.geometry.as_ref().map(Arc::as_ptr) {
+            self.geometry_generation += 1;
+        }
+        Ok(Outcome {
+            message: format!(
+                "undone — {} nodes, {} edges, {} faces, {} blocks, {} step{} back left",
+                self.blocking.nb_nodes(),
+                self.blocking.nb_edges(),
+                self.blocking.nb_faces(),
+                self.blocking.nb_blocks(),
+                self.past.len(),
+                plural(self.past.len()),
+            ),
+            view_changed: true,
+        })
+    }
+
+    fn set_history(&mut self, steps: usize) -> Outcome {
+        self.steps = steps.min(MAX_HISTORY_STEPS);
+        while self.past.len() > self.steps {
+            self.past.pop_front();
+        }
+        Outcome {
+            message: match self.steps {
+                0 => "undo is off".to_string(),
+                1 => "one step of undo".to_string(),
+                n => format!("{n} steps of undo"),
+            },
+            // Nothing in the scene moved. A client that redrew here would be
+            // redrawing because a number in the drawer changed.
+            view_changed: false,
+        }
     }
 
     fn run(&mut self, command: Command) -> Result<Outcome, SessionError> {
@@ -379,7 +529,7 @@ impl Session {
                         n => format!(", {n} element{} of other kinds ignored", plural(n)),
                     },
                 );
-                self.geometry = Some(geometry);
+                self.geometry = Some(Arc::new(geometry));
                 self.geometry_generation += 1;
                 // The view changes too, even though not one block moved: the
                 // rebasing origin is settled over the geometry as well, and a
@@ -431,7 +581,7 @@ impl Session {
                 })
             }
             Command::BoxGeometry { surfaces, margin } => {
-                let geometry = self.geometry.as_ref().ok_or(SessionError::NoGeometry)?;
+                let geometry = self.geometry.as_deref().ok_or(SessionError::NoGeometry)?;
                 let corners = geometry.bounding_box(&surfaces, margin)?;
                 let id = self.blocking.add_block(corners)?;
                 let round = if surfaces.is_empty() {
@@ -459,6 +609,13 @@ impl Session {
                     view_changed: true,
                 })
             }
+            // Caught in `apply`, which has to deal with them before it
+            // takes the state that an ordinary command is undone back to.
+            // Not a panic: a kernel inside a browser tab has nowhere good
+            // to panic to.
+            Command::Undo | Command::SetHistory { .. } => Err(SessionError::BadCommand(
+                "undo and set_history are handled before this".to_string(),
+            )),
             Command::GlueFaces { first, second } => {
                 let (first, second) = (CellId::from_raw(first), CellId::from_raw(second));
                 self.blocking.glue_faces(first, second)?;
@@ -513,7 +670,7 @@ impl Session {
             let Session {
                 blocking, geometry, ..
             } = self;
-            let geometry = geometry.as_ref().ok_or(SessionError::NoGeometry)?;
+            let geometry = geometry.as_deref().ok_or(SessionError::NoGeometry)?;
             let reach = [tolerance.max(0.0) * geometry.span(); 3];
             blocking.classify_nodes(
                 |at| {
@@ -550,7 +707,7 @@ impl Session {
         let Some(on) = self.blocking.node_class(node) else {
             return Ok(());
         };
-        let Some(geometry) = self.geometry.as_ref() else {
+        let Some(geometry) = self.geometry.as_deref() else {
             return Ok(());
         };
         let Some(vertex) = self.blocking.node_by_id(node) else {
@@ -587,7 +744,7 @@ impl Session {
         }
 
         self.blocking.set_position(node, to)?;
-        let Some(geometry) = self.geometry.as_ref() else {
+        let Some(geometry) = self.geometry.as_deref() else {
             return Ok(to);
         };
         let reach = [SNAP_SHARE * geometry.span(); 3];
@@ -626,7 +783,7 @@ impl Session {
         let Session {
             blocking, geometry, ..
         } = self;
-        let Some(geometry) = geometry.as_ref() else {
+        let Some(geometry) = geometry.as_deref() else {
             return;
         };
         blocking.reclassify(|cell| {
@@ -865,6 +1022,7 @@ impl Session {
             "faces": seen.faces,
             "blocks": seen.blocks,
             "geometry": self.geometry_json(),
+            "history": { "steps": self.steps, "back": self.past.len() },
             "classified": {
                 "nodes": seen.classified_nodes,
                 "edges": seen.classified_edges,

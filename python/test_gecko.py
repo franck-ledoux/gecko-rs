@@ -24,6 +24,7 @@ def test_a_session_starts_empty():
         "faces": 0,
         "blocks": 0,
         "geometry": {"generation": 0},
+        "history": {"steps": 5, "back": 0},
         "classified": {"nodes": 0, "edges": 0, "faces": 0, "frozen": 0},
     }
     assert s.url is None
@@ -935,3 +936,66 @@ def test_the_geometrys_entities_can_be_listed(tmp_path):
     ]
     assert [e["tag"] for e in s.entities if e["dim"] == 1] == list(range(201, 213))
     assert [e["tag"] for e in s.entities if e["dim"] == 2] == list(range(1, 7))
+
+
+# --- going back -------------------------------------------------------------
+
+
+def test_a_change_can_be_taken_back():
+    s = gecko.Session()
+    s.add_block(CUBE)
+    before = bytes(s.view_buffer)
+    nodes = s.nodes
+
+    s.add_block(shifted(dx=3))
+    assert cells(s)["blocks"] == 2
+
+    assert "undone" in s.undo()
+    assert cells(s)["blocks"] == 1
+    # The same bytes, which is the whole claim: the names came back with the
+    # positions, so a node id held across the undo still means that node.
+    assert bytes(s.view_buffer) == before
+    assert s.nodes == nodes
+
+
+def test_the_bottom_of_the_stack_is_an_answer_not_an_error():
+    s = gecko.Session()
+    assert s.undo() == "nothing to undo"
+
+
+def test_how_far_back_it_goes_is_a_setting():
+    s = gecko.Session()
+    assert s.stats["history"] == {"steps": 5, "back": 0}
+
+    assert s.set_history(1) == "one step of undo"
+    s.add_block(CUBE)
+    s.add_block(shifted(dx=3))
+    assert s.stats["history"] == {"steps": 1, "back": 1}
+
+    s.undo()
+    assert cells(s)["blocks"] == 1
+    assert s.undo() == "nothing to undo"
+
+    # And none at all keeps none at all.
+    assert s.set_history(0) == "undo is off"
+    s.add_block(shifted(dx=6))
+    assert s.undo() == "nothing to undo"
+    assert cells(s)["blocks"] == 2
+
+
+def test_a_cut_is_taken_back_whole():
+    s = gecko.Session()
+    s.create_cube()
+    before = bytes(s.view_buffer)
+    edge = s.edges[0]["id"]
+
+    s.split_sheet(edge, 0.5)
+    assert cells(s)["blocks"] == 2
+
+    s.undo()
+    assert bytes(s.view_buffer) == before
+    # The edge that was cut is still that edge, so the same cut can be made
+    # again — which is what keeping states rather than replaying commands
+    # buys, and what a renumbering rebuild would lose.
+    s.split_sheet(edge, 0.5)
+    assert cells(s)["blocks"] == 2

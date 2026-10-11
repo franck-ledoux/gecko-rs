@@ -36,6 +36,7 @@ does. Any key dismisses it.
 | `G`         | glue the two selected faces                   |
 | `Del` `⌫`   | remove the selection: a block, or a lit sheet |
 | `P`         | pillow the selected faces                     |
+| `⌘Z`        | take back the last change (ctrl `Z` on a PC)  |
 | `Esc`       | clear the selection                           |
 | `F`         | frame everything                              |
 | `X` `Y` `Z` | look down an axis, `⇧` for the negative side  |
@@ -53,11 +54,16 @@ does. Any key dismisses it.
 Clicking the background clears the selection too — with nothing under the
 pointer there is nothing to pick, so the click means *that one*.
 
-Two things are deliberately left alone. Anything with ctrl, meta or alt
-belongs to the browser or the system: a shortcut that swallowed ⌘S would be a
-bug. And anything typed into a field is typing — the colour inputs and the
-sliders both take characters and arrow keys, and `Tab` inside the open drawer
-walks its fields rather than shutting it.
+Two things are deliberately left alone. A combination the table does not
+claim belongs to the browser or the system: a shortcut that swallowed ⌘S
+would be a bug, and alt is left out altogether, being how several keyboards
+type the characters above the digits. And anything typed into a field is
+typing — the colour inputs and the sliders both take characters and arrow
+keys, and `Tab` inside the open drawer walks its fields rather than shutting
+it.
+
+Undo is the one shortcut that takes a modifier, because it is the one
+everybody already knows. Bare `Z` is a view down the Z axis and stays one.
 
 !!! note "Why the digits are read by position"
     Letters are matched by the character they produce, so the key you press
@@ -65,6 +71,38 @@ walks its fields rather than shutting it.
     French keyboard the digit row is shifted, and the key printed `1`
     produces `&`. Those three are matched by physical position instead, so
     the card stays true.
+
+## Going back
+
+`⌘Z`, or the arrow in the toolbar, puts the block structure back the way it
+was before the last thing that changed it. The button is greyed out when
+there is nothing to go back to, so the history is something you can see
+rather than something you find out by pressing.
+
+Five steps by default, and **steps** under **History** in the drawer
+sets it anywhere from 0 to 20. Shortening it throws the oldest states away
+there and then.
+
+What it covers is everything that changes the model: blocks created, boxed,
+glued, removed, extruded and pillowed; nodes moved, frozen, classified and
+unclassified; sheets cut and taken out; and loading or clearing a geometry,
+which comes back with the blocks. What it does not cover is how the model is
+*drawn* — colours, opacity, which groups are showing, where the camera is.
+Those are not changes to anything, and they are already a key away.
+
+!!! note "What a step costs"
+    Each one is a copy of the whole block structure, which is why there is a
+    number in the drawer at all rather than an unbounded stack. On a model
+    of a size anyone edits by hand that is a few hundred kilobytes and about
+    a tenth of what the operation itself costs — a cut of fifty blocks takes
+    some eighty milliseconds, and the copy taken before it about nine. The
+    geometry is **shared** rather than copied: it is read-only once loaded,
+    so five steps hold five block structures and no triangles.
+
+    What you get for that is the thing a cheaper undo cannot give: the cells
+    answer to the same numbers afterwards. See
+    [the architecture](../developer-guide/architecture.md) for why a replay
+    of the commands would not.
 
 ## Pictures
 

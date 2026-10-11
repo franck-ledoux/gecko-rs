@@ -83,6 +83,12 @@
           <path d="M5 7h14M10 7V4.5h4V7M6.5 7l1 13h9l1-13" />
         </svg>
       </button>
+      <button id="undo" disabled title="Take back the last change — ⌘Z" aria-label="Undo">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M7 5 3.2 8.8 7 12.6" />
+          <path d="M3.2 8.8h10.3a5.5 5.5 0 0 1 0 11H9" />
+        </svg>
+      </button>
       <span class="sep"></span>
       <button id="quad" title="Split into four views — V" aria-label="Split the window" aria-pressed="false">
         <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -134,6 +140,13 @@
 
       <h2>Geometry</h2>
       <div id="geometry"></div>
+
+      <h2>History</h2>
+      <label class="slider"
+        ><span>steps</span>
+        <input id="history" type="range" min="0" max="20" step="1" data-test="history" />
+        <b id="history-n" data-test="history-steps">5</b>
+      </label>
 
       <h2>Picture</h2>
       <label class="slider"

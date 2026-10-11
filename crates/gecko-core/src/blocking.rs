@@ -295,6 +295,84 @@ impl Blocking {
         })
     }
 
+    /// A copy of the whole structure, to put back later.
+    ///
+    /// Written out by hand because [`CMap3`] is not `Clone`, and it is worth
+    /// saying what that costs and what it does not. The map is four things —
+    /// the β functions, the vertex positions, the attribute storages, and the
+    /// record of which darts are in use — and all four can be read and written
+    /// from outside, so this is a copy and not a reconstruction: nothing is
+    /// re-sewn, nothing is re-derived, no operation is replayed.
+    ///
+    /// That is what makes it usable as an undo state. Every dart keeps its own
+    /// number, so every cell keeps the identifier the map derives from its
+    /// orbit; the name counters come across as they stand, so a [`CellId`] a
+    /// caller is still holding means the cell it meant; and the used-and-unused
+    /// pattern is reproduced position by position, so the next dart the map
+    /// hands out is the one it would have handed out anyway. A state put back
+    /// is indistinguishable from the state that was taken, rather than merely
+    /// the same shape.
+    ///
+    /// Attributes of cells that no longer exist are the one thing left behind.
+    /// No orbit names them and nothing reads them.
+    pub fn snapshot(&self) -> Result<Blocking, BlockingError> {
+        let mut copy = Blocking::new()?;
+        let total = self.map.n_darts() as DartIdType;
+
+        // Darts in runs of one kind, so each one lands on its own number.
+        // Dart 0 is the null dart: it belongs to the map, and a fresh one
+        // has it already.
+        let mut d: DartIdType = 1;
+        while d < total {
+            let unused = self.map.is_unused(d);
+            let mut run = 1;
+            while d + run < total && self.map.is_unused(d + run) == unused {
+                run += 1;
+            }
+            if unused {
+                copy.map.allocate_unused_darts(run as usize);
+            } else {
+                copy.map.allocate_used_darts(run as usize);
+            }
+            d += run;
+        }
+
+        // The topology before anything that hangs off it: a cell is named by
+        // the smallest dart of its orbit, and until β is in place there are
+        // no orbits to name.
+        for d in 1..total {
+            copy.map.set_betas(
+                d,
+                [
+                    self.map.beta::<0>(d),
+                    self.map.beta::<1>(d),
+                    self.map.beta::<2>(d),
+                    self.map.beta::<3>(d),
+                ],
+            );
+        }
+
+        for v in self.map.iter_vertices() {
+            if let Some(at) = self.map.read_vertex(v) {
+                copy.map.write_vertex(v, at);
+            }
+            copy.map.write_attribute(v, self.node_tag(v));
+        }
+        for e in self.map.iter_edges() {
+            copy.map.write_attribute(e, self.edge_tag(e));
+        }
+        for f in self.map.iter_faces() {
+            copy.map.write_attribute(f, self.face_tag(f));
+        }
+        for b in self.map.iter_volumes() {
+            copy.map.write_attribute(b, self.block_tag(b));
+        }
+
+        copy.names = self.names.clone();
+        copy.corners = self.corners.clone();
+        Ok(copy)
+    }
+
     /// Add one hexahedral block from its eight corner points, in the usual
     /// VTK/Gmsh order.
     ///
@@ -694,7 +772,7 @@ impl Blocking {
 
     /// Forget what every edge and face is classified on.
     ///
-    /// What makes a global [`Session::classify`][] a fresh start rather
+    /// What makes a global `Session::classify` a fresh start rather
     /// than a confirmation of what is already there: the settling keeps a
     /// classification that is still consistent with its boundary, which is
     /// right while editing and wrong when the whole point is to decide
