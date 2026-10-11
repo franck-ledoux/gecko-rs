@@ -19,6 +19,6 @@ pub mod bounds;
 pub mod model;
 pub mod msh;
 
-pub use bounds::{BoundsError, Frame};
+pub use bounds::BoundsError;
 pub use model::{Corner, Curve, Geometry, Surface};
 pub use msh::{Msh, MshError, PhysicalName, LINE, POINT, TRIANGLE};

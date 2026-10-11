@@ -1667,6 +1667,42 @@ describe("growing a block out of a face", () => {
     expect(viewer.beginExtrusion({ face: 999, block: 999 })).toBe(false);
   });
 
+  it("keeps the preview's meshes while the pointer moves", async () => {
+    // A drag is a stream of these, several per frame. Throwing two meshes
+    // and two materials away each time is what made the preview flicker
+    // and lag — the same lesson as the shrink sliders, which is why the
+    // assertion is the same one: the mesh you end with is the mesh you
+    // started with, and only its buffers changed.
+    const { viewer } = await cubeScene();
+    const id = () => viewer.scene.getMeshByName("grown")?.uniqueId ?? null;
+    const pick = viewer.surface("faces")!;
+    viewer.beginExtrusion({ face: pick.faces[0], block: pick.blocks[0] });
+    expect(id(), "nothing drawn before the first movement").toBeNull();
+
+    viewer.aimExtrusion(200, 120);
+    const first = id();
+    expect(first).not.toBeNull();
+    const corners = () =>
+      Array.from(viewer.scene.getMeshByName("grown")!.getVerticesData("position")!);
+    const before = corners();
+
+    for (const [x, y] of [
+      [210, 110],
+      [230, 90],
+      [260, 60],
+    ]) {
+      viewer.aimExtrusion(x, y);
+      expect(id(), "the mesh was thrown away and rebuilt").toBe(first);
+    }
+    // Rewritten, not merely kept: a preview that never moves is no better
+    // than one that flickers.
+    expect(corners()).not.toEqual(before);
+
+    viewer.endExtrusion();
+    expect(id()).toBeNull();
+    expect(viewer.scene.getMeshByName("grown-edges")).toBeNull();
+  });
+
   it("never asks for a block of no thickness", async () => {
     // Dragging the wrong way holds the preview at its thinnest rather than
     // letting it vanish: the kernel refuses a height of nought, and there

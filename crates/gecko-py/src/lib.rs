@@ -179,21 +179,13 @@ impl PySession {
     /// Add one block: a box round the geometry, or round part of it.
     ///
     /// `surfaces` is a list of gmsh entity tags, or `None` for the lot.
-    /// `frame` is `"axes"` for a box square to the world, or `"inertia"`
-    /// for one square to the shape's own principal axes — which is the
-    /// same thing, since the inertia tensor and the covariance share their
-    /// eigenvectors. `margin` grows each half-side by that share.
-    #[pyo3(signature = (surfaces=None, frame="axes", margin=0.1))]
-    fn box_geometry(
-        &self,
-        surfaces: Option<Vec<i32>>,
-        frame: &str,
-        margin: f64,
-    ) -> PyResult<String> {
+    /// `margin` grows each half-side by that share; 0 rests the box
+    /// exactly on the geometry.
+    #[pyo3(signature = (surfaces=None, margin=0.1))]
+    fn box_geometry(&self, surfaces: Option<Vec<i32>>, margin: f64) -> PyResult<String> {
         self.command(serde_json::json!({
             "op": "box_geometry",
             "surfaces": surfaces.unwrap_or_default(),
-            "frame": frame,
             "margin": margin,
         }))
     }

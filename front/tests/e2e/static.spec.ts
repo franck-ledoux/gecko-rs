@@ -1574,11 +1574,11 @@ async function openCube(page: import("@playwright/test").Page) {
 
 test("the geometry buttons wait for a geometry", async ({ page }) => {
   const errors = await boot(page);
-  for (const id of ["picking", "box", "box-inertia"]) {
+  for (const id of ["picking", "box"]) {
     await expect(page.locator(`#${id}`)).toBeDisabled();
   }
   await openCube(page);
-  for (const id of ["picking", "box", "box-inertia"]) {
+  for (const id of ["picking", "box"]) {
     await expect(page.locator(`#${id}`)).toBeEnabled();
   }
   expect(errors).toEqual([]);
@@ -1600,8 +1600,17 @@ test("aiming at the geometry picks surfaces, and the blocks stay out of it", asy
   await page.waitForFunction(() => (window as any).__gecko.selection().length === 1);
   expect(await page.evaluate(() => (window as any).__gecko.surfaceSelection())).toEqual([]);
 
+  // Which mode you are in is said twice over, because a toggle that looks
+  // the same either way is one you click to find out about.
+  await expect(page.locator("[data-test=aim]")).toHaveText("picking blocks");
+  await expect(page.locator("#picking .as-blocks")).toBeVisible();
+  await expect(page.locator("#picking .as-geometry")).toBeHidden();
+
   // Switched over, and the same click takes a surface instead.
   await page.keyboard.press("m");
+  await expect(page.locator("[data-test=aim]")).toHaveText("picking geometry");
+  await expect(page.locator("#picking .as-geometry")).toBeVisible();
+  await expect(page.locator("#picking .as-blocks")).toBeHidden();
   expect(await page.evaluate(() => (window as any).__gecko.picking())).toBe("geometry");
   await expect(page.locator("#picking")).toHaveAttribute("aria-pressed", "true");
   expect(await page.evaluate(() => (window as any).__gecko.selection())).toEqual([]);
@@ -1635,12 +1644,6 @@ test("a box is built round the geometry, or round what is selected", async ({ pa
   await page.locator("#box").click();
   await expect(page.locator("[data-test=blocks]")).toHaveText("1");
   await expect(page.locator("#status")).toContainText("the whole geometry");
-  await expect(page.locator("#status")).toContainText("square to the world");
-
-  // The shape's own axes, from the second button.
-  await page.locator("#box-inertia").click();
-  await expect(page.locator("[data-test=blocks]")).toHaveText("2");
-  await expect(page.locator("#status")).toContainText("its own axes");
 
   // And one round a selection, which has to be two surfaces at least or
   // the box has no thickness.
@@ -1650,7 +1653,7 @@ test("a box is built round the geometry, or round what is selected", async ({ pa
     g.selectSurfaces([1, 2]);
   });
   await page.keyboard.press("b");
-  await expect(page.locator("[data-test=blocks]")).toHaveText("3");
+  await expect(page.locator("[data-test=blocks]")).toHaveText("2");
   await expect(page.locator("#status")).toContainText("2 surfaces");
   expect(errors).toEqual([]);
 });

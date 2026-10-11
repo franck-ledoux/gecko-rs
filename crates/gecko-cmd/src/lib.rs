@@ -14,7 +14,7 @@ pub mod view;
 use gecko_core::ids::CellId;
 use gecko_core::{cube_corners, Blocking, BlockingError};
 use gecko_geom::model::GeometryError;
-use gecko_geom::{BoundsError, Frame, Geometry};
+use gecko_geom::{BoundsError, Geometry};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -34,29 +34,6 @@ pub enum SessionError {
     Bounds(#[from] BoundsError),
     #[error("no geometry is loaded — open a .msh first")]
     NoGeometry,
-}
-
-/// Which frame a bounding box is measured in.
-///
-/// A copy of [`gecko_geom::Frame`] carrying the serde attributes, so the
-/// geometry crate needs no idea that anything is ever serialised.
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BoxFrame {
-    /// The world's own X, Y and Z.
-    #[default]
-    Axes,
-    /// The shape's own, from the covariance of the surfaces chosen.
-    Inertia,
-}
-
-impl From<BoxFrame> for Frame {
-    fn from(frame: BoxFrame) -> Frame {
-        match frame {
-            BoxFrame::Axes => Frame::Axes,
-            BoxFrame::Inertia => Frame::Inertia,
-        }
-    }
 }
 
 /// How much room a bounding box leaves round the geometry, as a share of
@@ -151,13 +128,10 @@ pub enum Command {
     ClearGeometry,
     /// Add one block: a box round the geometry, or round part of it.
     ///
-    /// An empty `surfaces` means all of them. `frame` picks what the box is
-    /// square to — the world, or the shape's own axes of inertia.
+    /// An empty `surfaces` means all of them.
     BoxGeometry {
         #[serde(default)]
         surfaces: Vec<i32>,
-        #[serde(default)]
-        frame: BoxFrame,
         #[serde(default = "default_margin")]
         margin: f64,
     },
@@ -357,26 +331,18 @@ impl Session {
                     view_changed: true,
                 })
             }
-            Command::BoxGeometry {
-                surfaces,
-                frame,
-                margin,
-            } => {
+            Command::BoxGeometry { surfaces, margin } => {
                 let geometry = self.geometry.as_ref().ok_or(SessionError::NoGeometry)?;
-                let corners = geometry.bounding_box(&surfaces, frame.into(), margin)?;
+                let corners = geometry.bounding_box(&surfaces, margin)?;
                 let id = self.blocking.add_block(corners)?;
                 let round = if surfaces.is_empty() {
                     "the whole geometry".to_string()
                 } else {
                     format!("{} surface{}", surfaces.len(), plural(surfaces.len()))
                 };
-                let square = match frame {
-                    BoxFrame::Axes => "square to the world",
-                    BoxFrame::Inertia => "square to its own axes",
-                };
                 Ok(Outcome {
                     message: format!(
-                        "block {id:?} boxes {round}, {square} — \
+                        "block {id:?} boxes {round} — \
                          {} nodes, {} edges, {} faces, {} blocks",
                         self.blocking.nb_nodes(),
                         self.blocking.nb_edges(),

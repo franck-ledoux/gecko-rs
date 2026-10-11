@@ -171,6 +171,66 @@ export function heightAlong(
   return (dot(normal, gap) - slant * dot(towards, gap)) / denominator;
 }
 
+/** How solid the preview of an extrusion is drawn. Enough to read as a
+ *  volume, little enough to see the model through. */
+export const GROWN_ALPHA = 0.3;
+
+/**
+ * The six quadrangles of the preview box, as 24 vertices.
+ *
+ * Unshared corners, so each face gets a normal of its own and the box
+ * reads as a box rather than as a balloon. Wound outward throughout: the
+ * near ring runs anticlockwise seen from the far end, so the far face
+ * keeps that order, the near face reverses it, and each side takes one
+ * edge of the ring and the two above it.
+ */
+function boxFaces(near: readonly Vector3[], far: readonly Vector3[]): Float32Array {
+  const quads: Vector3[][] = [
+    [far[0], far[1], far[2], far[3]],
+    [near[0], near[3], near[2], near[1]],
+  ];
+  for (let k = 0; k < 4; k++) {
+    const next = (k + 1) % 4;
+    quads.push([near[k], near[next], far[next], far[k]]);
+  }
+  const out = new Float32Array(24 * 3);
+  quads.forEach((quad, q) =>
+    quad.forEach((p, k) => {
+      const at = (q * 4 + k) * 3;
+      out[at] = p.x;
+      out[at + 1] = p.y;
+      out[at + 2] = p.z;
+    }),
+  );
+  return out;
+}
+
+/** Two triangles per quadrangle, and the quadrangles never change. */
+const BOX_TRIANGLES = new Uint32Array(
+  Array.from({ length: 6 }, (_, q) => {
+    const base = q * 4;
+    return [base, base + 1, base + 2, base, base + 2, base + 3];
+  }).flat(),
+);
+
+function boxNormals(positions: Float32Array): number[] {
+  const normals: number[] = [];
+  VertexData.ComputeNormals(positions, Array.from(BOX_TRIANGLES), normals);
+  return normals;
+}
+
+/** The twelve edges, six numbers each. */
+function boxOutline(near: readonly Vector3[], far: readonly Vector3[]): number[][] {
+  const out: number[][] = [];
+  for (let k = 0; k < 4; k++) {
+    const next = (k + 1) % 4;
+    out.push([...near[k].asArray(), ...near[next].asArray()]);
+    out.push([...far[k].asArray(), ...far[next].asArray()]);
+    out.push([...near[k].asArray(), ...far[k].asArray()]);
+  }
+  return out;
+}
+
 /** Newell's normal of a quadrangle — the same arithmetic as the kernel's
  *  `quad_normal`, so the two agree about which way is out. */
 function quadNormal(corners: readonly Vector3[]): Vector3 {
@@ -290,7 +350,8 @@ export class Viewer {
   /** The face being grown, while the pointer is down on it: where it is,
    *  which way is out, and how far the pointer has asked for so far. */
   private growing?: { pick: Pick; centre: Vector3; normal: Vector3; corners: Vector3[] };
-  private grownWire?: Mesh;
+  private grownWire?: GreasedLineMesh;
+  private grownBox?: Mesh;
   private grown: number | null = null;
   /** The geometry, if one has been loaded. Read-only here: nothing in the
    *  viewer edits it, and no operation moves it. */
@@ -569,7 +630,7 @@ export class Viewer {
       .scale(0.25);
     this.growing = { pick, centre, normal: normal.normalize(), corners };
     this.grown = null;
-    this.rebuildGrown();
+    this.showGrown();
     return true;
   }
 
@@ -590,7 +651,7 @@ export class Viewer {
     if (asked === null) return this.grown;
     const across = Vector3.Distance(corners[0], corners[2]);
     this.grown = Math.max(asked, across * THINNEST);
-    this.rebuildGrown();
+    this.showGrown();
     return this.grown;
   }
 
@@ -608,34 +669,75 @@ export class Viewer {
   endExtrusion() {
     this.growing = undefined;
     this.grown = null;
-    this.rebuildGrown();
+    this.showGrown();
   }
 
   /**
-   * The preview: the twelve edges of the block that would be built.
+   * The preview: the block that would be built, as a translucent solid
+   * with its edges drawn over it.
    *
-   * A wireframe rather than a solid, for the same reason the aimed cut is
-   * drawn as a line — what you are judging is where it reaches, and a
-   * translucent box over a translucent model is two things to see through.
+   * **Built once and then written to.** A drag is a stream of these — one
+   * per pointer event, several per frame — and throwing two meshes and
+   * two materials away each time is what made it flicker and lag. Only
+   * eight corners move, so only the buffers are rewritten; the same
+   * lesson as the shrink sliders.
+   *
+   * A solid rather than the bare wireframe it started as: what you are
+   * judging is the volume you are about to add, and twelve lines in
+   * mid-air read as twelve lines.
    */
-  private rebuildGrown() {
-    this.grownWire?.dispose(false, true);
-    this.grownWire = undefined;
-    if (!this.growing || this.grown === null) return;
-    const { normal, corners } = this.growing;
-    const far = corners.map((p) => p.add(normal.scale(this.grown!)));
-    const points: number[][] = [];
-    for (let k = 0; k < 4; k++) {
-      const next = (k + 1) % 4;
-      points.push([...corners[k].asArray(), ...far[k].asArray()]);
-      points.push([...far[k].asArray(), ...far[next].asArray()]);
+  private showGrown() {
+    if (!this.growing || this.grown === null) {
+      this.grownBox?.dispose(false, true);
+      this.grownWire?.dispose(false, true);
+      this.grownBox = undefined;
+      this.grownWire = undefined;
+      return;
     }
+
+    const { normal, corners } = this.growing;
+    const height = this.grown;
+    const far = corners.map((p) => p.add(normal.scale(height)));
+    const positions = boxFaces(corners, far);
+    const outline = boxOutline(corners, far);
+
+    if (this.grownBox && this.grownWire) {
+      this.grownBox.updateVerticesData(VertexBuffer.PositionKind, positions);
+      this.grownBox.updateVerticesData(VertexBuffer.NormalKind, boxNormals(positions));
+      this.grownWire.setPoints(outline);
+      return;
+    }
+
+    const mesh = new Mesh("grown", this.scene);
+    const vertices = new VertexData();
+    vertices.positions = positions;
+    vertices.indices = Array.from(BOX_TRIANGLES);
+    vertices.normals = boxNormals(positions);
+    vertices.applyToMesh(mesh, true);
+
+    const colour = Color3.FromHexString(MATE);
+    const material = new StandardMaterial("grownMat", this.scene);
+    material.diffuseColor = colour;
+    material.emissiveColor = colour.scale(0.45);
+    material.specularColor = Color3.Black();
+    material.backFaceCulling = false;
+    material.separateCullingPass = true;
+    material.alpha = GROWN_ALPHA;
+    mesh.material = material;
+    mesh.isPickable = false;
+    mesh.layerMask = MAIN_LAYER;
+    // Over the model, like the lit sheet: it is a thing being shown to
+    // you rather than a thing that is there, and half of it is usually
+    // behind the block it is growing from.
+    mesh.renderingGroupId = 1;
+    this.grownBox = mesh;
+
     this.grownWire = CreateGreasedLine(
-      "grown",
-      { points },
-      { color: Color3.FromHexString(MATE), ...this.ribbon(1) },
+      "grown-edges",
+      { points: outline, updatable: true },
+      { color: colour, ...this.ribbon(1) },
       this.scene,
-    );
+    ) as GreasedLineMesh;
     this.grownWire.isPickable = false;
     this.grownWire.layerMask = MAIN_LAYER;
     this.grownWire.renderingGroupId = 2;

@@ -12,7 +12,8 @@ tooltip each, and a key each.
 **A settings drawer**, shut unless asked for — `Tab`, or the sliders button.
 Colours, cells, and how a saved picture comes out. Its state is remembered.
 
-**A readout**, bottom left: the counts, and whatever just happened.
+**A readout**, bottom left: the counts, which kind of thing the mouse is
+aimed at, and whatever just happened.
 
 `⇧Tab` puts all three away and brings them back. Which is cosmetic rather
 than necessary — see [Pictures](#pictures) below.
@@ -28,7 +29,7 @@ does. Any key dismisses it.
 | `C`         | create a cube                                 |
 | `O`         | open a geometry (`.msh`)                      |
 | `M`         | aim at the geometry, or back at the blocks    |
-| `B` `⇧B`    | box the geometry: world's axes, or its own    |
+| `B`         | box the geometry, or the selected surfaces    |
 | `G`         | glue the two selected faces                   |
 | `Del` `⌫`   | remove the selection: a block, or a lit sheet |
 | `P`         | pillow the selected faces                     |

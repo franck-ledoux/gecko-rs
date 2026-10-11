@@ -23,6 +23,11 @@
           <path d="M3 9.5h18" />
         </svg>
       </button>
+      <!-- Two icons, one per mode, and the button wears the one it is
+           currently in: the same hexagon, cut into quadrilaterals when the
+           mouse is aimed at the blocks and whole when it is aimed at the
+           geometry. A toggle that looks the same either way is a toggle
+           you have to click to find out about. -->
       <button
         id="picking"
         disabled
@@ -30,7 +35,11 @@
         aria-label="Aim at the geometry"
         aria-pressed="false"
       >
-        <svg viewBox="0 0 24 24" aria-hidden="true">
+        <svg class="as-blocks" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3.2 20 7.6v8.8L12 20.8 4 16.4V7.6Z" />
+          <path d="M12 12V3.2M12 12l8 4.4M12 12l-8 4.4" />
+        </svg>
+        <svg class="as-geometry" viewBox="0 0 24 24" aria-hidden="true">
           <path d="M12 3.2 20 7.6v8.8L12 20.8 4 16.4V7.6Z" />
           <circle cx="12" cy="12" r="2.4" class="dot" />
         </svg>
@@ -38,17 +47,6 @@
       <button id="box" disabled title="Box the geometry — B" aria-label="Bounding box">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M4 6.5h16v11H4Z" />
-          <circle cx="12" cy="12" r="3" />
-        </svg>
-      </button>
-      <button
-        id="box-inertia"
-        disabled
-        title="Box the geometry along its own axes — ⇧B"
-        aria-label="Bounding box along the shape's axes"
-      >
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M3.4 9.2 14.6 4.3l6.1 10.6L9.4 19.7Z" />
           <circle cx="12" cy="12" r="3" />
         </svg>
       </button>
@@ -137,6 +135,7 @@
 
     <footer id="readout">
       <span id="stats"></span>
+      <span id="aim" data-test="aim"></span>
       <span id="status"></span>
     </footer>
 

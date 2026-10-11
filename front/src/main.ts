@@ -530,23 +530,32 @@ async function boot() {
     );
   }
 
-  /** Whether the mouse is aimed at the geometry or at the blocks. */
+  /**
+   * Whether the mouse is aimed at the geometry or at the blocks.
+   *
+   * Said in three places, because a mode you cannot see is a mode you
+   * click twice to find out about: the button wears the icon of the mode
+   * it is in, the readout names it, and the status line says so when it
+   * changes.
+   */
   function setPicking(at: "blocks" | "geometry") {
     viewer.setPicking(at);
     $("picking").setAttribute("aria-pressed", String(at === "geometry"));
+    $("picking").title =
+      at === "geometry" ? "Aim at the blocks — M" : "Aim at the geometry — M";
+    $("aim").textContent = at === "geometry" ? "picking geometry" : "picking blocks";
     if (at === "blocks") viewer.selectSurfaces([]);
     else clearSelection();
     say(at === "geometry" ? "aiming at the geometry" : "aiming at the blocks");
   }
 
-  async function boxGeometry(frame: "axes" | "inertia") {
+  async function boxGeometry() {
     // No margin in the command: the kernel's default is the one definition
     // of how much room a box leaves, and sending a second copy of it from
     // here is how the two come to disagree.
     const reply = await kernel.apply({
       op: "box_geometry",
       surfaces: viewer.surfaceSelection,
-      frame,
     });
     message = reply.message;
     // Framed, because the box is almost always bigger than anything that
@@ -714,7 +723,7 @@ async function boot() {
     if (frame) viewer.frameAll(frame === "jump");
     // Nothing to aim at and nothing to box without one.
     const loaded = stats.geometry.surfaces !== undefined;
-    for (const id of ["picking", "box", "box-inertia"]) {
+    for (const id of ["picking", "box"]) {
       $<HTMLButtonElement>(id).disabled = !loaded;
     }
     if (!loaded && viewer.aimedAtGeometry) setPicking("blocks");
@@ -819,8 +828,7 @@ async function boot() {
     cube: createCube,
     open: openGeometry,
     picking: () => setPicking(viewer.aimedAtGeometry ? "blocks" : "geometry"),
-    box: () => boxGeometry("axes"),
-    "box-inertia": () => boxGeometry("inertia"),
+    box: () => boxGeometry(),
     glue: glueSelection,
     remove: removeSelection,
     pillow: pillowSelection,
@@ -898,7 +906,6 @@ async function boot() {
     ["open", "open"],
     ["picking", "picking"],
     ["box", "box"],
-    ["box-inertia", "box-inertia"],
     ["glue", "glue"],
     ["remove", "remove"],
     ["pillow", "pillow"],
@@ -951,6 +958,7 @@ async function boot() {
   });
 
   applyChrome();
+  $("aim").textContent = "picking blocks";
   engine.runRenderLoop(() => viewer.render());
   // Straight there: there is nothing on screen yet to glide away from.
   await refresh("jump");

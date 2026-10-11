@@ -126,17 +126,15 @@ A file that is not a mesh, is not version 2.x, has no triangles, or whose
 triangles carry no entity tag raises `ValueError` with a message that says
 which.
 
-#### `box_geometry(surfaces=None, frame="axes", margin=0.1)`
+#### `box_geometry(surfaces=None, margin=0.1)`
 
 Add one block: a box round the geometry, or round the surfaces whose gmsh
-tags are given. `frame` is `"axes"` for a box square to the world or
-`"inertia"` for one square to the shape's own principal axes. `margin` grows
-each half-side by that share.
+tags are given. `margin` grows each half-side by that share.
 
 ```python
 >>> s.box_geometry()
-'block CellId(0) boxes the whole geometry, square to the world — 8 nodes, …'
->>> s.box_geometry(surfaces=[3, 5], frame="inertia", margin=0)
+'block CellId(0) boxes the whole geometry — 8 nodes, 12 edges, 6 faces, …'
+>>> s.box_geometry(surfaces=[3, 5], margin=0)
 ```
 
 A flat selection, an unknown tag, a margin of −1 or less, or no geometry at

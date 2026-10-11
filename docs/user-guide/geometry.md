@@ -97,7 +97,10 @@ yet is still what there is to see.
 ## Selecting surfaces
 
 `M`, or the hexagon button, aims the mouse at the **geometry** instead of at
-the blocks. Clicking a surface then picks it, clicking it again puts it out,
+the blocks. The button wears the mode it is in — the hexagon cut into
+quadrilaterals for the blocks, whole for the geometry — and the readout
+along the bottom names it, because a toggle that looks the same either way
+is one you have to click to find out about. Clicking a surface then picks it, clicking it again puts it out,
 and the background or `Esc` lets go of the lot. A picked surface turns the
 selection colour, exactly as a picked face does.
 
@@ -117,8 +120,7 @@ a selection needs.
 ## A box round it
 
 `B`, or the box button, adds **one block**: a box containing the geometry, or
-containing just the surfaces selected. `⇧B`, or the tilted-box button, does
-the same measured along the shape's **own axes** rather than the world's.
+containing just the surfaces selected.
 
 It is almost always the first block of a session: something that contains the
 shape, to be cut and fitted onto it afterwards. The C++ GECKO has the same
@@ -126,32 +128,11 @@ button, and the same margin — each half-side is grown by **10%**, so the box
 stands clear of the geometry rather than resting on it. From Python,
 `s.box_geometry(margin=0)` for one that rests on it exactly.
 
-### Which axes
-
-A part lying at forty degrees gets, from `B`, a box square to the world and
-half full of air; from `⇧B`, a box lying at forty degrees and exactly its own
-size.
-
-The axes are the **principal axes of the selected surfaces, weighted by
-area**. Weighting matters: a faceted CAD surface has wildly uneven triangles
-— a cylinder's flat end is two of them and its round side two hundred — so
-counting corners would measure the mesher's habits rather than the shape.
-Cut one face of a bar into a hundred triangles and the box does not move.
-
-!!! note "Axes of inertia, principal axes, same box"
-    The inertia tensor is `J = tr(C)·I − C`, where `C` is the covariance.
-    Subtracting a matrix from a multiple of the identity leaves the
-    eigen*vectors* alone and only reorders the eigen*values* — the heaviest
-    axis of one is the lightest of the other. So the two give the same three
-    directions and the same box.
-
-!!! warning "A round shape has no axes"
-    A cylinder, or a bar with a square cross-section, has two equal
-    eigenvalues: every direction in that plane is as principal as every
-    other, and the box is free to turn about the shape's length. That is a
-    fact about the shape, not a weakness of the arithmetic — the *smallest*
-    box is a different and much longer question. When it matters, `B` and
-    the world's own axes are the predictable choice.
+The box is square to the world. A version along the shape's own axes of
+inertia was built and taken out again: a shape with a round or square
+cross-section has two equal eigenvalues and so no preferred way up at all,
+and the box turns about the shape's length as it pleases. The useful form of
+that idea is the *smallest* box, which is a different and much longer answer.
 
 A selection that is **flat** — one planar surface, say — is refused: a box
 round it would have no thickness, and a block with no volume is not a block.

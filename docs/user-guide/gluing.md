@@ -122,6 +122,11 @@ turned — one drag cannot be both. Every face but the selected one still
 orbits; press and release on the selected one without moving and that is a
 click, which lets go of it as usual.
 
+While you drag, the block that would be built is drawn as a translucent
+solid with its edges over it — rebuilt in place on every pointer move
+rather than thrown away and made again, which is what a drag of several
+events per frame costs otherwise.
+
 The face **does not move**. The new block's four near corners are built on
 it and welded to it, so the weld averages each pair of coincident points and
 lands back where it started.

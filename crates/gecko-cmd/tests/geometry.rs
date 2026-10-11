@@ -307,17 +307,11 @@ fn a_box_round_the_geometry_is_one_block() {
     let out = s
         .apply(Command::BoxGeometry {
             surfaces: vec![],
-            frame: gecko_cmd::BoxFrame::Axes,
             margin: 0.0,
         })
         .expect("a box");
     assert!(
         out.message.contains("the whole geometry"),
-        "{}",
-        out.message
-    );
-    assert!(
-        out.message.contains("square to the world"),
         "{}",
         out.message
     );
@@ -373,17 +367,4 @@ fn a_flat_selection_is_refused_rather_than_built_flat() {
     assert!(reply.contains(r#""ok":false"#), "{reply}");
     assert!(reply.contains("flat"), "{reply}");
     assert_eq!(stats(&s)["blocks"], 0);
-}
-
-#[test]
-fn the_other_frame_comes_through_the_door_by_name() {
-    let mut s = Session::new().unwrap();
-    load(&mut s, CUBE_MSH);
-    let reply = s.apply_json(r#"{"op":"box_geometry","frame":"inertia","margin":0}"#);
-    assert!(reply.contains(r#""ok":true"#), "{reply}");
-    assert!(reply.contains("its own axes"), "{reply}");
-    // Square to the world already, so the box is the same box — to within
-    // the rotation it goes through and comes back from.
-    let (lo, hi) = span(&s, 2);
-    assert!(lo.abs() < 1e-9 && (hi - 3.0).abs() < 1e-9, "{lo}..{hi}");
 }

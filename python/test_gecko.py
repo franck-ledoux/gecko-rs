@@ -659,16 +659,6 @@ def test_a_box_round_a_selection_of_surfaces(tmp_path):
     assert _span(s, 2) == pytest.approx((0.0, 3.0))
 
 
-def test_a_box_along_the_shapes_own_axes(tmp_path):
-    # Square to the world already, so the answer is the same box — which is
-    # the point: the second frame is not a different shape, it is a
-    # different measuring stick.
-    s = _boxed(tmp_path, frame="inertia", margin=0.0)
-    for axis, want in enumerate([2.0, 1.0, 3.0]):
-        lo, hi = _span(s, axis)
-        assert hi - lo == pytest.approx(want, abs=1e-9)
-
-
 def test_a_box_needs_a_geometry_and_some_depth(tmp_path):
     s = gecko.Session()
     with pytest.raises(ValueError, match="no geometry is loaded"):
