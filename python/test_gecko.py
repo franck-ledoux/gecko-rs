@@ -833,9 +833,11 @@ def test_reading_a_session_does_not_get_slower_than_linearly():
 
     Sixty-four blocks took nine seconds per refresh when `stats` and
     `nodes` resolved a name per cell, and take about forty milliseconds
-    when they do not. The threshold below is two seconds for twenty of
-    them: loose enough never to blink on a slow machine, tight enough that
-    a return to quadratic misses it by two orders of magnitude.
+    when they do not. Twenty of them is therefore either about a second or
+    about three minutes, and the threshold wants to sit between those two
+    with room on both sides — a CI runner is three times slower than the
+    machine this was written on, which the first attempt at this number
+    did not allow for and which cost a red build.
     """
     s = gecko.Session()
     s.create_cube([0.0, 0.0, 0.0], 4.0)
@@ -855,7 +857,9 @@ def test_reading_a_session_does_not_get_slower_than_linearly():
         bytes(s.view_buffer)
         s.nodes
     spent = time.perf_counter() - started
-    assert spent < 2.0, f"twenty refreshes of 64 blocks took {spent:.1f} s"
+    # Seven times the slowest seen on CI, and a ninth of what the version
+    # before this would take.
+    assert spent < 20.0, f"twenty refreshes of 64 blocks took {spent:.1f} s"
 
 
 def _along(session, edge, axis):
