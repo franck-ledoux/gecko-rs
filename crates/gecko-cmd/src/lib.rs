@@ -12,7 +12,7 @@
 pub mod view;
 
 use gecko_core::ids::CellId;
-use gecko_core::{cube_corners, Blocking, BlockingError};
+use gecko_core::{cube_corners, Blocking, BlockingError, On};
 use gecko_geom::model::GeometryError;
 use gecko_geom::{BoundsError, Geometry};
 use serde::{Deserialize, Serialize};
@@ -39,6 +39,28 @@ pub enum SessionError {
 /// How much room a bounding box leaves round the geometry, as a share of
 /// each half-side. The C++'s own default.
 pub const BOX_MARGIN: f64 = 0.1;
+
+/// How near a node has to be to a geometric entity to be classified on it,
+/// as a share of the geometry's own size.
+///
+/// A share rather than a length, because a tolerance in millimetres is
+/// right for exactly one model. One figure for all three dimensions, as the
+/// C++ defaults them — the geometry can take a different one per dimension
+/// and will, the day a model needs it.
+pub const SNAP_SHARE: f64 = 0.02;
+
+fn default_snap() -> f64 {
+    SNAP_SHARE
+}
+
+/// A geometric entity, as a command names one.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct Spot {
+    /// 0 a corner, 1 a curve, 2 a surface.
+    pub dim: u8,
+    /// The gmsh entity tag.
+    pub tag: i32,
+}
 
 fn default_margin() -> f64 {
     BOX_MARGIN
@@ -126,6 +148,26 @@ pub enum Command {
     },
     /// Forget the geometry.
     ClearGeometry,
+    /// Put every node of the blocking on the geometric entity nearest it,
+    /// and every edge on what its two ends agree about.
+    ///
+    /// `tolerance` is a share of the geometry's own size.
+    Classify {
+        #[serde(default = "default_snap")]
+        tolerance: f64,
+    },
+    /// Put one node on a geometric entity, or take it off one.
+    ClassifyNode {
+        node: u32,
+        /// Nothing frees the node.
+        #[serde(default)]
+        on: Option<Spot>,
+    },
+    /// Stop a node moving, or let it move again.
+    FreezeNode {
+        node: u32,
+        frozen: bool,
+    },
     /// Add one block: a box round the geometry, or round part of it.
     ///
     /// An empty `surfaces` means all of them.
@@ -197,6 +239,12 @@ impl Session {
         let outcome = self.run(command)?;
         if outcome.view_changed {
             self.settle_origin();
+            // Every edge, after anything that touched the model. An edge's
+            // classification is a statement about its two ends, so it is
+            // out of date the moment either of them is — and a cut makes
+            // edges nobody has ever classified. Two table lookups apiece,
+            // no geometry measured.
+            self.settle_edges();
         }
         Ok(outcome)
     }
@@ -214,9 +262,12 @@ impl Session {
             }
             Command::MoveNode { node, to } => {
                 let node = CellId::from_raw(node);
-                self.blocking.set_position(node, to)?;
+                let landed = self.move_node(node, to)?;
                 Ok(Outcome {
-                    message: format!("node {node:?} moved to {to:?}"),
+                    message: match self.blocking.node_class(node) {
+                        Some(on) => format!("node {node:?} moved along {}", name_of(on)),
+                        None => format!("node {node:?} moved to {landed:?}"),
+                    },
                     view_changed: true,
                 })
             }
@@ -331,6 +382,45 @@ impl Session {
                     view_changed: true,
                 })
             }
+            Command::Classify { tolerance } => {
+                let (nodes, edges) = self.classify(tolerance)?;
+                Ok(Outcome {
+                    message: format!(
+                        "classified {nodes} node{} and {edges} edge{} onto the geometry",
+                        plural(nodes),
+                        plural(edges),
+                    ),
+                    view_changed: true,
+                })
+            }
+            Command::ClassifyNode { node, on } => {
+                let node = CellId::from_raw(node);
+                let on = on.map(|s| On {
+                    dim: s.dim,
+                    tag: s.tag,
+                });
+                self.blocking.set_node_class(node, on)?;
+                // Put it where it now says it is, unless it is frozen, in
+                // which case nobody moves it — that is what frozen means.
+                if !self.blocking.is_frozen(node) {
+                    self.pull_onto_class(node)?;
+                }
+                Ok(Outcome {
+                    message: match on {
+                        Some(on) => format!("node {node:?} put on {}", name_of(on)),
+                        None => format!("node {node:?} is on nothing now"),
+                    },
+                    view_changed: true,
+                })
+            }
+            Command::FreezeNode { node, frozen } => {
+                let node = CellId::from_raw(node);
+                self.blocking.set_frozen(node, frozen)?;
+                Ok(Outcome {
+                    message: format!("node {node:?} {}", if frozen { "frozen" } else { "thawed" }),
+                    view_changed: true,
+                })
+            }
             Command::BoxGeometry { surfaces, margin } => {
                 let geometry = self.geometry.as_ref().ok_or(SessionError::NoGeometry)?;
                 let corners = geometry.bounding_box(&surfaces, margin)?;
@@ -392,6 +482,142 @@ impl Session {
         })
     }
 
+    /// Classify everything, and put it where it now says it is.
+    ///
+    /// Nodes by **proximity**, dimension by dimension, stopping at the
+    /// lowest dimension with anything in range; edges by **inference**,
+    /// from what their two ends agree about. Never the other way round:
+    /// measuring one point of an edge can land it on a curve neither of
+    /// its endpoints touches, and a cell at odds with its own boundary is
+    /// worse than one classified on nothing.
+    ///
+    /// Frozen nodes are left exactly as they are, classification included.
+    /// A reclassification would be followed by a projection, and a
+    /// projection is a move.
+    ///
+    /// Returns how many of each ended up on something.
+    fn classify(&mut self, tolerance: f64) -> Result<(usize, usize), SessionError> {
+        let geometry = self.geometry.as_ref().ok_or(SessionError::NoGeometry)?;
+        let reach = [tolerance.max(0.0) * geometry.span(); 3];
+
+        let found: Vec<(CellId, Option<On>)> = self
+            .blocking
+            .nodes()
+            .filter(|(node, _)| !self.blocking.is_frozen(*node))
+            .map(|(node, at)| {
+                let on = geometry
+                    .nearest(at, reach)
+                    .map(|(dim, tag)| On { dim, tag });
+                (node, on)
+            })
+            .collect();
+        for (node, on) in found {
+            self.blocking.set_node_class(node, on)?;
+            self.pull_onto_class(node)?;
+        }
+        // Here as well as in `apply`, because the count below is of what
+        // this pass achieved and the caller's message says so.
+        self.settle_edges();
+
+        let nodes = self
+            .blocking
+            .nodes()
+            .filter(|(n, _)| self.blocking.node_class(*n).is_some())
+            .count();
+        let edges = self
+            .blocking
+            .edges()
+            .filter(|(e, _, _)| self.blocking.edge_class(*e).is_some())
+            .count();
+        Ok((nodes, edges))
+    }
+
+    /// Put a node where its classification says it is.
+    ///
+    /// A no-op for an unclassified node, and for one already on its
+    /// entity. The projection is here rather than in the block structure
+    /// because this is the only place that holds both the cells and the
+    /// triangles.
+    fn pull_onto_class(&mut self, node: CellId) -> Result<(), SessionError> {
+        let Some(on) = self.blocking.node_class(node) else {
+            return Ok(());
+        };
+        let Some(geometry) = self.geometry.as_ref() else {
+            return Ok(());
+        };
+        let Some(vertex) = self.blocking.node_by_id(node) else {
+            return Ok(());
+        };
+        let at = self.blocking.position(vertex).unwrap_or([0.0; 3]);
+        if let Some(onto) = geometry.project(on.dim, on.tag, at) {
+            self.blocking.set_position(node, onto)?;
+        }
+        Ok(())
+    }
+
+    /// Move a node, under whatever constraint it is under.
+    ///
+    /// Classified, it **slides on its own entity**: the asked-for point is
+    /// projected first, so a node on a curve stays on that curve however
+    /// the pointer wanders. It does not come off by being dragged away —
+    /// coming off is [`Command::ClassifyNode`] with nothing, which is a
+    /// thing you say rather than a thing that happens to you.
+    ///
+    /// Unclassified, it goes where it was asked and then looks around: an
+    /// entity within reach takes it. That is the other half of the C++'s
+    /// pair, `snap_node`, and it is what makes dragging a corner onto the
+    /// model the way to classify it.
+    fn move_node(&mut self, node: CellId, to: [f64; 3]) -> Result<[f64; 3], SessionError> {
+        if let Some(on) = self.blocking.node_class(node) {
+            let onto = self
+                .geometry
+                .as_ref()
+                .and_then(|g| g.project(on.dim, on.tag, to))
+                .unwrap_or(to);
+            self.blocking.set_position(node, onto)?;
+            return Ok(onto);
+        }
+
+        self.blocking.set_position(node, to)?;
+        let Some(geometry) = self.geometry.as_ref() else {
+            return Ok(to);
+        };
+        let reach = [SNAP_SHARE * geometry.span(); 3];
+        if let Some((dim, tag)) = geometry.nearest(to, reach) {
+            self.blocking.set_node_class(node, Some(On { dim, tag }))?;
+            self.pull_onto_class(node)?;
+        }
+        Ok(to)
+    }
+
+    /// Put every edge on what its two ends agree about.
+    ///
+    /// Cheap enough to run after anything that touches the model: two
+    /// table lookups and an intersection per edge, and no geometry is
+    /// measured. An end that is on nothing leaves its edge on nothing —
+    /// there is nothing to infer from.
+    fn settle_edges(&mut self) {
+        let Some(geometry) = self.geometry.as_ref() else {
+            return;
+        };
+        let found: Vec<(CellId, Option<On>)> = self
+            .blocking
+            .edges()
+            .map(|(edge, a, b)| {
+                let on = match (self.blocking.node_class(a), self.blocking.node_class(b)) {
+                    (Some(a), Some(b)) => geometry
+                        .common((a.dim, a.tag), (b.dim, b.tag), gecko_geom::CURVE)
+                        .map(|(dim, tag)| On { dim, tag }),
+                    _ => None,
+                };
+                (edge, on)
+            })
+            .collect();
+        for (edge, on) in found {
+            let _ = self.blocking.set_edge_class(edge, on);
+        }
+    }
+
     /// Settle the rebasing origin against the model as it now stands.
     ///
     /// Done when the model changes, never when someone looks at it. An origin
@@ -449,9 +675,33 @@ impl Session {
         let nodes: Vec<_> = self
             .blocking
             .nodes()
-            .map(|(id, pos)| serde_json::json!({ "id": id.get(), "pos": pos }))
+            .map(|(id, pos)| {
+                serde_json::json!({
+                    "id": id.get(),
+                    "pos": pos,
+                    "on": self.blocking.node_class(id).map(spot_json),
+                    "frozen": self.blocking.is_frozen(id),
+                })
+            })
             .collect();
         serde_json::Value::Array(nodes).to_string()
+    }
+
+    /// Every edge, by stable name, with the names of its two ends and what
+    /// it is classified on.
+    pub fn edges_json(&self) -> String {
+        let edges: Vec<_> = self
+            .blocking
+            .edges()
+            .map(|(edge, a, b)| {
+                serde_json::json!({
+                    "id": edge.get(),
+                    "nodes": [a.get(), b.get()],
+                    "on": self.blocking.edge_class(edge).map(spot_json),
+                })
+            })
+            .collect();
+        serde_json::Value::Array(edges).to_string()
     }
 
     /// Every face, by stable name, with the block it bounds and its centre —
@@ -547,6 +797,23 @@ impl Session {
             "faces": self.blocking.nb_faces(),
             "blocks": self.blocking.nb_blocks(),
             "geometry": self.geometry_json(),
+            "classified": {
+                "nodes": self
+                    .blocking
+                    .nodes()
+                    .filter(|(n, _)| self.blocking.node_class(*n).is_some())
+                    .count(),
+                "edges": self
+                    .blocking
+                    .edges()
+                    .filter(|(e, _, _)| self.blocking.edge_class(*e).is_some())
+                    .count(),
+                "frozen": self
+                    .blocking
+                    .nodes()
+                    .filter(|(n, _)| self.blocking.is_frozen(*n))
+                    .count(),
+            },
         })
         .to_string()
     }
@@ -577,4 +844,18 @@ fn plural(n: usize) -> &'static str {
     } else {
         "s"
     }
+}
+
+fn spot_json(on: On) -> serde_json::Value {
+    serde_json::json!({ "dim": on.dim, "tag": on.tag })
+}
+
+/// How a classification reads in a message.
+fn name_of(on: On) -> String {
+    let what = match on.dim {
+        gecko_geom::CORNER => "corner",
+        gecko_geom::CURVE => "curve",
+        _ => "surface",
+    };
+    format!("{what} {}", on.tag)
 }

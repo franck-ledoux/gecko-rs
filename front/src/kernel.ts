@@ -44,6 +44,8 @@ export interface Stats {
   faces: number;
   blocks: number;
   geometry: GeometryStats;
+  /** How much of the blocking is pinned to the geometry. */
+  classified: { nodes: number; edges: number; frozen: number };
 }
 
 /** One edge of a sheet, and the way round a cut parameter would run on it. */

@@ -5,7 +5,7 @@
 //! at every dimension an existence of its own, and that the names we hang on
 //! those cells mean what they say.
 
-use gecko_core::attributes::{EdgeTag, FaceTag, NodeTag};
+use gecko_core::attributes::{EdgeTag, FaceTag, NodeTag, On};
 use gecko_core::ids::{CellId, CornerKey};
 use gecko_core::{Blocking, HEX_FACES};
 use honeycomb_core::attributes::AttributeUpdate;
@@ -171,20 +171,64 @@ fn assigning_names_twice_hands_out_nothing_new() {
 
 #[test]
 fn merging_two_cells_keeps_one_existing_name() {
-    let a = NodeTag {
-        id: CellId::NONE,
-        corner_key: CornerKey::NONE,
-    };
-    let c = NodeTag {
-        id: CellId::NONE,
-        corner_key: CornerKey::NONE,
-    };
+    let a = NodeTag::default();
+    let c = NodeTag::default();
     // A merge does not create a cell, so it must not consume a new name.
     assert_eq!(NodeTag::merge(a, c).unwrap(), a);
     assert_eq!(
         EdgeTag::merge(EdgeTag::default(), EdgeTag::default()).unwrap(),
         EdgeTag::default()
     );
+}
+
+#[test]
+fn merging_keeps_a_constraint_either_side_was_under() {
+    // The one thing a merge does **not** settle by taking the first: a
+    // merge is two nodes becoming one point, so if either of them was
+    // pinned to the geometry then the point that remains is pinned, and if
+    // either was frozen then somebody asked for it not to move. Taking the
+    // first blindly would throw away a constraint nobody withdrew.
+    let free = NodeTag::default();
+    let pinned = NodeTag {
+        on: Some(On { dim: 1, tag: 7 }),
+        frozen: true,
+        ..NodeTag::default()
+    };
+    assert_eq!(NodeTag::merge(free, pinned).unwrap().on, pinned.on);
+    assert!(NodeTag::merge(free, pinned).unwrap().frozen);
+    assert!(NodeTag::merge(pinned, free).unwrap().frozen);
+
+    // And when both are classified and disagree, the first wins, as its
+    // name does.
+    let elsewhere = NodeTag {
+        on: Some(On { dim: 2, tag: 3 }),
+        ..NodeTag::default()
+    };
+    assert_eq!(NodeTag::merge(pinned, elsewhere).unwrap().on, pinned.on);
+}
+
+#[test]
+fn splitting_keeps_what_a_cell_was_classified_on() {
+    // A different reason from the corner key's, and a different reason
+    // again from why the *name* is cleared: where a cell is, is not a
+    // claim about which cell it is, and a split moves nothing. Both halves
+    // of a node on a curve are on that curve.
+    let node = NodeTag {
+        on: Some(On { dim: 1, tag: 7 }),
+        frozen: true,
+        ..NodeTag::default()
+    };
+    let (left, right) = NodeTag::split(node).unwrap();
+    assert_eq!((left.on, right.on), (node.on, node.on));
+    assert!(left.frozen && right.frozen);
+
+    let edge = EdgeTag {
+        on: Some(On { dim: 2, tag: 4 }),
+        ..EdgeTag::default()
+    };
+    let (left, right) = EdgeTag::split(edge).unwrap();
+    assert_eq!((left.on, right.on), (edge.on, edge.on));
+    assert!(left.id.is_none() && right.id.is_none());
 }
 
 #[test]

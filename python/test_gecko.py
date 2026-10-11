@@ -23,6 +23,7 @@ def test_a_session_starts_empty():
         "faces": 0,
         "blocks": 0,
         "geometry": {"generation": 0},
+        "classified": {"nodes": 0, "edges": 0, "frozen": 0},
     }
     assert s.url is None
     assert "gecko.Session" in repr(s)
@@ -68,15 +69,16 @@ def test_the_view_buffer_is_the_wire_format():
     buf = bytes(s.view_buffer)
 
     assert buf[:4] == b"GKB1"
-    assert int.from_bytes(buf[4:8], "little") == 4
+    assert int.from_bytes(buf[4:8], "little") == 5
     n_nodes = int.from_bytes(buf[32:36], "little")
     n_edges = int.from_bytes(buf[36:40], "little")
     n_quads = int.from_bytes(buf[40:44], "little")
     assert (n_nodes, n_edges, n_quads) == (8, 12, 6)
-    # Per node: three f32 of position and one u32 of name. Per edge: two node
-    # indices and a name. Per quadrangle: four corner indices and the face
-    # and block names it can be coloured by.
-    assert len(buf) == 44 + n_nodes * 16 + n_edges * 12 + n_quads * 24
+    # Per node: three f32 of position, one u32 of name, and three more for
+    # what it is classified on and whether it is frozen. Per edge: two node
+    # indices, a name, and two for its classification. Per quadrangle: four
+    # corner indices and the face and block names it can be coloured by.
+    assert len(buf) == 44 + n_nodes * 28 + n_edges * 20 + n_quads * 24
 
 
 def test_show_serves_the_viewer_and_is_idempotent():
@@ -672,3 +674,143 @@ def test_a_box_needs_a_geometry_and_some_depth(tmp_path):
     with pytest.raises(ValueError, match="no surface of this geometry is tagged 99"):
         s.box_geometry(surfaces=[99])
     assert cells(s)["blocks"] == 0
+
+
+BOX_MSH = """$MeshFormat
+2.2 0 8
+$EndMeshFormat
+$Nodes
+8
+1 0 0 0
+2 1 0 0
+3 1 1 0
+4 0 1 0
+5 0 0 1
+6 1 0 1
+7 1 1 1
+8 0 1 1
+$EndNodes
+$Elements
+32
+1 15 2 0 101 1
+2 15 2 0 102 2
+3 15 2 0 103 3
+4 15 2 0 104 4
+5 15 2 0 105 5
+6 15 2 0 106 6
+7 15 2 0 107 7
+8 15 2 0 108 8
+9 1 2 0 201 1 2
+10 1 2 0 202 2 3
+11 1 2 0 203 3 4
+12 1 2 0 204 4 1
+13 1 2 0 205 5 6
+14 1 2 0 206 6 7
+15 1 2 0 207 7 8
+16 1 2 0 208 8 5
+17 1 2 0 209 1 5
+18 1 2 0 210 2 6
+19 1 2 0 211 3 7
+20 1 2 0 212 4 8
+21 2 2 0 1 1 2 3
+22 2 2 0 1 1 3 4
+23 2 2 0 2 5 6 7
+24 2 2 0 2 5 7 8
+25 2 2 0 3 1 2 6
+26 2 2 0 3 1 6 5
+27 2 2 0 4 2 3 7
+28 2 2 0 4 2 7 6
+29 2 2 0 5 3 4 8
+30 2 2 0 5 3 8 7
+31 2 2 0 6 4 1 5
+32 2 2 0 6 4 5 8
+$EndElements
+"""
+
+
+def _on_the_box(tmp_path):
+    """A session holding the unit cube's boundary and one block on it."""
+    s = gecko.Session()
+    path = tmp_path / "box.msh"
+    path.write_text(BOX_MSH)
+    s.load_geometry(str(path))
+    s.box_geometry(margin=0.0)
+    return s
+
+
+def test_classifying_puts_the_blocking_on_the_geometry(tmp_path):
+    s = _on_the_box(tmp_path)
+    assert s.stats["classified"] == {"nodes": 0, "edges": 0, "frozen": 0}
+
+    message = s.classify()
+    assert "8 nodes" in message and "12 edges" in message
+    assert s.stats["classified"] == {"nodes": 8, "edges": 12, "frozen": 0}
+
+    # Nodes on corners — the lowest dimension with anything in range, not
+    # the curves and surfaces that also pass through them.
+    assert all(n["on"]["dim"] == 0 for n in s.nodes)
+    assert sorted(n["on"]["tag"] for n in s.nodes) == list(range(101, 109))
+    # Edges on curves, inferred from their two ends rather than measured.
+    assert all(e["on"]["dim"] == 1 for e in s.edges)
+    assert sorted(e["on"]["tag"] for e in s.edges) == list(range(201, 213))
+
+
+def test_a_node_slides_on_what_it_is_classified_on(tmp_path):
+    s = _on_the_box(tmp_path)
+    node = s.nodes[0]["id"]
+    s.classify_node(node, 2, 1)          # surface 1 is the face at z = 0
+
+    s.move_node(node, [0.3, 0.7, 9.0])
+    at = next(n["pos"] for n in s.nodes if n["id"] == node)
+    assert at == pytest.approx([0.3, 0.7, 0.0])
+
+    # Dragged far away it stays on the face: coming off is something you
+    # say, not something that happens to you.
+    s.move_node(node, [40.0, 40.0, 40.0])
+    assert next(n["on"] for n in s.nodes if n["id"] == node) == {"dim": 2, "tag": 1}
+
+    s.unclassify_node(node)
+    assert next(n["on"] for n in s.nodes if n["id"] == node) is None
+    s.move_node(node, [40.0, 40.0, 40.0])
+    assert next(n["pos"] for n in s.nodes if n["id"] == node) == pytest.approx([40.0] * 3)
+
+
+def test_a_frozen_node_is_left_out_of_everything(tmp_path):
+    s = _on_the_box(tmp_path)
+    node = s.nodes[0]["id"]
+    where = next(n["pos"] for n in s.nodes if n["id"] == node)
+    s.freeze_node(node)
+    assert s.stats["classified"]["frozen"] == 1
+
+    with pytest.raises(ValueError, match="frozen"):
+        s.move_node(node, [5.0, 5.0, 5.0])
+    # Nor classified, since classifying is followed by a projection and a
+    # projection is a move.
+    s.classify()
+    assert next(n["on"] for n in s.nodes if n["id"] == node) is None
+    assert next(n["pos"] for n in s.nodes if n["id"] == node) == pytest.approx(where)
+
+    s.thaw_node(node)
+    s.classify()
+    assert s.stats["classified"]["nodes"] == 8
+
+
+def test_an_edge_goes_where_its_two_ends_agree(tmp_path):
+    s = _on_the_box(tmp_path)
+    edge = s.edges[0]
+    a, b = edge["nodes"]
+    # Corners 101 and 103 are the ends of the bottom face's diagonal: no
+    # curve holds both, surface 1 holds both.
+    s.classify_node(a, 0, 101)
+    s.classify_node(b, 0, 103)
+    assert next(e["on"] for e in s.edges if e["id"] == edge["id"]) == {"dim": 2, "tag": 1}
+
+    s.unclassify_node(a)
+    assert next(e["on"] for e in s.edges if e["id"] == edge["id"]) is None
+
+
+def test_classifying_needs_a_geometry():
+    s = gecko.Session()
+    s.create_cube([0.0, 0.0, 0.0], 1.0)
+    with pytest.raises(ValueError, match="no geometry"):
+        s.classify()

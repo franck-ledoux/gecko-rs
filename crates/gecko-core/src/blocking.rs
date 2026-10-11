@@ -15,7 +15,7 @@ use honeycomb_core::cmap::{
 };
 use thiserror::Error;
 
-use crate::attributes::{BlockTag, EdgeTag, FaceTag, NodeTag};
+use crate::attributes::{BlockTag, EdgeTag, FaceTag, NodeTag, On};
 use crate::ids::{CellId, Counter};
 
 /// The six faces of a hexahedron, each listed anticlockwise **seen from
@@ -199,6 +199,8 @@ pub enum BlockingError {
     LostFace,
     #[error("an extrusion has to go somewhere: {0} is not a positive distance")]
     BadHeight(f64),
+    #[error("node {0:?} is frozen; thaw it before moving it")]
+    Frozen(CellId),
 }
 
 impl From<DartReleaseError> for BlockingError {
@@ -327,6 +329,8 @@ impl Blocking {
                 NodeTag {
                     id: CellId::NONE,
                     corner_key: self.corners.next_corner(),
+                    on: None,
+                    frozen: false,
                 },
             );
         }
@@ -359,8 +363,11 @@ impl Blocking {
             .filter(|e| self.edge_tag(*e).id.is_none())
             .collect();
         for e in edges {
+            let tag = self.edge_tag(e);
             let id = self.names[1].next_cell();
-            self.map.write_attribute(e, EdgeTag { id });
+            // `..tag`, not a fresh one: naming a cell must not quietly undo
+            // what it was classified on.
+            self.map.write_attribute(e, EdgeTag { id, ..tag });
         }
 
         let faces: Vec<_> = self
@@ -393,8 +400,85 @@ impl Blocking {
         let vertex = self
             .node_by_id(node)
             .ok_or(BlockingError::NoSuchNode(node))?;
+        // A frozen node does not move for anybody. Refused rather than
+        // silently ignored: a caller that asked for a move and got nothing
+        // back would go on believing it happened.
+        if self.node_tag(vertex).frozen {
+            return Err(BlockingError::Frozen(node));
+        }
         self.map.write_vertex(vertex, (to[0], to[1], to[2]));
         Ok(())
+    }
+
+    /// Where a node is classified, if anywhere.
+    pub fn node_class(&self, node: CellId) -> Option<On> {
+        self.node_by_id(node).and_then(|v| self.node_tag(v).on)
+    }
+
+    /// Put a node on a geometric entity, or take it off one.
+    ///
+    /// The kernel does not check that the node is anywhere near it: what a
+    /// cell is classified on is a statement of intent, and it is the
+    /// projection — which lives where the triangles are — that makes it
+    /// true.
+    pub fn set_node_class(&mut self, node: CellId, on: Option<On>) -> Result<(), BlockingError> {
+        self.update_node(node, |tag| tag.on = on)
+    }
+
+    pub fn is_frozen(&self, node: CellId) -> bool {
+        self.node_by_id(node)
+            .map(|v| self.node_tag(v).frozen)
+            .unwrap_or(false)
+    }
+
+    pub fn set_frozen(&mut self, node: CellId, frozen: bool) -> Result<(), BlockingError> {
+        self.update_node(node, |tag| tag.frozen = frozen)
+    }
+
+    fn update_node(
+        &mut self,
+        node: CellId,
+        change: impl FnOnce(&mut NodeTag),
+    ) -> Result<(), BlockingError> {
+        let vertex = self
+            .node_by_id(node)
+            .ok_or(BlockingError::NoSuchNode(node))?;
+        let mut tag = self.node_tag(vertex);
+        change(&mut tag);
+        self.map.write_attribute(vertex, tag);
+        Ok(())
+    }
+
+    /// Where an edge is classified, if anywhere.
+    pub fn edge_class(&self, edge: CellId) -> Option<On> {
+        self.edge_by_id(edge).and_then(|e| self.edge_tag(e).on)
+    }
+
+    /// Put an edge on a geometric entity, or take it off one.
+    ///
+    /// Never called with something measured: an edge's classification is
+    /// inferred from its two ends, which is the only rule that keeps it
+    /// coherent with them.
+    pub fn set_edge_class(&mut self, edge: CellId, on: Option<On>) -> Result<(), BlockingError> {
+        let id = self
+            .edge_by_id(edge)
+            .ok_or(BlockingError::NoSuchEdge(edge))?;
+        let tag = self.edge_tag(id);
+        self.map.write_attribute(id, EdgeTag { on, ..tag });
+        Ok(())
+    }
+
+    /// Every edge by name, with the names of its two ends — what the
+    /// inference walks.
+    pub fn edges(&self) -> impl Iterator<Item = (CellId, CellId, CellId)> + '_ {
+        self.map.iter_edges().map(move |e| {
+            let (a, b) = self.edge_endpoints(e);
+            (
+                self.edge_tag(e).id,
+                self.node_tag(a).id,
+                self.node_tag(b).id,
+            )
+        })
     }
 
     /// The cell a stable name currently stands for.
@@ -827,6 +911,14 @@ impl Blocking {
         }
 
         // The node in the middle, and the two halves left to be named.
+        //
+        // The node is **unclassified**: it is a genuinely new point, and
+        // nothing about the cut says where on the model it belongs. The two
+        // halves keep what the whole was classified on, both halves lying
+        // where the whole did — though the inference will have the last
+        // word on that as soon as anything settles, the middle node having
+        // nothing to say yet. Cut first and classify after, as in the C++.
+        let was = self.edge_tag(self.map.edge_id(darts[0])).on;
         let middle = self.map.vertex_id(fresh[&darts[0]]);
         self.map.write_vertex(middle, (at[0], at[1], at[2]));
         self.map.write_attribute(
@@ -834,11 +926,19 @@ impl Blocking {
             NodeTag {
                 id: CellId::NONE,
                 corner_key: self.corners.next_corner(),
+                on: None,
+                frozen: false,
             },
         );
         for &d in &[darts[0], fresh[&darts[0]]] {
             let half = self.map.edge_id(d);
-            self.map.write_attribute(half, EdgeTag { id: CellId::NONE });
+            self.map.write_attribute(
+                half,
+                EdgeTag {
+                    id: CellId::NONE,
+                    on: was,
+                },
+            );
         }
         Ok(middle)
     }

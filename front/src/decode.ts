@@ -30,6 +30,17 @@ export interface View {
   quadFaces: Uint32Array;
   /** The block each quadrangle belongs to. */
   quadBlocks: Uint32Array;
+  /** What each node is classified on: the entity's dimension — 0 a corner,
+   *  1 a curve, 2 a surface — or −1 for nothing. */
+  nodeClassDim: Int32Array;
+  /** The gmsh tag of that entity, meaningless where the dimension is −1. */
+  nodeClassTag: Int32Array;
+  /** 1 where a node is frozen. Its own array, because a frozen node need
+   *  not be classified at all. */
+  nodeFrozen: Uint32Array;
+  /** The same two per edge. */
+  edgeClassDim: Int32Array;
+  edgeClassTag: Int32Array;
 }
 
 const MAGIC = 0x3142_4b47; // "GKB1" little-endian
@@ -46,7 +57,7 @@ export function decodeView(bytes: Uint8Array): View {
   const head = new DataView(bytes.buffer, bytes.byteOffset, HEADER);
   if (head.getUint32(0, true) !== MAGIC) throw new Error("view buffer: bad magic");
   const version = head.getUint32(4, true);
-  if (version !== 4) throw new Error(`view buffer: version ${version} not understood`);
+  if (version !== 5) throw new Error(`view buffer: version ${version} not understood`);
 
   const centre: [number, number, number] = [
     head.getFloat64(8, true),
@@ -59,27 +70,43 @@ export function decodeView(bytes: Uint8Array): View {
 
   // Check the declared sizes before making any view, so a truncated buffer is
   // a clear error here rather than an opaque one three lines down.
-  // Per node: three f32 of position and one u32 of name. Per edge: two node
-  // indices and a name. Per quadrangle: four corner indices and the two names
-  // it can be coloured by.
-  const expected = HEADER + nNodes * 16 + nEdges * 12 + nQuads * 24;
+  // Per node: three f32 of position, one u32 of name, and three more for
+  // what it is classified on and whether it is frozen. Per edge: two node
+  // indices, a name, and two for its classification. Per quadrangle: four
+  // corner indices and the two names it can be coloured by.
+  const expected = HEADER + nNodes * 28 + nEdges * 20 + nQuads * 24;
   if (expected !== bytes.byteLength) {
     throw new Error(
       `view buffer: header declares ${expected} bytes, buffer holds ${bytes.byteLength}`,
     );
   }
 
-  const base = bytes.byteOffset + HEADER;
-  const afterEdges = base + nNodes * 16 + nEdges * 12;
+  // Walked forward rather than addressed by a table of offsets: the arrays
+  // come in this order and nothing else needs to know where each starts.
+  let at = bytes.byteOffset + HEADER;
+  const take = <T>(make: (b: ArrayBufferLike, at: number, n: number) => T, n: number): T => {
+    const made = make(bytes.buffer, at, n);
+    at += n * 4;
+    return made;
+  };
+  const f32 = (b: ArrayBufferLike, o: number, n: number) => new Float32Array(b, o, n);
+  const u32 = (b: ArrayBufferLike, o: number, n: number) => new Uint32Array(b, o, n);
+  const i32 = (b: ArrayBufferLike, o: number, n: number) => new Int32Array(b, o, n);
+
   return {
     centre,
-    positions: new Float32Array(bytes.buffer, base, nNodes * 3),
-    names: new Uint32Array(bytes.buffer, base + nNodes * 12, nNodes),
-    edges: new Uint32Array(bytes.buffer, base + nNodes * 16, nEdges * 2),
-    edgeNames: new Uint32Array(bytes.buffer, base + nNodes * 16 + nEdges * 8, nEdges),
-    quads: new Uint32Array(bytes.buffer, afterEdges, nQuads * 4),
-    quadFaces: new Uint32Array(bytes.buffer, afterEdges + nQuads * 16, nQuads),
-    quadBlocks: new Uint32Array(bytes.buffer, afterEdges + nQuads * 20, nQuads),
+    positions: take(f32, nNodes * 3),
+    names: take(u32, nNodes),
+    edges: take(u32, nEdges * 2),
+    edgeNames: take(u32, nEdges),
+    quads: take(u32, nQuads * 4),
+    quadFaces: take(u32, nQuads),
+    quadBlocks: take(u32, nQuads),
+    nodeClassDim: take(i32, nNodes),
+    nodeClassTag: take(i32, nNodes),
+    nodeFrozen: take(u32, nNodes),
+    edgeClassDim: take(i32, nEdges),
+    edgeClassTag: take(i32, nEdges),
   };
 }
 

@@ -176,6 +176,47 @@ impl PySession {
         self.command(serde_json::json!({ "op": "clear_geometry" }))
     }
 
+    /// Put every node on the geometric entity nearest it, and every edge
+    /// on what its two ends agree about.
+    ///
+    /// Nodes by proximity, dimension by dimension, stopping at the lowest
+    /// dimension with anything within `tolerance` — a share of the
+    /// geometry's own size, not a length. Edges never by proximity: an
+    /// edge goes on the lowest-dimensional entity containing **both** its
+    /// ends' classifications, which is the only rule that keeps it
+    /// coherent with its own boundary.
+    ///
+    /// Frozen nodes are left alone, classification included.
+    #[pyo3(signature = (tolerance=0.02))]
+    fn classify(&self, tolerance: f64) -> PyResult<String> {
+        self.command(serde_json::json!({ "op": "classify", "tolerance": tolerance }))
+    }
+
+    /// Put one node on a geometric entity: `dim` 0 a corner, 1 a curve, 2
+    /// a surface, and `tag` the gmsh entity tag. The node is then pulled
+    /// onto it.
+    fn classify_node(&self, node: u32, dim: u8, tag: i32) -> PyResult<String> {
+        self.command(serde_json::json!({
+            "op": "classify_node", "node": node, "on": { "dim": dim, "tag": tag },
+        }))
+    }
+
+    /// Take a node off whatever it was classified on. It stays where it
+    /// is; what changes is that it may now go anywhere.
+    fn unclassify_node(&self, node: u32) -> PyResult<String> {
+        self.command(serde_json::json!({ "op": "classify_node", "node": node }))
+    }
+
+    /// Stop a node moving. It stays put for every operation, this one's
+    /// own projection included, until [`thaw_node`] lets it go.
+    fn freeze_node(&self, node: u32) -> PyResult<String> {
+        self.command(serde_json::json!({ "op": "freeze_node", "node": node, "frozen": true }))
+    }
+
+    fn thaw_node(&self, node: u32) -> PyResult<String> {
+        self.command(serde_json::json!({ "op": "freeze_node", "node": node, "frozen": false }))
+    }
+
     /// Add one block: a box round the geometry, or round part of it.
     ///
     /// `surfaces` is a list of gmsh entity tags, or `None` for the lot.
@@ -230,6 +271,14 @@ impl PySession {
 
     /// Every node, as `{"id": …, "pos": [x, y, z]}` — what a script needs in
     /// order to have something to move.
+    /// Every edge, by stable name, with its two ends and what it is
+    /// classified on.
+    #[getter]
+    fn edges(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let json = self.locked(|s| s.edges_json());
+        to_py(py, &serde_json::from_str(&json).unwrap_or_default())
+    }
+
     #[getter]
     fn nodes(&self, py: Python<'_>) -> PyResult<PyObject> {
         let json = self.locked(|s| s.nodes_json());

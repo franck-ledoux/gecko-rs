@@ -49,8 +49,11 @@ Every node, as `{"id": …, "pos": [x, y, z]}`.
 
 ```python
 >>> s.nodes[0]
-{'id': 0, 'pos': [0.0, 0.0, 0.0]}
+{'id': 0, 'pos': [0.0, 0.0, 0.0], 'on': None, 'frozen': False}
 ```
+
+`on` is what the node is [classified](classification.md) on, and `frozen`
+whether it may move at all.
 
 #### `move_node(node, to)`
 
@@ -140,6 +143,28 @@ tags are given. `margin` grows each half-side by that share.
 A flat selection, an unknown tag, a margin of −1 or less, or no geometry at
 all raises `ValueError` saying which.
 
+#### `classify(tolerance=0.02)`
+
+Put every node on the geometric entity nearest it, and every edge on what
+its two ends agree about. The tolerance is a share of the geometry's own
+size. See [Classification](classification.md).
+
+```python
+>>> s.classify()
+'classified 8 nodes and 12 edges onto the geometry'
+```
+
+#### `classify_node(node, dim, tag)` and `unclassify_node(node)`
+
+Put one node on an entity by hand — `dim` 0 a corner, 1 a curve, 2 a surface
+— or take it off one. Classifying pulls the node onto it; unclassifying
+leaves it where it is.
+
+#### `freeze_node(node)` and `thaw_node(node)`
+
+Stop a node moving, or let it move again. A frozen node is refused to every
+move and left out of `classify()`.
+
 #### `clear_geometry()`
 
 Forget it. The blocks are untouched either way.
@@ -151,6 +176,15 @@ separate from `view_buffer`, because the two change on completely different
 clocks.
 
 ### Looking at the session
+
+#### `edges`
+
+Every edge, by stable name, with its two ends and what it is classified on.
+
+```python
+>>> s.edges[0]
+{'id': 0, 'nodes': [0, 1], 'on': {'dim': 1, 'tag': 205}}
+```
 
 #### `faces` and `blocks`
 

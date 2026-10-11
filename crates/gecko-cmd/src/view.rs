@@ -15,11 +15,11 @@ use gecko_geom::Geometry;
 use std::collections::HashMap;
 
 pub const MAGIC: [u8; 4] = *b"GKB1";
-/// 2 added the node names, 3 the surface, 4 the edge names. The field is
-/// bumped rather than quietly reused: three independent decoders read this,
-/// and a silent change is how one of them ends up reading the wrong field as
-/// a coordinate.
-pub const VERSION: u32 = 4;
+/// 2 added the node names, 3 the surface, 4 the edge names, 5 what each
+/// node and edge is classified on. The field is bumped rather than quietly
+/// reused: three independent decoders read this, and a silent change is how
+/// one of them ends up reading the wrong field as a coordinate.
+pub const VERSION: u32 = 5;
 /// magic + version + f64 centre + three counts.
 pub const HEADER: usize = 44;
 
@@ -54,6 +54,17 @@ pub struct ViewBuffer {
     pub quad_faces: Vec<u32>,
     /// The block's stable name, one per quadrangle.
     pub quad_blocks: Vec<u32>,
+    /// What each node is classified on: the entity's dimension, −1 for
+    /// none. Signed, like the tag beside it, and for the same reason.
+    pub node_class_dim: Vec<i32>,
+    /// The gmsh tag of that entity, meaningless where the dimension is −1.
+    pub node_class_tag: Vec<i32>,
+    /// 1 where a node is frozen. Its own array rather than a bit stolen
+    /// from the dimension: a frozen node need not be classified at all.
+    pub node_frozen: Vec<u32>,
+    /// The same two for each edge.
+    pub edge_class_dim: Vec<i32>,
+    pub edge_class_tag: Vec<i32>,
 }
 
 impl ViewBuffer {
@@ -64,10 +75,17 @@ impl ViewBuffer {
         let mut at: HashMap<u32, u32> = HashMap::with_capacity(nodes.len());
         let mut world = Vec::with_capacity(nodes.len() * 3);
         let mut names = Vec::with_capacity(nodes.len());
+        let mut node_class_dim = Vec::with_capacity(nodes.len());
+        let mut node_class_tag = Vec::with_capacity(nodes.len());
+        let mut node_frozen = Vec::with_capacity(nodes.len());
         for (i, n) in nodes.iter().enumerate() {
             at.insert(*n, i as u32);
             world.extend_from_slice(&blocking.position(*n).unwrap_or([0.0; 3]));
-            names.push(blocking.node_tag(*n).id.get().unwrap_or(u32::MAX));
+            let tag = blocking.node_tag(*n);
+            names.push(tag.id.get().unwrap_or(u32::MAX));
+            node_class_dim.push(tag.on.map(|on| on.dim as i32).unwrap_or(-1));
+            node_class_tag.push(tag.on.map(|on| on.tag).unwrap_or(0));
+            node_frozen.push(u32::from(tag.frozen));
         }
 
         let centre = stable_centre(&world, previous);
@@ -88,11 +106,16 @@ impl ViewBuffer {
 
         let mut edges = Vec::new();
         let mut edge_names = Vec::new();
+        let mut edge_class_dim = Vec::new();
+        let mut edge_class_tag = Vec::new();
         for e in blocking.map().iter_edges() {
             let (a, b) = blocking.edge_endpoints(e);
             if let (Some(a), Some(b)) = (at.get(&a), at.get(&b)) {
+                let tag = blocking.edge_tag(e);
                 edges.extend_from_slice(&[*a, *b]);
-                edge_names.push(blocking.edge_tag(e).id.get().unwrap_or(u32::MAX));
+                edge_names.push(tag.id.get().unwrap_or(u32::MAX));
+                edge_class_dim.push(tag.on.map(|on| on.dim as i32).unwrap_or(-1));
+                edge_class_tag.push(tag.on.map(|on| on.tag).unwrap_or(0));
             }
         }
 
@@ -125,6 +148,11 @@ impl ViewBuffer {
             quads,
             quad_faces,
             quad_blocks,
+            node_class_dim,
+            node_class_tag,
+            node_frozen,
+            edge_class_dim,
+            edge_class_tag,
         }
     }
 
@@ -140,7 +168,12 @@ impl ViewBuffer {
                     + self.edge_names.len()
                     + self.quads.len()
                     + self.quad_faces.len()
-                    + self.quad_blocks.len())
+                    + self.quad_blocks.len()
+                    + self.node_class_dim.len()
+                    + self.node_class_tag.len()
+                    + self.node_frozen.len()
+                    + self.edge_class_dim.len()
+                    + self.edge_class_tag.len())
                     * 4,
         );
         out.extend_from_slice(&MAGIC);
@@ -170,6 +203,25 @@ impl ViewBuffer {
             out.extend_from_slice(&x.to_le_bytes());
         }
         for x in &self.quad_blocks {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        // The classification comes last, appended rather than threaded in
+        // beside the names it belongs with: every offset before it stays
+        // where it was, and a decoder reads the whole thing by walking
+        // forward anyway.
+        for x in &self.node_class_dim {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        for x in &self.node_class_tag {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        for x in &self.node_frozen {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        for x in &self.edge_class_dim {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        for x in &self.edge_class_tag {
             out.extend_from_slice(&x.to_le_bytes());
         }
         out

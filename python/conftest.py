@@ -17,13 +17,14 @@ def fnv1a(data: bytes) -> int:
 
 
 def cells(session):
-    """The four cell counts, without the geometry's stats beside them.
+    """The four cell counts, and nothing else `stats` reports.
 
-    `stats` also reports which geometry is loaded, which almost no test
-    about blocks has an opinion about — and spelling it out in every one of
-    them would bury the counts that are the point.
+    It also says which geometry is loaded and how much of the blocking is
+    pinned to it, which almost no test about blocks has an opinion about —
+    and spelling those out in every one of them would bury the counts that
+    are the point.
     """
-    return {k: v for k, v in session.stats.items() if k != "geometry"}
+    return {k: session.stats[k] for k in ("nodes", "edges", "faces", "blocks")}
 
 
 def shifted(dx=0.0, dy=0.0, dz=0.0):

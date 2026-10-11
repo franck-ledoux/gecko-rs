@@ -19,13 +19,12 @@
 //!
 //! # What is not here
 //!
-//! No incidence: which curve bounds which surface is not stated anywhere in
-//! `$Elements`, and the C++ recovers it from shared mesh nodes because
-//! classification needs it. Nothing needs it yet, and a table nobody reads is
-//! a table nobody notices is wrong.
-//!
 //! No volumes: this is a surface mesh by construction. Tetrahedra are skipped
 //! by the reader, counted as [`Geometry::skipped`].
+//!
+//! The **incidence** — which curves pass through a corner, which surfaces a
+//! curve bounds — is in [`crate::where_on`], built here once the entities
+//! exist.
 
 use crate::msh::{self, Msh, MshError, PhysicalName, LINE, POINT, TRIANGLE};
 use std::collections::BTreeMap;
@@ -81,6 +80,10 @@ pub struct Geometry {
     surfaces: Vec<Surface>,
     names: Vec<PhysicalName>,
     skipped: usize,
+    /// Everything containing each entity, itself included. Worked out once
+    /// here rather than on demand: every edge classified intersects two of
+    /// these, and nothing moves a geometry once it is read.
+    containment: BTreeMap<(u8, i32), Vec<(u8, i32)>>,
 }
 
 impl Geometry {
@@ -153,7 +156,7 @@ impl Geometry {
             }
         }
 
-        Ok(Geometry {
+        let mut geometry = Geometry {
             nodes,
             corners: corners
                 .into_iter()
@@ -169,7 +172,14 @@ impl Geometry {
                 .collect(),
             names: file.names.clone(),
             skipped: file.skipped,
-        })
+            containment: BTreeMap::new(),
+        };
+        geometry.containment = crate::where_on::containment(&geometry);
+        Ok(geometry)
+    }
+
+    pub(crate) fn containment(&self) -> &BTreeMap<(u8, i32), Vec<(u8, i32)>> {
+        &self.containment
     }
 
     /// Every node of the faceting, shared between the entities that use it.

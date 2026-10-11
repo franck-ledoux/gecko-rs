@@ -1,0 +1,289 @@
+//! Where a point is on the geometry, and what contains what.
+//!
+//! Two questions a block structure asks of a geometry once its cells are
+//! classified onto it:
+//!
+//! - **where** — the nearest entity to a point, and the point on that entity
+//!   nearest to it. That is how a node is classified in the first place, and
+//!   how it is kept on its entity afterwards.
+//! - **what contains what** — which curves pass through a corner, which
+//!   surfaces a curve bounds. That is how an *edge* is classified, from its
+//!   two ends rather than from any measurement of its own.
+//!
+//! The containment is recovered from **shared mesh nodes**, not from
+//! proximity: a corner is on a curve when its own node is one of the curve's,
+//! a curve is on a surface when every one of its nodes is one of the
+//! surface's. Integer set membership — no tolerance, nothing ambiguous. It is
+//! what `FacetedGeometry::containing_entities` does in the C++, and for the
+//! reason given there: `$Elements` states nowhere which curve bounds which
+//! surface, so it has to be recovered.
+//!
+//! The assumption is that the faceting is **conformal** — a curve's nodes
+//! are the *same node numbers* as its bounding surface's. True of any `.msh`
+//! gmsh wrote from one CAD model; false of one assembled from parts meshed
+//! separately, where this reports fewer containments and never wrong ones.
+
+use crate::model::Geometry;
+use std::collections::{BTreeMap, BTreeSet};
+
+/// A geometric corner. The dimension a cell classified on one carries.
+pub const CORNER: u8 = 0;
+/// A geometric curve.
+pub const CURVE: u8 = 1;
+/// A geometric surface.
+pub const SURFACE: u8 = 2;
+
+/// Everything containing an entity, itself included, lowest dimension first.
+///
+/// Built once when the geometry is read, because every classification of an
+/// edge intersects two of these.
+pub(crate) fn containment(geometry: &Geometry) -> BTreeMap<(u8, i32), Vec<(u8, i32)>> {
+    let curve_nodes: Vec<(i32, BTreeSet<u32>)> = geometry
+        .curves()
+        .iter()
+        .map(|c| (c.tag, c.segments.iter().flatten().copied().collect()))
+        .collect();
+    let surface_nodes: Vec<(i32, BTreeSet<u32>)> = geometry
+        .surfaces()
+        .iter()
+        .map(|s| (s.tag, s.triangles.iter().flatten().copied().collect()))
+        .collect();
+
+    let mut out: BTreeMap<(u8, i32), Vec<(u8, i32)>> = BTreeMap::new();
+    // Every entity contains itself, so intersecting two up-sets never comes
+    // back empty merely because both cells are on the same thing.
+    for (tag, nodes) in &curve_nodes {
+        let mut up = vec![(CURVE, *tag)];
+        for (surface, on_it) in &surface_nodes {
+            if nodes.iter().all(|n| on_it.contains(n)) {
+                up.push((SURFACE, *surface));
+            }
+        }
+        out.insert((CURVE, *tag), up);
+    }
+    for corner in geometry.corners() {
+        let mut up = vec![(CORNER, corner.tag)];
+        for (tag, nodes) in &curve_nodes {
+            if nodes.contains(&corner.node) {
+                up.push((CURVE, *tag));
+            }
+        }
+        for (tag, nodes) in &surface_nodes {
+            if nodes.contains(&corner.node) {
+                up.push((SURFACE, *tag));
+            }
+        }
+        out.insert((CORNER, corner.tag), up);
+    }
+    for (tag, _) in &surface_nodes {
+        out.insert((SURFACE, *tag), vec![(SURFACE, *tag)]);
+    }
+    out
+}
+
+impl Geometry {
+    /// How big the geometry is, corner to corner.
+    ///
+    /// What a tolerance is a share of: "within a hundredth" has to mean a
+    /// hundredth of something, and a figure in millimetres would be wrong
+    /// for every model but the one it was chosen on.
+    pub fn span(&self) -> f64 {
+        let mut lo = [f64::INFINITY; 3];
+        let mut hi = [f64::NEG_INFINITY; 3];
+        for p in self.nodes() {
+            for k in 0..3 {
+                lo[k] = lo[k].min(p[k]);
+                hi[k] = hi[k].max(p[k]);
+            }
+        }
+        if self.nodes().is_empty() {
+            return 0.0;
+        }
+        (0..3).map(|k| (hi[k] - lo[k]).powi(2)).sum::<f64>().sqrt()
+    }
+
+    /// Everything containing `(dim, tag)`, itself first, or nothing when no
+    /// entity answers to that pair.
+    pub fn containing(&self, dim: u8, tag: i32) -> &[(u8, i32)] {
+        self.containment()
+            .get(&(dim, tag))
+            .map(|up| up.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// The lowest-dimensional entity containing **both** of two
+    /// classifications, which is what an edge between them lies on.
+    ///
+    /// Topological throughout: no point of the edge is ever measured. An
+    /// edge whose two corners sit on one curve belongs on that curve; one
+    /// whose corners sit on two curves bounding a common surface belongs on
+    /// that surface; one whose corners have nothing in common belongs
+    /// nowhere, and says so.
+    ///
+    /// `at_least` is the cell's own dimension — an edge is never pinned to a
+    /// single point, which would over-constrain it.
+    pub fn common(&self, a: (u8, i32), b: (u8, i32), at_least: u8) -> Option<(u8, i32)> {
+        let theirs: BTreeSet<(u8, i32)> = self.containing(b.0, b.1).iter().copied().collect();
+        self.containing(a.0, a.1)
+            .iter()
+            .filter(|e| e.0 >= at_least && theirs.contains(e))
+            // The lists are built lowest dimension first, so the first match
+            // is already the lowest — but say so rather than rely on it.
+            .min_by_key(|e| (e.0, e.1))
+            .copied()
+    }
+
+    /// The point of an entity nearest `p`, or nothing when no entity answers
+    /// to that pair.
+    pub fn project(&self, dim: u8, tag: i32, p: [f64; 3]) -> Option<[f64; 3]> {
+        match dim {
+            CORNER => self
+                .corners()
+                .iter()
+                .find(|c| c.tag == tag)
+                .map(|c| self.nodes()[c.node as usize]),
+            CURVE => self.curves().iter().find(|c| c.tag == tag).map(|curve| {
+                nearest_of(
+                    curve.segments.iter().map(|s| {
+                        on_segment(p, self.nodes()[s[0] as usize], self.nodes()[s[1] as usize])
+                    }),
+                    p,
+                )
+            }),
+            SURFACE => self
+                .surfaces()
+                .iter()
+                .find(|s| s.tag == tag)
+                .map(|surface| {
+                    nearest_of(
+                        surface.triangles.iter().map(|t| {
+                            on_triangle(
+                                p,
+                                [
+                                    self.nodes()[t[0] as usize],
+                                    self.nodes()[t[1] as usize],
+                                    self.nodes()[t[2] as usize],
+                                ],
+                            )
+                        }),
+                        p,
+                    )
+                }),
+            _ => None,
+        }
+    }
+
+    /// How far `p` is from an entity.
+    pub fn distance(&self, dim: u8, tag: i32, p: [f64; 3]) -> Option<f64> {
+        self.project(dim, tag, p).map(|q| apart(p, q))
+    }
+
+    /// The entity to classify a point on, or nothing when it is near none.
+    ///
+    /// Dimension by dimension, stopping at the **lowest** one with anything
+    /// within its tolerance — a point near a corner is on the corner, not on
+    /// the three curves through it. `tolerance` is one figure per dimension,
+    /// corners first; the corner one is usually the tightest, since two
+    /// corners are typically far closer to each other than either is to a
+    /// curve it does not touch.
+    pub fn nearest(&self, p: [f64; 3], tolerance: [f64; 3]) -> Option<(u8, i32)> {
+        for dim in [CORNER, CURVE, SURFACE] {
+            let tags: Vec<i32> = match dim {
+                CORNER => self.corners().iter().map(|c| c.tag).collect(),
+                CURVE => self.curves().iter().map(|c| c.tag).collect(),
+                _ => self.surfaces().iter().map(|s| s.tag).collect(),
+            };
+            let best = tags
+                .into_iter()
+                .filter_map(|tag| self.distance(dim, tag, p).map(|d| (d, tag)))
+                .filter(|(d, _)| *d <= tolerance[dim as usize])
+                .min_by(|a, b| a.0.partial_cmp(&b.0).expect("a finite distance"));
+            if let Some((_, tag)) = best {
+                return Some((dim, tag));
+            }
+        }
+        None
+    }
+}
+
+fn nearest_of(candidates: impl Iterator<Item = [f64; 3]>, p: [f64; 3]) -> [f64; 3] {
+    candidates
+        .min_by(|a, b| {
+            apart(*a, p)
+                .partial_cmp(&apart(*b, p))
+                .expect("a finite distance")
+        })
+        .unwrap_or(p)
+}
+
+fn apart(a: [f64; 3], b: [f64; 3]) -> f64 {
+    (0..3).map(|k| (a[k] - b[k]).powi(2)).sum::<f64>().sqrt()
+}
+
+fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+fn minus(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+fn along(from: [f64; 3], direction: [f64; 3], t: f64) -> [f64; 3] {
+    [0, 1, 2].map(|k| from[k] + direction[k] * t)
+}
+
+/// The point of a segment nearest `p`, ends included.
+fn on_segment(p: [f64; 3], a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    let ab = minus(b, a);
+    let length = dot(ab, ab);
+    if length <= 0.0 {
+        return a;
+    }
+    along(a, ab, (dot(minus(p, a), ab) / length).clamp(0.0, 1.0))
+}
+
+/// The point of a triangle nearest `p`.
+///
+/// The usual seven-region split — inside the face, past one of the three
+/// corners, or alongside one of the three edges — which gets the answer in
+/// one pass of comparisons rather than by projecting onto the plane and
+/// hoping the foot lands inside.
+fn on_triangle(p: [f64; 3], t: [[f64; 3]; 3]) -> [f64; 3] {
+    let (a, b, c) = (t[0], t[1], t[2]);
+    let (ab, ac, ap) = (minus(b, a), minus(c, a), minus(p, a));
+    let (d1, d2) = (dot(ab, ap), dot(ac, ap));
+    if d1 <= 0.0 && d2 <= 0.0 {
+        return a;
+    }
+
+    let bp = minus(p, b);
+    let (d3, d4) = (dot(ab, bp), dot(ac, bp));
+    if d3 >= 0.0 && d4 <= d3 {
+        return b;
+    }
+
+    let vc = d1 * d4 - d3 * d2;
+    if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
+        return along(a, ab, d1 / (d1 - d3));
+    }
+
+    let cp = minus(p, c);
+    let (d5, d6) = (dot(ab, cp), dot(ac, cp));
+    if d6 >= 0.0 && d5 <= d6 {
+        return c;
+    }
+
+    let vb = d5 * d2 - d1 * d6;
+    if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
+        return along(a, ac, d2 / (d2 - d6));
+    }
+
+    let va = d3 * d6 - d5 * d4;
+    if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0 {
+        return along(b, minus(c, b), (d4 - d3) / ((d4 - d3) + (d5 - d6)));
+    }
+
+    let denominator = 1.0 / (va + vb + vc);
+    let (v, w) = (vb * denominator, vc * denominator);
+    [0, 1, 2].map(|k| a[k] + ab[k] * v + ac[k] * w)
+}

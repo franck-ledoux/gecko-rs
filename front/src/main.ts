@@ -533,10 +533,12 @@ async function boot() {
   /**
    * Whether the mouse is aimed at the geometry or at the blocks.
    *
-   * Said in three places, because a mode you cannot see is a mode you
-   * click twice to find out about: the button wears the icon of the mode
-   * it is in, the readout names it, and the status line says so when it
-   * changes.
+   * Said in two places, because a mode you cannot see is a mode you click
+   * twice to find out about: the button wears the icon of the mode it is
+   * in, and the readout names it in the same blue the status line uses.
+   * Not *also* announced in the status line — that line is for what just
+   * happened, and a standing fact repeated there pushes out the message
+   * about the thing you actually did.
    */
   function setPicking(at: "blocks" | "geometry") {
     viewer.setPicking(at);
@@ -546,7 +548,6 @@ async function boot() {
     $("aim").textContent = at === "geometry" ? "picking geometry" : "picking blocks";
     if (at === "blocks") viewer.selectSurfaces([]);
     else clearSelection();
-    say(at === "geometry" ? "aiming at the geometry" : "aiming at the blocks");
   }
 
   async function boxGeometry() {

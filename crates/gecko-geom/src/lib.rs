@@ -18,7 +18,9 @@
 pub mod bounds;
 pub mod model;
 pub mod msh;
+pub mod where_on;
 
 pub use bounds::BoundsError;
 pub use model::{Corner, Curve, Geometry, Surface};
 pub use msh::{Msh, MshError, PhysicalName, LINE, POINT, TRIANGLE};
+pub use where_on::{CORNER, CURVE, SURFACE};

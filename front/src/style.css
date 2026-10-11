@@ -127,8 +127,10 @@ button { font: inherit; }
 body[data-chrome="light"] #readout { text-shadow: 0 1px 2px rgba(255, 255, 255, .6); }
 #stats b { font-weight: 600; color: var(--fg); font-variant-numeric: tabular-nums; }
 #stats span + span { margin-left: 9px; }
-/* Which mode the mouse is in, said rather than left to the icon alone. */
-#aim { color: var(--fg); }
+/* Which mode the mouse is in, said rather than left to the icon alone, and
+   in the same blue as the status line: both are about what the next click
+   will do rather than about what the model holds. */
+#aim { color: var(--accent); }
 #status { color: var(--accent); }
 
 /* --- put it all away ----------------------------------------------------- */

@@ -1,10 +1,17 @@
 //! What the map stores on each cell.
 //!
 //! These are deliberately tiny. `AttributeUpdate` requires `Copy`, so nothing
-//! of variable size can live here — no list of classification targets, no
+//! of variable size can live here — no *list* of classification targets, no
 //! vector of control points. That constraint is not in the way; it is the
-//! design. An attribute carries only a **stable name**, and everything that
-//! grows hangs off that name in tables beside the map.
+//! design. An attribute carries a **stable name** and a handful of fixed
+//! fields, and everything that grows hangs off that name in tables beside
+//! the map.
+//!
+//! One of those fixed fields is [`On`]: which geometric entity a cell is
+//! classified on. One entity, not a set of them — which the `Copy`
+//! requirement all but settles, and which costs nothing, because what a set
+//! would be *for* is reading off the entities that contain the one named
+//! here, and the geometry can answer that from the name alone.
 //!
 //! The `merge` and `split` behaviour below is the whole contract with the map,
 //! and it is where this kind of code goes wrong, so it is spelled out rather
@@ -15,17 +22,36 @@ use honeycomb_core::cmap::{EdgeIdType, FaceIdType, OrbitPolicy, VertexIdType, Vo
 
 use crate::ids::{CellId, CornerKey};
 
+/// Which geometric entity a cell is classified on.
+///
+/// `dim` is 0 for a corner, 1 for a curve, 2 for a surface, and `tag` is the
+/// gmsh entity tag — the geometry's own name for it. Deliberately plain
+/// numbers: the block structure has no business knowing what a triangle is,
+/// and the crate that does the projecting is the one that holds both.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct On {
+    pub dim: u8,
+    pub tag: i32,
+}
+
 /// Attribute of a 0-cell: a node.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NodeTag {
     pub id: CellId,
     pub corner_key: CornerKey,
+    /// The geometric entity this node is classified on, if any.
+    pub on: Option<On>,
+    /// Frozen nodes do not move, for anybody, until they are thawed.
+    pub frozen: bool,
 }
 
 /// Attribute of a 1-cell: an edge.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EdgeTag {
     pub id: CellId,
+    /// The geometric entity this edge is classified on, if any. Never set
+    /// by measuring the edge: it is inferred from its two ends.
+    pub on: Option<On>,
 }
 
 /// Attribute of a 2-cell: a face.
@@ -44,8 +70,21 @@ impl AttributeUpdate for NodeTag {
     /// Two nodes becoming one. The first name survives and the second is
     /// dropped: a merge does not create a cell, so it must not consume a new
     /// name, and one of the two existing names has to win.
-    fn merge(a: Self, _b: Self) -> Result<Self, AttributeError> {
-        Ok(a)
+    ///
+    /// The classification and the freeze do **not** follow that rule, and
+    /// deliberately. A merge is two nodes becoming one *point*: if either of
+    /// them was pinned to the geometry then the point that remains is on the
+    /// geometry, and if either was frozen then somebody asked for it not to
+    /// move. Taking the first blindly would quietly throw away a constraint
+    /// nobody withdrew. When both are classified and disagree, the first
+    /// wins, as its name does.
+    fn merge(a: Self, b: Self) -> Result<Self, AttributeError> {
+        Ok(Self {
+            id: a.id,
+            corner_key: a.corner_key,
+            on: a.on.or(b.on),
+            frozen: a.frozen || b.frozen,
+        })
     }
 
     /// One node becoming two.
@@ -55,10 +94,17 @@ impl AttributeUpdate for NodeTag {
     /// fresh ones. The corner key is **copied** instead, because a split orbit
     /// is still the same corner to every cell that had it, and those cells have
     /// to go on recognising it.
+    ///
+    /// The classification is copied for the same reason, and it is a
+    /// different reason from the name's: where a cell *is* is not a claim
+    /// about which cell it is, and a split moves nothing. Both halves of a
+    /// node on a curve are on that curve. So is the freeze.
     fn split(a: Self) -> Result<(Self, Self), AttributeError> {
         let kept = Self {
             id: CellId::NONE,
             corner_key: a.corner_key,
+            on: a.on,
+            frozen: a.frozen,
         };
         Ok((kept, kept))
     }
@@ -68,6 +114,33 @@ impl AttributeBind for NodeTag {
     type StorageType = AttrSparseVec<Self>;
     type IdentifierType = VertexIdType;
     const BIND_POLICY: OrbitPolicy = OrbitPolicy::Vertex;
+}
+
+impl AttributeUpdate for EdgeTag {
+    fn merge(a: Self, b: Self) -> Result<Self, AttributeError> {
+        Ok(Self {
+            id: a.id,
+            on: a.on.or(b.on),
+        })
+    }
+
+    /// An edge cut in two gives two new edges — new names, and the same
+    /// classification, because both halves lie where the whole did. A later
+    /// pass re-infers it from the ends either way; this is what keeps the
+    /// picture right in between.
+    fn split(a: Self) -> Result<(Self, Self), AttributeError> {
+        let fresh = Self {
+            id: CellId::NONE,
+            on: a.on,
+        };
+        Ok((fresh, fresh))
+    }
+}
+
+impl AttributeBind for EdgeTag {
+    type StorageType = AttrSparseVec<Self>;
+    type IdentifierType = EdgeIdType;
+    const BIND_POLICY: OrbitPolicy = OrbitPolicy::Edge;
 }
 
 /// The same rule for the cells that have only a name: keep the first on a
@@ -93,6 +166,5 @@ macro_rules! named_cell {
     };
 }
 
-named_cell!(EdgeTag, EdgeIdType, OrbitPolicy::Edge);
 named_cell!(FaceTag, FaceIdType, OrbitPolicy::Face);
 named_cell!(BlockTag, VolumeIdType, OrbitPolicy::Volume);

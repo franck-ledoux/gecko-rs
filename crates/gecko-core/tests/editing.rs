@@ -143,3 +143,52 @@ fn two_cubes_keep_their_names_and_their_nodes_apart() {
         "{second:?}"
     );
 }
+
+#[test]
+fn a_frozen_node_does_not_move_for_anybody() {
+    use gecko_core::On;
+    let mut b = Blocking::new().unwrap();
+    b.add_block(cube_corners([0.0, 0.0, 0.0], 1.0)).unwrap();
+    let (node, before) = b.nodes().next().unwrap();
+
+    b.set_frozen(node, true).unwrap();
+    assert!(b.is_frozen(node));
+    let refused = b.set_position(node, [9.0, 9.0, 9.0]).expect_err("frozen");
+    assert!(
+        matches!(refused, BlockingError::Frozen(n) if n == node),
+        "{refused:?}"
+    );
+    // Refused, not quietly ignored: a caller told nothing would go on
+    // believing the move happened.
+    assert_eq!(b.position(b.node_by_id(node).unwrap()), Some(before));
+
+    b.set_frozen(node, false).unwrap();
+    b.set_position(node, [9.0, 9.0, 9.0]).expect("thawed");
+    assert_eq!(
+        b.position(b.node_by_id(node).unwrap()),
+        Some([9.0, 9.0, 9.0])
+    );
+
+    // And the freeze is independent of the classification: one says where
+    // a node may go, the other says whether it may go at all.
+    b.set_node_class(node, Some(On { dim: 2, tag: 5 })).unwrap();
+    assert_eq!(b.node_class(node), Some(On { dim: 2, tag: 5 }));
+    assert!(!b.is_frozen(node));
+    b.set_node_class(node, None).unwrap();
+    assert_eq!(b.node_class(node), None);
+}
+
+#[test]
+fn an_edge_knows_the_names_of_its_own_two_ends() {
+    // What the inference walks: an edge, and the two nodes whose
+    // classification decides its own.
+    let mut b = Blocking::new().unwrap();
+    b.add_block(cube_corners([0.0, 0.0, 0.0], 1.0)).unwrap();
+    let edges: Vec<_> = b.edges().collect();
+    assert_eq!(edges.len(), 12);
+    for (edge, a, c) in edges {
+        assert!(edge.is_some() && a.is_some() && c.is_some());
+        assert_ne!(a, c, "an edge's two ends are two nodes");
+        assert_eq!(b.edge_class(edge), None, "nothing is classified yet");
+    }
+}

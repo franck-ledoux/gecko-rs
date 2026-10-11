@@ -1052,6 +1052,11 @@ export class Viewer {
       quads: Uint32Array.from(view.quads),
       quadFaces: Uint32Array.from(view.quadFaces),
       quadBlocks: Uint32Array.from(view.quadBlocks),
+      nodeClassDim: Int32Array.from(view.nodeClassDim),
+      nodeClassTag: Int32Array.from(view.nodeClassTag),
+      nodeFrozen: Uint32Array.from(view.nodeFrozen),
+      edgeClassDim: Int32Array.from(view.edgeClassDim),
+      edgeClassTag: Int32Array.from(view.edgeClassTag),
     };
     this.nodes.forEach((m) => m.dispose());
     this.nodes = [];

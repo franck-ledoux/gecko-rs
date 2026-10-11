@@ -218,26 +218,36 @@ What the browser draws, in the one shape both modes deliver it. The static page
 reads it straight out of wasm memory; the station sends the identical bytes down
 a WebSocket. One producer, one decoder.
 
-Little-endian throughout. Version 4.
+Little-endian throughout. Version 5.
 
-| Offset | Type  | Count | Meaning                           |
-| ------ | ----- | ----- | --------------------------------- |
-| 0      | `u8`  | 4     | magic, `GKB1`                     |
-| 4      | `u32` | 1     | format version                    |
-| 8      | `f64` | 3     | model centre                      |
-| 32     | `u32` | 1     | number of nodes, *N*              |
-| 36     | `u32` | 1     | number of edges, *E*              |
-| 40     | `u32` | 1     | number of quadrangles, *Q*        |
-| 44     | `f32` | 3*N*  | positions, relative to the centre |
-| …      | `u32` | *N*   | each node's `CellId`              |
-| …      | `u32` | 2*E*  | node indices, two per edge        |
-| …      | `u32` | *E*   | each edge's `CellId`              |
-| …      | `u32` | 4*Q*  | node indices, four per quadrangle |
-| …      | `u32` | *Q*   | each quadrangle's face `CellId`   |
-| …      | `u32` | *Q*   | each quadrangle's block `CellId`  |
+| Offset | Type  | Count | Meaning                                                     |
+| ------ | ----- | ----- | ----------------------------------------------------------- |
+| 0      | `u8`  | 4     | magic, `GKB1`                                               |
+| 4      | `u32` | 1     | format version                                              |
+| 8      | `f64` | 3     | model centre                                                |
+| 32     | `u32` | 1     | number of nodes, *N*                                        |
+| 36     | `u32` | 1     | number of edges, *E*                                        |
+| 40     | `u32` | 1     | number of quadrangles, *Q*                                  |
+| 44     | `f32` | 3*N*  | positions, relative to the centre                           |
+| …      | `u32` | *N*   | each node's `CellId`                                        |
+| …      | `u32` | 2*E*  | node indices, two per edge                                  |
+| …      | `u32` | *E*   | each edge's `CellId`                                        |
+| …      | `u32` | 4*Q*  | node indices, four per quadrangle                           |
+| …      | `u32` | *Q*   | each quadrangle's face `CellId`                             |
+| …      | `u32` | *Q*   | each quadrangle's block `CellId`                            |
+| …      | `i32` | *N*   | what each node is classified on: the dimension, −1 for none |
+| …      | `i32` | *N*   | …and the entity's gmsh tag                                  |
+| …      | `u32` | *N*   | 1 where a node is frozen                                    |
+| …      | `i32` | *E*   | the same two for each edge                                  |
+| …      | `i32` | *E*   |                                                             |
 
 The edge names are what let a click on a line say which edge it was, and so
 what lets the viewer ask for the [sheet](../user-guide/sheets.md) through it.
+
+The classification is appended at the end rather than threaded in beside the
+names it belongs with, so that every offset before it stayed where it was.
+The frozen flag has an array of its own rather than a bit stolen from the
+dimension beside it: a frozen node need not be classified at all.
 
 Arrays rather than one interleaved record per quadrangle, like everything
 above them: a client makes a typed-array view over each one instead of walking
@@ -367,6 +377,37 @@ run **geometry ← blocking**: a cell of a block structure will be classified
 onto one of these entities, not the other way round, so the geometry gets to
 be testable with no block structure in sight. And a file reader has no
 business inside a combinatorial map.
+
+## Where a classification lives
+
+Split across two crates, and the split is the point.
+
+`gecko-core` stores **what** a cell is classified on: a dimension and a tag,
+two plain numbers in the cell's attribute, plus a flag for frozen. It knows
+nothing of triangles. `gecko-geom` answers **where** that is: the nearest
+entity to a point, the point of an entity nearest a point, and which
+entities contain which. `gecko-cmd`, which holds both, is the only place
+that projects.
+
+An attribute has to be `Copy`, so what a cell carries is **one** entity
+rather than a set of them. That is not a concession: what a set would be
+*for* is reading off the entities containing the one named, and the geometry
+answers that from the name alone.
+
+### Merging and splitting a classification
+
+The two rules are different from the ones the names follow, and for
+different reasons again.
+
+**A merge** takes the first cell's name, as always — but the classification
+and the freeze are taken from **either** side. A merge is two nodes becoming
+one point: if either was pinned to the geometry, the point that remains is
+pinned; if either was frozen, somebody asked for it not to move. Taking the
+first blindly would throw away a constraint nobody withdrew.
+
+**A split** clears the name and **keeps** the classification. Where a cell is
+is not a claim about which cell it is, and a split moves nothing: both halves
+of a node on a curve are on that curve.
 
 ## What does not go through the kernel
 
