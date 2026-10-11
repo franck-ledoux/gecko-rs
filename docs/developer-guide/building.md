@@ -24,7 +24,7 @@ npm run test:unit     needs the wasm; writes the file pytest replays
     ↓
 npm run build         the viewer bundle  ->  front/dist
     ↓
-maturin develop       the wheel embeds that bundle
+maturin develop --release   the wheel embeds that bundle
     ↓
 playwright test       the station test needs the wheel
     ↓
@@ -136,3 +136,18 @@ runs `wasm-opt`, which is worth about a quarter of the binary.
 The browser is opened with the platform's own command (`open`, `xdg-open`,
 `start`) rather than the `webbrowser` crate, which pulls in 39 others — `url`,
 `idna`, the whole `icu` family — to run one command. Measured, not guessed.
+
+## Always `--release`
+
+A debug build of the kernel is **eight to fifteen times slower**, and it is
+not a constant you can ignore: a combinatorial map finds a vertex by taking
+the smallest dart of its orbit, so everything that reads the model walks
+darts, and nothing in that is optimised away at `opt-level=0`.
+
+Measured on a fifty-block model: a refresh — one view buffer and one stats
+— takes about 30 ms built with `--release` and about 350 ms without. Every
+edit then feels like treacle, and the obvious conclusion is that the
+algorithm is wrong rather than the flags.
+
+`./dev` and `./check.sh` both pass it. The compile is slower; the loop is
+not.

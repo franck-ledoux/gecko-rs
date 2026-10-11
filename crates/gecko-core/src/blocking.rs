@@ -112,6 +112,19 @@ pub fn quad_normal(p: [[f64; 3]; 4]) -> [f64; 3] {
     n
 }
 
+/// What there is, counted once.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Census {
+    pub nodes: usize,
+    pub edges: usize,
+    pub faces: usize,
+    pub blocks: usize,
+    pub classified_nodes: usize,
+    pub classified_edges: usize,
+    pub classified_faces: usize,
+    pub frozen: usize,
+}
+
 /// A cell asking where it belongs, and everything there is to answer with.
 ///
 /// The last two fields are what makes the difference between a rule that
@@ -547,32 +560,34 @@ impl Blocking {
         })
     }
 
-    /// How much of the blocking is pinned to a geometry: nodes, edges,
-    /// faces, and how many nodes are frozen.
+    /// How many cells there are, and how much of them is pinned to a
+    /// geometry — everything the readout says, counted in **one pass per
+    /// dimension**.
     ///
-    /// Counted off the map rather than by resolving every name, for the
-    /// reason [`nodes_in_full`][Self::nodes_in_full] gives.
-    pub fn nb_classified(&self) -> (usize, usize, usize, usize) {
-        let nodes = self
-            .map
-            .iter_vertices()
-            .filter(|v| self.node_tag(*v).on.is_some());
-        let frozen = self
-            .map
-            .iter_vertices()
-            .filter(|v| self.node_tag(*v).frozen);
-        (
-            nodes.count(),
-            self.map
-                .iter_edges()
-                .filter(|e| self.edge_tag(*e).on.is_some())
-                .count(),
-            self.map
-                .iter_faces()
-                .filter(|f| self.face_tag(*f).on.is_some())
-                .count(),
-            frozen.count(),
-        )
+    /// Walking the map is the expensive thing this crate does: a vertex
+    /// is found by taking the smallest dart of its orbit, so iterating
+    /// them costs a dart-orbit walk apiece, and those orbits grow as more
+    /// blocks meet at a node. Asking separately for the nodes, the
+    /// classified nodes and the frozen ones was three of those walks
+    /// where one does.
+    pub fn census(&self) -> Census {
+        let mut out = Census::default();
+        for v in self.map.iter_vertices() {
+            let tag = self.node_tag(v);
+            out.nodes += 1;
+            out.classified_nodes += usize::from(tag.on.is_some());
+            out.frozen += usize::from(tag.frozen);
+        }
+        for e in self.map.iter_edges() {
+            out.edges += 1;
+            out.classified_edges += usize::from(self.edge_tag(e).on.is_some());
+        }
+        for f in self.map.iter_faces() {
+            out.faces += 1;
+            out.classified_faces += usize::from(self.face_tag(f).on.is_some());
+        }
+        out.blocks = self.map.iter_volumes().count();
+        out
     }
 
     /// Put every node on an entity, and then where that entity says it is.

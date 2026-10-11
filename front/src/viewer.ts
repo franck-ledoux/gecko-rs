@@ -469,7 +469,14 @@ export class Viewer {
       z: this.orthoCamera("z"),
     };
 
-    this.scene.onBeforeRenderObservable.add(() => this.rescaleHandles());
+    // Per **camera**, not per frame. One sphere is shown in four views at
+    // four zooms and cannot be the right number of pixels across in all
+    // of them at once — but it can be resized between them, because each
+    // camera's render happens after its own observable.
+    this.scene.onBeforeCameraRenderObservable.add((camera) => {
+      this.rescaleHandles(camera as ArcRotateCamera);
+    });
+    this.scene.onBeforeRenderObservable.add(() => this.fitPickTolerance());
     this.axes = new AxisGizmo(this.scene, this.camera);
     this.layOut();
     // Rendering leaves `activeCamera` set to whichever camera went last — the
@@ -905,7 +912,7 @@ export class Viewer {
   aimExtrusion(x: number, y: number): number | null {
     if (!this.growing) return null;
     const { centre, normal, corners } = this.growing;
-    const ray = this.scene.createPickingRay(x, y, Matrix.Identity(), this.camera);
+    const ray = this.scene.createPickingRay(x, y, Matrix.Identity(), this.cameraFor(x, y));
     const towards = ray.direction.normalizeToNew();
     const asked = heightAlong(
       [ray.origin.x, ray.origin.y, ray.origin.z],
@@ -1599,7 +1606,7 @@ export class Viewer {
    */
   pickEdge(x: number, y: number): number | null {
     if (!this.wire || !this.view) return null;
-    const hit = this.scene.pick(x, y, (m) => m === this.wire, false, this.camera);
+    const hit = this.scene.pick(x, y, (m) => m === this.wire, false, this.cameraFor(x, y));
     if (!hit?.hit || hit.faceId < 0) return null;
     return hit.faceId < this.view.edgeNames.length ? this.view.edgeNames[hit.faceId] : null;
   }
@@ -1916,37 +1923,33 @@ export class Viewer {
    * there are thousands of nodes this becomes a thin-instance buffer updated
    * once, not a loop.
    */
-  private rescaleHandles() {
+  /**
+   * Keep every handle the same size on screen, **in the pane about to be
+   * drawn**.
+   *
+   * Called once per camera rather than once per frame. One sphere is one
+   * mesh shown in four views at four zooms, and sizing it for whichever
+   * pane the pointer happened to be in left it the size of a block in a
+   * pane zoomed in further — which is what it looked like.
+   *
+   * A loop per camera over the node meshes. Negligible at this scale; when
+   * there are thousands of nodes this becomes a thin-instance buffer, one
+   * per pane.
+   */
+  private rescaleHandles(camera: ArcRotateCamera) {
+    const pane = PANES.find((p) => this.panes[p] === camera);
+    if (!pane) return;
     const engine = this.scene.getEngine();
     // The pane's own height, not the canvas's: in a split window a pane is
     // half as tall, and a handle sized against the whole canvas would come
     // out half the size it was asked for.
-    const camera = this.panes[this.hovered];
     const height = engine.getRenderHeight() * camera.viewport.height;
-    const ortho = PANE_AXIS[this.hovered] ? this.half[this.hovered] : null;
-    if (this.wire) {
-      // Half, because the threshold is a radius about the line. Taken at the
-      // distance to what the camera is looking at: an exact answer would be
-      // per edge, and this is a click tolerance.
-      this.wire.intersectionThreshold =
-        (ortho === null
-          ? worldSizeForPixels(
-              EDGE_PICK_PIXELS,
-              Vector3.Distance(camera.target, camera.position),
-              camera.fov,
-              height,
-            )
-          : worldSizeForPixelsOrtho(EDGE_PICK_PIXELS, ortho, height)) / 2;
-    }
+    const ortho = PANE_AXIS[pane] ? this.half[pane] : null;
     for (const [meshes, pixels] of [
       [this.nodes, HANDLE_PIXELS],
       [this.geomMeshes.corners, CORNER_PIXELS],
     ] as const) {
       for (const mesh of meshes) {
-        // Sized for the pane the pointer is in, which is the pane you are
-        // about to click in. One mesh cannot be the right size in four
-        // views at different zooms, and the one that matters is the one
-        // being aimed at.
         const wanted =
           ortho === null
             ? worldSizeForPixels(
@@ -1959,6 +1962,32 @@ export class Viewer {
         mesh.scaling.setAll(wanted);
       }
     }
+  }
+
+  /**
+   * How near a line the pointer has to be, in the pane it is in.
+   *
+   * This one really is per frame rather than per camera: it is about
+   * where the mouse is, and the mouse is in one pane.
+   */
+  private fitPickTolerance() {
+    if (!this.wire) return;
+    const engine = this.scene.getEngine();
+    const camera = this.panes[this.hovered];
+    const height = engine.getRenderHeight() * camera.viewport.height;
+    const ortho = PANE_AXIS[this.hovered] ? this.half[this.hovered] : null;
+    // Half, because the threshold is a radius about the line. Taken at the
+    // distance to what the camera is looking at: an exact answer would be
+    // per edge, and this is a click tolerance.
+    this.wire.intersectionThreshold =
+      (ortho === null
+        ? worldSizeForPixels(
+            EDGE_PICK_PIXELS,
+            Vector3.Distance(camera.target, camera.position),
+            camera.fov,
+            height,
+          )
+        : worldSizeForPixelsOrtho(EDGE_PICK_PIXELS, ortho, height)) / 2;
   }
 
   get nodeCount() {

@@ -32,7 +32,11 @@ echo "── building the kernel ───────────────�
 ./build-wasm.sh
 # Debug, not release: this is the edit-and-try loop, and the difference is
 # twenty seconds a go.
-(cd crates/gecko-py && VIRTUAL_ENV="$PWD/../../.venv" ../../.venv/bin/maturin develop --quiet)
+# `--release`, and it is not optional. A debug build of a combinatorial
+# map is eight to fifteen times slower: at fifty blocks a refresh goes
+# from thirty milliseconds to a third of a second, and every edit feels
+# like treacle. The compile is slower; the loop is not.
+(cd crates/gecko-py && VIRTUAL_ENV="$PWD/../../.venv" ../../.venv/bin/maturin develop --release --quiet)
 
 echo "── starting the dev server ───────────────────────────────────"
 (cd front && npm run dev -- --clearScreen false) &

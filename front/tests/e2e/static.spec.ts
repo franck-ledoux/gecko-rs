@@ -1998,3 +1998,48 @@ test("nodes, edges and faces each take three colourings", async ({ page }) => {
   expect(await page.evaluate(() => (window as any).__gecko.prefs().nodes.colouring)).toBe("class");
   expect(errors).toEqual([]);
 });
+
+test("an edge is picked and its sheet cut from an axis view", async ({ page }) => {
+  // Everything works in every pane or the split is half a feature. Each
+  // pick goes through the camera of the pane the pointer is in; it was
+  // the edges that were still asking the 3-D one, so clicking a line in
+  // a side view did nothing at all.
+  const errors = await boot(page);
+  await page.evaluate(EDGE_NEAR);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.keyboard.press("v");
+  await page.evaluate(() => (window as any).__gecko.run("recentre"));
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // Into the Y pane, bottom left, and ask it where an edge is.
+  const box = (await page.locator("#view").boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.25, box.y + box.height * 0.75);
+  expect(await page.evaluate(() => (window as any).__gecko.pane())).toBe("y");
+
+  const edge = (await page.evaluate(() => edgeNear([0.5, 0, 0]))) as number;
+  const at = (await page.evaluate((e) => (window as any).__gecko.edgeScreen(e), edge)) as [
+    number,
+    number,
+  ];
+  await page.mouse.click(box.x + at[0], box.y + at[1]);
+  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 4);
+
+  // And dragging along it there cuts, as it does in the 3-D view.
+  const ends = (await page.evaluate(
+    (e) => (window as any).__gecko.edgeEndsOnScreen(e),
+    edge,
+  )) as [[number, number], [number, number]];
+  const along = (t: number) =>
+    [
+      box.x + ends[0][0] + (ends[1][0] - ends[0][0]) * t,
+      box.y + ends[0][1] + (ends[1][1] - ends[0][1]) * t,
+    ] as const;
+  await page.mouse.move(...along(0.05));
+  await page.mouse.down();
+  await page.mouse.move(...along(0.5), { steps: 5 });
+  await page.mouse.up();
+
+  await expect(page.locator("[data-test=blocks]")).toHaveText("2");
+  expect(errors).toEqual([]);
+});

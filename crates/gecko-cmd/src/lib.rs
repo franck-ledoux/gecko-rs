@@ -532,8 +532,12 @@ impl Session {
         // this pass achieved and the caller's message says so.
         self.settle_classification();
 
-        let (nodes, edges, faces, _) = self.blocking.nb_classified();
-        Ok((nodes, edges, faces))
+        let seen = self.blocking.census();
+        Ok((
+            seen.classified_nodes,
+            seen.classified_edges,
+            seen.classified_faces,
+        ))
     }
 
     /// Put a node where its classification says it is.
@@ -852,13 +856,21 @@ impl Session {
     }
 
     pub fn stats_json(&self) -> String {
+        // One census rather than eight counts: walking the map is what
+        // this costs, and it is walked once per dimension here.
+        let seen = self.blocking.census();
         serde_json::json!({
-            "nodes": self.blocking.nb_nodes(),
-            "edges": self.blocking.nb_edges(),
-            "faces": self.blocking.nb_faces(),
-            "blocks": self.blocking.nb_blocks(),
+            "nodes": seen.nodes,
+            "edges": seen.edges,
+            "faces": seen.faces,
+            "blocks": seen.blocks,
             "geometry": self.geometry_json(),
-            "classified": classified_json(self.blocking.nb_classified()),
+            "classified": {
+                "nodes": seen.classified_nodes,
+                "edges": seen.classified_edges,
+                "faces": seen.classified_faces,
+                "frozen": seen.frozen,
+            },
         })
         .to_string()
     }
@@ -889,11 +901,6 @@ fn plural(n: usize) -> &'static str {
     } else {
         "s"
     }
-}
-
-fn classified_json(counts: (usize, usize, usize, usize)) -> serde_json::Value {
-    let (nodes, edges, faces, frozen) = counts;
-    serde_json::json!({ "nodes": nodes, "edges": edges, "faces": faces, "frozen": frozen })
 }
 
 fn spot_json(on: On) -> serde_json::Value {

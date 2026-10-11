@@ -220,9 +220,13 @@ plane, which is oblique to the axes, and all three coordinates move.
 
 !!! note "One mesh, four zooms"
     A node handle is one sphere shown in four views, so it cannot be the
-    right number of pixels across in all of them at once. It is sized for
-    the pane the pointer is in — which is the pane you are about to click
-    in, and the only one where the size matters.
+    right number of pixels across in all of them at once — but it can be
+    resized **between** them. It is rescaled once per camera rather than
+    once per frame, each camera's render happening after its own turn to
+    adjust it.
+
+    Sizing it for whichever pane the pointer was in left it the size of a
+    block in a pane zoomed in further, which is what it looked like.
 
 ## The orientation triad
 
