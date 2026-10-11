@@ -122,6 +122,8 @@ async function boot() {
     drawSwatches();
     drawLayers();
     drawGeometryLayers();
+    // The legend is the theme, so it changes when the theme does.
+    drawHelp();
   }
 
   /**
@@ -131,9 +133,19 @@ async function boot() {
    * four controls — shown, coloured how, how opaque, how shrunk — and only
    * faces have anything extra to say.
    */
-  const LAYERS: ReadonlyArray<{ group: Group; label: string }> = [
-    { group: "faces", label: "Faces" },
-    { group: "blocks", label: "Blocks" },
+  /**
+   * The cells' controls, generated from this list.
+   *
+   * By falling dimension, as the geometry's are: a block, then its faces,
+   * then their edges, then the nodes those meet at.
+   *
+   * `class` is offered where it means something. A block is classified on
+   * nothing — a surface mesh has no volumes to classify one on — so it
+   * keeps the two colourings it always had.
+   */
+  const LAYERS: ReadonlyArray<{ group: Group; label: string; follows: boolean }> = [
+    { group: "blocks", label: "Blocks", follows: false },
+    { group: "faces", label: "Faces", follows: true },
   ];
 
   const slider = (test: string, label: string, min: number, value: number) =>
@@ -141,19 +153,39 @@ async function boot() {
     `<input type="range" min="${min}" max="1" step="0.01" value="${value}"` +
     ` data-test="${test}" /></label>`;
 
+  /** The uniform / by id / by what it follows radios for one group. */
+  const modes = (group: string, now: Colouring, follows: boolean) => {
+    const one = (value: Colouring, text: string) =>
+      `<label class="mode"><input type="radio" name="${group}-mode" value="${value}"` +
+      ` data-test="${group}-${value}"${now === value ? " checked" : ""} />${text}</label>`;
+    return (
+      `<div class="row">${one("uniform", "uniform")}${one("id", "by id")}</div>` +
+      (follows ? `<div class="row">${one("class", "by what it follows")}</div>` : "")
+    );
+  };
+
+  /** Hook up one group's radios. */
+  function wireModes(group: string, set: (value: Colouring) => void) {
+    for (const value of ["uniform", "id", "class"] as Colouring[]) {
+      const input = $("layers").querySelector<HTMLInputElement>(
+        `[data-test="${group}-${value}"]`,
+      );
+      input?.addEventListener("change", () => {
+        set(value);
+        redraw();
+      });
+    }
+  }
+
   function drawLayers() {
     $("layers").innerHTML =
-      LAYERS.map(({ group, label }) => {
+      LAYERS.map(({ group, label, follows }) => {
         const layer = prefs[group];
-        const mode = (value: Colouring, text: string) =>
-          `<label class="mode"><input type="radio" name="${group}-mode" value="${value}"` +
-          ` data-test="${group}-${value}"${layer.colouring === value ? " checked" : ""} />` +
-          `${text}</label>`;
         return (
           `<fieldset class="layer"><legend>${label}</legend>` +
           `<label class="check"><input type="checkbox" data-test="${group}-visible"` +
           `${layer.visible ? " checked" : ""} /> show</label>` +
-          `<div class="row">${mode("uniform", "uniform")}${mode("id", "by id")}</div>` +
+          modes(group, layer.colouring, follows) +
           slider(`${group}-alpha`, "opacity", 0, layer.alpha) +
           slider(`${group}-shrink`, "shrink", 0.1, layer.shrink) +
           (group === "faces"
@@ -161,16 +193,20 @@ async function boot() {
               `${prefs.faces.internal ? " checked" : ""} /> internal faces</label>`
             : "") +
           // Closed, and it matters: an unclosed fieldset is not a parse
-          // error, it is a fieldset that swallows everything after it. The
-          // three boxes came out nested one inside the next, which read as
-          // though edges were part of blocks were part of faces.
+          // error, it is a fieldset that swallows everything after it.
           `</fieldset>`
         );
       }).join("") +
       `<fieldset class="layer"><legend>Edges</legend>` +
       `<label class="check"><input type="checkbox" data-test="edges-visible"` +
       `${prefs.edges.visible ? " checked" : ""} /> show</label>` +
+      modes("edges", prefs.edges.colouring, true) +
       slider("edges-shrink", "shrink", 0.1, prefs.edges.shrink) +
+      `</fieldset>` +
+      // Nodes are always drawn — they are what you grab — so all they
+      // carry is how they are coloured.
+      `<fieldset class="layer"><legend>Nodes</legend>` +
+      modes("nodes", prefs.nodes.colouring, true) +
       `</fieldset>`;
 
     for (const { group } of LAYERS) {
@@ -180,12 +216,9 @@ async function boot() {
         prefs[group].visible = (e.target as HTMLInputElement).checked;
         redraw();
       });
-      for (const value of ["uniform", "id"] as Colouring[]) {
-        find(`${group}-${value}`).addEventListener("change", () => {
-          prefs[group].colouring = value;
-          redraw();
-        });
-      }
+      wireModes(group, (value) => {
+        prefs[group].colouring = value;
+      });
       find(`${group}-alpha`).addEventListener("input", (e) => {
         prefs[group].alpha = Number((e.target as HTMLInputElement).value);
         redraw();
@@ -195,6 +228,12 @@ async function boot() {
         redraw();
       });
     }
+    wireModes("edges", (value) => {
+      prefs.edges.colouring = value;
+    });
+    wireModes("nodes", (value) => {
+      prefs.nodes.colouring = value;
+    });
     const internal = $("layers").querySelector<HTMLInputElement>('[data-test="faces-internal"]')!;
     internal.addEventListener("change", (e) => {
       prefs.faces.internal = (e.target as HTMLInputElement).checked;
@@ -891,7 +930,36 @@ async function boot() {
             `</dl></section>`,
         )
         .join("") +
-      `</div><p id="help-hint">Click a node, an edge or a face to pick it; <kbd>M</kbd> aims at the geometry instead. Any key closes this.</p>`;
+      // In the grid with the key groups rather than under it: the Edit
+      // column is twice the height of the others, and the legend fits in
+      // the space that leaves.
+      legend() +
+      `</div>` +
+      `<p id="help-hint">Click a node, an edge or a face to pick it; <kbd>M</kbd> aims at the geometry instead. Any key closes this.</p>`;
+  }
+
+  /**
+   * What the classification colours mean.
+   *
+   * Read off the theme rather than written out, so the card cannot come
+   * to disagree with the screen — the same reason the keys above it are
+   * generated from the table they are matched against.
+   */
+  function legend() {
+    const swatch = (colour: string, says: string) =>
+      `<span class="key"><i style="background:${colour}"></i>${says}</span>`;
+    return (
+      `<section><h2>What a cell follows</h2>` +
+      `<div id="help-legend">` +
+      swatch(prefs.theme.onCorner, "on a corner") +
+      swatch(prefs.theme.onCurve, "on a curve") +
+      swatch(prefs.theme.onSurface, "on a surface") +
+      swatch(prefs.theme.nodes, "on nothing") +
+      swatch(prefs.theme.frozen, "frozen: it does not move") +
+      `</div>` +
+      `<p class="aside">Nodes, edges and faces take these when their box` +
+      ` in the drawer says <b>by what it follows</b>.</p></section>`
+    );
   }
   drawHelp();
 

@@ -1015,7 +1015,7 @@ describe("changing a setting without rebuilding the scene", () => {
   it("keeps the edges when only their shrink moves", async () => {
     const viewer = await shown();
     const before = idOf(viewer, "edges");
-    viewer.applyPrefs({ ...DEFAULTS, edges: { visible: true, shrink: 0.5 } });
+    viewer.applyPrefs({ ...DEFAULTS, edges: { visible: true, shrink: 0.5, colouring: "uniform" } });
     expect(idOf(viewer, "edges")).toBe(before);
     expect(viewer.edgeCount).toBe(12);
   });
@@ -1025,11 +1025,11 @@ describe("changing a setting without rebuilding the scene", () => {
     // for one: a wireframe pulled to a tenth is still a wireframe, just a
     // dotted one, and there was no way to ask for none at all.
     const viewer = await shown();
-    viewer.applyPrefs({ ...DEFAULTS, edges: { visible: false, shrink: 1 } });
+    viewer.applyPrefs({ ...DEFAULTS, edges: { visible: false, shrink: 1, colouring: "uniform" } });
     expect(viewer.edgeCount).toBe(0);
     expect(viewer.scene.getMeshByName("edges")).toBeNull();
 
-    viewer.applyPrefs({ ...DEFAULTS, edges: { visible: true, shrink: 1 } });
+    viewer.applyPrefs({ ...DEFAULTS, edges: { visible: true, shrink: 1, colouring: "uniform" } });
     expect(viewer.edgeCount).toBe(12);
   });
 
@@ -1388,7 +1388,7 @@ describe("lighting up a sheet", () => {
     expect(viewer.highlighted).toEqual(names);
     expect(viewer.scene.getMeshByName("sheet")).not.toBeNull();
 
-    viewer.applyPrefs({ ...DEFAULTS, edges: { visible: true, shrink: 0.4 } });
+    viewer.applyPrefs({ ...DEFAULTS, edges: { visible: true, shrink: 0.4, colouring: "uniform" } });
     expect(viewer.scene.getMeshByName("sheet")).not.toBeNull();
   });
 
@@ -1766,27 +1766,43 @@ describe("wearing what it follows", () => {
     viewer.setView(decodeView(await kernel.view()));
   }
 
-  it("gives a classified node the colour of what it is classified on", async () => {
+  it("says what a node follows only when asked to", async () => {
+    // Classification colouring is a mode, not an override. It used to be
+    // on always, which painted a block face the colour of the very
+    // surface it follows and then drew it on top of that surface.
     const { kernel, viewer } = await pinned();
     const names = viewer.names();
-    expect(handle(viewer, 0)).toBe(DEFAULTS.theme.nodes.toLowerCase());
-
-    // On a curve, under that group's own setting: one colour for all
-    // curves by default, and a colour per curve when asked.
     await kernel.apply({ op: "classify_node", node: names[0], on: { dim: 1, tag: 11 } });
     await redraw(kernel, viewer);
-    expect(handle(viewer, 0)).toBe(DEFAULTS.theme.curves.toLowerCase());
+    expect(handle(viewer, 0)).toBe(DEFAULTS.theme.nodes.toLowerCase());
 
     const prefs = structuredClone(DEFAULTS);
-    prefs.curves.colouring = "id";
+    prefs.nodes.colouring = "class";
     viewer.applyPrefs(prefs);
-    expect(handle(viewer, 0)).toBe(colourForId(11, FAMILY.curves).toLowerCase());
-    // Exactly the colour curve 11 itself is drawn in, which is the whole
-    // point: the pairing reads at a glance rather than by clicking.
-    expect(handle(viewer, 0)).toBe(viewer.geomLook("curves", 11)!.colour);
+    expect(handle(viewer, 0)).toBe(DEFAULTS.theme.onCurve.toLowerCase());
+    // One colour per *kind* of thing followed, not per entity: a second
+    // node on another curve reads the same.
+    await kernel.apply({ op: "classify_node", node: names[1], on: { dim: 1, tag: 12 } });
+    await redraw(kernel, viewer);
+    expect(handle(viewer, 1)).toBe(DEFAULTS.theme.onCurve.toLowerCase());
+    // And a node on nothing keeps the group's own colour, which is what
+    // makes the colouring readable as an answer to "has this taken hold".
+    expect(handle(viewer, 2)).toBe(DEFAULTS.theme.nodes.toLowerCase());
 
-    // And the nodes that were not classified are untouched.
-    expect(handle(viewer, 1)).toBe(DEFAULTS.theme.nodes.toLowerCase());
+    // On a surface it is a third colour again.
+    await kernel.apply({ op: "classify_node", node: names[2], on: { dim: 2, tag: 1 } });
+    await redraw(kernel, viewer);
+    expect(handle(viewer, 2)).toBe(DEFAULTS.theme.onSurface.toLowerCase());
+  });
+
+  it("colours a node by its own name when asked for that instead", async () => {
+    const { viewer } = await pinned();
+    const prefs = structuredClone(DEFAULTS);
+    prefs.nodes.colouring = "id";
+    viewer.applyPrefs(prefs);
+    const names = viewer.names();
+    expect(handle(viewer, 0)).toBe(colourForId(names[0], FAMILY.nodes).toLowerCase());
+    expect(handle(viewer, 0)).not.toBe(handle(viewer, 1));
   });
 
   it("gives a frozen node a colour of its own, whatever it is on", async () => {
@@ -1838,6 +1854,9 @@ describe("wearing what it follows", () => {
     // on one entity or none.
     const { kernel, viewer } = await pinned();
     const names = viewer.names();
+    const prefs = structuredClone(DEFAULTS);
+    prefs.edges.colouring = "class";
+    viewer.applyPrefs(prefs);
     const colours = () =>
       Array.from(viewer.scene.getMeshByName("edges")!.getVerticesData("color") ?? []);
     const plain = colours();

@@ -185,16 +185,26 @@ export function heightAlong(
   return (dot(normal, gap) - slant * dot(towards, gap)) / denominator;
 }
 
+/**
+ * Which pass each thing is drawn in.
+ *
+ * Transparency is sorted **per mesh**, back to front by how far the mesh's
+ * middle is from the camera, and that is a guess: a geometry surface and
+ * the block face following it have their middles in almost the same place,
+ * so which came first flipped as the view turned. Putting them in separate
+ * passes settles it — the geometry first, the blocking over it — and the
+ * passes share one depth buffer, so what is genuinely in front still wins.
+ *
+ * The last two are over everything on purpose: a lit sheet runs *through*
+ * the model and an extrusion preview is half inside the block it grows
+ * from, and both are things being shown to you rather than things that are
+ * there.
+ */
+export const PASS = { geometry: 0, blocking: 1, sheet: 2, aiming: 3 } as const;
+
 /** How solid the preview of an extrusion is drawn. Enough to read as a
  *  volume, little enough to see the model through. */
 export const GROWN_ALPHA = 0.3;
-
-/** Which group of the geometry a classification's dimension names. */
-const GEOM_GROUPS_BY_DIM: Record<number, GeomGroup | undefined> = {
-  0: "corners",
-  1: "curves",
-  2: "surfaces",
-};
 
 /**
  * The six quadrangles of the preview box, as 24 vertices.
@@ -486,6 +496,11 @@ export class Viewer {
     //
     // Faces are picked deliberately instead, by `pickSurface`, on a click that
     // did not land on a handle.
+    // The blocking's pass keeps the depth the geometry's left behind, so
+    // the two are ordered without either being declared always in front.
+    // The two passes above it do clear, which is what puts them over
+    // everything.
+    this.scene.setRenderingAutoClearDepthStencil(PASS.blocking, false, false, false);
     this.setPicking("blocks");
     this.applyPrefs(this.prefs);
   }
@@ -728,7 +743,7 @@ export class Viewer {
       if (dim < 0) continue;
       out.set(
         this.view!.quadFaces[q],
-        this.classColour(dim, this.view!.quadClassTag[q], this.prefs.theme.faces).toHexString(),
+        this.classColour(dim, 0, this.prefs.theme.faces).toHexString(),
       );
     }
     return out;
@@ -859,6 +874,7 @@ export class Viewer {
     // predicates only ever see those.
     mesh.isPickable = true;
     mesh.layerMask = MAIN_LAYER;
+    mesh.renderingGroupId = PASS.blocking;
     return mesh;
   }
 
@@ -980,7 +996,7 @@ export class Viewer {
     // Over the model, like the lit sheet: it is a thing being shown to
     // you rather than a thing that is there, and half of it is usually
     // behind the block it is growing from.
-    mesh.renderingGroupId = 1;
+    mesh.renderingGroupId = PASS.aiming;
     this.grownBox = mesh;
 
     this.grownWire = CreateGreasedLine(
@@ -991,7 +1007,7 @@ export class Viewer {
     ) as GreasedLineMesh;
     this.grownWire.isPickable = false;
     this.grownWire.layerMask = MAIN_LAYER;
-    this.grownWire.renderingGroupId = 2;
+    this.grownWire.renderingGroupId = PASS.aiming;
   }
 
   /** Which quadrangle of the view a pick names. */
@@ -1116,30 +1132,38 @@ export class Viewer {
   }
 
   /**
-   * The colour of a cell of the **blocking**, by what it is classified on.
+   * The colour of a cell of the **blocking**, by the *kind* of thing it is
+   * classified on: a corner, a curve, a surface, or nothing.
    *
-   * It wears the colour of the entity it follows, under that entity group's
-   * own setting — so with "by id" a node on curve 12 comes out exactly the
-   * colour of curve 12, and the pairing is readable at a glance rather than
-   * by clicking things. Unclassified, it keeps the blocking's own colour.
+   * Three colours and a legend, not a hue per entity. What you read off a
+   * `class` colouring is whether the blocking has taken hold of the
+   * geometry, which is a question with four answers — and painting a
+   * block face the colour of the very surface it follows, on top of that
+   * surface, made two things nobody could tell apart.
    */
   private classColour(dim: number, tag: number, free: string): Color3 {
-    const group = GEOM_GROUPS_BY_DIM[dim];
-    return group ? this.entityColour(group, tag) : Color3.FromHexString(free);
+    void tag;
+    const named = (["onCorner", "onCurve", "onSurface"] as const)[dim];
+    return Color3.FromHexString(named ? this.prefs.theme[named] : free);
   }
 
-  /** The colour of one node handle: picked, frozen, classified, or plain —
-   *  in that order, each being more urgent than the next. */
+  /**
+   * The colour of one node handle: picked, frozen, then whatever the
+   * colouring says — in that order, each being more urgent than the next.
+   */
   private nodeColour(index: number): Color3 {
-    if (this.view && this.view.names[index] === this.pickedNode) {
-      return Color3.FromHexString(ANCHOR);
+    const plain = this.prefs.theme.nodes;
+    if (!this.view) return Color3.FromHexString(plain);
+    if (this.view.names[index] === this.pickedNode) return Color3.FromHexString(ANCHOR);
+    if (this.view.nodeFrozen[index]) return Color3.FromHexString(this.prefs.theme.frozen);
+    switch (this.prefs.nodes.colouring) {
+      case "class":
+        return this.classColour(this.view.nodeClassDim[index], 0, plain);
+      case "id":
+        return Color3.FromHexString(colourForId(this.view.names[index], FAMILY.nodes));
+      default:
+        return Color3.FromHexString(plain);
     }
-    if (this.view?.nodeFrozen[index]) return Color3.FromHexString(this.prefs.theme.frozen);
-    return this.classColour(
-      this.view?.nodeClassDim[index] ?? -1,
-      this.view?.nodeClassTag[index] ?? 0,
-      this.prefs.theme.nodes,
-    );
   }
 
   /**
@@ -1238,6 +1262,7 @@ export class Viewer {
     mesh.visibility = this.prefs[group].alpha;
     mesh.isPickable = false;
     mesh.layerMask = MAIN_LAYER;
+    mesh.renderingGroupId = PASS.geometry;
     this.geomMeshes[group].push(mesh as Mesh);
   }
 
@@ -1268,6 +1293,7 @@ export class Viewer {
     // this is reached by `pickEdge` on a click that missed one.
     this.wire.isPickable = true;
     this.wire.layerMask = MAIN_LAYER;
+    this.wire.renderingGroupId = PASS.blocking;
   }
 
   /**
@@ -1407,6 +1433,7 @@ export class Viewer {
       m.disableLighting = true;
       s.material = m;
       s.layerMask = MAIN_LAYER;
+      s.renderingGroupId = PASS.blocking;
       this.nodes.push(s);
       this.makeDraggable(s, n);
     }
@@ -1486,14 +1513,16 @@ export class Viewer {
    */
   private edgeColours(): Color4[][] {
     const plain = this.prefs.theme.edges;
+    const how = this.prefs.edges.colouring;
     const out: Color4[][] = [];
     for (let e = 0; e < (this.view?.edgeNames.length ?? 0); e++) {
-      const colour = this.classColour(
-        this.view!.edgeClassDim[e],
-        this.view!.edgeClassTag[e],
-        plain,
-      ).toColor4(1);
-      out.push([colour, colour]);
+      const colour =
+        how === "class"
+          ? this.classColour(this.view!.edgeClassDim[e], 0, plain)
+          : how === "id"
+            ? Color3.FromHexString(colourForId(this.view!.edgeNames[e], FAMILY.edges))
+            : Color3.FromHexString(plain);
+      out.push([colour.toColor4(1), colour.toColor4(1)]);
     }
     return out;
   }
@@ -1644,7 +1673,7 @@ export class Viewer {
     );
     this.aimWire.isPickable = false;
     this.aimWire.layerMask = MAIN_LAYER;
-    this.aimWire.renderingGroupId = 2;
+    this.aimWire.renderingGroupId = PASS.aiming;
   }
 
   private rebuildHighlight() {
@@ -1673,7 +1702,7 @@ export class Viewer {
     );
     this.litWire.isPickable = false;
     this.litWire.layerMask = MAIN_LAYER;
-    this.litWire.renderingGroupId = 1;
+    this.litWire.renderingGroupId = PASS.sheet;
   }
 
   /** The midpoint of an edge, in **CSS pixels** — the inverse of `pickEdge`,

@@ -31,13 +31,18 @@ no new markup.
 Each has its own box in the panel, and the two are independent: either, both,
 or neither.
 
-| Control     | What it does                                          |
-| ----------- | ----------------------------------------------------- |
-| **show**    | draw this group at all                                |
-| **uniform** | one colour for the whole group, taken from its swatch |
-| **by id**   | a colour per cell, from its stable name               |
-| **opacity** | transparency, per group                               |
-| **shrink**  | pull each cell towards its own centre                 |
+| Control                | What it does                                                                                              |
+| ---------------------- | --------------------------------------------------------------------------------------------------------- |
+| **show**               | draw this group at all                                                                                    |
+| **uniform**            | one colour for the whole group, taken from its swatch                                                     |
+| **by id**              | a colour per cell, from its stable name                                                                   |
+| **by what it follows** | a colour per kind of geometric entity — see [Classification](classification.md#reading-it-off-the-screen) |
+| **opacity**            | transparency, per group                                                                                   |
+| **shrink**             | pull each cell towards its own centre                                                                     |
+
+Nodes and edges take the three colourings too; nodes are always drawn, so
+that is all their box carries. **Blocks** take only the first two: a block
+is classified on nothing, a surface mesh having no volumes to put it on.
 
 **They are the same surfaces.** A block is bounded by its faces, so with both
 on at full size you are looking at one shape coloured two ways. Shrinking is
@@ -49,6 +54,23 @@ sliders do visibly different things. A face pulls towards the middle of that
 face, so it shrinks within its own plane and the model keeps its outline. A
 block pulls towards the middle of the block, so the whole thing narrows. An
 edge pulls towards its own midpoint, leaving a gap at each corner.
+
+!!! note "Which pass each thing is drawn in"
+    Transparency is sorted **per mesh**, back to front by how far the
+    mesh's middle is from the camera, and that is a guess. A geometry
+    surface and the block face following it have their middles in almost
+    the same place, so which was drawn first flipped as the view turned.
+
+    The geometry and the blocking are drawn in separate passes now — the
+    geometry first — which settles it. They share one depth buffer, so
+    what is genuinely in front still wins. A lit sheet and an extrusion
+    preview are drawn over everything, on purpose: both run through the
+    model rather than sitting in it.
+
+    Within one pass the per-mesh guess is still a guess. Two translucent
+    things of about the same size in about the same place cannot be sorted
+    correctly by their middles, and the remedy is to turn one of them down
+    or off.
 
 !!! note "One mesh per block"
     Transparency is drawn back to front, and Babylon sorts **meshes** — it

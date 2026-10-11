@@ -193,8 +193,9 @@ test("colours can be changed, and are remembered", async ({ page }) => {
 
   // The panel is generated from the theme's keys, so there is one input per
   // colour and no markup to keep in step: background, nodes, edges, faces,
-  // blocks, the geometry's corners, curves and surfaces, and frozen.
-  await expect(page.locator("#swatches input[type=color]")).toHaveCount(9);
+  // blocks, the geometry's corners, curves and surfaces, frozen, and the
+  // three that say what a cell follows.
+  await expect(page.locator("#swatches input[type=color]")).toHaveCount(12);
   expect(await page.evaluate(() => (window as any).__gecko.theme())).toMatchObject({
     background: "#15171b",
   });
@@ -1677,7 +1678,8 @@ test("each group of cells is its own box, not nested inside the last", async ({ 
   const errors = await boot(page);
   await openDrawer(page);
 
-  await expect(page.locator("#layers > fieldset")).toHaveCount(3);
+  // Blocks, faces, edges and nodes.
+  await expect(page.locator("#layers > fieldset")).toHaveCount(4);
   expect(await page.locator("#layers fieldset fieldset").count()).toBe(0);
   await expect(page.locator("#geometry > fieldset")).toHaveCount(3);
   expect(await page.locator("#geometry fieldset fieldset").count()).toBe(0);
@@ -1940,5 +1942,59 @@ test("a face is picked in an axis view, through that view's own camera", async (
   const box = (await page.locator("#view").boundingBox())!;
   await page.mouse.click(box.x + box.width * 0.25, box.y + box.height * 0.75);
   await page.waitForFunction(() => (window as any).__gecko.selection().length === 1);
+  expect(errors).toEqual([]);
+});
+
+test("the help card says what the classification colours mean", async ({ page }) => {
+  // A colour code nobody can look up is a colour code nobody reads. It is
+  // generated from the theme, so it cannot come to disagree with the
+  // screen — the same reason the keys beside it are generated from the
+  // table they are matched against.
+  const errors = await boot(page);
+  await page.keyboard.press("h");
+  await expect(page.locator("#help-legend .key")).toHaveCount(5);
+  await expect(page.locator("#help-legend")).toContainText("on a corner");
+  await expect(page.locator("#help-legend")).toContainText("on a curve");
+  await expect(page.locator("#help-legend")).toContainText("on a surface");
+  await expect(page.locator("#help-legend")).toContainText("frozen");
+
+  // The swatch really is the colour the scene uses.
+  const first = await page
+    .locator("#help-legend .key i")
+    .first()
+    .evaluate((e) => (e as HTMLElement).style.background);
+  const theme = (await page.evaluate(() => (window as any).__gecko.theme())) as {
+    onCorner: string;
+  };
+  // The browser hands a style back as `rgb(…)` whatever it was set with.
+  const rgb = (hex: string) =>
+    `rgb(${[1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16)).join(",")})`;
+  expect(first.replace(/\s/g, "")).toBe(rgb(theme.onCorner));
+  expect(errors).toEqual([]);
+});
+
+test("nodes, edges and faces each take three colourings", async ({ page }) => {
+  const errors = await boot(page);
+  await openCube(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await openDrawer(page);
+
+  // Three for each of the three, and only two for blocks — a block is
+  // classified on nothing, a surface mesh having no volumes to put it on.
+  for (const group of ["nodes", "edges", "faces"]) {
+    for (const mode of ["uniform", "id", "class"]) {
+      await expect(page.locator(`[data-test="${group}-${mode}"]`)).toHaveCount(1);
+    }
+  }
+  await expect(page.locator('[data-test="blocks-class"]')).toHaveCount(0);
+
+  // And choosing one is remembered, like every other thing about how it
+  // looks.
+  await page.locator('[data-test="nodes-class"]').check();
+  expect(await page.evaluate(() => (window as any).__gecko.prefs().nodes.colouring)).toBe("class");
+  await page.reload();
+  await page.waitForSelector("body[data-ready='1']");
+  expect(await page.evaluate(() => (window as any).__gecko.prefs().nodes.colouring)).toBe("class");
   expect(errors).toEqual([]);
 });

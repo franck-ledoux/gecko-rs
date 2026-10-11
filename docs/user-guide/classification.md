@@ -25,13 +25,40 @@ handle without moving it is a pick; anything further is still a drag.
 
 ### Reading it off the screen
 
-A classified node, edge or face **wears the colour of what it follows**, under
-that entity group's own setting in the drawer. With surfaces coloured *by
-id*, a node on surface 12 comes out exactly the colour of surface 12 — the
-pairing reads at a glance rather than by clicking things. Unclassified, a
-cell keeps the blocking's own colour.
+Nodes, edges and faces each take one of **three colourings**, from their own
+box in the drawer:
 
-A **frozen** node is grey, whatever it is classified on: it is not a kind of
+|                        |                                                  |
+| ---------------------- | ------------------------------------------------ |
+| **uniform**            | one colour for the group, from its swatch        |
+| **by id**              | a colour per cell, from its stable name          |
+| **by what it follows** | a colour per *kind* of thing it is classified on |
+
+The third is the classification one, and it is four colours rather than one
+per entity:
+
+|              |                           |
+| ------------ | ------------------------- |
+| on a corner  | one violet                |
+| on a curve   | another                   |
+| on a surface | a third                   |
+| on nothing   | the group's own colour    |
+| frozen       | grey, whatever it follows |
+
+`H` shows them, read off the theme so the card cannot come to disagree with
+the screen.
+
+!!! note "Why not the colour of the entity itself"
+    It was, and it was a mistake. A block face painted the colour of the
+    very surface it follows, and then drawn on top of that surface, is two
+    things nobody can tell apart — and on a cylinder, where every face of
+    the bounding box follows some surface, the whole blocking disappeared
+    into the geometry.
+
+    What you read off this colouring is whether the blocking has taken
+    hold of the geometry, and that is a question with four answers.
+
+A **frozen** node is grey whatever it is classified on: it is not a kind of
 classification, it is a cell out of play, and that is the more urgent thing
 to see. It cannot be dragged at all — letting it be dragged and having the
 kernel refuse would show it moving and snapping back, which reads as a bug
@@ -157,6 +184,11 @@ s.classify_node(n, 1, 205)   # or put it somewhere by hand: a curve, tag 205
 
 A constraint that gave way when pulled hard enough would be a constraint you
 could not rely on.
+
+With the mouse: click the node and press `U`. It stays where it is and may
+now go anywhere — and when you drop it somewhere else it takes hold of
+whatever is nearest *there*, which is the point of freeing it when the
+nearest thing here was the wrong one.
 
 ## What is not classified
 

@@ -197,7 +197,10 @@ export class AxisGizmo {
 
   private adopt(mesh: Mesh) {
     mesh.layerMask = GIZMO_LAYER;
-    mesh.renderingGroupId = 1;
+    // An overlay pass, which still clears the depth buffer: the pass the
+    // blocking uses no longer does, and the triad has to sit over
+    // whatever the main camera left behind.
+    mesh.renderingGroupId = 3;
     this.meshes.push(mesh);
   }
 

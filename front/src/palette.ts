@@ -42,6 +42,8 @@ const LIGHTNESS = 0.56;
  * face both called 3 are not the same thing and must not look alike.
  */
 export const FAMILY = {
+  nodes: 0,
+  edges: 1,
   faces: 2,
   blocks: 3,
   corners: 4,

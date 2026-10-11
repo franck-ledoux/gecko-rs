@@ -19,8 +19,19 @@
 import type { View } from "./decode";
 import { colourForId, FAMILY, hexToRgb } from "./palette";
 
-/** One colour for everything, or one per cell name. */
-export type Colouring = "uniform" | "id";
+/**
+ * One colour for everything, one per cell name, or one per **kind of thing
+ * the cell follows**.
+ *
+ * The third is the one worth explaining. `class` says nothing about which
+ * cell this is and everything about where it belongs: one colour for a
+ * cell on a corner of the model, one for a curve, one for a surface, and
+ * the group's own colour for a cell on nothing. Three colours and a legend
+ * rather than a hue per entity — what you are reading off is whether the
+ * blocking has taken hold of the geometry, and that is a question with
+ * four answers.
+ */
+export type Colouring = "uniform" | "id" | "class";
 
 export interface SurfaceOptions {
   /** Which name picks the colour, and which centre the shrink pulls towards. */
@@ -40,12 +51,10 @@ export interface SurfaceOptions {
    *  what the user has picked. Keyed by face name, so a selected face stands
    *  out on both meshes at once. */
   highlight?: ReadonlyMap<number, string>;
-  /** The colour a face wears for the geometric surface it is classified
-   *  on, keyed by face name. Beaten by `highlight` — what you have picked
-   *  is more urgent than what it follows — and beating the colouring
-   *  below, which is about telling cells apart rather than about where
-   *  they belong. Only meaningful for `by: "face"`: a block is not
-   *  classified on anything. */
+  /** The colour a face wears for what it is classified on, keyed by face
+   *  name, and only when `colouring` is `class`. Beaten by `highlight`:
+   *  what you have picked is more urgent than where it belongs. Only
+   *  meaningful for `by: "face"` — a block is classified on nothing. */
   classified?: ReadonlyMap<number, string>;
 }
 
@@ -176,7 +185,10 @@ function buildFrom(view: View, options: SurfaceOptions, kept: number[]): Surface
     blocks[i] = view.quadBlocks[q];
     const c = middle.get(name) ?? [0, 0, 0];
     const picked = options.highlight?.get(view.quadFaces[q]);
-    const follows = options.by === "face" ? options.classified?.get(view.quadFaces[q]) : undefined;
+    const follows =
+      options.colouring === "class" && options.by === "face"
+        ? options.classified?.get(view.quadFaces[q])
+        : undefined;
     const rgb = picked
       ? hexToRgb(picked)
       : follows

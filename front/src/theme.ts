@@ -30,6 +30,14 @@ export interface Theme {
   /** A node nothing may move. Grey, and nothing else is: a frozen node is
    *  not a kind of classification, it is a cell that is out of play. */
   frozen: string;
+  /** What a cell of the **blocking** wears to say what it follows, in
+   *  `class` colouring. A family of its own rather than the colour of the
+   *  entity itself: a block face painted the same as the surface it
+   *  follows, and drawn on top of that surface, is two things nobody can
+   *  tell apart. */
+  onCorner: string;
+  onCurve: string;
+  onSurface: string;
 }
 
 /** Order and labels for the generated settings panel. */
@@ -43,6 +51,9 @@ export const SWATCHES: ReadonlyArray<{ key: keyof Theme; label: string }> = [
   { key: "curves", label: "curves" },
   { key: "surfaces", label: "surfaces" },
   { key: "frozen", label: "frozen" },
+  { key: "onCorner", label: "on a corner" },
+  { key: "onCurve", label: "on a curve" },
+  { key: "onSurface", label: "on a surface" },
 ];
 
 export const PRESETS: Record<"dark" | "light", Theme> = {
@@ -56,6 +67,9 @@ export const PRESETS: Record<"dark" | "light", Theme> = {
     curves: "#2fbf71",
     surfaces: "#3f7d5e",
     frozen: "#9aa0a8",
+    onCorner: "#d58cff",
+    onCurve: "#a66ff0",
+    onSurface: "#6b4fa8",
   },
   light: {
     background: "#f4f5f7",
@@ -67,6 +81,9 @@ export const PRESETS: Record<"dark" | "light", Theme> = {
     curves: "#157f4a",
     surfaces: "#a8d5bd",
     frozen: "#6b7280",
+    onCorner: "#8e3fd4",
+    onCurve: "#6f3fd4",
+    onSurface: "#b9a8e0",
   },
 };
 
@@ -119,10 +136,12 @@ export interface ViewPrefs {
   quad: boolean;
   /** How a saved picture comes out. */
   shot: { scale: number; transparent: boolean };
-  /** Edges keep one colour — the theme's — so all they carry is whether
-   *  they are drawn, and how far they are pulled off the surfaces they
-   *  would otherwise lie exactly on. */
-  edges: { visible: boolean; shrink: number };
+  /** Nodes are always drawn — they are what you grab — so all they carry
+   *  is how they are coloured. */
+  nodes: { colouring: Colouring };
+  /** Edges carry that, whether they are drawn at all, and how far they
+   *  are pulled off the surfaces they would otherwise lie exactly on. */
+  edges: { visible: boolean; shrink: number; colouring: Colouring };
   faces: Layer & { internal: boolean };
   blocks: Layer;
   /** The geometry, which is not edited and so has no notion of a selection
@@ -146,7 +165,11 @@ export const DEFAULTS: ViewPrefs = {
   // background is kept by default: transparency is for dropping a figure
   // onto a page of unknown colour, and surprises anyone not expecting it.
   shot: { scale: 2, transparent: false },
-  edges: { visible: true, shrink: 1 },
+  // Both plain to begin with. Colouring by what a cell follows is a
+  // question you ask once the blocking is on the model, not while you are
+  // still putting it there.
+  nodes: { colouring: "uniform" },
+  edges: { visible: true, shrink: 1, colouring: "uniform" },
   // Faces on but well short of opaque, so the wireframe and the handles still
   // read through them. Blocks off: they draw the same surfaces, and two
   // colourings of one shape at once is a choice rather than a default.
@@ -168,13 +191,18 @@ export const DEFAULTS: ViewPrefs = {
 const clamp = (v: unknown, fallback: number) =>
   typeof v === "number" && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : fallback;
 
+/** One of the three, or the fallback: storage is a thing anyone can edit,
+ *  and a colouring nobody has heard of is not an error worth reporting. */
+function colouring(stored: unknown, fallback: Colouring): Colouring {
+  return stored === "id" || stored === "uniform" || stored === "class"
+    ? stored
+    : fallback;
+}
+
 function geomLayer(stored: Partial<GeomLayer> | undefined, fallback: GeomLayer): GeomLayer {
   return {
     visible: typeof stored?.visible === "boolean" ? stored.visible : fallback.visible,
-    colouring:
-      stored?.colouring === "id" || stored?.colouring === "uniform"
-        ? stored.colouring
-        : fallback.colouring,
+    colouring: colouring(stored?.colouring, fallback.colouring),
     alpha: clamp(stored?.alpha, fallback.alpha),
   };
 }
@@ -217,12 +245,14 @@ export function loadPrefs(): ViewPrefs {
             ? stored.shot.transparent
             : DEFAULTS.shot.transparent,
       },
+      nodes: { colouring: colouring(stored.nodes?.colouring, DEFAULTS.nodes.colouring) },
       edges: {
         visible:
           typeof stored.edges?.visible === "boolean"
             ? stored.edges.visible
             : DEFAULTS.edges.visible,
         shrink: clamp(stored.edges?.shrink, DEFAULTS.edges.shrink),
+        colouring: colouring(stored.edges?.colouring, DEFAULTS.edges.colouring),
       },
       faces: {
         ...layer(stored.faces, DEFAULTS.faces),
