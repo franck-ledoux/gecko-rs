@@ -490,3 +490,171 @@ fn the_same_names_mean_the_same_thing_in_the_kernel() {
         Some(On { dim: 1, tag: 205 })
     );
 }
+
+/// A square whose bottom side **bends**: the curve 201 runs from (0,0,0)
+/// up to (0.5,0.25,0) and back down to (1,0,0), and the surface is the
+/// polygon above it. A straight edge between the two corners is nowhere
+/// near the curve in the middle, which is what makes a projection
+/// visible rather than a no-op.
+const BENT: &str = "\
+$MeshFormat\n\
+2.2 0 8\n\
+$EndMeshFormat\n\
+$Nodes\n\
+5\n\
+1 0 0 0\n\
+2 1 0 0\n\
+3 1 1 0\n\
+4 0 1 0\n\
+5 0.5 0.25 0\n\
+$EndNodes\n\
+$Elements\n\
+7\n\
+1 15 2 0 101 1\n\
+2 15 2 0 102 2\n\
+3 1 2 0 201 1 5\n\
+4 1 2 0 201 5 2\n\
+5 2 2 0 1 1 5 4\n\
+6 2 2 0 1 5 2 3\n\
+7 2 2 0 1 5 3 4\n\
+$EndElements\n";
+
+/// A unit cube with its bottom-front edge classified on the bent curve,
+/// and the name of that edge.
+fn on_the_bend() -> (Session, u32) {
+    let mut s = Session::new().unwrap();
+    s.apply(Command::LoadGeometry {
+        msh: BENT.to_string(),
+        name: "bent.msh".to_string(),
+    })
+    .expect("a geometry");
+    s.apply(Command::CreateCube {
+        origin: [0.0, 0.0, 0.0],
+        size: 1.0,
+    })
+    .expect("a cube");
+
+    // The two ends of the bottom-front edge, onto the two corners the
+    // curve runs between. The edge follows from them.
+    for (want, tag) in [([0.0, 0.0, 0.0], 101), ([1.0, 0.0, 0.0], 102)] {
+        let node = nodes(&s)
+            .into_iter()
+            .find(|n| {
+                let p = n["pos"].as_array().unwrap();
+                (0..3).all(|k| (p[k].as_f64().unwrap() - want[k]).abs() < 1e-9)
+            })
+            .expect("a corner of the cube");
+        s.apply(Command::ClassifyNode {
+            node: node["id"].as_u64().unwrap() as u32,
+            on: Some(Spot { dim: 0, tag }),
+        })
+        .unwrap();
+    }
+
+    let edge = edges(&s)
+        .into_iter()
+        .find(|e| e["on"] == serde_json::json!({ "dim": 1, "tag": 201 }))
+        .expect("an edge on the bent curve");
+    let name = edge["id"].as_u64().unwrap() as u32;
+    (s, name)
+}
+
+#[test]
+fn cutting_an_edge_leaves_a_node_on_what_the_edge_was_on() {
+    // What a cut of a classified edge has to produce: a node and two
+    // edges, all three on what the whole was on — and the node **on** it,
+    // not merely labelled with it.
+    let (mut s, edge) = on_the_bend();
+    let before = nodes(&s).len();
+
+    s.apply(Command::SplitSheet { edge, at: 0.5 }).expect("cut");
+
+    // The node that came out of that edge: on the curve, and pulled onto
+    // it. The straight midpoint is (0.5, 0, 0) and the curve passes
+    // nowhere near it.
+    let on_curve: Vec<_> = nodes(&s)
+        .into_iter()
+        .filter(|n| n["on"] == serde_json::json!({ "dim": 1, "tag": 201 }))
+        .collect();
+    assert_eq!(on_curve.len(), 1, "one new node, on the curve");
+    let p = on_curve[0]["pos"].as_array().unwrap();
+    let y = p[1].as_f64().unwrap();
+    assert!(y > 0.15, "the node was left on the chord at y = {y}");
+    // And it really is on the curve: the bend runs between y = 0 and
+    // y = 0.25, and the nearest point to the chord's middle is y = 0.2.
+    assert!((y - 0.2).abs() < 1e-9, "{p:?}");
+
+    // The two halves the edge became are on the curve as well.
+    let halves: Vec<_> = edges(&s)
+        .into_iter()
+        .filter(|e| e["on"] == serde_json::json!({ "dim": 1, "tag": 201 }))
+        .collect();
+    assert_eq!(halves.len(), 2, "two halves, both on the curve");
+    assert!(nodes(&s).len() > before, "the cut made nodes");
+}
+
+#[test]
+fn the_other_nodes_a_cut_makes_are_left_where_it_put_them() {
+    // The sheet through that edge crosses three other edges, none of them
+    // classified. Nothing about the cut says where those belong, and
+    // moving them would be an invention.
+    let (mut s, edge) = on_the_bend();
+    s.apply(Command::SplitSheet { edge, at: 0.5 }).unwrap();
+
+    let loose: Vec<_> = nodes(&s)
+        .into_iter()
+        .filter(|n| n["on"].is_null())
+        .filter(|n| {
+            let p = n["pos"].as_array().unwrap();
+            (p[0].as_f64().unwrap() - 0.5).abs() < 1e-9
+        })
+        .collect();
+    assert_eq!(loose.len(), 3, "three unclassified nodes, at the half way");
+    for n in loose {
+        let p = n["pos"].as_array().unwrap();
+        let y = p[1].as_f64().unwrap();
+        assert!(y.abs() < 1e-9 || (y - 1.0).abs() < 1e-9, "{p:?}");
+    }
+}
+
+#[test]
+fn cutting_a_face_leaves_an_edge_and_two_faces_on_what_the_face_was_on() {
+    // The other half of the same rule, one dimension up. It is not
+    // written anywhere: the new edge's two ends are the two nodes the cut
+    // made, which carry the curves they came from, and two curves of one
+    // surface put the edge between them on that surface — which is where
+    // the face was. The halves then follow from their four edges.
+    let mut s = on_the_box();
+    s.apply(Command::Classify { tolerance: 0.02 }).unwrap();
+    assert_eq!(classified(&s)["faces"], 6);
+
+    let edge = edges(&s)[0]["id"].as_u64().unwrap() as u32;
+    s.apply(Command::SplitSheet { edge, at: 0.5 }).expect("cut");
+
+    // Two blocks now, so eleven faces: the ten on the outside and the one
+    // between them.
+    let found = serde_json::from_str::<Vec<serde_json::Value>>(&s.faces_json()).unwrap();
+    let outside: Vec<_> = found.iter().filter(|f| !f["on"].is_null()).collect();
+    assert_eq!(classified(&s)["faces"], 10, "every face of the outside");
+    assert!(outside.iter().all(|f| f["on"]["dim"] == 2), "{outside:?}");
+
+    // And the one inside is on nothing, having four edges that share no
+    // surface. Saying so is the point: a face in the middle of the model
+    // follows nothing.
+    // `faces_json` lists a face once per block, so the one in the middle
+    // appears twice: ten outside and two entries for the one inside.
+    assert_eq!(found.len(), 12);
+    assert_eq!(found.iter().filter(|f| f["on"].is_null()).count(), 2);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&s.stats_json()).unwrap()["faces"],
+        11
+    );
+
+    // The four nodes the cut made are each on the curve their edge was on.
+    let on_curves = nodes(&s).iter().filter(|n| n["on"]["dim"] == 1).count();
+    assert_eq!(on_curves, 4);
+    // Twenty edges: the eight halves and the four new ones round the cut
+    // are all on the model, and the four round the inside face are the
+    // new ones — on surfaces, not curves.
+    assert_eq!(classified(&s)["edges"], 20, "every edge of the outside");
+}

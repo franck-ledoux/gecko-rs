@@ -106,6 +106,35 @@ geometry is measured.
     model; false of one assembled from parts meshed separately, where it
     reports fewer containments and never wrong ones.
 
+## Cutting something that is classified
+
+Cut an edge lying on a curve and you get **a node and two edges, all three
+on that curve** — and the node is *pulled onto* it, not merely labelled with
+it. On a curve that bends between the edge's two ends, the straight middle
+of the edge is nowhere near the curve, and leaving the node there would be
+the same empty label a classification without a projection always is.
+
+Cutting a face does the same one dimension up: the edge and the two faces
+that replace it are on whatever the face was on.
+
+!!! note "Said once, and followed from"
+    Only the **node** is written down. A node has no boundary to infer
+    from, so inheriting is the only thing that could tell it where it
+    belongs. Everything else falls out of the rule that was already there:
+    the two half-edges have that node at one end and a corner of the old
+    edge at the other, and those agree about the curve; the new edge of a
+    face cut has a node from each of two curves of one surface, and those
+    agree about the surface; the half-faces follow from their four edges.
+
+    So the three entities do inherit, and they inherit by being asked the
+    same question every other cell is asked. The alternative — writing the
+    inheritance onto each of them — would be a second source of truth, and
+    the first thing it would do is disagree with the boundary.
+
+Where the boundary is **not** fully classified the inference says so rather
+than guessing: cut a face with an unclassified edge and the pieces are on
+nothing. A face whose boundary is not on the model is not on the model.
+
 ## Freezing
 
 A frozen node does not move. Not for a drag, not for a classification, not

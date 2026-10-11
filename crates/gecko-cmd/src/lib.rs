@@ -301,7 +301,14 @@ impl Session {
             }
             Command::SplitSheet { edge, at } => {
                 let edge = CellId::from_raw(edge);
-                self.blocking.split_sheet(edge, at)?;
+                // Each new node has inherited what the edge it came from
+                // was classified on, and is sitting on the straight line
+                // between that edge's ends. Putting it where its entity
+                // says it is is this crate's business, holding both.
+                let made = self.blocking.split_sheet(edge, at)?;
+                for node in made {
+                    self.pull_onto_class(node)?;
+                }
                 Ok(Outcome {
                     message: format!(
                         "sheet through {edge:?} cut at {at:.3} — {} nodes, {} edges, {} faces, {} blocks",

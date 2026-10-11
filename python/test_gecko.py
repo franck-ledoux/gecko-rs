@@ -864,3 +864,54 @@ def _along(session, edge, axis):
     a, b = (at[n] for n in edge["nodes"])
     gap = [abs(a[k] - b[k]) for k in range(3)]
     return gap[axis] > 1e-9 and max(gap[(axis + 1) % 3], gap[(axis + 2) % 3]) < 1e-9
+
+
+BENT_MSH = """$MeshFormat
+2.2 0 8
+$EndMeshFormat
+$Nodes
+5
+1 0 0 0
+2 1 0 0
+3 1 1 0
+4 0 1 0
+5 0.5 0.25 0
+$EndNodes
+$Elements
+7
+1 15 2 0 101 1
+2 15 2 0 102 2
+3 1 2 0 201 1 5
+4 1 2 0 201 5 2
+5 2 2 0 1 1 5 4
+6 2 2 0 1 5 2 3
+7 2 2 0 1 5 3 4
+$EndElements
+"""
+
+
+def test_cutting_a_classified_edge_leaves_a_node_on_the_curve(tmp_path):
+    # The curve bends up to (0.5, 0.25, 0) between its two ends, so the
+    # straight middle of the edge is nowhere near it. Inheriting the
+    # classification without being pulled onto it would leave the node at
+    # y = 0, which is the thing this is checking.
+    s = gecko.Session()
+    path = tmp_path / "bent.msh"
+    path.write_text(BENT_MSH)
+    s.load_geometry(str(path))
+    s.create_cube([0.0, 0.0, 0.0], 1.0)
+
+    for want, tag in (([0.0, 0.0, 0.0], 101), ([1.0, 0.0, 0.0], 102)):
+        node = next(
+            n for n in s.nodes if all(abs(n["pos"][k] - want[k]) < 1e-9 for k in range(3))
+        )
+        s.classify_node(node["id"], 0, tag)
+
+    edge = next(e for e in s.edges if e["on"] == {"dim": 1, "tag": 201})
+    s.split_sheet(edge["id"], 0.5)
+
+    on_curve = [n for n in s.nodes if n["on"] == {"dim": 1, "tag": 201}]
+    assert len(on_curve) == 1
+    assert on_curve[0]["pos"] == pytest.approx([0.4, 0.2, 0.0])
+    # And both halves of the edge are on it too.
+    assert len([e for e in s.edges if e["on"] == {"dim": 1, "tag": 201}]) == 2

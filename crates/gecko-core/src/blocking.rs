@@ -1072,12 +1072,15 @@ impl Blocking {
 
         // The node in the middle, and the two halves left to be named.
         //
-        // The node is **unclassified**: it is a genuinely new point, and
-        // nothing about the cut says where on the model it belongs. The two
-        // halves keep what the whole was classified on, both halves lying
-        // where the whole did — though the inference will have the last
-        // word on that as soon as anything settles, the middle node having
-        // nothing to say yet. Cut first and classify after, as in the C++.
+        // All three **inherit what the edge was classified on**. For the
+        // node that is the load-bearing one: an edge lying along a curve
+        // is cut into two edges along that curve and a point on it, and a
+        // point on it is what the new node has to be. The caller projects
+        // it, this crate having no idea where the curve goes.
+        //
+        // The two halves could be left to the inference — their ends now
+        // agree about the same entity, so it would reach the same answer
+        // — but there is no reason to make them wait for it.
         let was = self.edge_tag(self.map.edge_id(darts[0])).on;
         let middle = self.map.vertex_id(fresh[&darts[0]]);
         self.map.write_vertex(middle, (at[0], at[1], at[2]));
@@ -1086,7 +1089,7 @@ impl Blocking {
             NodeTag {
                 id: CellId::NONE,
                 corner_key: self.corners.next_corner(),
-                on: None,
+                on: was,
                 frozen: false,
             },
         );
@@ -1115,7 +1118,7 @@ impl Blocking {
     /// reports, which is the same way round on every edge of the sheet —
     /// otherwise one parameter would mean `t` on some cells and `1 - t` on
     /// the next.
-    pub fn split_sheet(&mut self, edge: CellId, t: f64) -> Result<(), BlockingError> {
+    pub fn split_sheet(&mut self, edge: CellId, t: f64) -> Result<Vec<CellId>, BlockingError> {
         if !t.is_finite() || t <= 0.0 || t >= 1.0 {
             return Err(BlockingError::BadParameter(t));
         }
@@ -1194,7 +1197,15 @@ impl Blocking {
             }
         }
         self.assign_missing_ids();
-        Ok(())
+
+        // The nodes the cut made, now that they have names. The caller
+        // wants them because each has inherited a classification and is
+        // still sitting on the straight line between the ends of the edge
+        // it came from — and only the caller knows where the geometry
+        // says it should be instead.
+        let mut made: Vec<CellId> = fresh.iter().map(|v| self.node_tag(*v).id).collect();
+        made.sort();
+        Ok(made)
     }
 
     /// Close one block off along its ring of new edges, making two.
