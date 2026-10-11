@@ -180,10 +180,23 @@ Both are taken straight from GECKO's `CellData.h`. The problem is not specific
 to CGAL: it is inherent to identifiers derived from darts, and honeycomb has it
 too.
 
-!!! note "Resolving a name is a scan"
+!!! danger "Resolving a name is a scan"
     `Blocking::node_by_id` walks the vertices. An index kept *across*
     operations would have to be invalidated by every topological change, and
     getting that wrong is silent — so there is none.
+
+    Which makes **one of these inside a loop over cells** the standard way
+    to make this project slow, and it is silent too: everything still
+    answers correctly. It has happened twice. The second time, `stats` and
+    `nodes` resolved a name per cell to report what each was classified on,
+    and a single refresh of sixty-four blocks took nine seconds.
+
+    The cure both times was the same: read what is wanted in **one pass**
+    over the map. `nodes_in_full`, `edges`, `nb_classified`, `reclassify`
+    and `classify_nodes` exist for that reason, and `BlockFace` carries
+    what its face is classified on rather than leaving the caller to look
+    it up. There is a budget test in `python/test_gecko.py` that fails by
+    two orders of magnitude if any of them goes back.
 
     Where it started to matter is inside one operation. A sheet cut resolves
     every edge of the sheet, and a scan each made the whole thing quadratic:

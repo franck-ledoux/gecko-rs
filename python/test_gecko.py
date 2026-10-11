@@ -6,6 +6,7 @@ argument shapes, error mapping, and the station it can start.
 """
 
 import json
+import time
 import urllib.error
 import urllib.request
 
@@ -819,3 +820,47 @@ def test_classifying_needs_a_geometry():
     s.create_cube([0.0, 0.0, 0.0], 1.0)
     with pytest.raises(ValueError, match="no geometry"):
         s.classify()
+
+
+def test_reading_a_session_does_not_get_slower_than_linearly():
+    """The guard against a lookup by name inside a loop over cells.
+
+    `node_by_id` and its siblings are scans of the whole map. Putting one
+    inside a per-cell loop makes the whole thing quadratic, and it is
+    silent: everything still answers correctly, only slowly. It has
+    happened twice — once to sheet removal, once to the classification —
+    so this is a budget rather than a measurement.
+
+    Sixty-four blocks took nine seconds per refresh when `stats` and
+    `nodes` resolved a name per cell, and take about forty milliseconds
+    when they do not. The threshold below is two seconds for twenty of
+    them: loose enough never to blink on a slow machine, tight enough that
+    a return to quadratic misses it by two orders of magnitude.
+    """
+    s = gecko.Session()
+    s.create_cube([0.0, 0.0, 0.0], 4.0)
+    for axis in range(3):
+        for _ in range(3):
+            edge = next(
+                e["id"]
+                for e in s.edges
+                if _along(s, e, axis)
+            )
+            s.split_sheet(edge, 0.5)
+    assert s.stats["blocks"] == 64
+
+    started = time.perf_counter()
+    for _ in range(20):
+        s.stats
+        bytes(s.view_buffer)
+        s.nodes
+    spent = time.perf_counter() - started
+    assert spent < 2.0, f"twenty refreshes of 64 blocks took {spent:.1f} s"
+
+
+def _along(session, edge, axis):
+    """Whether an edge runs along one axis and no other."""
+    at = {n["id"]: n["pos"] for n in session.nodes}
+    a, b = (at[n] for n in edge["nodes"])
+    gap = [abs(a[k] - b[k]) for k in range(3)]
+    return gap[axis] > 1e-9 and max(gap[(axis + 1) % 3], gap[(axis + 2) % 3]) < 1e-9

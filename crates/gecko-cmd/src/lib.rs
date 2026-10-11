@@ -499,43 +499,29 @@ impl Session {
     ///
     /// Returns how many of each ended up on something.
     fn classify(&mut self, tolerance: f64) -> Result<(usize, usize, usize), SessionError> {
-        let geometry = self.geometry.as_ref().ok_or(SessionError::NoGeometry)?;
-        let reach = [tolerance.max(0.0) * geometry.span(); 3];
-
-        let found: Vec<(CellId, Option<On>)> = self
-            .blocking
-            .nodes()
-            .filter(|(node, _)| !self.blocking.is_frozen(*node))
-            .map(|(node, at)| {
-                let on = geometry
-                    .nearest(at, reach)
-                    .map(|(dim, tag)| On { dim, tag });
-                (node, on)
-            })
-            .collect();
-        for (node, on) in found {
-            self.blocking.set_node_class(node, on)?;
-            self.pull_onto_class(node)?;
+        {
+            // Borrowed field by field: the block structure is being
+            // written to while the geometry answers questions about it,
+            // and they are two fields rather than one object.
+            let Session {
+                blocking, geometry, ..
+            } = self;
+            let geometry = geometry.as_ref().ok_or(SessionError::NoGeometry)?;
+            let reach = [tolerance.max(0.0) * geometry.span(); 3];
+            blocking.classify_nodes(
+                |at| {
+                    geometry
+                        .nearest(at, reach)
+                        .map(|(dim, tag)| On { dim, tag })
+                },
+                |on, at| geometry.project(on.dim, on.tag, at),
+            );
         }
         // Here as well as in `apply`, because the count below is of what
         // this pass achieved and the caller's message says so.
         self.settle_classification();
 
-        let nodes = self
-            .blocking
-            .nodes()
-            .filter(|(n, _)| self.blocking.node_class(*n).is_some())
-            .count();
-        let edges = self
-            .blocking
-            .edges()
-            .filter(|(e, _, _)| self.blocking.edge_class(*e).is_some())
-            .count();
-        let faces = self
-            .blocking
-            .faces()
-            .filter(|(f, _)| self.blocking.face_class(*f).is_some())
-            .count();
+        let (nodes, edges, faces, _) = self.blocking.nb_classified();
         Ok((nodes, edges, faces))
     }
 
@@ -606,45 +592,18 @@ impl Session {
     /// measured. A boundary cell that is on nothing leaves the cell above
     /// it on nothing — there is nothing to infer from.
     fn settle_classification(&mut self) {
-        let Some(geometry) = self.geometry.as_ref() else {
+        let Session {
+            blocking, geometry, ..
+        } = self;
+        let Some(geometry) = geometry.as_ref() else {
             return;
         };
-
-        let edges: Vec<(CellId, Option<On>)> = self
-            .blocking
-            .edges()
-            .map(|(edge, a, b)| {
-                let on = match (self.blocking.node_class(a), self.blocking.node_class(b)) {
-                    (Some(a), Some(b)) => geometry
-                        .common((a.dim, a.tag), (b.dim, b.tag), gecko_geom::CURVE)
-                        .map(|(dim, tag)| On { dim, tag }),
-                    _ => None,
-                };
-                (edge, on)
-            })
-            .collect();
-        for (edge, on) in edges {
-            let _ = self.blocking.set_edge_class(edge, on);
-        }
-
-        let geometry = self.geometry.as_ref().expect("still there");
-        let faces: Vec<(CellId, Option<On>)> = self
-            .blocking
-            .faces()
-            .map(|(face, edges)| {
-                let boundary: Option<Vec<(u8, i32)>> = edges
-                    .iter()
-                    .map(|e| self.blocking.edge_class(*e).map(|on| (on.dim, on.tag)))
-                    .collect();
-                let on = boundary
-                    .and_then(|b| geometry.common_of(&b, gecko_geom::SURFACE))
-                    .map(|(dim, tag)| On { dim, tag });
-                (face, on)
-            })
-            .collect();
-        for (face, on) in faces {
-            let _ = self.blocking.set_face_class(face, on);
-        }
+        blocking.reclassify(|boundary, at_least| {
+            let pairs: Vec<(u8, i32)> = boundary.iter().map(|on| (on.dim, on.tag)).collect();
+            geometry
+                .common_of(&pairs, at_least)
+                .map(|(dim, tag)| On { dim, tag })
+        });
     }
 
     /// Settle the rebasing origin against the model as it now stands.
@@ -703,13 +662,13 @@ impl Session {
     pub fn nodes_json(&self) -> String {
         let nodes: Vec<_> = self
             .blocking
-            .nodes()
-            .map(|(id, pos)| {
+            .nodes_in_full()
+            .map(|(id, pos, on, frozen)| {
                 serde_json::json!({
                     "id": id.get(),
                     "pos": pos,
-                    "on": self.blocking.node_class(id).map(spot_json),
-                    "frozen": self.blocking.is_frozen(id),
+                    "on": on.map(spot_json),
+                    "frozen": frozen,
                 })
             })
             .collect();
@@ -722,11 +681,11 @@ impl Session {
         let edges: Vec<_> = self
             .blocking
             .edges()
-            .map(|(edge, a, b)| {
+            .map(|(edge, a, b, on)| {
                 serde_json::json!({
                     "id": edge.get(),
                     "nodes": [a.get(), b.get()],
-                    "on": self.blocking.edge_class(edge).map(spot_json),
+                    "on": on.map(spot_json),
                 })
             })
             .collect();
@@ -755,7 +714,7 @@ impl Session {
                     "id": side.face.get(),
                     "block": side.block.get(),
                     "centre": centre,
-                    "on": self.blocking.face_class(side.face).map(spot_json),
+                    "on": side.on.map(spot_json),
                 })
             })
             .collect();
@@ -827,28 +786,7 @@ impl Session {
             "faces": self.blocking.nb_faces(),
             "blocks": self.blocking.nb_blocks(),
             "geometry": self.geometry_json(),
-            "classified": {
-                "nodes": self
-                    .blocking
-                    .nodes()
-                    .filter(|(n, _)| self.blocking.node_class(*n).is_some())
-                    .count(),
-                "edges": self
-                    .blocking
-                    .edges()
-                    .filter(|(e, _, _)| self.blocking.edge_class(*e).is_some())
-                    .count(),
-                "faces": self
-                    .blocking
-                    .faces()
-                    .filter(|(f, _)| self.blocking.face_class(*f).is_some())
-                    .count(),
-                "frozen": self
-                    .blocking
-                    .nodes()
-                    .filter(|(n, _)| self.blocking.is_frozen(*n))
-                    .count(),
-            },
+            "classified": classified_json(self.blocking.nb_classified()),
         })
         .to_string()
     }
@@ -879,6 +817,11 @@ fn plural(n: usize) -> &'static str {
     } else {
         "s"
     }
+}
+
+fn classified_json(counts: (usize, usize, usize, usize)) -> serde_json::Value {
+    let (nodes, edges, faces, frozen) = counts;
+    serde_json::json!({ "nodes": nodes, "edges": edges, "faces": faces, "frozen": frozen })
 }
 
 fn spot_json(on: On) -> serde_json::Value {

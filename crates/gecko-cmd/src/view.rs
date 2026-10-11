@@ -144,9 +144,8 @@ impl ViewBuffer {
             quads.extend_from_slice(&corners);
             quad_faces.push(side.face.get().unwrap_or(u32::MAX));
             quad_blocks.push(side.block.get().unwrap_or(u32::MAX));
-            let on = blocking.face_class(side.face);
-            quad_class_dim.push(on.map(|on| on.dim as i32).unwrap_or(-1));
-            quad_class_tag.push(on.map(|on| on.tag).unwrap_or(0));
+            quad_class_dim.push(side.on.map(|on| on.dim as i32).unwrap_or(-1));
+            quad_class_tag.push(side.on.map(|on| on.tag).unwrap_or(0));
         }
 
         ViewBuffer {

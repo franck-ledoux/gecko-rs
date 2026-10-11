@@ -186,9 +186,9 @@ fn an_edge_knows_the_names_of_its_own_two_ends() {
     b.add_block(cube_corners([0.0, 0.0, 0.0], 1.0)).unwrap();
     let edges: Vec<_> = b.edges().collect();
     assert_eq!(edges.len(), 12);
-    for (edge, a, c) in edges {
+    for (edge, a, c, on) in edges {
         assert!(edge.is_some() && a.is_some() && c.is_some());
         assert_ne!(a, c, "an edge's two ends are two nodes");
-        assert_eq!(b.edge_class(edge), None, "nothing is classified yet");
+        assert_eq!(on, None, "nothing is classified yet");
     }
 }

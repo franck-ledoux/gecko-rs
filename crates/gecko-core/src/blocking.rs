@@ -157,6 +157,10 @@ pub struct BlockFace {
     pub face: CellId,
     pub block: CellId,
     pub nodes: [VertexIdType; 4],
+    /// What the face is classified on. Carried here rather than looked up
+    /// by name: everything that draws a surface walks this list, and a
+    /// lookup per entry is a scan of the whole map per entry.
+    pub on: Option<On>,
 }
 
 #[derive(Debug, Error)]
@@ -485,8 +489,7 @@ impl Blocking {
         Ok(())
     }
 
-    /// Every face by name, with the names of its four edges — what the
-    /// inference walks, one dimension up.
+    /// Every face by name, with the names of its four edges.
     pub fn faces(&self) -> impl Iterator<Item = (CellId, [CellId; 4])> + '_ {
         self.map.iter_faces().map(move |f| {
             let edges = self
@@ -496,17 +499,146 @@ impl Blocking {
         })
     }
 
-    /// Every edge by name, with the names of its two ends — what the
-    /// inference walks.
-    pub fn edges(&self) -> impl Iterator<Item = (CellId, CellId, CellId)> + '_ {
+    /// Every edge by name, with the names of its two ends and what it is
+    /// classified on.
+    pub fn edges(&self) -> impl Iterator<Item = (CellId, CellId, CellId, Option<On>)> + '_ {
         self.map.iter_edges().map(move |e| {
             let (a, b) = self.edge_endpoints(e);
+            let tag = self.edge_tag(e);
+            (tag.id, self.node_tag(a).id, self.node_tag(b).id, tag.on)
+        })
+    }
+
+    /// Every node by name, with where it is, what it is classified on and
+    /// whether it is frozen.
+    ///
+    /// Everything about a node in one pass. The alternative — a name, then
+    /// `node_class(name)`, then `is_frozen(name)` — is three scans of the
+    /// whole map per node, which is quadratic and was: `nodes_json` took
+    /// six seconds on sixty-four blocks.
+    pub fn nodes_in_full(&self) -> impl Iterator<Item = (CellId, [f64; 3], Option<On>, bool)> + '_ {
+        self.map.iter_vertices().map(move |v| {
+            let tag = self.node_tag(v);
             (
-                self.edge_tag(e).id,
-                self.node_tag(a).id,
-                self.node_tag(b).id,
+                tag.id,
+                self.position(v).unwrap_or([0.0; 3]),
+                tag.on,
+                tag.frozen,
             )
         })
+    }
+
+    /// How much of the blocking is pinned to a geometry: nodes, edges,
+    /// faces, and how many nodes are frozen.
+    ///
+    /// Counted off the map rather than by resolving every name, for the
+    /// reason [`nodes_in_full`][Self::nodes_in_full] gives.
+    pub fn nb_classified(&self) -> (usize, usize, usize, usize) {
+        let nodes = self
+            .map
+            .iter_vertices()
+            .filter(|v| self.node_tag(*v).on.is_some());
+        let frozen = self
+            .map
+            .iter_vertices()
+            .filter(|v| self.node_tag(*v).frozen);
+        (
+            nodes.count(),
+            self.map
+                .iter_edges()
+                .filter(|e| self.edge_tag(*e).on.is_some())
+                .count(),
+            self.map
+                .iter_faces()
+                .filter(|f| self.face_tag(*f).on.is_some())
+                .count(),
+            frozen.count(),
+        )
+    }
+
+    /// Put every node on an entity, and then where that entity says it is.
+    ///
+    /// `pick` is the proximity search and `project` the pull onto what it
+    /// found — both questions only the geometry can answer, and both
+    /// passed in rather than reached for, so that the block structure goes
+    /// on knowing nothing about triangles.
+    ///
+    /// Frozen nodes are skipped entirely: a projection is a move.
+    ///
+    /// One pass, no names resolved. Going through `set_node_class` and
+    /// `set_position` instead is two scans of the whole map per node.
+    pub fn classify_nodes(
+        &mut self,
+        pick: impl Fn([f64; 3]) -> Option<On>,
+        project: impl Fn(On, [f64; 3]) -> Option<[f64; 3]>,
+    ) {
+        let found: Vec<(VertexIdType, Option<On>, Option<[f64; 3]>)> = self
+            .map
+            .iter_vertices()
+            .filter(|v| !self.node_tag(*v).frozen)
+            .map(|v| {
+                let at = self.position(v).unwrap_or([0.0; 3]);
+                let on = pick(at);
+                (v, on, on.and_then(|on| project(on, at)))
+            })
+            .collect();
+        for (v, on, onto) in found {
+            let tag = self.node_tag(v);
+            self.map.write_attribute(v, NodeTag { on, ..tag });
+            if let Some(p) = onto {
+                self.map.write_vertex(v, (p[0], p[1], p[2]));
+            }
+        }
+    }
+
+    /// Settle every edge's classification from its two ends, and then
+    /// every face's from its four edges.
+    ///
+    /// In that order, because each level consumes the one below it.
+    /// `common` answers the one question the block structure cannot: given
+    /// what the cells of a boundary are on, and the dimension this cell
+    /// may not go below, what contains them all.
+    ///
+    /// No name is resolved anywhere in here. It runs after everything that
+    /// touches the model, so quadratic was not an option: at sixty-four
+    /// blocks it had moving one node taking a tenth of a second.
+    pub fn reclassify(&mut self, common: impl Fn(&[On], u8) -> Option<On>) {
+        let edges: Vec<(EdgeIdType, Option<On>)> = self
+            .map
+            .iter_edges()
+            .map(|e| {
+                let (a, b) = self.edge_endpoints(e);
+                let on = match (self.node_tag(a).on, self.node_tag(b).on) {
+                    // An edge is never pinned to a point, which would
+                    // over-constrain it.
+                    (Some(a), Some(b)) => common(&[a, b], 1),
+                    _ => None,
+                };
+                (e, on)
+            })
+            .collect();
+        for (e, on) in edges {
+            let tag = self.edge_tag(e);
+            self.map.write_attribute(e, EdgeTag { on, ..tag });
+        }
+
+        let faces: Vec<(FaceIdType, Option<On>)> = self
+            .map
+            .iter_faces()
+            .map(|f| {
+                let boundary: Option<Vec<On>> = self
+                    .face_darts(f)
+                    .iter()
+                    .map(|d| self.edge_tag(self.map.edge_id(*d)).on)
+                    .collect();
+                // Nor a face to a curve.
+                (f, boundary.and_then(|b| common(&b, 2)))
+            })
+            .collect();
+        for (f, on) in faces {
+            let tag = self.face_tag(f);
+            self.map.write_attribute(f, FaceTag { on, ..tag });
+        }
     }
 
     /// The cell a stable name currently stands for.
@@ -1644,10 +1776,12 @@ impl Blocking {
                     walk = self.map.beta::<1>(walk);
                 }
                 debug_assert_eq!(walk, dart, "a block face that is not a quadrangle");
+                let tag = self.face_tag(face);
                 out.push(BlockFace {
-                    face: self.face_tag(face).id,
+                    face: tag.id,
                     block,
                     nodes,
+                    on: tag.on,
                 });
             }
         }
