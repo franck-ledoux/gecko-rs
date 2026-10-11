@@ -36,6 +36,28 @@ body {
 #view { position: absolute; inset: 0; width: 100%; height: 100%;
         display: block; outline: none; touch-action: none; }
 
+/* --- the four panes ------------------------------------------------------ */
+
+#panes {
+  position: fixed; inset: 0; z-index: 1; display: none;
+  /* The canvas is underneath and wants every click. */
+  pointer-events: none;
+  grid-template: 1fr 1fr / 1fr 1fr;
+}
+body.quad #panes { display: grid; }
+#panes span {
+  /* Top right of each pane: the top left of the first one is where the
+     toolbar lives, and the bottom left is the readout. */
+  padding: 7px 10px; font-size: 10px; font-weight: 600; color: var(--dim);
+  text-transform: uppercase; letter-spacing: .09em; text-align: right;
+}
+/* The cross, drawn as the inner edges of the top-left three. */
+#panes span:nth-child(1) { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+#panes span:nth-child(2) { border-bottom: 1px solid var(--line); }
+#panes span:nth-child(3) { border-right: 1px solid var(--line); }
+body.chrome-hidden #panes { opacity: 0; }
+#panes { transition: opacity .18s ease; }
+
 /* --- the toolbar ------------------------------------------------------- */
 
 #bar {

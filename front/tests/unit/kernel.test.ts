@@ -33,6 +33,13 @@ import { readProbe } from "../../src/mode";
 import { colourForId, FAMILY, hexToRgb, hslToHex, UNNAMED } from "../../src/palette";
 import { buildSurface, edgeSegments, quadsToDraw } from "../../src/surface";
 import { geomBounds, geomCorners, geomCurves, geomSurfaces, GEOM_GROUPS } from "../../src/geometry";
+import {
+  orthoExtents,
+  paneAt,
+  paneRect,
+  paneViewport,
+  worldSizeForPixelsOrtho,
+} from "../../src/panes";
 import { isLight, loadPrefs, SHOT_SCALES } from "../../src/theme";
 import { actionFor, ACTIONS, helpRows, SHORTCUTS } from "../../src/shortcuts";
 import { dataUrlToBlob, shotName } from "../../src/capture";
@@ -1842,5 +1849,105 @@ describe("wearing what it follows", () => {
     }
     await redraw(kernel, viewer);
     expect(colours()).not.toEqual(plain);
+  });
+});
+
+describe("four views of one scene", () => {
+  it("lays the panes out in the order they are named", () => {
+    // 3D and X across the top, Y and Z beneath — and Babylon measures a
+    // viewport's y from the bottom, which is the one thing a full-screen
+    // viewport lets you get away with not knowing.
+    expect(paneViewport("3d", true)).toEqual({ x: 0, y: 0.5, w: 0.5, h: 0.5 });
+    expect(paneViewport("x", true)).toEqual({ x: 0.5, y: 0.5, w: 0.5, h: 0.5 });
+    expect(paneViewport("y", true)).toEqual({ x: 0, y: 0, w: 0.5, h: 0.5 });
+    expect(paneViewport("z", true)).toEqual({ x: 0.5, y: 0, w: 0.5, h: 0.5 });
+    // Unsplit, the 3-D view has the lot.
+    expect(paneViewport("3d", false)).toEqual({ x: 0, y: 0, w: 1, h: 1 });
+
+    // The same rectangles counted from the top left, which is the frame a
+    // pointer speaks in.
+    expect(paneRect("3d", true, 800, 600)).toEqual({ x: 0, y: 0, width: 400, height: 300 });
+    expect(paneRect("z", true, 800, 600)).toEqual({ x: 400, y: 300, width: 400, height: 300 });
+    expect(paneRect("3d", false, 800, 600)).toEqual({ x: 0, y: 0, width: 800, height: 600 });
+  });
+
+  it("says which pane a point is in", () => {
+    for (const [x, y, pane] of [
+      [10, 10, "3d"],
+      [790, 10, "x"],
+      [10, 590, "y"],
+      [790, 590, "z"],
+      // The lines themselves belong to the pane below and to the right,
+      // which is what a strict comparison gives and is as good as either.
+      [400, 300, "z"],
+      [399, 299, "3d"],
+    ] as const) {
+      expect(paneAt(true, x, y, 800, 600), `${x},${y}`).toBe(pane);
+    }
+    // Unsplit, every point is the 3-D view's.
+    expect(paneAt(false, 790, 590, 800, 600)).toBe("3d");
+  });
+
+  it("gives an orthographic pane the shape of its own rectangle", () => {
+    // The height is what was asked for and the width follows the pane, so
+    // a model in a wide pane is not stretched to fit it.
+    const wide = orthoExtents(2, 400, 200);
+    expect([wide.top, wide.bottom]).toEqual([2, -2]);
+    expect([wide.left, wide.right]).toEqual([-4, 4]);
+    const tall = orthoExtents(2, 200, 400);
+    expect([tall.left, tall.right]).toEqual([-1, 1]);
+    // A pane of no height — every pane but one, unsplit — would divide by
+    // nothing.
+    expect(orthoExtents(2, 0, 0).right).toBe(2);
+  });
+
+  it("sizes a handle in an orthographic pane without a distance", () => {
+    // Which is the whole difference from the perspective case: everything
+    // is drawn at one scale, so how far away it is does not come into it.
+    expect(worldSizeForPixelsOrtho(10, 5, 100)).toBeCloseTo(1);
+    expect(worldSizeForPixelsOrtho(10, 5, 200)).toBeCloseTo(0.5);
+    expect(worldSizeForPixelsOrtho(10, 5, 0)).toBe(0);
+  });
+
+  it("draws four cameras when split and one when not", async () => {
+    const kernel = new WasmKernel();
+    await kernel.apply({ op: "add_block", corners: CUBE });
+    const viewer = new Viewer(new NullEngine());
+    viewer.setView(decodeView(await kernel.view()));
+
+    // One view and the corner triad.
+    expect(viewer.scene.activeCameras).toHaveLength(2);
+    expect(viewer.split).toBe(false);
+
+    viewer.setQuad(true);
+    expect(viewer.split).toBe(true);
+    expect(viewer.scene.activeCameras).toHaveLength(5);
+
+    viewer.setQuad(false);
+    expect(viewer.scene.activeCameras).toHaveLength(2);
+  });
+
+  it("locks an axis view to its axis, and frames it on the model", async () => {
+    // A view down X that can be turned off X is a third 3-D view.
+    const kernel = new WasmKernel();
+    await kernel.apply({ op: "add_block", corners: CUBE });
+    const viewer = new Viewer(new NullEngine());
+    viewer.setView(decodeView(await kernel.view()));
+    viewer.setQuad(true);
+
+    viewer.aimAt(10, 10);
+    expect(viewer.aimedAtPane).toBe("3d");
+    expect(viewer.paneCamera().ortho).toBe(false);
+
+    const engine = viewer.scene.getEngine();
+    const w = engine.getRenderWidth();
+    viewer.aimAt(w - 10, 10);
+    expect(viewer.aimedAtPane).toBe("x");
+    const camera = viewer.paneCamera();
+    expect(camera.ortho).toBe(true);
+    // Big enough to hold a unit cube, which has a diagonal of √3.
+    expect(camera.half).toBeGreaterThan(Math.sqrt(3) / 2);
+    expect(camera.extents[2]).toBeCloseTo(camera.half);
+    expect(camera.extents[3]).toBeCloseTo(-camera.half);
   });
 });

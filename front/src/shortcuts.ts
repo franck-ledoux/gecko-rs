@@ -41,6 +41,7 @@ export const ACTIONS = [
   "corners",
   "curves",
   "surfaces",
+  "quad",
   "triad",
   "theme",
   "drawer",
@@ -134,6 +135,13 @@ export const SHORTCUTS: readonly Shortcut[] = [
   },
   { show: "⇧Y", key: "y", shift: true, action: "axis--y", does: "", group: "View" },
   { show: "⇧Z", key: "z", shift: true, action: "axis--z", does: "", group: "View" },
+  {
+    show: "V",
+    key: "v",
+    action: "quad",
+    does: "split the window into 3D, X, Y and Z",
+    group: "View",
+  },
   { show: "T", key: "t", action: "triad", does: "show the X/Y/Z triad", group: "View" },
   { show: "D", key: "d", action: "theme", does: "dark or light", group: "View" },
 

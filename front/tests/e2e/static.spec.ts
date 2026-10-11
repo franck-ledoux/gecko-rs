@@ -1822,3 +1822,123 @@ test("the classify button waits for a geometry", async ({ page }) => {
   await expect(page.locator("[data-test=pinned]")).toHaveText("8");
   expect(errors).toEqual([]);
 });
+
+test("the window splits into four views of the one scene", async ({ page }) => {
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  expect(await page.evaluate(() => (window as any).__gecko.split())).toBe(false);
+  await expect(page.locator("#panes")).toBeHidden();
+
+  await page.keyboard.press("v");
+  await expect(page.locator("#panes")).toBeVisible();
+  await expect(page.locator("#panes span")).toHaveText(["3D", "X", "Y", "Z"]);
+  expect(await page.evaluate(() => (window as any).__gecko.split())).toBe(true);
+
+  // Which pane the pointer is in is what everything else follows from.
+  const box = (await page.locator("#view").boundingBox())!;
+  const corner = async (x: number, y: number) => {
+    await page.mouse.move(box.x + x, box.y + y);
+    return page.evaluate(() => (window as any).__gecko.pane());
+  };
+  expect(await corner(box.width * 0.25, box.height * 0.3)).toBe("3d");
+  expect(await corner(box.width - 20, 20)).toBe("x");
+  expect(await corner(20, box.height - 20)).toBe("y");
+  expect(await corner(box.width - 20, box.height - 20)).toBe("z");
+
+  // The three axis views have no perspective, which is what makes them
+  // worth having; the 3-D one does. Aimed clear of the toolbar, which is
+  // over the top left of that pane and takes the pointer events itself.
+  await page.mouse.move(box.x + box.width * 0.25, box.y + box.height * 0.3);
+  expect(await page.evaluate(() => (window as any).__gecko.paneCamera().ortho)).toBe(false);
+  await page.mouse.move(box.x + box.width - 20, box.y + 20);
+  expect(await page.evaluate(() => (window as any).__gecko.paneCamera().ortho)).toBe(true);
+
+  // Remembered, like every other thing about how it looks.
+  await page.reload();
+  await page.waitForSelector("body[data-ready='1']");
+  expect(await page.evaluate(() => (window as any).__gecko.split())).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test("dragging a node in an axis view keeps it in the plane of the screen", async ({ page }) => {
+  // The reason for the split: two coordinates move and the third cannot,
+  // so placing a corner is a matter of looking at it rather than of
+  // guessing how far away it ended up.
+  //
+  // Both halves are asserted, because the outcome alone would hold for
+  // the wrong reason: an orthographic camera locked to an axis already
+  // faces that plane, so a drag left to face the camera would keep the
+  // third coordinate too. What is checked below is that the plane is the
+  // **pane's**, said rather than inherited.
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.keyboard.press("v");
+  await page.evaluate(() => (window as any).__gecko.run("recentre"));
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  const box = (await page.locator("#view").boundingBox())!;
+  // Into the Z pane — the bottom right — which looks down Z, so Z is what
+  // must not move.
+  await page.mouse.move(box.x + box.width * 0.75, box.y + box.height * 0.75);
+  expect(await page.evaluate(() => (window as any).__gecko.pane())).toBe("z");
+  expect(await page.evaluate(() => (window as any).__gecko.dragPlane())).toEqual([0, 0, 1]);
+  // And in the 3-D pane there is no plane to name: it faces the camera,
+  // wherever that is.
+  await page.mouse.move(box.x + box.width * 0.25, box.y + box.height * 0.3);
+  expect(await page.evaluate(() => (window as any).__gecko.dragPlane())).toBeNull();
+  await page.mouse.move(box.x + box.width * 0.75, box.y + box.height * 0.75);
+
+  // Where the nodes are before, and where one of them is on screen. Which
+  // one the view answers for at that pixel is its business — looking down
+  // Z, the nearest of a column of them wins — so what moved is worked out
+  // afterwards rather than named in advance.
+  const before = (await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    return (g.names() as number[]).map((n) => ({ n, at: g.nodePosition(n) }));
+  })) as { n: number; at: [number, number, number] }[];
+  const aim = (await page.evaluate(
+    (n) => (window as any).__gecko.nodeScreen(n),
+    before[0].n,
+  )) as [number, number];
+
+  await page.mouse.move(box.x + aim[0], box.y + aim[1]);
+  await page.mouse.down();
+  await page.mouse.move(box.x + aim[0] + 35, box.y + aim[1] - 25, { steps: 4 });
+  await page.mouse.up();
+  await page.waitForFunction(() => (window as any).__gecko.revision() > 1);
+
+  const after = (await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    return (g.names() as number[]).map((n) => ({ n, at: g.nodePosition(n) }));
+  })) as { n: number; at: [number, number, number] }[];
+
+  const moved = before.filter((b, i) => {
+    const a = after[i].at;
+    return Math.hypot(a[0] - b.at[0], a[1] - b.at[1], a[2] - b.at[2]) > 1e-9;
+  });
+  expect(moved, "exactly one node should have moved").toHaveLength(1);
+  const was = moved[0].at;
+  const now = after.find((a) => a.n === moved[0].n)!.at;
+  expect(now[2], "z moved in a view looking down Z").toBeCloseTo(was[2], 6);
+  expect(Math.hypot(now[0] - was[0], now[1] - was[1])).toBeGreaterThan(0.05);
+  expect(errors).toEqual([]);
+});
+
+test("a face is picked in an axis view, through that view's own camera", async ({ page }) => {
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.keyboard.press("v");
+  await page.evaluate(() => (window as any).__gecko.run("recentre"));
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // The middle of the Y pane, which is looking straight at the model.
+  const box = (await page.locator("#view").boundingBox())!;
+  await page.mouse.click(box.x + box.width * 0.25, box.y + box.height * 0.75);
+  await page.waitForFunction(() => (window as any).__gecko.selection().length === 1);
+  expect(errors).toEqual([]);
+});

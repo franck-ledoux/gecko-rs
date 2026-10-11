@@ -39,6 +39,7 @@ does. Any key dismisses it.
 | `Esc`       | clear the selection                           |
 | `F`         | frame everything                              |
 | `X` `Y` `Z` | look down an axis, `⇧` for the negative side  |
+| `V`         | split into four views: 3D, X, Y and Z         |
 | `T`         | the X/Y/Z triad                               |
 | `D`         | dark or light                                 |
 | `1` `2` `3` | faces, blocks, edges                          |

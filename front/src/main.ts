@@ -100,6 +100,13 @@ async function boot() {
   const prefs = loadPrefs();
   viewer.applyPrefs(prefs);
   viewer.axes.setVisible(prefs.axes);
+  /** The split, in the three places that have to agree about it. */
+  function showQuad() {
+    viewer.setQuad(prefs.quad);
+    document.body.classList.toggle("quad", prefs.quad);
+    $("quad").setAttribute("aria-pressed", String(prefs.quad));
+  }
+  showQuad();
 
   /** One path for every control: change `prefs`, hand the lot to the viewer,
    *  remember it. Nothing reaches the scene any other way. */
@@ -940,6 +947,19 @@ async function boot() {
       drawLayers();
       say(`internal faces ${prefs.faces.internal ? "shown" : "hidden"}`);
     },
+    quad: () => {
+      prefs.quad = !prefs.quad;
+      /** The split, in the three places that have to agree about it. */
+  function showQuad() {
+    viewer.setQuad(prefs.quad);
+    document.body.classList.toggle("quad", prefs.quad);
+    $("quad").setAttribute("aria-pressed", String(prefs.quad));
+  }
+  showQuad();
+      $("quad").setAttribute("aria-pressed", String(prefs.quad));
+      savePrefs(prefs);
+      say(prefs.quad ? "split into four views" : "one view");
+    },
     triad: () => {
       prefs.axes = !prefs.axes;
       viewer.axes.setVisible(prefs.axes);
@@ -992,6 +1012,7 @@ async function boot() {
     ["glue", "glue"],
     ["remove", "remove"],
     ["pillow", "pillow"],
+    ["quad", "quad"],
     ["recentre", "recentre"],
     ["shot", "screenshot"],
     ["settings", "drawer"],
@@ -1083,6 +1104,10 @@ async function boot() {
       );
     },
     axesVisible: () => viewer.axes.visible,
+    split: () => viewer.split,
+    pane: () => viewer.aimedAtPane,
+    paneCamera: () => viewer.paneCamera(),
+    dragPlane: () => viewer.dragPlane(),
     grownBy: () => viewer.grownBy,
     picking: () => (viewer.aimedAtGeometry ? "geometry" : "blocks"),
     surfaceSelection: () => viewer.surfaceSelection,

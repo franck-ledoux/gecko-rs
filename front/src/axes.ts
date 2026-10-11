@@ -202,23 +202,37 @@ export class AxisGizmo {
   }
 
   /**
-   * Keep the corner square.
+   * Keep the corner square, in the corner of the pane it belongs to.
    *
-   * A viewport is given in fractions of the canvas, so a fixed pair of
-   * fractions is only square when the canvas is. The height is derived from
-   * the width and the aspect ratio instead.
+   * A viewport is given in fractions of the **canvas**, so a fixed pair of
+   * fractions is only square when the canvas is, and the corner of a pane
+   * is not the corner of the window. Both are worked out here: the height
+   * from the width and the aspect ratio, the position from where the pane
+   * sits.
+   *
+   * `host` is the pane's rectangle in CSS pixels from the top left, and
+   * defaults to the whole canvas.
    */
-  resize() {
+  resize(
+    host?: { x: number; y: number; width: number; height: number },
+    canvasWidth?: number,
+    canvasHeight?: number,
+  ) {
     const engine = this.scene.getEngine();
     // CSS pixels, not the backing store. A fraction worked out from the
     // backing store makes the triad **half the size** on a high-density
     // display, because 150 of those pixels are 75 of the ones anyone sees.
     const css = engine.getHardwareScalingLevel();
-    const width = (engine.getRenderWidth() || 1) * css;
-    const height = (engine.getRenderHeight() || 1) * css;
+    const width = canvasWidth ?? (engine.getRenderWidth() || 1) * css;
+    const height = canvasHeight ?? (engine.getRenderHeight() || 1) * css;
+    const pane = host ?? { x: 0, y: 0, width, height };
     const w = Math.min(0.22, CORNER_PIXELS / width);
     const h = (w * width) / height;
-    this.camera.viewport = new Viewport(1 - w - 0.012, 0.018, w, h);
+    // The pane's bottom right, less the same small gap, expressed back in
+    // fractions of the whole canvas.
+    const right = (pane.x + pane.width) / width;
+    const bottom = (height - (pane.y + pane.height)) / height;
+    this.camera.viewport = new Viewport(right - w - 0.012, bottom + 0.018, w, h);
   }
 
   setVisible(visible: boolean) {

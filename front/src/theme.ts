@@ -115,6 +115,8 @@ export interface ViewPrefs {
   /** The settings drawer, and whether the interface is on screen at all. */
   drawer: boolean;
   chrome: boolean;
+  /** Whether the window is split into four views. */
+  quad: boolean;
   /** How a saved picture comes out. */
   shot: { scale: number; transparent: boolean };
   /** Edges keep one colour — the theme's — so all they carry is whether
@@ -137,6 +139,9 @@ export const DEFAULTS: ViewPrefs = {
   // the model. The toolbar carries the verbs; this carries the settings.
   drawer: false,
   chrome: true,
+  // One view. The split is for placing corners, which is a thing you do
+  // for a while and then stop doing.
+  quad: false,
   // Twice the canvas, which is what a figure in a paper wants. The
   // background is kept by default: transparency is for dropping a figure
   // onto a page of unknown colour, and surprises anyone not expecting it.
@@ -200,6 +205,7 @@ export function loadPrefs(): ViewPrefs {
       axes: typeof stored.axes === "boolean" ? stored.axes : DEFAULTS.axes,
       drawer: typeof stored.drawer === "boolean" ? stored.drawer : DEFAULTS.drawer,
       chrome: typeof stored.chrome === "boolean" ? stored.chrome : DEFAULTS.chrome,
+      quad: typeof stored.quad === "boolean" ? stored.quad : DEFAULTS.quad,
       shot: {
         // One of the offered sizes, not whatever is in storage: a scale of
         // 40 is a request for a gigapixel the browser will refuse to make.

@@ -12,6 +12,8 @@
 import type { AbstractEngine } from "@babylonjs/core/Engines/abstractEngine";
 import { Scene } from "@babylonjs/core/scene";
 import { ArcRotateCamera } from "@babylonjs/core/Cameras/arcRotateCamera";
+import { Camera } from "@babylonjs/core/Cameras/camera";
+import { Viewport } from "@babylonjs/core/Maths/math.viewport";
 import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight";
 import { Matrix, Vector2, Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { Animation } from "@babylonjs/core/Animations/animation";
@@ -35,7 +37,19 @@ import "@babylonjs/core/Culling/ray";
 import type { GeometryView, View } from "./decode";
 import type { GeomGroup } from "./geometry";
 import { geomBounds, geomCorners, geomCurves, geomSurfaces, GEOM_GROUPS } from "./geometry";
-import { AxisGizmo, MAIN_LAYER } from "./axes";
+import { AxisGizmo, MAIN_LAYER, orientationFor } from "./axes";
+import type { Axis } from "./axes";
+import {
+  orthoExtents,
+  orthoHalfFor,
+  paneAt,
+  paneRect,
+  paneViewport,
+  PANES,
+  PANE_AXIS,
+  worldSizeForPixelsOrtho,
+  type Pane,
+} from "./panes";
 import { DEFAULTS, type GeomLayer, type Layer, type ViewPrefs } from "./theme";
 import { ANCHOR, FAMILY, MATE, colourForId } from "./palette";
 import type { SheetEdge } from "./kernel";
@@ -238,6 +252,17 @@ function boxOutline(near: readonly Vector3[], far: readonly Vector3[]): number[]
   return out;
 }
 
+/** The axis an axis view looks down, as a vector. */
+function planeNormal(axis: Axis): Vector3 {
+  const sign = axis.startsWith("-") ? -1 : 1;
+  const letter = axis[axis.length - 1];
+  return new Vector3(
+    letter === "x" ? sign : 0,
+    letter === "y" ? sign : 0,
+    letter === "z" ? sign : 0,
+  );
+}
+
 /** Newell's normal of a quadrangle — the same arithmetic as the kernel's
  *  `quad_normal`, so the two agree about which way is out. */
 function quadNormal(corners: readonly Vector3[]): Vector3 {
@@ -380,6 +405,18 @@ export class Viewer {
    *  leaves the seam where it is — so the two are drawn differently. */
   private picked: Pick[] = [];
   readonly axes: AxisGizmo;
+  /** One camera per pane. The 3-D one is [`camera`](Viewer.camera); the
+   *  other three look down an axis and are orthographic. */
+  private readonly panes: Record<Pane, ArcRotateCamera>;
+  /** Whether the window is split in four. */
+  private quad = false;
+  /** The pane the pointer is over. Everything a gesture does — which
+   *  camera answers a click, which plane a drag runs in, how big a handle
+   *  has to be — is about this one. */
+  private hovered: Pane = "3d";
+  /** How much of the world each orthographic pane shows, top to bottom.
+   *  Its own, because each pane zooms on its own. */
+  private half: Record<Pane, number> = { "3d": 1, x: 1, y: 1, z: 1 };
 
   constructor(engine: AbstractEngine) {
     this.scene = new Scene(engine);
@@ -415,9 +452,16 @@ export class Viewer {
     // to read — which defeats colouring by name.
     light.groundColor = new Color3(0.42, 0.42, 0.46);
 
+    this.panes = {
+      "3d": this.camera,
+      x: this.orthoCamera("x"),
+      y: this.orthoCamera("y"),
+      z: this.orthoCamera("z"),
+    };
+
     this.scene.onBeforeRenderObservable.add(() => this.rescaleHandles());
     this.axes = new AxisGizmo(this.scene, this.camera);
-    this.scene.activeCameras = [this.camera, this.axes.camera];
+    this.layOut();
     // Rendering leaves `activeCamera` set to whichever camera went last — the
     // corner gizmo. Everything that runs between frames then reads the wrong
     // one, and Babylon's own drag behaviour reads it twice: to decide whose
@@ -425,7 +469,7 @@ export class Viewer {
     // dragged node went the wrong way *and* the view orbited along with it.
     // Put it back to the main camera once the frame is done.
     this.scene.onAfterRenderObservable.add(() => {
-      this.scene.activeCamera = this.camera;
+      this.scene.activeCamera = this.panes[this.hovered];
     });
     // Babylon's own picking — which is what the drag behaviours run on — must
     // use the main camera, not whichever happens to be active. The gizmo does
@@ -444,6 +488,190 @@ export class Viewer {
     // did not land on a handle.
     this.setPicking("blocks");
     this.applyPrefs(this.prefs);
+  }
+
+  /**
+   * A camera looking straight down one axis, with no perspective.
+   *
+   * No perspective is the point of it: two things the same size are drawn
+   * the same size wherever they are, which is what makes these views worth
+   * having for lining anything up. The rotation is locked — a view down X
+   * that can be turned off X is a third 3-D view — and the distance is
+   * fixed, an orthographic camera's distance changing nothing but what it
+   * clips.
+   */
+  private orthoCamera(pane: Pane): ArcRotateCamera {
+    const { alpha, beta } = orientationFor(PANE_AXIS[pane]!);
+    const camera = new ArcRotateCamera(`cam-${pane}`, alpha, beta, 100, Vector3.Zero(), this.scene);
+    camera.mode = Camera.ORTHOGRAPHIC_CAMERA;
+    camera.overrideCloneAlphaBetaRadius = true;
+    camera.layerMask = MAIN_LAYER;
+    camera.lowerAlphaLimit = alpha;
+    camera.upperAlphaLimit = alpha;
+    camera.lowerBetaLimit = beta;
+    camera.upperBetaLimit = beta;
+    camera.lowerRadiusLimit = 100;
+    camera.upperRadiusLimit = 100;
+    camera.minZ = 0.01;
+    camera.maxZ = 1000;
+    // Left-drag belongs to the model here — there is nothing to orbit — so
+    // the only thing the camera takes is the right button, which pans.
+    camera.panningSensibility = 200;
+    return camera;
+  }
+
+  /** Split the window in four, or put it back. */
+  setQuad(quad: boolean) {
+    if (this.quad === quad) return;
+    this.quad = quad;
+    if (!quad) this.hovered = "3d";
+    this.layOut();
+    this.frameAll(true);
+  }
+
+  get split(): boolean {
+    return this.quad;
+  }
+
+  /** The pane the pointer is over. */
+  get aimedAtPane(): Pane {
+    return this.hovered;
+  }
+
+  /** The plane a node is currently dragged in, or nothing when the drag
+   *  is left to face the camera. */
+  dragPlane(): [number, number, number] | null {
+    for (const mesh of this.nodes) {
+      for (const behaviour of mesh.behaviors) {
+        if (behaviour.name !== "PointerDrag") continue;
+        const normal = (behaviour as PointerDragBehavior).options.dragPlaneNormal;
+        return normal ? [normal.x, normal.y, normal.z] : null;
+      }
+    }
+    return null;
+  }
+
+  /** What the pane under the pointer is showing — everything a test needs
+   *  to say where a point of the model lands on screen. */
+  paneCamera(): {
+    pane: Pane;
+    ortho: boolean;
+    half: number;
+    extents: [number, number, number, number];
+    viewport: [number, number, number, number];
+    target: [number, number, number];
+  } {
+    const camera = this.panes[this.hovered];
+    const v = camera.viewport;
+    return {
+      pane: this.hovered,
+      ortho: camera.mode === Camera.ORTHOGRAPHIC_CAMERA,
+      half: this.half[this.hovered],
+      extents: [
+        camera.orthoLeft ?? 0,
+        camera.orthoRight ?? 0,
+        camera.orthoTop ?? 0,
+        camera.orthoBottom ?? 0,
+      ],
+      viewport: [v.x, v.y, v.width, v.height],
+      target: [camera.target.x, camera.target.y, camera.target.z],
+    };
+  }
+
+  /**
+   * Give each camera its share of the canvas, and say which are drawn.
+   *
+   * The corner triad goes in the 3-D pane rather than in the corner of the
+   * window: it reports the 3-D camera's rotation, and in the bottom right
+   * of a split window it would be sitting in the Z view saying something
+   * about a different view entirely.
+   */
+  private layOut() {
+    for (const pane of PANES) {
+      const f = paneViewport(pane, this.quad);
+      this.panes[pane].viewport = new Viewport(f.x, f.y, f.w, f.h);
+    }
+    const drawn: ArcRotateCamera[] = this.quad
+      ? PANES.map((p) => this.panes[p])
+      : [this.camera];
+    this.scene.activeCameras = [...drawn, this.axes.camera];
+    this.resize();
+    this.attachHovered();
+  }
+
+  /** Point the camera controls at the pane the pointer is over, and only
+   *  at that one: four cameras attached to one canvas all answer the same
+   *  drag, and the view would turn in every pane at once. */
+  private attachHovered() {
+    for (const pane of PANES) this.panes[pane].detachControl();
+    const camera = this.panes[this.hovered];
+    if (this.held) camera.attachControl(this.held, true);
+    // Babylon's own pointer system — which is what the node drag behaviours
+    // run on — builds its ray through this one.
+    this.scene.cameraToUseForPointers = camera;
+  }
+
+  /**
+   * Note which pane the pointer is in, and set everything that follows
+   * from it.
+   *
+   * Called on every pointer move over the canvas. The **drag plane** is
+   * the part that matters: in an axis view a node is dragged in the plane
+   * of the screen, which is what makes these views worth using for placing
+   * one — there is no depth to get wrong. In the 3-D view it stays
+   * camera-facing, as it always was.
+   */
+  aimAt(x: number, y: number) {
+    const pane = this.paneFor(x, y);
+    if (pane === this.hovered) return;
+    this.hovered = pane;
+    this.attachHovered();
+    for (const mesh of this.nodes) this.setDragPlane(mesh);
+  }
+
+  /**
+   * Which plane a node is dragged in, from the pane the pointer is over.
+   *
+   * In an axis view it is that axis's plane: two coordinates move and the
+   * third cannot, which is what makes these views worth using for placing
+   * a corner. In the 3-D view the plane faces the camera, as it always
+   * has. Read at the start of each drag, so crossing into another pane
+   * between drags is enough to change it.
+   *
+   * An orthographic camera locked to an axis already faces that plane, so
+   * leaving this out would **look** the same today. Saying it makes the
+   * constraint a property of the pane rather than a coincidence of where
+   * the camera happens to be pointing — which is the thing that was
+   * asked for, and the thing that would quietly stop being true if an
+   * axis view ever gained a way to be turned.
+   */
+  private setDragPlane(mesh: Mesh) {
+    const axis = PANE_AXIS[this.hovered];
+    const normal = axis ? planeNormal(axis) : undefined;
+    for (const behaviour of mesh.behaviors) {
+      if (behaviour.name !== "PointerDrag") continue;
+      (behaviour as PointerDragBehavior).options = normal ? { dragPlaneNormal: normal } : {};
+    }
+  }
+
+  /** The camera that answers for a point of the canvas. */
+  private cameraFor(x: number, y: number): ArcRotateCamera {
+    return this.panes[this.paneFor(x, y)];
+  }
+
+  /**
+   * Which pane a point of the canvas is in.
+   *
+   * The canvas's CSS size when there is one, and the engine's otherwise —
+   * which is what a headless test has, and what there is before anything
+   * has been attached.
+   */
+  private paneFor(x: number, y: number): Pane {
+    const engine = this.scene.getEngine();
+    const css = engine.getHardwareScalingLevel();
+    const width = this.held?.clientWidth || engine.getRenderWidth() * css;
+    const height = this.held?.clientHeight || engine.getRenderHeight() * css;
+    return paneAt(this.quad, x, y, width, height);
   }
 
   /**
@@ -535,7 +763,7 @@ export class Viewer {
       y,
       (m) => this.dataOf(m.name) !== undefined,
       false,
-      this.camera,
+      this.cameraFor(x, y),
     );
     if (!hit?.hit || !hit.pickedMesh) return null;
     const data = this.dataOf(hit.pickedMesh.name);
@@ -818,7 +1046,7 @@ export class Viewer {
    */
   pickGeometry(x: number, y: number): number | null {
     const mine = new Set(this.geomMeshes.surfaces.map((m) => m.name));
-    const hit = this.scene.pick(x, y, (m) => mine.has(m.name), false, this.camera);
+    const hit = this.scene.pick(x, y, (m) => mine.has(m.name), false, this.cameraFor(x, y));
     if (!hit?.hit || !hit.pickedMesh) return null;
     const tag = Number(hit.pickedMesh.name.split("-").pop());
     return Number.isFinite(tag) ? tag : null;
@@ -1058,9 +1286,32 @@ export class Viewer {
     };
   }
 
-  /** Keep the corner viewport square when the canvas changes shape. */
+  /**
+   * Fit everything to the canvas's new shape.
+   *
+   * The orthographic panes keep their half-height and take a new width
+   * from it, so a window made wider shows more to the sides rather than
+   * stretching what was there.
+   */
   resize() {
-    this.axes.resize();
+    const sized = this.scene.getEngine();
+    const css = sized.getHardwareScalingLevel();
+    const wide = (sized.getRenderWidth() || 1) * css;
+    const tall = (sized.getRenderHeight() || 1) * css;
+    for (const pane of PANES) {
+      if (!PANE_AXIS[pane]) continue;
+      const rect = paneRect(pane, this.quad, wide, tall);
+      const extents = orthoExtents(this.half[pane], rect.width, rect.height);
+      const camera = this.panes[pane];
+      camera.orthoLeft = extents.left;
+      camera.orthoRight = extents.right;
+      camera.orthoTop = extents.top;
+      camera.orthoBottom = extents.bottom;
+    }
+    // In the corner of the 3-D pane, not of the window: the triad reports
+    // the 3-D camera's rotation, and in the bottom right of a split window
+    // it would sit in the Z view saying something about another view.
+    this.axes.resize(paneRect("3d", this.quad, wide, tall), wide, tall);
     // A ribbon's width is in pixels of the resolution it was built with, and
     // the material holds that resolution from the moment it was made. Resize
     // the window with a sheet lit and it would go on measuring itself
@@ -1079,7 +1330,23 @@ export class Viewer {
 
   attachTo(canvas: HTMLCanvasElement) {
     this.held = canvas;
-    this.camera.attachControl(canvas, true);
+    this.attachHovered();
+    canvas.addEventListener("pointermove", (e) => this.aimAt(e.offsetX, e.offsetY));
+    // An orthographic camera's distance changes nothing but what it clips,
+    // so the wheel has to move the extents instead. A share of what is
+    // left, like the perspective pane's, so it feels the same at every
+    // scale.
+    canvas.addEventListener(
+      "wheel",
+      (e) => {
+        if (!PANE_AXIS[this.hovered]) return;
+        e.preventDefault();
+        const by = Math.exp(Math.sign(e.deltaY) * ZOOM_PER_NOTCH * 4);
+        this.half[this.hovered] = Math.max(1e-6, this.half[this.hovered] * by);
+        this.resize();
+      },
+      { passive: false },
+    );
   }
 
   /** Take the pointer away from the camera, and give it back.
@@ -1087,11 +1354,11 @@ export class Viewer {
    *  Aiming a cut is a drag along an edge, and a drag is also how the view
    *  is turned. One of them has to stand aside. */
   suspendCamera() {
-    this.camera.detachControl();
+    for (const pane of PANES) this.panes[pane].detachControl();
   }
 
   resumeCamera() {
-    if (this.held) this.camera.attachControl(this.held, true);
+    this.attachHovered();
   }
 
   /** Called when a drag ends, with the node's new position in model space. */
@@ -1170,6 +1437,7 @@ export class Viewer {
     // back, which looks like a bug rather than like a locked node.
     drag.enabled = this.view?.nodeFrozen[index] !== 1;
     sphere.addBehavior(drag);
+    this.setDragPlane(sphere);
     let from = sphere.position.clone();
     drag.onDragStartObservable.add(() => {
       from = sphere.position.clone();
@@ -1276,7 +1544,13 @@ export class Viewer {
   pickNode(x: number, y: number): number | null {
     // Explicitly the main camera: after a frame, `scene.activeCamera` is
     // whichever rendered last, which is the corner gizmo.
-    const hit = this.scene.pick(x, y, (m) => (m.metadata?.name ?? -1) >= 0, false, this.camera);
+    const hit = this.scene.pick(
+      x,
+      y,
+      (m) => (m.metadata?.name ?? -1) >= 0,
+      false,
+      this.cameraFor(x, y),
+    );
     return hit?.hit && hit.pickedMesh ? (hit.pickedMesh.metadata.name as number) : null;
   }
 
@@ -1448,11 +1722,24 @@ export class Viewer {
    */
   private toScreen(at: Vector3): [number, number] {
     const engine = this.scene.getEngine();
+    const camera = this.panes[this.hovered];
+    const width = engine.getRenderWidth();
+    const height = engine.getRenderHeight();
+    const pixels = camera.viewport.toGlobal(width, height);
+    // A Babylon viewport measures y from the bottom and `Project` wants it
+    // from the top. A full-screen viewport hides the difference because
+    // the offset is nought either way; a quarter of the window does not.
+    const topDown = new Viewport(
+      pixels.x,
+      height - pixels.y - pixels.height,
+      pixels.width,
+      pixels.height,
+    );
     const projected = Vector3.Project(
       at,
       Matrix.Identity(),
-      this.camera.getViewMatrix().multiply(this.camera.getProjectionMatrix()),
-      this.camera.viewport.toGlobal(engine.getRenderWidth(), engine.getRenderHeight()),
+      camera.getViewMatrix().multiply(camera.getProjectionMatrix()),
+      topDown,
     );
     const css = engine.getHardwareScalingLevel();
     return [projected.x * css, projected.y * css];
@@ -1532,7 +1819,18 @@ export class Viewer {
     const box = this.bounds();
     if (!box) return;
     const target = box.lo.add(box.hi).scale(0.5);
-    const radius = box.hi.subtract(box.lo).length() * 1.8 || 4;
+    const diagonal = box.hi.subtract(box.lo).length();
+    const radius = diagonal * 1.8 || 4;
+
+    // The orthographic panes always jump. What a glide is for is keeping
+    // track of which way round the model ended up, and a view locked to an
+    // axis has no way round to lose.
+    for (const pane of PANES) {
+      if (!PANE_AXIS[pane]) continue;
+      this.panes[pane].target = target.clone();
+      this.half[pane] = orthoHalfFor(diagonal);
+    }
+    this.resize();
 
     // A gesture leaves inertia running, and it would go on nudging the camera
     // while the animation moves it, ending somewhere neither of them meant.
@@ -1591,26 +1889,45 @@ export class Viewer {
    */
   private rescaleHandles() {
     const engine = this.scene.getEngine();
-    const height = engine.getRenderHeight();
+    // The pane's own height, not the canvas's: in a split window a pane is
+    // half as tall, and a handle sized against the whole canvas would come
+    // out half the size it was asked for.
+    const camera = this.panes[this.hovered];
+    const height = engine.getRenderHeight() * camera.viewport.height;
+    const ortho = PANE_AXIS[this.hovered] ? this.half[this.hovered] : null;
     if (this.wire) {
       // Half, because the threshold is a radius about the line. Taken at the
       // distance to what the camera is looking at: an exact answer would be
       // per edge, and this is a click tolerance.
       this.wire.intersectionThreshold =
-        worldSizeForPixels(
-          EDGE_PICK_PIXELS,
-          Vector3.Distance(this.camera.target, this.camera.position),
-          this.camera.fov,
-          height,
-        ) / 2;
+        (ortho === null
+          ? worldSizeForPixels(
+              EDGE_PICK_PIXELS,
+              Vector3.Distance(camera.target, camera.position),
+              camera.fov,
+              height,
+            )
+          : worldSizeForPixelsOrtho(EDGE_PICK_PIXELS, ortho, height)) / 2;
     }
     for (const [meshes, pixels] of [
       [this.nodes, HANDLE_PIXELS],
       [this.geomMeshes.corners, CORNER_PIXELS],
     ] as const) {
       for (const mesh of meshes) {
-        const distance = Vector3.Distance(mesh.position, this.camera.position);
-        mesh.scaling.setAll(worldSizeForPixels(pixels, distance, this.camera.fov, height));
+        // Sized for the pane the pointer is in, which is the pane you are
+        // about to click in. One mesh cannot be the right size in four
+        // views at different zooms, and the one that matters is the one
+        // being aimed at.
+        const wanted =
+          ortho === null
+            ? worldSizeForPixels(
+                pixels,
+                Vector3.Distance(mesh.position, camera.position),
+                camera.fov,
+                height,
+              )
+            : worldSizeForPixelsOrtho(pixels, ortho, height);
+        mesh.scaling.setAll(wanted);
       }
     }
   }

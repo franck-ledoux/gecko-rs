@@ -155,6 +155,53 @@ land somewhere neither meant.
 It is the only control that moves the camera on purpose. Edits do not, except
 for creating a cube, which glides too.
 
+## Four views
+
+`V`, or the grid button, splits the window into four: the 3-D view top
+left, and beside and below it three views looking straight down **X**, **Y**
+and **Z**.
+
+They are four cameras on **one scene**. Moving a node moves it in all four
+because it is the same node — there is nothing keeping them in step, and so
+nothing that can fall out of step. Only the cameras differ.
+
+The three axis views are **orthographic**: no perspective, so two things the
+same size are drawn the same size wherever they are. That is what makes them
+worth having for lining anything up, and it is why their zoom moves the
+extent they show rather than a distance.
+
+### What each view answers for
+
+The pane the pointer is over is the one that answers. Clicks, drags and
+every verb work in all four — the pick goes through that pane's own camera —
+and the camera controls are attached to that pane alone, so a drag turns one
+view rather than all of them.
+
+Each pane zooms and pans on its own, as in any CAD package: frame one
+closely while another still holds the whole model. `F` reframes all four at
+once.
+
+### Dragging in the plane
+
+In an axis view a node is dragged **in the plane of the screen**: two
+coordinates move and the third cannot. Placing a corner becomes a matter of
+looking at it rather than of guessing how far away it ended up.
+
+!!! note "Said, not inherited"
+    An orthographic camera locked to an axis already faces that plane, so
+    leaving the constraint out would look the same today. It is stated
+    anyway, which makes it a property of the pane rather than a coincidence
+    of where the camera happens to be pointing.
+
+The 3-D view is unchanged: a drag there follows the camera's own facing
+plane, which is oblique to the axes, and all three coordinates move.
+
+!!! note "One mesh, four zooms"
+    A node handle is one sphere shown in four views, so it cannot be the
+    right number of pixels across in all of them at once. It is sized for
+    the pane the pointer is in — which is the pane you are about to click
+    in, and the only one where the size matters.
+
 ## The orientation triad
 
 Bottom right, and switched on and off with **X/Y/Z triad** in the drawer, or

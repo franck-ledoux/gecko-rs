@@ -8,6 +8,13 @@
   <body>
     <main id="stage"><canvas id="view"></canvas></main>
 
+    <!-- The four panes' borders and names. Drawn over the canvas rather
+         than in it: a line in the scene would be a line the camera could
+         move, and these belong to the window. -->
+    <div id="panes" aria-hidden="true">
+      <span>3D</span><span>X</span><span>Y</span><span>Z</span>
+    </div>
+
     <!-- The verbs, always to hand. An icon and a title each, and every one of
          them has a key as well — the help card is that list. -->
     <nav id="bar" aria-label="Tools">
@@ -77,6 +84,12 @@
         </svg>
       </button>
       <span class="sep"></span>
+      <button id="quad" title="Split into four views — V" aria-label="Split the window" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3.5 3.5h17v17h-17Z" />
+          <path d="M12 3.5v17M3.5 12h17" />
+        </svg>
+      </button>
       <button id="recentre" title="Frame everything — F" aria-label="Frame everything">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M3.5 8.5v-5h5M20.5 8.5v-5h-5M3.5 15.5v5h5M20.5 15.5v5h-5" />
