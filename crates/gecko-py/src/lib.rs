@@ -86,8 +86,15 @@ impl PySession {
     ///
     /// `node` is the stable id from [`Session::nodes`], not a position in that
     /// list: the list is reordered by edits, the id is not.
-    fn move_node(&self, node: u32, to: [f64; 3]) -> PyResult<String> {
-        self.command(serde_json::json!({ "op": "move_node", "node": node, "to": to }))
+    ///
+    /// A node already classified **slides on its own entity**: the point is
+    /// projected onto it first. One that is not looks around when it lands,
+    /// and an entity within `snap` — a share of the geometry's own size —
+    /// takes it. 0 refuses the geometry altogether, which is how you put a
+    /// node somewhere near the model and have it stay there.
+    #[pyo3(signature = (node, to, snap=0.02))]
+    fn move_node(&self, node: u32, to: [f64; 3], snap: f64) -> PyResult<String> {
+        self.command(serde_json::json!({ "op": "move_node", "node": node, "to": to, "snap": snap }))
     }
 
     /// Weld two blocks along a face.

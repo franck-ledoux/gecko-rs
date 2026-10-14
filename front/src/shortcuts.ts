@@ -46,6 +46,7 @@ export const ACTIONS = [
   "triad",
   "theme",
   "drawer",
+  "params",
   "chrome",
   "help",
 ] as const;
@@ -172,7 +173,8 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { show: "5", code: "Digit5", action: "curves", does: "show geometric curves", group: "Display" },
   { show: "6", code: "Digit6", action: "corners", does: "show geometric corners", group: "Display" },
 
-  { show: "Tab", key: "tab", action: "drawer", does: "settings", group: "Window" },
+  { show: "Tab", key: "tab", action: "drawer", does: "how it is drawn", group: "Window" },
+  { show: ",", key: ",", action: "params", does: "what the operations do", group: "Window" },
   { show: "⇧Tab", key: "tab", shift: true, action: "chrome", does: "hide everything", group: "Window" },
   { show: "S", key: "s", action: "screenshot", does: "save a picture", group: "Window" },
   { show: "H", key: "h", action: "help", does: "this card", group: "Window" },

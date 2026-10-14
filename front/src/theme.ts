@@ -132,12 +132,30 @@ export const SHOT_SCALES = [1, 2, 4];
 export const HISTORY_STEPS = 5;
 export const MAX_HISTORY = 20;
 
+/** How much room a bounding box leaves round the geometry, as a share of
+ *  each half-side, and the most the drawer offers. The kernel's own default
+ *  is the same 10%. */
+export const BOX_MARGIN = 0.1;
+export const MAX_BOX_MARGIN = 0.5;
+
+/** How near a node has to come to a geometric entity to be taken by it, as
+ *  a share of the geometry's own size. Used for `classify` and for a node
+ *  dropped by hand, which are the same question asked twice. */
+export const SNAP_SHARE = 0.02;
+export const MAX_SNAP = 0.1;
+
 export interface ViewPrefs {
   theme: Theme;
   axes: boolean;
-  /** The settings drawer, and whether the interface is on screen at all. */
+  /** The two panels, and whether the interface is on screen at all. Only
+   *  one panel is ever open: they sit in the same place. */
   drawer: boolean;
+  params: boolean;
   chrome: boolean;
+  /** Which parts of the display drawer are unfolded, by element id. A list
+   *  rather than a flag each, so a section added later needs no migration:
+   *  an id nobody recognises is simply not there. */
+  panels: string[];
   /** Whether the window is split into four views. */
   quad: boolean;
   /** How a saved picture comes out. */
@@ -146,6 +164,13 @@ export interface ViewPrefs {
    *  rest of what a viewer prefers, and sent to the kernel on boot: the
    *  kernel holds the states, so it is the kernel that has to be told. */
   history: number;
+  /** What the next bounding box leaves round the geometry, and how near a
+   *  node has to come to be taken by an entity.
+   *
+   *  Here rather than in the kernel because they are not state: each one is
+   *  an argument to the command it belongs to, and the kernel's constant is
+   *  the default for anyone who does not send one. */
+  box: { margin: number; snap: number };
   /** Nodes are always drawn — they are what you grab — so all they carry
    *  is how they are coloured. */
   nodes: { colouring: Colouring };
@@ -167,7 +192,11 @@ export const DEFAULTS: ViewPrefs = {
   // Shut, because the whole point of a drawer is that the window belongs to
   // the model. The toolbar carries the verbs; this carries the settings.
   drawer: false,
+  params: false,
   chrome: true,
+  // Cells and geometry unfolded, colours and picture put away: the first
+  // two are what you reach for while working, the other two are set once.
+  panels: ["sec-cells", "sec-geometry"],
   // One view. The split is for placing corners, which is a thing you do
   // for a while and then stop doing.
   quad: false,
@@ -176,6 +205,7 @@ export const DEFAULTS: ViewPrefs = {
   // onto a page of unknown colour, and surprises anyone not expecting it.
   shot: { scale: 2, transparent: false },
   history: HISTORY_STEPS,
+  box: { margin: BOX_MARGIN, snap: SNAP_SHARE },
   // Both plain to begin with. Colouring by what a cell follows is a
   // question you ask once the blocking is on the model, not while you are
   // still putting it there.
@@ -201,6 +231,11 @@ export const DEFAULTS: ViewPrefs = {
  *  an error anyone wants to read. */
 const clamp = (v: unknown, fallback: number) =>
   typeof v === "number" && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : fallback;
+
+/** Within 0 and a ceiling of its own, which `clamp` cannot do: these are
+ *  shares of something rather than fractions of one. */
+const within = (v: unknown, most: number, fallback: number) =>
+  typeof v === "number" && Number.isFinite(v) ? Math.min(most, Math.max(0, v)) : fallback;
 
 /** One of the three, or the fallback: storage is a thing anyone can edit,
  *  and a colouring nobody has heard of is not an error worth reporting. */
@@ -243,6 +278,10 @@ export function loadPrefs(): ViewPrefs {
       theme: { ...DEFAULTS.theme, ...(stored.theme ?? {}) },
       axes: typeof stored.axes === "boolean" ? stored.axes : DEFAULTS.axes,
       drawer: typeof stored.drawer === "boolean" ? stored.drawer : DEFAULTS.drawer,
+      params: typeof stored.params === "boolean" ? stored.params : DEFAULTS.params,
+      panels: Array.isArray(stored.panels)
+        ? stored.panels.filter((id): id is string => typeof id === "string")
+        : DEFAULTS.panels,
       chrome: typeof stored.chrome === "boolean" ? stored.chrome : DEFAULTS.chrome,
       quad: typeof stored.quad === "boolean" ? stored.quad : DEFAULTS.quad,
       shot: {
@@ -263,6 +302,10 @@ export function loadPrefs(): ViewPrefs {
         typeof stored.history === "number" && Number.isFinite(stored.history)
           ? Math.min(MAX_HISTORY, Math.max(0, Math.round(stored.history)))
           : DEFAULTS.history,
+      box: {
+        margin: within(stored.box?.margin, MAX_BOX_MARGIN, DEFAULTS.box.margin),
+        snap: within(stored.box?.snap, MAX_SNAP, DEFAULTS.box.snap),
+      },
       nodes: { colouring: colouring(stored.nodes?.colouring, DEFAULTS.nodes.colouring) },
       edges: {
         visible:

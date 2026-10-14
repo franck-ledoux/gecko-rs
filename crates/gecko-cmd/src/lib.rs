@@ -103,6 +103,15 @@ pub enum Command {
     MoveNode {
         node: u32,
         to: [f64; 3],
+        /// How near an unclassified node has to come to a geometric entity
+        /// to be taken by it, as a share of the geometry's own size.
+        ///
+        /// On the command rather than on the session because it is a
+        /// property of **this** gesture: dropping a node near a curve is a
+        /// different act from dragging one past it, and the interface knows
+        /// which it was. Left out, the default stands.
+        #[serde(default = "default_snap")]
+        snap: f64,
     },
     /// Weld two blocks along a face. `first` stays where it is and `second`
     /// is brought onto it, so the order is part of the command rather than a
@@ -410,9 +419,9 @@ impl Session {
                 }
                 self.add(cube_corners(origin, size))
             }
-            Command::MoveNode { node, to } => {
+            Command::MoveNode { node, to, snap } => {
                 let node = CellId::from_raw(node);
-                let landed = self.move_node(node, to)?;
+                let landed = self.move_node(node, to, snap)?;
                 Ok(Outcome {
                     message: match self.blocking.node_class(node) {
                         Some(on) => format!("node {node:?} moved along {}", name_of(on)),
@@ -732,7 +741,12 @@ impl Session {
     /// entity within reach takes it. That is the other half of the C++'s
     /// pair, `snap_node`, and it is what makes dragging a corner onto the
     /// model the way to classify it.
-    fn move_node(&mut self, node: CellId, to: [f64; 3]) -> Result<[f64; 3], SessionError> {
+    fn move_node(
+        &mut self,
+        node: CellId,
+        to: [f64; 3],
+        snap: f64,
+    ) -> Result<[f64; 3], SessionError> {
         if let Some(on) = self.blocking.node_class(node) {
             let onto = self
                 .geometry
@@ -747,7 +761,7 @@ impl Session {
         let Some(geometry) = self.geometry.as_deref() else {
             return Ok(to);
         };
-        let reach = [SNAP_SHARE * geometry.span(); 3];
+        let reach = [snap.max(0.0) * geometry.span(); 3];
         if let Some((dim, tag)) = geometry.nearest(to, reach) {
             self.blocking.set_node_class(node, Some(On { dim, tag }))?;
             self.pull_onto_class(node)?;

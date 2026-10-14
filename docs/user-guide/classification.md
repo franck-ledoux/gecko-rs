@@ -28,11 +28,11 @@ handle without moving it is a pick; anything further is still a drag.
 Nodes, edges and faces each take one of **three colourings**, from their own
 box in the drawer:
 
-|                        |                                                  |
-| ---------------------- | ------------------------------------------------ |
-| **uniform**            | one colour for the group, from its swatch        |
-| **by id**              | a colour per cell, from its stable name          |
-| **by what it follows** | a colour per *kind* of thing it is classified on |
+|             |                                                  |
+| ----------- | ------------------------------------------------ |
+| **uniform** | one colour for the group, from its swatch        |
+| **id**      | a colour per cell, from its stable name          |
+| **follows** | a colour per *kind* of thing it is classified on |
 
 The third is the classification one, and it is four colours rather than one
 per entity:

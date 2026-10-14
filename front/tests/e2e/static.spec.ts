@@ -48,10 +48,37 @@ const CUBE = [
  */
 async function openDrawer(page: import("@playwright/test").Page) {
   if (!(await page.evaluate(() => (window as any).__gecko.chrome().drawer))) {
-    await page.locator("#settings").click();
+    await page.locator("#display").click();
   }
   await expect(page.locator("#drawer")).toBeVisible();
 }
+
+/** The other panel: what the operations do, as against how they look. */
+async function openParams(page: import("@playwright/test").Page) {
+  if (!(await page.evaluate(() => (window as any).__gecko.chrome().params))) {
+    await page.locator("#settings").click();
+  }
+  await expect(page.locator("#params")).toBeVisible();
+}
+
+/** Unfold part of the display drawer, which mostly starts folded: a section
+ *  by its name, a group of cells by `grp-…`. */
+async function unfold(page: import("@playwright/test").Page, id: string, handle = "> summary") {
+  await openDrawer(page);
+  const fold = page.locator(`#${id}`);
+  if (!(await fold.evaluate((d) => (d as HTMLDetailsElement).open))) {
+    await fold.locator(handle).click();
+  }
+  await expect(fold).toHaveAttribute("open", "");
+}
+
+/** One group of cells or of the geometry. Clicked on its name, which is the
+ *  one part of the line that is neither the box nor the digest. */
+const openGroup = (page: import("@playwright/test").Page, group: string) =>
+  unfold(page, `grp-${group}`, "summary .name");
+
+const openSection = (page: import("@playwright/test").Page, name: string) =>
+  unfold(page, `sec-${name}`);
 
 async function boot(page: import("@playwright/test").Page) {
   const errors: string[] = [];
@@ -200,6 +227,7 @@ test("colours can be changed, and are remembered", async ({ page }) => {
     background: "#15171b",
   });
 
+  await openSection(page, "colours");
   await page.locator("#preset-light").click();
   const light = await page.evaluate(() => (window as any).__gecko.theme());
   expect(light.background).toBe("#f4f5f7");
@@ -220,7 +248,7 @@ test("colours can be changed, and are remembered", async ({ page }) => {
 
 test("the triad turns the view, and can be hidden", async ({ page }) => {
   await boot(page);
-  await openDrawer(page);
+  await openSection(page, "colours");
   await page.locator("#cube").click();
   await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
   await page.evaluate(() => (window as any).__gecko.settled());
@@ -279,15 +307,18 @@ test("faces and blocks are drawn, coloured and faded from the panel", async ({ p
 
   // One colour per face. Six faces, six colours — and the kernel was not
   // asked anything: these come off the names already in the view buffer.
+  await openGroup(page, "faces");
   await page.locator("[data-test=faces-id]").check();
   expect(await surface("faces")).toMatchObject({ quads: 6, colours: 6 });
 
   // Both at once, each with its own colouring and its own transparency.
   await page.locator("[data-test=blocks-visible]").check();
+  await openGroup(page, "blocks");
   await page.locator("[data-test=blocks-uniform]").check();
   expect(await surface("blocks")).toMatchObject({ quads: 6, colours: 1 });
   expect(await surface("faces")).toMatchObject({ colours: 6 });
 
+  await openGroup(page, "faces");
   await page.locator("[data-test=faces-alpha]").fill("0.2");
   await page.waitForFunction(
     () => (window as any).__gecko.surface("faces").alpha < 0.21,
@@ -306,6 +337,7 @@ test("each kind of cell shrinks towards its own centre", async ({ page }) => {
   // Blocks come up slightly shrunk, because that is what makes them legible
   // over the faces they are drawn from. Start both at full size, so what the
   // numbers below say about shrinking is about shrinking.
+  await openGroup(page, "blocks");
   await page.locator("[data-test=blocks-shrink]").fill("1");
   await page.waitForFunction(() => (window as any).__gecko.display().blocks.shrink === 1);
 
@@ -326,6 +358,7 @@ test("each kind of cell shrinks towards its own centre", async ({ page }) => {
   expect(await extent("blocks")).toBeCloseTo(1, 5);
 
   // A block pulls towards one point, so the whole thing narrows.
+  await openGroup(page, "blocks");
   await page.locator("[data-test=blocks-shrink]").fill("0.5");
   await page.waitForFunction(() => {
     const p = (window as any).__gecko.surface("blocks").positions as number[];
@@ -337,6 +370,7 @@ test("each kind of cell shrinks towards its own centre", async ({ page }) => {
 
   // A face pulls towards its own centre, which is in its own plane: the cube
   // keeps its width while every face shrinks inside it.
+  await openGroup(page, "faces");
   await page.locator("[data-test=faces-shrink]").fill("0.5");
   await page.waitForFunction(
     () => (window as any).__gecko.display().faces.shrink === 0.5,
@@ -349,7 +383,9 @@ test("the display settings survive a reload", async ({ page }) => {
   const errors = await boot(page);
   await openDrawer(page);
   await page.locator("[data-test=blocks-visible]").check();
+  await openGroup(page, "faces");
   await page.locator("[data-test=faces-id]").check();
+  await openGroup(page, "edges");
   await page.locator("[data-test=edges-shrink]").fill("0.8");
   await page.waitForFunction(
     () => (window as any).__gecko.display().edges.shrink === 0.8,
@@ -383,6 +419,7 @@ test("every handle stays grabbable through an opaque surface", async ({ page }) 
   await page.locator("#cube").click();
   await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
   await page.locator("[data-test=blocks-visible]").check();
+  await openGroup(page, "faces");
   await page.locator("[data-test=faces-alpha]").fill("1");
   await page.evaluate(() => (window as any).__gecko.settled());
 
@@ -698,7 +735,7 @@ test("the interface folds away, and remembers that it did", async ({ page }) => 
 
   await page.keyboard.press("Tab");
   await expect(page.locator("#drawer")).toBeVisible();
-  await expect(page.locator("#settings")).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("#display")).toHaveAttribute("aria-expanded", "true");
 
   // Everything away, toolbar and readout included.
   await page.keyboard.press("Shift+Tab");
@@ -735,7 +772,7 @@ test("typing in a field is typing, not a shortcut", async ({ page }) => {
   // The colour inputs and the sliders take characters and arrow keys. A
   // slider that jumped to a new view instead of nudging would be unusable.
   const errors = await boot(page);
-  await openDrawer(page);
+  await openGroup(page, "faces");
   await page.locator("[data-test=faces-alpha]").focus();
   await page.keyboard.press("c");
   expect(await page.evaluate(() => (window as any).__gecko.counts().nodes)).toBe(0);
@@ -1132,7 +1169,7 @@ test("the nearer of two translucent blocks is the one you see", async ({ page })
   // and leaves the triangles inside one in the order they were built, so
   // the same cell wins the blend from either side.
   const errors = await boot(page);
-  await openDrawer(page);
+  await openGroup(page, "faces");
   await page.locator("[data-test=faces-id]").check();
   await page.locator("[data-test=faces-alpha]").fill("0.6");
 
@@ -1342,6 +1379,7 @@ test("each geometry group is hidden, coloured and faded on its own", async ({ pa
   expect(await count("curves")).toBe(4);
 
   // One colour for the lot, then one per tag.
+  await openGroup(page, "curves");
   await page.locator('[data-test="curves-uniform"]').check();
   const uniform = await look("curves", 11);
   expect((await look("curves", 12))!.colour).toBe(uniform!.colour);
@@ -1349,6 +1387,7 @@ test("each geometry group is hidden, coloured and faded on its own", async ({ pa
   expect((await look("curves", 12))!.colour).not.toBe((await look("curves", 11))!.colour);
 
   // And opacity, per group.
+  await openGroup(page, "surfaces");
   await page.locator('[data-test="surfaces-alpha"]').fill("0.2");
   expect((await look("surfaces", 1))!.alpha).toBeCloseTo(0.2, 2);
   expect((await look("curves", 11))!.alpha).toBeCloseTo(1, 2);
@@ -1671,22 +1710,22 @@ test("a box that cannot be built says why and builds nothing", async ({ page }) 
 });
 
 test("each group of cells is its own box, not nested inside the last", async ({ page }) => {
-  // An unclosed `<fieldset>` is not a parse error — it is a fieldset that
-  // swallows whatever comes after it. The three boxes came out one inside
-  // the next, which reads as though edges were part of blocks were part of
+  // An unclosed element is not a parse error — it is an element that
+  // swallows whatever comes after it. The boxes came out one inside the
+  // next, which reads as though edges were part of blocks were part of
   // faces, and they are nothing of the sort.
   const errors = await boot(page);
   await openDrawer(page);
 
   // Blocks, faces, edges and nodes.
-  await expect(page.locator("#layers > fieldset")).toHaveCount(4);
-  expect(await page.locator("#layers fieldset fieldset").count()).toBe(0);
-  await expect(page.locator("#geometry > fieldset")).toHaveCount(3);
-  expect(await page.locator("#geometry fieldset fieldset").count()).toBe(0);
+  await expect(page.locator("#layers > .layer")).toHaveCount(4);
+  expect(await page.locator("#layers .layer .layer").count()).toBe(0);
+  await expect(page.locator("#geometry > .layer")).toHaveCount(3);
+  expect(await page.locator("#geometry .layer .layer").count()).toBe(0);
 
   // Side by side, so they all start at the same place on screen.
   const lefts = await page
-    .locator("#layers > fieldset")
+    .locator("#layers > .layer")
     .evaluateAll((all) => all.map((f) => f.getBoundingClientRect().left));
   expect(new Set(lefts).size).toBe(1);
   expect(errors).toEqual([]);
@@ -1991,6 +2030,7 @@ test("nodes, edges and faces each take three colourings", async ({ page }) => {
 
   // And choosing one is remembered, like every other thing about how it
   // looks.
+  await openGroup(page, "nodes");
   await page.locator('[data-test="nodes-class"]').check();
   expect(await page.evaluate(() => (window as any).__gecko.prefs().nodes.colouring)).toBe("class");
   await page.reload();
@@ -2107,7 +2147,7 @@ test("a cut is taken back whole, and the names come back with it", async ({ page
 
 test("how far back it goes is a setting, and it is remembered", async ({ page }) => {
   const errors = await boot(page);
-  await openDrawer(page);
+  await openParams(page);
   await expect(page.locator("[data-test=history-steps]")).toHaveText("5");
 
   // One step, and then two changes: only the second can be taken back.
@@ -2126,7 +2166,121 @@ test("how far back it goes is a setting, and it is remembered", async ({ page })
   // And the setting outlives the page, like every other preference.
   await page.reload();
   await page.waitForSelector("body[data-ready='1']");
-  await openDrawer(page);
+  await openParams(page);
   await expect(page.locator("[data-test=history-steps]")).toHaveText("1");
+  expect(errors).toEqual([]);
+});
+
+test("the drawer folds, and what is open is remembered", async ({ page }) => {
+  // Seven groups of controls unfolded at once is a drawer you scroll rather
+  // than read. Folded, the whole of it fits in the window.
+  const errors = await boot(page);
+  await openDrawer(page);
+
+  const open = (id: string) =>
+    page.locator(`#${id}`).evaluate((d) => (d as HTMLDetailsElement).open);
+  expect(await open("sec-cells")).toBe(true);
+  expect(await open("sec-geometry")).toBe(true);
+  expect(await open("sec-colours")).toBe(false);
+  expect(await open("grp-faces")).toBe(false);
+
+  // It fits: no scrolling, which is the whole complaint this answers.
+  const fits = await page
+    .locator("#drawer")
+    .evaluate((d) => d.scrollHeight <= d.clientHeight + 1);
+  expect(fits, "the folded drawer still scrolls").toBe(true);
+
+  // A folded group still says what it is: what you opened it to find out.
+  await expect(page.locator("#grp-faces .digest")).toHaveText("uniform · 35%");
+  await expect(page.locator("#grp-blocks .digest")).toHaveText("hidden");
+
+  // Its show box is on that line, and toggling it does not unfold anything.
+  await page.locator("[data-test=blocks-visible]").check();
+  expect(await open("grp-blocks")).toBe(false);
+  await expect(page.locator("#grp-blocks .digest")).toHaveText("id · 55%");
+
+  // One group of a band at a time: opening the next closes the last.
+  await openGroup(page, "faces");
+  await openGroup(page, "edges");
+  expect(await open("grp-faces")).toBe(false);
+
+  // And the folds outlive the page, like every other preference. Written
+  // when the browser says a fold moved — `toggle` is a queued task, not
+  // part of the click — so the preference is waited for rather than
+  // assumed to be there already.
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__gecko.prefs().panels))
+    .toContain("grp-edges");
+  await page.reload();
+  await page.waitForSelector("body[data-ready='1']");
+  await openDrawer(page);
+  expect(await open("grp-edges")).toBe(true);
+  expect(await open("grp-faces")).toBe(false);
+  expect(errors).toEqual([]);
+});
+
+test("the two panels are one at a time, and the cog has its own key", async ({ page }) => {
+  // They are drawn in the same place: two sheets of glass on top of each
+  // other is a bug that looks like a rendering fault.
+  const errors = await boot(page);
+  await page.locator("#display").click();
+  await expect(page.locator("#drawer")).toBeVisible();
+
+  await page.locator("#settings").click();
+  await expect(page.locator("#params")).toBeVisible();
+  await expect(page.locator("#drawer")).toBeHidden();
+  await expect(page.locator("#settings")).toHaveAttribute("aria-expanded", "true");
+
+  await page.keyboard.press("Tab");
+  await expect(page.locator("#drawer")).toBeVisible();
+  await expect(page.locator("#params")).toBeHidden();
+
+  // And the comma is the cog, as it is everywhere else.
+  await page.keyboard.press(",");
+  await expect(page.locator("#params")).toBeVisible();
+  await expect(page.locator("#drawer")).toBeHidden();
+  expect(errors).toEqual([]);
+});
+
+test("the box margin in the settings panel is the one the box is built to", async ({ page }) => {
+  // The kernel's constant is what you get when nobody says; this is
+  // somebody saying, and it has to reach the command.
+  const errors = await boot(page);
+  await openCube(page); // a 2 × 1 × 3 box of a geometry
+  await openParams(page);
+
+  /** How wide the blocking is, on each axis. Rebasing-proof: a difference
+   *  of two positions does not care where the origin went. */
+  const extent = async () => {
+    const names = (await page.evaluate(() => (window as any).__gecko.names())) as number[];
+    const at = await Promise.all(
+      names.map((n) => page.evaluate((m) => (window as any).__gecko.nodePosition(m), n)),
+    );
+    return [0, 1, 2].map((axis) => {
+      const all = (at as number[][]).map((p) => p[axis]);
+      return Math.max(...all) - Math.min(...all);
+    });
+  };
+
+  await page.locator("[data-test=box-margin]").fill("0");
+  await page.locator("[data-test=box-margin]").dispatchEvent("input");
+  await expect(page.locator("[data-test=box-margin-value]")).toHaveText("0%");
+  await page.locator("#box").click();
+  await expect(page.locator("[data-test=blocks]")).toHaveText("1");
+  for (const [axis, want] of [2, 1, 3].entries()) {
+    expect((await extent())[axis]).toBeCloseTo(want, 5);
+  }
+
+  // Half a half-side of room all round: every extent grows by half.
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(page.locator("[data-test=blocks]")).toHaveText("0");
+  await page.locator("[data-test=box-margin]").fill("0.5");
+  await page.locator("[data-test=box-margin]").dispatchEvent("input");
+  await expect(page.locator("[data-test=box-margin-value]")).toHaveText("50%");
+  await page.locator("#box").click();
+  await expect(page.locator("[data-test=blocks]")).toHaveText("1");
+  for (const [axis, want] of [3, 1.5, 4.5].entries()) {
+    expect((await extent())[axis]).toBeCloseTo(want, 5);
+  }
   expect(errors).toEqual([]);
 });

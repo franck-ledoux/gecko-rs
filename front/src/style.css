@@ -85,7 +85,7 @@ body.chrome-hidden #panes { opacity: 0; }
 
 /* --- the settings drawer ------------------------------------------------ */
 
-#drawer {
+#drawer, #params {
   position: fixed; top: 60px; left: 14px; z-index: 2;
   width: 246px; max-height: calc(100vh - 110px); overflow-y: auto; overflow-x: hidden;
   padding: 4px 14px 14px;
@@ -95,13 +95,33 @@ body.chrome-hidden #panes { opacity: 0; }
   opacity: 0; visibility: hidden;
   transition: transform .22s ease, opacity .22s ease, visibility .22s;
 }
-body.drawer-open #drawer { transform: none; opacity: 1; visibility: visible; }
+body.drawer-open #drawer,
+body.params-open #params { transform: none; opacity: 1; visibility: visible; }
 
-#drawer h2 {
+#drawer h2, #params h2, .section > summary {
   margin: 14px 0 6px; font-size: 10px; font-weight: 600; color: var(--dim);
   text-transform: uppercase; letter-spacing: .08em;
 }
-#drawer h2:first-child { margin-top: 10px; }
+#drawer h2:first-child, #params h2:first-child { margin-top: 10px; }
+
+/* --- the folds ---------------------------------------------------------- */
+
+/* A section's title is also its handle. The marker is ours rather than the
+   browser's, so it sits where a title's eye expects it and turns rather
+   than jumping. */
+.section > summary, .layer > summary {
+  cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px;
+}
+.section > summary::-webkit-details-marker,
+.layer > summary::-webkit-details-marker { display: none; }
+.section > summary::before, .layer > summary::before {
+  content: ""; flex: none; width: 0; height: 0;
+  border: 4px solid transparent; border-left-color: currentColor;
+  transition: transform .15s ease; transform-origin: 2px 50%;
+}
+.section[open] > summary::before, .layer[open] > summary::before { transform: rotate(90deg); }
+.section > summary:hover, .layer > summary:hover { color: var(--fg); }
+.section > summary { margin-bottom: 2px; }
 
 button { font: inherit; }
 .row { display: flex; gap: 6px; margin: 6px 0; }
@@ -112,25 +132,38 @@ button { font: inherit; }
 .row > button:hover { color: var(--accent); }
 .check { display: block; margin: 7px 0; color: var(--dim); font-size: 12px; }
 .swatch { display: flex; align-items: center; justify-content: space-between;
-          margin: 5px 0; font-size: 12px; color: var(--dim); }
+          margin: 3px 0; font-size: 12px; color: var(--dim); }
 .swatch input[type=color] { width: 40px; height: 20px; padding: 0; cursor: pointer;
           background: none; border: 1px solid var(--line); border-radius: 5px; }
 
-/* One fieldset per group of cells. The legend carries the name, so a row needs
-   no label of its own and the controls line up across groups. */
-.layer { margin: 8px 0 0; padding: 6px 9px 9px; border: 1px solid var(--line);
-         border-radius: 8px;
-         /* A fieldset will not shrink below its widest content on its own —
-            `min-inline-size: min-content` is in the user-agent stylesheet —
-            and the drawer would scroll sideways because of it. */
-         min-inline-size: 0; }
-.layer legend { padding: 0 5px; font-size: 10px; color: var(--dim);
-                text-transform: uppercase; letter-spacing: .07em; }
-.layer .check, .layer .row { margin: 4px 0; }
-.mode { flex: 1; color: var(--dim); font-size: 12px; white-space: nowrap; }
-.slider { display: flex; align-items: center; gap: 8px; margin: 6px 0;
+/* One box per group of cells, folded to a single line. That line carries
+   everything you reach for without thinking — is it shown, and what does it
+   look like now — and the controls are a turn of the triangle away. */
+.layer { margin: 3px 0 0; padding: 3px 8px; border: 1px solid var(--line);
+         border-radius: 8px; min-inline-size: 0; }
+.layer[open] { padding-bottom: 7px; }
+.layer > summary { font-size: 11px; color: var(--dim); text-transform: uppercase;
+                   letter-spacing: .06em; padding: 3px 0; }
+.layer > summary .name { flex: 1; }
+/* What the group looks like, said in the line that stands for it. Gone once
+   it is open: the controls below are then the better answer. */
+.layer .digest { font-size: 10px; letter-spacing: 0; text-transform: none;
+                 opacity: .75; }
+.layer[open] .digest { display: none; }
+/* The checkbox in a summary toggles the group, not the fold — see main.ts. */
+.layer > summary .check { margin: 0; display: flex; }
+.layer > summary input { margin: 0; }
+.layer .check, .layer .row { margin: 3px 0; }
+.layer .row.modes { gap: 2px; }
+.mode { flex: none; color: var(--dim); font-size: 12px; white-space: nowrap; }
+.mode + .mode { margin-left: 9px; }
+.mode input { margin-right: 2px; }
+.slider { display: flex; align-items: center; gap: 8px; margin: 4px 0;
           font-size: 12px; color: var(--dim); }
-.slider span { flex: none; width: 56px; }
+.slider span { flex: none; width: 50px; }
+/* The settings panel's labels are words rather than one word, and it has no
+   column of its own to line up with. */
+#params .slider span { width: 64px; }
 .slider input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); }
 /* A slider that stands for a count says which count it is standing on. */
 .slider b { flex: none; min-width: 15px; text-align: right; color: var(--fg);

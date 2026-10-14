@@ -999,3 +999,22 @@ def test_a_cut_is_taken_back_whole():
     # buys, and what a renumbering rebuild would lose.
     s.split_sheet(edge, 0.5)
     assert cells(s)["blocks"] == 2
+
+
+def test_how_near_a_dropped_node_has_to_come_is_the_gestures_own(tmp_path):
+    path = tmp_path / "box.msh"
+    path.write_text(BOX_MSH)
+    s = gecko.Session()
+    s.load_geometry(str(path))
+    s.box_geometry(margin=0.0)
+    node = s.nodes[0]["id"]
+
+    # Hard against the corner at the origin, and refused the geometry.
+    s.move_node(node, [0.01, 0.01, 0.01], snap=0)
+    assert next(n for n in s.nodes if n["id"] == node)["on"] is None
+
+    # The same drop, with the usual reach, is taken by that corner.
+    s.move_node(node, [0.01, 0.01, 0.01])
+    landed = next(n for n in s.nodes if n["id"] == node)
+    assert landed["on"] == {"dim": 0, "tag": 101}
+    assert landed["pos"] == [0.0, 0.0, 0.0]

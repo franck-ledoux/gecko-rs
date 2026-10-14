@@ -55,7 +55,7 @@ Every node, as `{"id": …, "pos": [x, y, z]}`.
 `on` is what the node is [classified](classification.md) on, and `frozen`
 whether it may move at all.
 
-#### `move_node(node, to)`
+#### `move_node(node, to, snap=0.02)`
 
 Move one node. `node` is the **`id` from `nodes`**, not a position in that list.
 
@@ -63,6 +63,13 @@ Move one node. `node` is the **`id` from `nodes`**, not a position in that list.
 n = s.nodes[0]
 s.move_node(n["id"], [0.5, -0.2, 0.0])
 ```
+
+A node already classified **slides on its own entity**: the point is projected
+onto it first, so one on a curve stays on that curve however far you ask it to
+go. One that is not looks around when it lands, and an entity within `snap` —
+a share of the geometry's own size — takes it. `snap=0` refuses the geometry
+altogether, which is how you put a node near the model and have it stay where
+you put it.
 
 !!! warning "Use the id, not the index"
     The list is reordered by edits; the id is not. A name that no node answers

@@ -1,7 +1,7 @@
 //! The door, and the bytes that come out of it.
 
 use gecko_cmd::view::{HEADER, MAGIC};
-use gecko_cmd::{Command, Session, SessionError, ViewBuffer};
+use gecko_cmd::{Command, Session, SessionError, ViewBuffer, SNAP_SHARE};
 
 const UNIT_CUBE: [[f64; 3]; 8] = [
     [0.0, 0.0, 0.0],
@@ -282,6 +282,7 @@ fn moving_a_node_moves_what_the_view_said_it_would() {
         .apply(Command::MoveNode {
             node: name,
             to: [9.0, 8.0, 7.0],
+            snap: SNAP_SHARE,
         })
         .unwrap();
     assert!(out.view_changed);
@@ -361,6 +362,7 @@ fn the_view_stays_put_when_a_node_moves() {
     s.apply(Command::MoveNode {
         node: name,
         to: [0.3, -0.4, 0.2],
+        snap: SNAP_SHARE,
     })
     .unwrap();
 

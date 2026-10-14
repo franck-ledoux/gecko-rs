@@ -109,12 +109,23 @@
         </svg>
       </button>
       <span class="sep"></span>
-      <button id="settings" title="Settings — Tab" aria-label="Settings" aria-expanded="false">
+      <!-- Two panels, and the pair of icons says which is which: sliders
+           for how the model is drawn, a cog for what the operations do. -->
+      <button id="display" title="Display — Tab" aria-label="Display" aria-expanded="false">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M3.5 7h17M3.5 12h17M3.5 17h17" />
           <circle cx="9" cy="7" r="2.1" />
           <circle cx="15.5" cy="12" r="2.1" />
           <circle cx="7.5" cy="17" r="2.1" />
+        </svg>
+      </button>
+      <button id="settings" title="Settings — ," aria-label="Settings" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="5.6" />
+          <circle cx="12" cy="12" r="2.4" class="dot" />
+          <path
+            d="M17.6 12h2.7M15.96 8.04l1.91-1.91M12 6.4V3.7M8.04 8.04 6.13 6.13M6.4 12H3.7M8.04 15.96l-1.91 1.91M12 17.6v2.7M15.96 15.96l1.91 1.91"
+          />
         </svg>
       </button>
       <button id="help-open" title="Shortcuts — H" aria-label="Shortcuts">
@@ -126,20 +137,61 @@
       </button>
     </nav>
 
-    <aside id="drawer" aria-label="Settings">
-      <h2>Colours</h2>
-      <div id="swatches"></div>
-      <div class="row">
-        <button id="preset-dark">Dark</button>
-        <button id="preset-light">Light</button>
-      </div>
-      <label class="check"><input id="show-axes" type="checkbox" checked /> X/Y/Z triad</label>
+    <!-- How the model is drawn. Every section folds, and what is open is
+         remembered: seven groups of controls unfolded at once is a drawer
+         you scroll rather than read. -->
+    <aside id="drawer" aria-label="Display">
+      <details class="section" id="sec-cells">
+        <summary>Cells</summary>
+        <div id="layers"></div>
+      </details>
 
-      <h2>Cells</h2>
-      <div id="layers"></div>
+      <details class="section" id="sec-geometry">
+        <summary>Geometry</summary>
+        <div id="geometry"></div>
+      </details>
 
-      <h2>Geometry</h2>
-      <div id="geometry"></div>
+      <details class="section" id="sec-colours">
+        <summary>Colours</summary>
+        <div id="swatches"></div>
+        <div class="row">
+          <button id="preset-dark">Dark</button>
+          <button id="preset-light">Light</button>
+        </div>
+        <label class="check"><input id="show-axes" type="checkbox" checked /> X/Y/Z triad</label>
+      </details>
+
+      <details class="section" id="sec-picture">
+        <summary>Picture</summary>
+        <label class="slider"
+          ><span>size</span>
+          <select id="shot-scale" data-test="shot-scale">
+            <option value="1">1× — as on screen</option>
+            <option value="2">2× — for a figure</option>
+            <option value="4">4×</option>
+          </select>
+        </label>
+        <label class="check"
+          ><input id="shot-transparent" type="checkbox" data-test="shot-transparent" /> transparent
+          background</label
+        >
+      </details>
+    </aside>
+
+    <!-- What the operations do, as against how they look. Numbers that go
+         into the next command rather than into the scene. -->
+    <aside id="params" aria-label="Settings">
+      <h2>Operations</h2>
+      <label class="slider"
+        ><span>box margin</span>
+        <input id="box-margin" type="range" min="0" max="0.5" step="0.01" data-test="box-margin" />
+        <b id="box-margin-n" data-test="box-margin-value">10%</b>
+      </label>
+      <label class="slider"
+        ><span>snap</span>
+        <input id="snap" type="range" min="0" max="0.1" step="0.005" data-test="snap" />
+        <b id="snap-n" data-test="snap-value">2%</b>
+      </label>
 
       <h2>History</h2>
       <label class="slider"
@@ -147,20 +199,6 @@
         <input id="history" type="range" min="0" max="20" step="1" data-test="history" />
         <b id="history-n" data-test="history-steps">5</b>
       </label>
-
-      <h2>Picture</h2>
-      <label class="slider"
-        ><span>size</span>
-        <select id="shot-scale" data-test="shot-scale">
-          <option value="1">1× — as on screen</option>
-          <option value="2">2× — for a figure</option>
-          <option value="4">4×</option>
-        </select>
-      </label>
-      <label class="check"
-        ><input id="shot-transparent" type="checkbox" data-test="shot-transparent" /> transparent
-        background</label
-      >
     </aside>
 
     <!-- The file picker a browser insists on: a page cannot read a file the

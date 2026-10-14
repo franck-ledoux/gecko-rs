@@ -73,14 +73,14 @@ faces and blocks:
 | ----------- | ----------------------------------------------------- |
 | **show**    | draw this group at all                                |
 | **uniform** | one colour for the whole group, taken from its swatch |
-| **by id**   | a colour per entity, from its gmsh tag                |
+| **id**      | a colour per entity, from its gmsh tag                |
 | **opacity** | transparency, per group                               |
 
 There is no **shrink**. A geometry is not a decomposition you can explode: its
 surfaces meet along the very curves also on screen, and pulling them apart
 would only break that.
 
-Surfaces come up **by id** and translucent by default, because telling one CAD
+Surfaces come up coloured **by id** and translucent by default, because telling one CAD
 patch from the next is the whole reason the file was read as a model rather
 than as a pile of triangles — and because what goes inside it is the point.
 The geometry's colours are a family of their own, green against the blocking's

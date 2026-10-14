@@ -3,13 +3,38 @@
 Both modes share one viewer, so everything here applies to the static page and
 to a station tab alike.
 
+## Two panels
+
+The toolbar carries two, and they answer two different questions:
+
+- the **sliders** icon, or `Tab`, opens **Display** — everything on this
+  page: what is drawn, in what colour, how far through it you can see;
+- the **cog**, or `,`, opens **Settings** — what the operations *do*: the
+  margin a bounding box leaves, how near a node has to come to be taken by
+  an entity, how many steps of undo. Those are in
+  [The interface](interface.md#the-settings-panel).
+
+Only one is open at a time: they are drawn in the same place.
+
+## Folding
+
+Every section of the display panel folds, and so does every group inside
+**Cells** and **Geometry**. A folded group is one line carrying what you
+reach for without thinking — its **show** box, its name, and a digest of how
+it is drawn right now (`uniform · 35%`, or `hidden`). Open it for the rest.
+
+Within a band only one group is open at a time, so the panel stays the height
+of one group however many there are. **Cells** and **Geometry** start
+unfolded, **Colours** and **Picture** put away, and what you leave open is
+remembered like every other preference.
+
 ## Colours
 
 The drawer's **Colours** section has one swatch per colourable thing —
 background, nodes, edges, faces, blocks, and the geometry's corners, curves
 and surfaces — and two presets, **Dark** and
 **Light** (`D` swaps them). The face and block swatches are what the
-**uniform** mode below uses; in **by id** mode they are ignored. The light
+**uniform** mode below uses; in **id** mode they are ignored. The light
 preset
 exists because "change the background" nearly always means "I need a light one
 for a figure", and setting three swatches by hand to get there is tedious.
@@ -31,14 +56,14 @@ no new markup.
 Each has its own box in the panel, and the two are independent: either, both,
 or neither.
 
-| Control                | What it does                                                                                              |
-| ---------------------- | --------------------------------------------------------------------------------------------------------- |
-| **show**               | draw this group at all                                                                                    |
-| **uniform**            | one colour for the whole group, taken from its swatch                                                     |
-| **by id**              | a colour per cell, from its stable name                                                                   |
-| **by what it follows** | a colour per kind of geometric entity — see [Classification](classification.md#reading-it-off-the-screen) |
-| **opacity**            | transparency, per group                                                                                   |
-| **shrink**             | pull each cell towards its own centre                                                                     |
+| Control     | What it does                                                                                              |
+| ----------- | --------------------------------------------------------------------------------------------------------- |
+| **show**    | draw this group at all                                                                                    |
+| **uniform** | one colour for the whole group, taken from its swatch                                                     |
+| **id**      | a colour per cell, from its stable name                                                                   |
+| **follows** | a colour per kind of geometric entity — see [Classification](classification.md#reading-it-off-the-screen) |
+| **opacity** | transparency, per group                                                                                   |
+| **shrink**  | pull each cell towards its own centre                                                                     |
 
 Nodes and edges take the three colourings too; nodes are always drawn, so
 that is all their box carries. **Blocks** take only the first two: a block
@@ -128,7 +153,7 @@ Nothing is internal until two blocks are [glued](gluing.md).
 ## The geometry
 
 The three groups a [geometry](geometry.md) is drawn in — surfaces, curves and
-corners — take the same **show / uniform / by id / opacity** controls, and no
+corners — take the same **show / uniform / id / opacity** controls, and no
 shrink. They are on that page rather than this one, because what the tags mean
 is the larger half of the story.
 

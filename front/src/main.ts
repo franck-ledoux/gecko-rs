@@ -17,7 +17,9 @@ import {
   isLight,
   loadPrefs,
   savePrefs,
+  MAX_BOX_MARGIN,
   MAX_HISTORY,
+  MAX_SNAP,
   PRESETS,
   SHOT_SCALES,
   SWATCHES,
@@ -113,7 +115,30 @@ async function boot() {
    *  remember it. Nothing reaches the scene any other way. */
   function redraw() {
     viewer.applyPrefs(prefs);
+    drawDigests();
     savePrefs(prefs);
+  }
+
+  /**
+   * Every folded group's line, back in step with what it stands for.
+   *
+   * Here rather than in each control, and run wherever anything changes:
+   * seven spans is nothing, and a line that says `uniform · 35%` about a
+   * group that is now hidden is worse than no line at all.
+   */
+  function drawDigests() {
+    const say = (group: string, html: string) => {
+      const span = document.querySelector(`#grp-${group} .digest`);
+      if (span) span.outerHTML = html;
+    };
+    for (const { group } of LAYERS) {
+      say(group, digest(prefs[group].colouring, prefs[group].alpha, prefs[group].visible));
+    }
+    say("edges", digest(prefs.edges.colouring, undefined, prefs.edges.visible));
+    say("nodes", digest(prefs.nodes.colouring));
+    for (const group of GEOM_GROUPS) {
+      say(group, digest(prefs[group].colouring, prefs[group].alpha, prefs[group].visible));
+    }
   }
 
   function setTheme(theme: Theme) {
@@ -154,16 +179,48 @@ async function boot() {
     `<input type="range" min="${min}" max="1" step="0.01" value="${value}"` +
     ` data-test="${test}" /></label>`;
 
-  /** The uniform / by id / by what it follows radios for one group. */
+  /** The uniform / id / follows radios for one group, on one line.
+   *
+   *  Short words on purpose: three of them have to fit across a drawer
+   *  246 pixels wide, and "by what it follows" took a line of its own. The
+   *  help card carries the long form, and so does the legend under it. */
   const modes = (group: string, now: Colouring, follows: boolean) => {
     const one = (value: Colouring, text: string) =>
       `<label class="mode"><input type="radio" name="${group}-mode" value="${value}"` +
       ` data-test="${group}-${value}"${now === value ? " checked" : ""} />${text}</label>`;
     return (
-      `<div class="row">${one("uniform", "uniform")}${one("id", "by id")}</div>` +
-      (follows ? `<div class="row">${one("class", "by what it follows")}</div>` : "")
+      `<div class="row modes">${one("uniform", "uniform")}${one("id", "id")}` +
+      (follows ? one("class", "follows") : "") +
+      `</div>`
     );
   };
+
+  /** What a folded group says about itself: hidden, or how it is coloured
+   *  and how far through it you can see. The line that stands for a group
+   *  has to answer the question you opened it to ask. */
+  const digest = (colouring: Colouring, alpha?: number, visible = true) => {
+    if (!visible) return `<span class="digest">hidden</span>`;
+    const how = colouring === "class" ? "follows" : colouring;
+    const seen = alpha === undefined ? "" : ` · ${Math.round(alpha * 100)}%`;
+    return `<span class="digest">${how}${seen}</span>`;
+  };
+
+  /**
+   * The line a group folds to: its own show box, its name, its digest.
+   *
+   * `name` groups the folds of one band, so opening one closes the last —
+   * which is what keeps the drawer the height of one open group however
+   * many groups there are.
+   */
+  const summary = (band: string, group: string, label: string, inside: string, show?: boolean) =>
+    `<details class="layer" name="${band}" id="grp-${group}"${
+      prefs.panels.includes(`grp-${group}`) ? " open" : ""
+    }><summary>` +
+    (show === undefined
+      ? ""
+      : `<label class="check"><input type="checkbox" data-test="${group}-visible"` +
+        `${show ? " checked" : ""} /></label>`) +
+    `<span class="name">${label}</span>${inside}</summary>`;
 
   /** Hook up one group's radios. */
   function wireModes(group: string, set: (value: Colouring) => void) {
@@ -183,9 +240,13 @@ async function boot() {
       LAYERS.map(({ group, label, follows }) => {
         const layer = prefs[group];
         return (
-          `<fieldset class="layer"><legend>${label}</legend>` +
-          `<label class="check"><input type="checkbox" data-test="${group}-visible"` +
-          `${layer.visible ? " checked" : ""} /> show</label>` +
+          summary(
+            "cells",
+            group,
+            label,
+            digest(layer.colouring, layer.alpha, layer.visible),
+            layer.visible,
+          ) +
           modes(group, layer.colouring, follows) +
           slider(`${group}-alpha`, "opacity", 0, layer.alpha) +
           slider(`${group}-shrink`, "shrink", 0.1, layer.shrink) +
@@ -193,22 +254,26 @@ async function boot() {
             ? `<label class="check"><input type="checkbox" data-test="faces-internal"` +
               `${prefs.faces.internal ? " checked" : ""} /> internal faces</label>`
             : "") +
-          // Closed, and it matters: an unclosed fieldset is not a parse
-          // error, it is a fieldset that swallows everything after it.
-          `</fieldset>`
+          // Closed, and it matters: an unclosed element is not a parse
+          // error, it is an element that swallows everything after it.
+          `</details>`
         );
       }).join("") +
-      `<fieldset class="layer"><legend>Edges</legend>` +
-      `<label class="check"><input type="checkbox" data-test="edges-visible"` +
-      `${prefs.edges.visible ? " checked" : ""} /> show</label>` +
+      summary(
+        "cells",
+        "edges",
+        "Edges",
+        digest(prefs.edges.colouring, undefined, prefs.edges.visible),
+        prefs.edges.visible,
+      ) +
       modes("edges", prefs.edges.colouring, true) +
       slider("edges-shrink", "shrink", 0.1, prefs.edges.shrink) +
-      `</fieldset>` +
+      `</details>` +
       // Nodes are always drawn — they are what you grab — so all they
       // carry is how they are coloured.
-      `<fieldset class="layer"><legend>Nodes</legend>` +
+      summary("cells", "nodes", "Nodes", digest(prefs.nodes.colouring)) +
       modes("nodes", prefs.nodes.colouring, true) +
-      `</fieldset>`;
+      `</details>`;
 
     for (const { group } of LAYERS) {
       const find = (test: string) =>
@@ -250,6 +315,7 @@ async function boot() {
       prefs.edges.visible = (e.target as HTMLInputElement).checked;
       redraw();
     });
+    keepFolds("layers");
   }
   drawLayers();
 
@@ -263,17 +329,17 @@ async function boot() {
   function drawGeometryLayers() {
     $("geometry").innerHTML = GEOM_GROUPS.map((group) => {
       const layer = prefs[group];
-      const mode = (value: Colouring, text: string) =>
-        `<label class="mode"><input type="radio" name="${group}-mode" value="${value}"` +
-        ` data-test="${group}-${value}"${layer.colouring === value ? " checked" : ""} />` +
-        `${text}</label>`;
       return (
-        `<fieldset class="layer"><legend>${group}</legend>` +
-        `<label class="check"><input type="checkbox" data-test="${group}-visible"` +
-        `${layer.visible ? " checked" : ""} /> show</label>` +
-        `<div class="row">${mode("uniform", "uniform")}${mode("id", "by id")}</div>` +
+        summary(
+          "geometry",
+          group,
+          group,
+          digest(layer.colouring, layer.alpha, layer.visible),
+          layer.visible,
+        ) +
+        modes(group, layer.colouring, false) +
         slider(`${group}-alpha`, "opacity", 0, layer.alpha) +
-        `</fieldset>`
+        `</details>`
       );
     }).join("");
 
@@ -295,6 +361,7 @@ async function boot() {
         redraw();
       });
     }
+    keepFolds("geometry");
   }
   drawGeometryLayers();
 
@@ -324,6 +391,52 @@ async function boot() {
   });
   $("preset-dark").addEventListener("click", () => setTheme(PRESETS.dark));
   $("preset-light").addEventListener("click", () => setTheme(PRESETS.light));
+
+  // --- the folds ----------------------------------------------------------
+  for (const section of $("drawer").querySelectorAll<HTMLDetailsElement>(".section")) {
+    section.open = prefs.panels.includes(section.id);
+  }
+  // `toggle` does not bubble, so it is caught on the way down. Read off the
+  // DOM rather than tracked: opening one group of a band closes the last,
+  // and asking what is open afterwards cannot get that wrong.
+  $("drawer").addEventListener(
+    "toggle",
+    () => {
+      prefs.panels = [...$("drawer").querySelectorAll("details[open]")].map((d) => d.id);
+      savePrefs(prefs);
+    },
+    true,
+  );
+
+  /** A box in a fold's own line toggles the group, never the fold. */
+  function keepFolds(where: string) {
+    for (const input of $(where).querySelectorAll("summary input")) {
+      input.addEventListener("click", (e) => e.stopPropagation());
+    }
+  }
+
+  // --- what the operations do ---------------------------------------------
+  //
+  // Not state in the kernel: each of these is an argument to the command it
+  // belongs to, sent when that command is sent. The kernel's own constants
+  // stay the default for anyone who sends none — a script, or this page
+  // before anybody touched the slider.
+  const share = (id: string, key: "margin" | "snap", most: number) => {
+    const input = $<HTMLInputElement>(id);
+    input.max = String(most);
+    input.value = String(prefs.box[key]);
+    const show = () => {
+      $(`${id}-n`).textContent = `${+(prefs.box[key] * 100).toFixed(1)}%`;
+    };
+    show();
+    input.addEventListener("input", () => {
+      prefs.box[key] = Number(input.value);
+      show();
+      savePrefs(prefs);
+    });
+  };
+  share("box-margin", "margin", MAX_BOX_MARGIN);
+  share("snap", "snap", MAX_SNAP);
 
   // --- how far back it can go ---------------------------------------------
   const history = $<HTMLInputElement>("history");
@@ -641,7 +754,7 @@ async function boot() {
 
   /** Put the whole blocking on the geometry. */
   async function classify() {
-    const reply = await kernel.apply({ op: "classify" });
+    const reply = await kernel.apply({ op: "classify", tolerance: prefs.box.snap });
     message = reply.message;
     await refresh();
   }
@@ -684,12 +797,13 @@ async function boot() {
   }
 
   async function boxGeometry() {
-    // No margin in the command: the kernel's default is the one definition
-    // of how much room a box leaves, and sending a second copy of it from
-    // here is how the two come to disagree.
+    // The margin is sent, because it is adjustable: the kernel's constant
+    // is what you get when nobody says, and the slider in the settings
+    // panel is somebody saying.
     const reply = await kernel.apply({
       op: "box_geometry",
       surfaces: viewer.surfaceSelection,
+      margin: prefs.box.margin,
     });
     message = reply.message;
     // Framed, because the box is almost always bigger than anything that
@@ -948,9 +1062,24 @@ async function boot() {
    */
   function applyChrome() {
     document.body.classList.toggle("drawer-open", prefs.drawer);
+    document.body.classList.toggle("params-open", prefs.params);
     document.body.classList.toggle("chrome-hidden", !prefs.chrome);
     document.body.dataset.chrome = isLight(prefs.theme.background) ? "light" : "dark";
-    $("settings").setAttribute("aria-expanded", String(prefs.drawer));
+    $("display").setAttribute("aria-expanded", String(prefs.drawer));
+    $("settings").setAttribute("aria-expanded", String(prefs.params));
+  }
+
+  /**
+   * Open one of the two panels, or shut it.
+   *
+   * Never both: they are drawn in the same place, and two sheets of glass
+   * on top of each other is a bug that looks like a rendering fault.
+   */
+  function showPanel(which: "drawer" | "params", open: boolean) {
+    prefs.drawer = which === "drawer" && open;
+    prefs.params = which === "params" && open;
+    applyChrome();
+    savePrefs(prefs);
   }
 
   function showHelp(open: boolean) {
@@ -1005,7 +1134,7 @@ async function boot() {
       swatch(prefs.theme.frozen, "frozen: it does not move") +
       `</div>` +
       `<p class="aside">Nodes, edges and faces take these when their box` +
-      ` in the drawer says <b>by what it follows</b>.</p></section>`
+      ` in the display panel is set to <b>follows</b>.</p></section>`
     );
   }
   drawHelp();
@@ -1076,11 +1205,8 @@ async function boot() {
       savePrefs(prefs);
     },
     theme: () => setTheme(isLight(prefs.theme.background) ? PRESETS.dark : PRESETS.light),
-    drawer: () => {
-      prefs.drawer = !prefs.drawer;
-      applyChrome();
-      savePrefs(prefs);
-    },
+    drawer: () => showPanel("drawer", !prefs.drawer),
+    params: () => showPanel("params", !prefs.params),
     chrome: () => {
       prefs.chrome = !prefs.chrome;
       applyChrome();
@@ -1125,7 +1251,8 @@ async function boot() {
     ["quad", "quad"],
     ["recentre", "recentre"],
     ["shot", "screenshot"],
-    ["settings", "drawer"],
+    ["display", "drawer"],
+    ["settings", "params"],
     ["help-open", "help"],
   ] as [string, Action][]) {
     $(id).addEventListener("click", () => run(action));
@@ -1162,7 +1289,14 @@ async function boot() {
   // the mouse on its own copy; this is where the kernel takes it back over,
   // and the refresh below redraws from what the kernel actually holds.
   viewer.onDrop(async (name, to) => {
-    const reply = await kernel.apply({ op: "move_node", node: name, to });
+    // With the reach the settings panel asks for: a node dropped near an
+    // entity is taken by it, and a reach of nothing means it is not.
+    const reply = await kernel.apply({
+      op: "move_node",
+      node: name,
+      to,
+      snap: prefs.box.snap,
+    });
     message = reply.message;
     await refresh();
   });
@@ -1199,6 +1333,7 @@ async function boot() {
       capture(engine, viewer.camera, options),
     chrome: () => ({
       drawer: document.body.classList.contains("drawer-open"),
+      params: document.body.classList.contains("params-open"),
       hidden: document.body.classList.contains("chrome-hidden"),
       help: document.body.classList.contains("help-open"),
       tone: document.body.dataset.chrome,

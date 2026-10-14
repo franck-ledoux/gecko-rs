@@ -1,6 +1,6 @@
 //! Putting the blocking on the geometry.
 
-use gecko_cmd::{Command, Session, Spot};
+use gecko_cmd::{Command, Session, Spot, SNAP_SHARE};
 use gecko_core::On;
 
 /// The unit cube's boundary, every entity of it named: eight corners, twelve
@@ -273,6 +273,7 @@ fn a_node_on_a_surface_slides_on_it_and_does_not_come_off() {
     s.apply(Command::MoveNode {
         node,
         to: [0.4, 0.6, 5.0],
+        snap: SNAP_SHARE,
     })
     .expect("moved");
     let at = nodes(&s)
@@ -294,6 +295,7 @@ fn a_node_on_a_surface_slides_on_it_and_does_not_come_off() {
     s.apply(Command::MoveNode {
         node,
         to: [50.0, 50.0, 50.0],
+        snap: SNAP_SHARE,
     })
     .unwrap();
     assert_eq!(
@@ -315,6 +317,7 @@ fn a_node_on_a_corner_cannot_move_at_all() {
     s.apply(Command::MoveNode {
         node,
         to: [9.0, 9.0, 9.0],
+        snap: SNAP_SHARE,
     })
     .unwrap();
     let at = nodes(&s)
@@ -350,6 +353,7 @@ fn an_unclassified_node_dropped_near_the_model_takes_hold_of_it() {
     s.apply(Command::MoveNode {
         node,
         to: [0.5, 0.5, 0.001],
+        snap: SNAP_SHARE,
     })
     .unwrap();
     let found = nodes(&s).into_iter().find(|n| n["id"] == node).unwrap();
@@ -362,6 +366,7 @@ fn an_unclassified_node_dropped_near_the_model_takes_hold_of_it() {
     s.apply(Command::MoveNode {
         node: other,
         to: [40.0, 40.0, 40.0],
+        snap: SNAP_SHARE,
     })
     .unwrap();
     let found = nodes(&s).into_iter().find(|n| n["id"] == other).unwrap();
@@ -382,6 +387,7 @@ fn a_frozen_node_is_left_out_of_everything() {
         .apply(Command::MoveNode {
             node,
             to: [5.0, 5.0, 5.0],
+            snap: SNAP_SHARE,
         })
         .expect_err("frozen");
     assert!(refused.to_string().contains("frozen"), "{refused}");
@@ -801,4 +807,41 @@ fn a_cut_across_a_surface_stays_on_that_surface() {
             "the node was pulled off the lid, to {p:?}"
         );
     }
+}
+
+#[test]
+fn how_near_a_dropped_node_has_to_come_is_the_gesture_s_own() {
+    // The reach is on the command, not on the session: dropping a node near
+    // a corner is a different act from dragging one past it, and the thing
+    // holding the mouse is what knows which it was.
+    let mut s = on_the_box();
+    let node = nodes(&s)[0]["id"].as_u64().unwrap() as u32;
+
+    // Within a fiftieth of the model of the corner at the origin, and
+    // refused the geometry entirely.
+    s.apply(Command::MoveNode {
+        node,
+        to: [0.01, 0.01, 0.01],
+        snap: 0.0,
+    })
+    .unwrap();
+    assert!(
+        nodes(&s).into_iter().find(|n| n["id"] == node).unwrap()["on"].is_null(),
+        "nothing should be in reach of nothing",
+    );
+
+    // The same drop, with the usual reach, is taken by that corner.
+    s.apply(Command::MoveNode {
+        node,
+        to: [0.01, 0.01, 0.01],
+        snap: SNAP_SHARE,
+    })
+    .unwrap();
+    let landed = nodes(&s).into_iter().find(|n| n["id"] == node).unwrap();
+    assert_eq!(landed["on"]["dim"], 0, "{landed}");
+    assert_eq!(
+        landed["pos"],
+        serde_json::json!([0.0, 0.0, 0.0]),
+        "{landed}"
+    );
 }

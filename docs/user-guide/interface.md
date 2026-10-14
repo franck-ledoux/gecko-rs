@@ -9,8 +9,10 @@ away.
 glue, remove, recentre, save a picture, settings, shortcuts. Icons with a
 tooltip each, and a key each.
 
-**A settings drawer**, shut unless asked for — `Tab`, or the sliders button.
-Colours, cells, and how a saved picture comes out. Its state is remembered.
+**Two panels**, shut unless asked for, and never both at once — they are
+drawn in the same place. The sliders button, or `Tab`, opens **Display**:
+colours, cells, geometry, and how a saved picture comes out. The cog, or `,`,
+opens **Settings**: what the operations do. Both remember their state.
 
 **A readout**, bottom left: the counts, which kind of thing the mouse is
 aimed at, and whatever just happened.
@@ -46,7 +48,8 @@ does. Any key dismisses it.
 | `1` `2` `3` | faces, blocks, edges                          |
 | `4` `5` `6` | geometric surfaces, curves, corners           |
 | `I`         | internal faces                                |
-| `Tab`       | settings                                      |
+| `Tab`       | display: colours, cells, geometry             |
+| `,`         | settings: what the operations do              |
 | `⇧Tab`      | hide everything                               |
 | `S`         | save a picture                                |
 | `H` `?`     | the card                                      |
@@ -72,6 +75,21 @@ everybody already knows. Bare `Z` is a view down the Z axis and stays one.
     produces `&`. Those three are matched by physical position instead, so
     the card stays true.
 
+## The settings panel
+
+The cog, or `,`. Three numbers, and each one is an **argument to the command
+it belongs to** rather than something the kernel is holding: the kernel's own
+constant is what you get when nobody says, and these are somebody saying.
+
+| Setting        | What it changes                                                                                                                                                                                       |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **box margin** | how much room a bounding box leaves round the geometry, as a share of each half-side. 0 rests it exactly on the model, 10% is the default and the C++'s                                               |
+| **snap**       | how near a node has to come to a geometric entity to be taken by it, as a share of the geometry's own size. Used by `K` and by a node you drop by hand; 0 means a dropped node stays where you put it |
+| **steps**      | how far back `⌘Z` can go — see below                                                                                                                                                                  |
+
+Both shares are of the model rather than lengths, because a tolerance in
+millimetres is right for exactly one geometry.
+
 ## Going back
 
 `⌘Z`, or the arrow in the toolbar, puts the block structure back the way it
@@ -79,7 +97,7 @@ was before the last thing that changed it. The button is greyed out when
 there is nothing to go back to, so the history is something you can see
 rather than something you find out by pressing.
 
-Five steps by default, and **steps** under **History** in the drawer
+Five steps by default, and **steps** under **History** in the settings panel
 sets it anywhere from 0 to 20. Shortening it throws the oldest states away
 there and then.
 

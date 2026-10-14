@@ -40,7 +40,7 @@ import {
   paneViewport,
   worldSizeForPixelsOrtho,
 } from "../../src/panes";
-import { isLight, loadPrefs, SHOT_SCALES } from "../../src/theme";
+import { isLight, loadPrefs, MAX_BOX_MARGIN, SHOT_SCALES } from "../../src/theme";
 import { actionFor, ACTIONS, helpRows, SHORTCUTS } from "../../src/shortcuts";
 import { dataUrlToBlob, shotName } from "../../src/capture";
 import type { View } from "../../src/decode";
@@ -979,6 +979,24 @@ describe("preferences that outlive a version", () => {
     expect(prefs.faces.shrink).toBe(0);
   });
 
+  it("clamps the two shares to a ceiling of their own", () => {
+    // Not fractions of one, so the usual clamp is the wrong one: a snap of
+    // 80% of the model would take every node to the nearest anything.
+    store.set("gecko.view", JSON.stringify({ box: { margin: 9, snap: -1 } }));
+    const prefs = loadPrefs();
+    expect(prefs.box.margin).toBe(MAX_BOX_MARGIN);
+    expect(prefs.box.snap).toBe(0);
+  });
+
+  it("keeps the folds that were open, and ignores a name it does not know", () => {
+    store.set("gecko.view", JSON.stringify({ panels: ["sec-colours", "grp-faces", 7] }));
+    // Not checked against a list: a fold added later would need a migration
+    // for nothing, and an id nobody recognises is simply not on screen.
+    expect(loadPrefs().panels).toEqual(["sec-colours", "grp-faces"]);
+    store.set("gecko.view", JSON.stringify({ panels: "all of them" }));
+    expect(loadPrefs().panels).toEqual(DEFAULTS.panels);
+  });
+
   it("survives nonsense in storage", () => {
     store.set("gecko.view", "{ not json");
     expect(loadPrefs()).toEqual(DEFAULTS);
@@ -1303,6 +1321,13 @@ describe("the keyboard", () => {
       expect(press({ key: "s", code: "KeyS", [held]: true })).toBeNull();
     }
     expect(press({ key: "s", code: "KeyS" })).toBe("screenshot");
+  });
+
+  it("has a key for each of the two panels", () => {
+    // They are two different questions — how it is drawn, and what the
+    // operations do — so they are two panels and two keys.
+    expect(press({ key: "Tab", code: "Tab" })).toBe("drawer");
+    expect(press({ key: ",", code: "Comma" })).toBe("params");
   });
 
   it("takes ⌘Z and ctrl Z, and leaves bare Z to the view", () => {
