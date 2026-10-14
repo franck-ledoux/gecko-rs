@@ -103,6 +103,16 @@ pub enum Command {
     MoveNode {
         node: u32,
         to: [f64; 3],
+        /// Nodes that come along, by the same offset.
+        ///
+        /// What a drag does when several handles are picked: one of them
+        /// follows the pointer and the rest keep station with it. The
+        /// offset is the one that was **asked for** — `to` less where
+        /// `node` was — so what each of them does with it is its own
+        /// business: a node on a curve slides along that curve, a node on
+        /// nothing goes where it is put, and a frozen one stays.
+        #[serde(default)]
+        carrying: Vec<u32>,
         /// How near an unclassified node has to come to a geometric entity
         /// to be taken by it, as a share of the geometry's own size.
         ///
@@ -424,13 +434,70 @@ impl Session {
                 }
                 self.add(cube_corners(origin, size))
             }
-            Command::MoveNode { node, to, snap } => {
+            Command::MoveNode {
+                node,
+                to,
+                carrying,
+                snap,
+            } => {
                 let node = CellId::from_raw(node);
+                // The offset is read before anything moves, and from where
+                // the node **is** rather than where it ends up: the dragged
+                // node may be on a curve and so land short of the point
+                // asked for, and the others would then all move by that
+                // shortfall rather than by the gesture.
+                let was = self
+                    .blocking
+                    .node_by_id(node)
+                    .and_then(|v| self.blocking.position(v))
+                    .ok_or(BlockingError::NoSuchNode(node))?;
+                let by = [to[0] - was[0], to[1] - was[1], to[2] - was[2]];
+
+                let others = if carrying.is_empty() {
+                    Vec::new()
+                } else {
+                    self.named(&carrying)?
+                };
                 let landed = self.move_node(node, to, snap)?;
+
+                // Frozen ones are left where they are rather than refusing
+                // the gesture: not moving is what frozen *means*, and the
+                // other nodes have nothing to do with it. The one being
+                // dragged is a different matter — it is refused, because
+                // you grabbed it and are owed an answer.
+                let mut moved = 1;
+                let mut held = 0;
+                for other in others.iter().filter(|o| **o != node) {
+                    if self.blocking.is_frozen(*other) {
+                        held += 1;
+                        continue;
+                    }
+                    let Some(at) = self
+                        .blocking
+                        .node_by_id(*other)
+                        .and_then(|v| self.blocking.position(v))
+                    else {
+                        continue;
+                    };
+                    self.move_node(*other, [at[0] + by[0], at[1] + by[1], at[2] + by[2]], snap)?;
+                    moved += 1;
+                }
+
                 Ok(Outcome {
-                    message: match self.blocking.node_class(node) {
-                        Some(on) => format!("node {node:?} moved along {}", name_of(on)),
-                        None => format!("node {node:?} moved to {landed:?}"),
+                    message: if moved + held > 1 {
+                        format!(
+                            "{moved} node{} moved{}",
+                            plural(moved),
+                            match held {
+                                0 => String::new(),
+                                n => format!(", {n} frozen and left"),
+                            }
+                        )
+                    } else {
+                        match self.blocking.node_class(node) {
+                            Some(on) => format!("node {node:?} moved along {}", name_of(on)),
+                            None => format!("node {node:?} moved to {landed:?}"),
+                        }
                     },
                     view_changed: true,
                 })

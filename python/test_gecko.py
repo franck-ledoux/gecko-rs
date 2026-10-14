@@ -1048,3 +1048,25 @@ def test_several_nodes_go_onto_one_entity_at_once(tmp_path):
     s.freeze_node(bottom[0])
     s.freeze_node(bottom[1:])
     assert s.stats["classified"]["frozen"] == 4
+
+
+def test_a_move_can_carry_the_other_nodes_with_it():
+    s = gecko.Session()
+    s.create_cube()
+    before = {n["id"]: n["pos"] for n in s.nodes}
+    ids = sorted(before)[:3]
+
+    # The first is put somewhere; the other two come by the same offset.
+    target = [before[ids[0]][0] + 1.0, before[ids[0]][1], before[ids[0]][2]]
+    assert "3 nodes moved" in s.move_node(ids[0], target, carrying=ids)
+
+    after = {n["id"]: n["pos"] for n in s.nodes}
+    for i in ids:
+        assert after[i][0] == pytest.approx(before[i][0] + 1.0)
+        assert after[i][1:] == pytest.approx(before[i][1:])
+    for i in set(before) - set(ids):
+        assert after[i] == before[i]
+
+    # One gesture, one command, one step back.
+    s.undo()
+    assert {n["id"]: n["pos"] for n in s.nodes} == before

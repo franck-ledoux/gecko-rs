@@ -84,7 +84,12 @@ export interface Pick {
 }
 
 /** Where a dragged node was let go, in model coordinates. */
-export type Drop = (name: number, to: [number, number, number]) => void;
+export type Drop = (
+  name: number,
+  to: [number, number, number],
+  /** The other picked nodes, which came along by the same offset. */
+  carrying: number[],
+) => void;
 
 /** How many pixels across a node handle should be, whatever the zoom. */
 export const HANDLE_PIXELS = 11;
@@ -1501,10 +1506,34 @@ export class Viewer {
     sphere.addBehavior(drag);
     this.setDragPlane(sphere);
     let from = sphere.position.clone();
+    /** The other picked handles and where each of them started, while a
+     *  drag that takes them along is running. */
+    let carried: { mesh: Mesh; index: number; from: Vector3 }[] = [];
     drag.onDragStartObservable.add(() => {
       from = sphere.position.clone();
+      // Picked handles come along; one that is not picked moves alone,
+      // and leaves whatever is picked where it is. Decided at the start of
+      // the gesture, so the selection cannot change under it.
+      const picked = this.pickedNodes;
+      carried =
+        picked.length > 1 && picked.includes(sphere.metadata.name as number)
+          ? this.nodes
+              .filter((m) => m !== sphere && picked.includes(m.metadata.name as number))
+              .map((mesh) => ({
+                mesh,
+                index: mesh.metadata.index as number,
+                from: mesh.position.clone(),
+              }))
+          : [];
     });
-    drag.onDragObservable.add(() => this.preview(index, sphere.position));
+    drag.onDragObservable.add(() => {
+      const by = sphere.position.subtract(from);
+      this.preview(index, sphere.position);
+      for (const other of carried) {
+        other.mesh.position.copyFrom(other.from.add(by));
+        this.preview(other.index, other.mesh.position);
+      }
+    });
     drag.onDragEndObservable.add(() => {
       const p = sphere.position;
       // A press and release on the spot is a click, not a move. Without
@@ -1517,7 +1546,9 @@ export class Viewer {
         p.y + this.centre[1],
         p.z + this.centre[2],
       ];
-      this.dropped.forEach((listener) => listener(name, to));
+      const also = carried.map((o) => o.mesh.metadata.name as number);
+      carried = [];
+      this.dropped.forEach((listener) => listener(name, to, also));
     });
   }
 
@@ -1607,9 +1638,13 @@ export class Viewer {
   nodesInRect(x0: number, y0: number, x1: number, y1: number): number[] {
     const [left, right] = x0 < x1 ? [x0, x1] : [x1, x0];
     const [top, bottom] = y0 < y1 ? [y0, y1] : [y1, y0];
+    // Through the camera of the pane the band was **begun** in. The pointer
+    // may wander into another pane while it is drawn — the rectangle is
+    // anchored where it started, and so is what it means.
+    const pane = this.paneFor(x0, y0);
     const out: number[] = [];
     for (const mesh of this.nodes) {
-      const at = this.toScreen(mesh.position);
+      const at = this.toScreen(mesh.position, pane);
       if (!at) continue;
       if (at[0] >= left && at[0] <= right && at[1] >= top && at[1] <= bottom) {
         out.push(mesh.metadata.name as number);
@@ -1811,9 +1846,9 @@ export class Viewer {
    * two active cameras that holds whichever rendered last, which is the
    * corner gizmo.
    */
-  private toScreen(at: Vector3): [number, number] {
+  private toScreen(at: Vector3, pane: Pane = this.hovered): [number, number] {
     const engine = this.scene.getEngine();
-    const camera = this.panes[this.hovered];
+    const camera = this.panes[pane];
     const width = engine.getRenderWidth();
     const height = engine.getRenderHeight();
     const pixels = camera.viewport.toGlobal(width, height);

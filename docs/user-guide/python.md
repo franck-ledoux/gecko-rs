@@ -55,7 +55,7 @@ Every node, as `{"id": …, "pos": [x, y, z]}`.
 `on` is what the node is [classified](classification.md) on, and `frozen`
 whether it may move at all.
 
-#### `move_node(node, to, snap=0.02)`
+#### `move_node(node, to, carrying=None, snap=0.02)`
 
 Move one node. `node` is the **`id` from `nodes`**, not a position in that list.
 
@@ -63,6 +63,10 @@ Move one node. `node` is the **`id` from `nodes`**, not a position in that list.
 n = s.nodes[0]
 s.move_node(n["id"], [0.5, -0.2, 0.0])
 ```
+
+`carrying` is a list of other nodes that come along by the same offset —
+what a drag does when several handles are picked. Each of them meets its own
+constraint on arrival, and a frozen one is left where it is.
 
 A node already classified **slides on its own entity**: the point is projected
 onto it first, so one on a curve stays on that curve however far you ask it to

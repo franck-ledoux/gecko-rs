@@ -14,7 +14,8 @@ not move it at all, its entity being a single point.
 |                           |                                               |
 | ------------------------- | --------------------------------------------- |
 | click a node              | pick it, or put it out again                  |
-| shift-drag                | catch every handle inside the band            |
+| hold `W` and drag         | catch every handle inside the band            |
+| drag a picked handle      | move every picked node with it                |
 | `A`                       | put the picked nodes on the picked entity     |
 | `K`, or the magnet button | put the whole blocking on whatever is nearest |
 | `L`                       | lock the picked nodes, or let them go         |
@@ -32,13 +33,20 @@ circle they are meant to follow. `A` is how you say where they go.
 
 For a cylinder, per circle:
 
-1. **Catch the four corners.** Hold shift and drag a band round them. It
-   takes everything *inside* it, including the handles on the far side of
-   the model — which is what you want when the four you are after are the
-   four at the bottom. Clicking them one by one does the same thing, and
-   either adds to what is already picked.
+1. **Catch the four corners.** Hold `W` — or shift — and drag a band round
+   them. It takes everything *inside* it, including the handles on the far
+   side of the model, which is what you want when the four you are after
+   are the four at the bottom. Clicking them one by one does the same
+   thing, and either adds to what is already picked.
+
+   The band is read through the camera of the pane it was **begun** in, so
+   it works in the X, Y and Z views as well as in the 3-D one — and in
+   those, where the model is seen flat on, it is usually easier to see
+   which four you are catching.
+
 1. **Pick the circle.** `M` to aim at the geometry, then click it. Curves
    are pickable now, and a curve wins over the surfaces it bounds.
+
 1. **`A`.** All four go on that curve and are **projected onto it** — each
    to its own nearest point, which for the corners of a box is the four
    points at 45°, 135°, 225° and 315°.
@@ -185,6 +193,24 @@ that replace it are on whatever the face was on.
 Where the boundary is **not** fully classified the inference says so rather
 than guessing: cut a face with an unclassified edge and the pieces are on
 nothing. A face whose boundary is not on the model is not on the model.
+
+## Moving them together
+
+Dragging a handle that is picked moves **every** picked node by the same
+offset; dragging one that is not moves it alone and leaves the selection
+where it is.
+
+What each node does with that offset is its own business, exactly as for a
+drag of one: a node on a curve slides along that curve, a node on a surface
+over that surface, a node on nothing goes where it is put and looks around
+when it lands. A frozen node in the selection stays where it is — not
+moving is what frozen means — and the readout says how many were left.
+
+The offset is the one **asked for**, read before anything moves: a dragged
+node that is itself on a curve lands short of the pointer, and the others
+must not then move by that shortfall.
+
+It is one command, so it is one step of undo for one gesture.
 
 ## Freezing
 

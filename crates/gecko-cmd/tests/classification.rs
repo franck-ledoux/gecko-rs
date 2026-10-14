@@ -277,6 +277,7 @@ fn a_node_on_a_surface_slides_on_it_and_does_not_come_off() {
     s.apply(Command::MoveNode {
         node,
         to: [0.4, 0.6, 5.0],
+        carrying: vec![],
         snap: SNAP_SHARE,
     })
     .expect("moved");
@@ -299,6 +300,7 @@ fn a_node_on_a_surface_slides_on_it_and_does_not_come_off() {
     s.apply(Command::MoveNode {
         node,
         to: [50.0, 50.0, 50.0],
+        carrying: vec![],
         snap: SNAP_SHARE,
     })
     .unwrap();
@@ -321,6 +323,7 @@ fn a_node_on_a_corner_cannot_move_at_all() {
     s.apply(Command::MoveNode {
         node,
         to: [9.0, 9.0, 9.0],
+        carrying: vec![],
         snap: SNAP_SHARE,
     })
     .unwrap();
@@ -357,6 +360,7 @@ fn an_unclassified_node_dropped_near_the_model_takes_hold_of_it() {
     s.apply(Command::MoveNode {
         node,
         to: [0.5, 0.5, 0.001],
+        carrying: vec![],
         snap: SNAP_SHARE,
     })
     .unwrap();
@@ -370,6 +374,7 @@ fn an_unclassified_node_dropped_near_the_model_takes_hold_of_it() {
     s.apply(Command::MoveNode {
         node: other,
         to: [40.0, 40.0, 40.0],
+        carrying: vec![],
         snap: SNAP_SHARE,
     })
     .unwrap();
@@ -395,6 +400,7 @@ fn a_frozen_node_is_left_out_of_everything() {
         .apply(Command::MoveNode {
             node,
             to: [5.0, 5.0, 5.0],
+            carrying: vec![],
             snap: SNAP_SHARE,
         })
         .expect_err("frozen");
@@ -834,6 +840,7 @@ fn how_near_a_dropped_node_has_to_come_is_the_gesture_s_own() {
     s.apply(Command::MoveNode {
         node,
         to: [0.01, 0.01, 0.01],
+        carrying: vec![],
         snap: 0.0,
     })
     .unwrap();
@@ -846,6 +853,7 @@ fn how_near_a_dropped_node_has_to_come_is_the_gesture_s_own() {
     s.apply(Command::MoveNode {
         node,
         to: [0.01, 0.01, 0.01],
+        carrying: vec![],
         snap: SNAP_SHARE,
     })
     .unwrap();
@@ -923,4 +931,128 @@ fn a_name_no_node_answers_to_leaves_the_others_alone() {
             frozen: true,
         })
         .is_err());
+}
+
+#[test]
+fn a_drag_carries_the_other_picked_nodes_with_it() {
+    // What a drag does when several handles are picked: one follows the
+    // pointer, the rest keep station with it.
+    let mut s = on_the_box();
+    let bottom: Vec<u32> = nodes(&s)
+        .iter()
+        .filter(|n| n["pos"][2].as_f64().unwrap().abs() < 1e-9)
+        .map(|n| n["id"].as_u64().unwrap() as u32)
+        .collect();
+    let before: Vec<[f64; 3]> = at(&s, &bottom);
+
+    // The first of them is dragged a unit up; the others come with it.
+    let out = s
+        .apply(Command::MoveNode {
+            node: bottom[0],
+            to: [before[0][0], before[0][1], before[0][2] + 1.0],
+            carrying: bottom.clone(),
+            snap: 0.0,
+        })
+        .unwrap();
+    assert_eq!(out.message, "4 nodes moved", "{}", out.message);
+
+    for (was, now) in before.iter().zip(at(&s, &bottom)) {
+        assert!((now[2] - was[2] - 1.0).abs() < 1e-9, "{was:?} -> {now:?}");
+        assert!((now[0] - was[0]).abs() < 1e-9 && (now[1] - was[1]).abs() < 1e-9);
+    }
+
+    // One step back, because it was one command.
+    s.apply(Command::Undo).unwrap();
+    assert_eq!(at(&s, &bottom), before);
+}
+
+#[test]
+fn a_frozen_node_stays_where_it_is_while_the_others_go() {
+    // Not moving is what frozen means, and the other nodes have nothing to
+    // do with it: the gesture is not refused, the frozen one is left.
+    let mut s = on_the_box();
+    let all: Vec<u32> = nodes(&s)
+        .iter()
+        .map(|n| n["id"].as_u64().unwrap() as u32)
+        .collect();
+    s.apply(Command::FreezeNode {
+        nodes: vec![all[1]],
+        frozen: true,
+    })
+    .unwrap();
+    let before = at(&s, &all);
+
+    let out = s
+        .apply(Command::MoveNode {
+            node: all[0],
+            to: [before[0][0] + 1.0, before[0][1], before[0][2]],
+            carrying: all.clone(),
+            snap: 0.0,
+        })
+        .unwrap();
+    assert_eq!(
+        out.message, "7 nodes moved, 1 frozen and left",
+        "{}",
+        out.message
+    );
+    let now = at(&s, &all);
+    assert_eq!(now[1], before[1], "the frozen one moved");
+    assert!((now[0][0] - before[0][0] - 1.0).abs() < 1e-9);
+}
+
+#[test]
+fn what_each_carried_node_does_with_the_offset_is_its_own_business() {
+    // The offset is the one asked for, read before anything moves. A node
+    // on a curve slides along that curve and so lands short of it — and
+    // the others must not then move by *that* shortfall.
+    let mut s = on_the_box();
+    let bottom: Vec<u32> = nodes(&s)
+        .iter()
+        .filter(|n| n["pos"][2].as_f64().unwrap().abs() < 1e-9)
+        .map(|n| n["id"].as_u64().unwrap() as u32)
+        .collect();
+    // Curve 201 runs along y = z = 0; the node at the origin is put on it.
+    s.apply(Command::ClassifyNode {
+        nodes: vec![bottom[0]],
+        on: Some(Spot { dim: 1, tag: 201 }),
+    })
+    .unwrap();
+    let before = at(&s, &bottom);
+
+    s.apply(Command::MoveNode {
+        node: bottom[0],
+        to: [before[0][0] + 0.5, before[0][1], before[0][2] + 1.0],
+        carrying: bottom.clone(),
+        snap: 0.0,
+    })
+    .unwrap();
+
+    let now = at(&s, &bottom);
+    // The dragged one slid along its curve: across, not up.
+    assert!((now[0][2]).abs() < 1e-9, "it left the curve: {:?}", now[0]);
+    // The others took the whole offset, the vertical part included.
+    for i in 1..bottom.len() {
+        assert!(
+            (now[i][2] - before[i][2] - 1.0).abs() < 1e-9,
+            "{:?} -> {:?}",
+            before[i],
+            now[i]
+        );
+    }
+}
+
+/// Where these nodes are, in the order given.
+fn at(session: &Session, names: &[u32]) -> Vec<[f64; 3]> {
+    let all = nodes(session);
+    names
+        .iter()
+        .map(|id| {
+            let node = all
+                .iter()
+                .find(|n| n["id"].as_u64() == Some(u64::from(*id)))
+                .expect("the node");
+            let p = node["pos"].as_array().unwrap();
+            [0, 1, 2].map(|k| p[k].as_f64().unwrap())
+        })
+        .collect()
 }

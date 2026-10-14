@@ -467,7 +467,7 @@ async function boot() {
   });
 
   /**
-   * Shift and drag: a rubber band over the handles.
+   * Hold `W` — or shift — and drag: a rubber band over the handles.
    *
    * Registered before everything else that takes a press, and the others
    * stand aside while it is running — a shift-drag is a selection and
@@ -478,7 +478,7 @@ async function boot() {
    * one rectangle can be caught in two.
    */
   canvas.addEventListener("pointerdown", (e) => {
-    if (e.button !== 0 || !e.shiftKey || viewer.aimedAtGeometry) return;
+    if (e.button !== 0 || !(banding || e.shiftKey) || viewer.aimedAtGeometry) return;
     if (aiming !== null || growing) return;
     lasso = [e.offsetX, e.offsetY];
     canvas.setPointerCapture(e.pointerId);
@@ -566,6 +566,9 @@ async function boot() {
   /** How far the pointer may travel and still count as a click. Dragging from
    *  a face is how you orbit the view, and it must not also select it. */
   const CLICK_SLOP = 4;
+  /** The key held to draw a band round handles, matched by its character
+   *  so it is the key printed `W` whatever the layout. */
+  const LASSO_KEY = "w";
   /** How close to an end a cut may be aimed. The kernel refuses 0 and 1 —
    *  a cut there is not a cut — so the pointer never asks for them. */
   const CUT_MARGIN = 0.02;
@@ -575,8 +578,26 @@ async function boot() {
   let aimingWasSelected = false;
   /** Whether a face is being pulled out into a block. */
   let growing = false;
-  /** Where a rubber band was begun, while shift and the pointer are down. */
+  /** Where a rubber band was begun, while the pointer is down on one. */
   let lasso: [number, number] | undefined;
+  /**
+   * Whether the key that opens a band is held.
+   *
+   * `W` or shift. A letter rather than a modifier alone because that is
+   * the one your left hand is already on, and because it is tracked here
+   * rather than read off the event: a window that loses focus mid-gesture
+   * would otherwise leave it held for ever.
+   */
+  let banding = false;
+  window.addEventListener("keydown", (e) => {
+    if (e.key.toLowerCase() === LASSO_KEY) banding = true;
+  });
+  window.addEventListener("keyup", (e) => {
+    if (e.key.toLowerCase() === LASSO_KEY) banding = false;
+  });
+  window.addEventListener("blur", () => {
+    banding = false;
+  });
 
   canvas.addEventListener("pointermove", (e) => {
     if (lasso) drawLasso(lasso, [e.offsetX, e.offsetY]);
@@ -1239,7 +1260,9 @@ async function boot() {
       // the space that leaves.
       legend() +
       `</div>` +
-      `<p id="help-hint">Click a node, an edge or a face to pick it; <kbd>M</kbd> aims at the geometry instead. Any key closes this.</p>`;
+      `<p id="help-hint">Click a node, an edge or a face to pick it;` +
+      ` hold <kbd>W</kbd> and drag to catch every handle in a band;` +
+      ` <kbd>M</kbd> aims at the geometry instead. Any key closes this.</p>`;
   }
 
   /**
@@ -1418,13 +1441,16 @@ async function boot() {
   // Dropping a node is one command, sent once. The scene has been following
   // the mouse on its own copy; this is where the kernel takes it back over,
   // and the refresh below redraws from what the kernel actually holds.
-  viewer.onDrop(async (name, to) => {
+  viewer.onDrop(async (name, to, carrying) => {
     // With the reach the settings panel asks for: a node dropped near an
     // entity is taken by it, and a reach of nothing means it is not.
     const reply = await kernel.apply({
       op: "move_node",
       node: name,
       to,
+      // Whatever else was picked comes along by the same offset — one
+      // command, so one step of undo for one gesture.
+      carrying,
       snap: prefs.box.snap,
     });
     message = reply.message;

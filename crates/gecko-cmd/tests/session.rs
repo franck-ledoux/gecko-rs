@@ -282,6 +282,7 @@ fn moving_a_node_moves_what_the_view_said_it_would() {
         .apply(Command::MoveNode {
             node: name,
             to: [9.0, 8.0, 7.0],
+            carrying: vec![],
             snap: SNAP_SHARE,
         })
         .unwrap();
@@ -362,6 +363,7 @@ fn the_view_stays_put_when_a_node_moves() {
     s.apply(Command::MoveNode {
         node: name,
         to: [0.3, -0.4, 0.2],
+        carrying: vec![],
         snap: SNAP_SHARE,
     })
     .unwrap();

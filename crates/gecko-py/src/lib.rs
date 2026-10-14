@@ -110,9 +110,26 @@ impl PySession {
     /// and an entity within `snap` — a share of the geometry's own size —
     /// takes it. 0 refuses the geometry altogether, which is how you put a
     /// node somewhere near the model and have it stay there.
-    #[pyo3(signature = (node, to, snap=0.02))]
-    fn move_node(&self, node: u32, to: [f64; 3], snap: f64) -> PyResult<String> {
-        self.command(serde_json::json!({ "op": "move_node", "node": node, "to": to, "snap": snap }))
+    ///
+    /// `carrying` is a list of other nodes that come along by the same
+    /// offset — what a drag does when several handles are picked. What
+    /// each of them does with that offset is its own business: one on a
+    /// curve slides along it, and a frozen one is left where it is.
+    #[pyo3(signature = (node, to, carrying=None, snap=0.02))]
+    fn move_node(
+        &self,
+        node: u32,
+        to: [f64; 3],
+        carrying: Option<Nodes>,
+        snap: f64,
+    ) -> PyResult<String> {
+        self.command(serde_json::json!({
+            "op": "move_node",
+            "node": node,
+            "to": to,
+            "carrying": carrying.map(|n| n.0).unwrap_or_default(),
+            "snap": snap,
+        }))
     }
 
     /// Weld two blocks along a face.

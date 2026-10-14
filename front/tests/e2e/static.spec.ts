@@ -2426,3 +2426,152 @@ test("freezing and unclassifying take the whole selection", async ({ page }) => 
   await expect(page.locator("[data-test=pinned]")).toHaveText("5");
   expect(errors).toEqual([]);
 });
+
+test("the band is opened with W as well, and works in an axis view", async ({ page }) => {
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.keyboard.press("v");
+  await page.evaluate(() => (window as any).__gecko.run("recentre"));
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // Into the Y pane, bottom left, and read the handles as **it** sees them.
+  const box = (await page.locator("#view").boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.25, box.y + box.height * 0.75);
+  expect(await page.evaluate(() => (window as any).__gecko.pane())).toBe("y");
+
+  const seen = await handles(page);
+  // Seen along an axis the cube's corners fall in pairs, one behind the
+  // other. A band round one of them has to catch both — which is only true
+  // if the handles are projected through this pane's own camera.
+  const first = seen[0];
+  const pair = seen.filter((n) => Math.hypot(n.on[0] - first.on[0], n.on[1] - first.on[1]) < 3);
+  expect(pair).toHaveLength(2);
+
+  const pad = 10;
+  await page.keyboard.down("w");
+  await page.mouse.move(box.x + first.on[0] - pad, box.y + first.on[1] - pad);
+  await page.mouse.down();
+  await page.mouse.move(box.x + first.on[0] + pad, box.y + first.on[1] + pad, { steps: 4 });
+  await expect(page.locator("#lasso")).toBeVisible();
+  await page.mouse.up();
+  await page.keyboard.up("w");
+
+  expect(
+    ((await page.evaluate(() => (window as any).__gecko.selectedNodes())) as number[]).sort(),
+  ).toEqual(pair.map((n) => n.name).sort());
+
+  // A band that wanders out of the pane it was begun in still means what
+  // it meant there: the rectangle is anchored where it started, and so is
+  // the camera it is read through.
+  await page.keyboard.press("Escape");
+  const corner: [number, number] = [first.on[0] - pad, first.on[1] + pad];
+  const away: [number, number] = [first.on[0] + 3 * pad, box.height * 0.2];
+  await page.keyboard.down("w");
+  await page.mouse.move(box.x + corner[0], box.y + corner[1]);
+  await page.mouse.down();
+  // Up and out of the Y pane, into the 3-D one above it.
+  await page.mouse.move(box.x + away[0], box.y + away[1], { steps: 8 });
+  await page.mouse.up();
+  await page.keyboard.up("w");
+  expect(await page.evaluate(() => (window as any).__gecko.pane())).toBe("3d");
+
+  // What the **Y** pane has inside that rectangle, which is what the band
+  // was drawn over. Read with the pointer back in it.
+  await page.mouse.move(box.x + box.width * 0.25, box.y + box.height * 0.75);
+  const inside = (await handles(page))
+    .filter(
+      (n) =>
+        n.on[0] >= Math.min(corner[0], away[0]) &&
+        n.on[0] <= Math.max(corner[0], away[0]) &&
+        n.on[1] >= Math.min(corner[1], away[1]) &&
+        n.on[1] <= Math.max(corner[1], away[1]),
+    )
+    .map((n) => n.name);
+  expect(inside.length).toBeGreaterThan(0);
+  expect(
+    ((await page.evaluate(() => (window as any).__gecko.selectedNodes())) as number[]).sort(),
+  ).toEqual(inside.sort());
+  expect(errors).toEqual([]);
+});
+
+test("dragging one picked handle takes the others with it", async ({ page }) => {
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  const before = await handles(page);
+  const picked = before.slice(0, 3);
+  await page.evaluate(
+    (names) => (window as any).__gecko.selectNodes(names),
+    picked.map((n) => n.name),
+  );
+
+  // A real drag on one of them, by a hundred pixels.
+  const box = (await page.locator("#view").boundingBox())!;
+  const grab = picked[0];
+  await page.mouse.move(box.x + grab.on[0], box.y + grab.on[1]);
+  await page.mouse.down();
+  await page.mouse.move(box.x + grab.on[0] + 100, box.y + grab.on[1], { steps: 8 });
+  await page.mouse.up();
+  await page.waitForFunction(() => (window as any).__gecko.message().includes("moved"));
+
+  const after = await handles(page);
+  const moved = (name: number) => {
+    const was = before.find((n) => n.name === name)!.at;
+    const now = after.find((n) => n.name === name)!.at;
+    return [0, 1, 2].map((k) => now[k] - was[k]);
+  };
+  const by = moved(grab.name);
+  expect(Math.hypot(...by)).toBeGreaterThan(0.1);
+  // The other two picked handles went exactly as far, and the five that
+  // were not picked did not move at all.
+  for (const node of picked.slice(1)) {
+    for (const k of [0, 1, 2]) expect(moved(node.name)[k]).toBeCloseTo(by[k], 5);
+  }
+  for (const node of before.filter((n) => !picked.some((p) => p.name === n.name))) {
+    expect(Math.hypot(...moved(node.name))).toBeLessThan(1e-9);
+  }
+
+  // One gesture, one command, one step back.
+  await expect(page.locator("#status")).toContainText("3 nodes moved");
+  await page.keyboard.press("ControlOrMeta+z");
+  await page.waitForFunction(() => (window as any).__gecko.message().includes("undone"));
+  const back = await handles(page);
+  for (const node of before) {
+    const now = back.find((n) => n.name === node.name)!.at;
+    for (const k of [0, 1, 2]) expect(now[k]).toBeCloseTo(node.at[k], 6);
+  }
+  expect(errors).toEqual([]);
+});
+
+test("dragging a handle that is not picked moves it alone", async ({ page }) => {
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  const before = await handles(page);
+  await page.evaluate(
+    (names) => (window as any).__gecko.selectNodes(names),
+    before.slice(0, 3).map((n) => n.name),
+  );
+
+  const box = (await page.locator("#view").boundingBox())!;
+  const grab = before[5];
+  await page.mouse.move(box.x + grab.on[0], box.y + grab.on[1]);
+  await page.mouse.down();
+  await page.mouse.move(box.x + grab.on[0] + 80, box.y + grab.on[1], { steps: 8 });
+  await page.mouse.up();
+  await page.waitForFunction(() => (window as any).__gecko.message().includes("moved"));
+
+  const after = await handles(page);
+  for (const node of before) {
+    const now = after.find((n) => n.name === node.name)!.at;
+    const went = Math.hypot(...[0, 1, 2].map((k) => now[k] - node.at[k]));
+    if (node.name === grab.name) expect(went).toBeGreaterThan(0.1);
+    else expect(went).toBeLessThan(1e-9);
+  }
+  expect(errors).toEqual([]);
+});
