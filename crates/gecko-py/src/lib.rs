@@ -53,6 +53,24 @@ fn to_py(py: Python<'_>, value: &Value) -> PyResult<PyObject> {
     })
 }
 
+/// One node or several, as a script is likely to have them.
+///
+/// `s.freeze_node(3)` and `s.freeze_node([3, 4])` are both natural things
+/// to write, and the kernel takes a list either way. Extracted rather than
+/// overloaded because PyO3 has no overloading, and a second method called
+/// `freeze_nodes` would be a convenience written in a façade — which is the
+/// one thing a façade here is not allowed to grow.
+struct Nodes(Vec<u32>);
+
+impl<'py> FromPyObject<'py> for Nodes {
+    fn extract_bound(any: &Bound<'py, PyAny>) -> PyResult<Self> {
+        if let Ok(one) = any.extract::<u32>() {
+            return Ok(Nodes(vec![one]));
+        }
+        Ok(Nodes(any.extract::<Vec<u32>>()?))
+    }
+}
+
 #[pyclass(name = "Session")]
 pub struct PySession {
     shared: Arc<Shared>,
@@ -199,29 +217,35 @@ impl PySession {
         self.command(serde_json::json!({ "op": "classify", "tolerance": tolerance }))
     }
 
-    /// Put one node on a geometric entity: `dim` 0 a corner, 1 a curve, 2
-    /// a surface, and `tag` the gmsh entity tag. The node is then pulled
-    /// onto it.
-    fn classify_node(&self, node: u32, dim: u8, tag: i32) -> PyResult<String> {
+    /// Put nodes on a geometric entity: `dim` 0 a corner, 1 a curve, 2 a
+    /// surface, and `tag` the gmsh entity tag. Each is then pulled onto it.
+    ///
+    /// `node` is one id or a list of them. A list is one act: one step of
+    /// undo, and the edges and faces above them settled once.
+    ///
+    /// ```python
+    /// >>> s.classify_node([3, 4, 5, 6], 1, 201)   # four corners, one curve
+    /// ```
+    fn classify_node(&self, node: Nodes, dim: u8, tag: i32) -> PyResult<String> {
         self.command(serde_json::json!({
-            "op": "classify_node", "node": node, "on": { "dim": dim, "tag": tag },
+            "op": "classify_node", "nodes": node.0, "on": { "dim": dim, "tag": tag },
         }))
     }
 
-    /// Take a node off whatever it was classified on. It stays where it
-    /// is; what changes is that it may now go anywhere.
-    fn unclassify_node(&self, node: u32) -> PyResult<String> {
-        self.command(serde_json::json!({ "op": "classify_node", "node": node }))
+    /// Take nodes off whatever they were classified on. They stay where
+    /// they are; what changes is that they may now go anywhere.
+    fn unclassify_node(&self, node: Nodes) -> PyResult<String> {
+        self.command(serde_json::json!({ "op": "classify_node", "nodes": node.0 }))
     }
 
-    /// Stop a node moving. It stays put for every operation, this one's
-    /// own projection included, until [`thaw_node`] lets it go.
-    fn freeze_node(&self, node: u32) -> PyResult<String> {
-        self.command(serde_json::json!({ "op": "freeze_node", "node": node, "frozen": true }))
+    /// Stop nodes moving. They stay put for every operation, this one's
+    /// own projection included, until [`thaw_node`] lets them go.
+    fn freeze_node(&self, node: Nodes) -> PyResult<String> {
+        self.command(serde_json::json!({ "op": "freeze_node", "nodes": node.0, "frozen": true }))
     }
 
-    fn thaw_node(&self, node: u32) -> PyResult<String> {
-        self.command(serde_json::json!({ "op": "freeze_node", "node": node, "frozen": false }))
+    fn thaw_node(&self, node: Nodes) -> PyResult<String> {
+        self.command(serde_json::json!({ "op": "freeze_node", "nodes": node.0, "frozen": false }))
     }
 
     /// Add one block: a box round the geometry, or round part of it.

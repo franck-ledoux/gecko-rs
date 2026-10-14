@@ -28,7 +28,7 @@ import {
 import { actionFor, helpRows, type Action } from "./shortcuts";
 import { capture, save, shotName } from "./capture";
 import type { Colouring } from "./surface";
-import { GEOM_GROUPS, type GeomGroup } from "./geometry";
+import { GEOM_GROUPS, spotName, type GeomGroup, type Spot } from "./geometry";
 import type { Axis } from "./axes";
 import "./style.css";
 
@@ -466,10 +466,54 @@ async function boot() {
     savePrefs(prefs);
   });
 
+  /**
+   * Shift and drag: a rubber band over the handles.
+   *
+   * Registered before everything else that takes a press, and the others
+   * stand aside while it is running — a shift-drag is a selection and
+   * nothing else. The camera is suspended for the same reason it is during
+   * a cut: Babylon would otherwise orbit underneath.
+   *
+   * It **adds** to what is already picked, so a model you cannot catch in
+   * one rectangle can be caught in two.
+   */
+  canvas.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || !e.shiftKey || viewer.aimedAtGeometry) return;
+    if (aiming !== null || growing) return;
+    lasso = [e.offsetX, e.offsetY];
+    canvas.setPointerCapture(e.pointerId);
+    viewer.suspendCamera();
+    drawLasso(lasso, lasso);
+  });
+
+  canvas.addEventListener("pointerup", (e) => {
+    if (!lasso) return;
+    const from = lasso;
+    lasso = undefined;
+    canvas.releasePointerCapture(e.pointerId);
+    viewer.resumeCamera();
+    $("lasso").hidden = true;
+    const caught = viewer.nodesInRect(from[0], from[1], e.offsetX, e.offsetY);
+    const now = [...new Set([...viewer.selectedNodes, ...caught])];
+    viewer.selectNodes(now);
+    sayNodes(now);
+  });
+
+  /** Where the band is, in the CSS pixels the canvas is laid out in. */
+  function drawLasso(from: [number, number], to: [number, number]) {
+    const box = $("lasso");
+    const rect = canvas.getBoundingClientRect();
+    box.hidden = false;
+    box.style.left = `${rect.left + Math.min(from[0], to[0])}px`;
+    box.style.top = `${rect.top + Math.min(from[1], to[1])}px`;
+    box.style.width = `${Math.abs(to[0] - from[0])}px`;
+    box.style.height = `${Math.abs(to[1] - from[1])}px`;
+  }
+
   // Clicking the triad swings the view onto that axis. Checked before
   // anything else: it is an overlay, so it is in front.
   canvas.addEventListener("pointerdown", (e) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || lasso) return;
     pressedAt = [e.offsetX, e.offsetY];
     const axis = viewer.axes.pick(e.offsetX, e.offsetY);
     if (!axis) return;
@@ -482,7 +526,7 @@ async function boot() {
   // taken off the camera so that dragging sets the parameter rather than
   // turning the view.
   canvas.addEventListener("pointerdown", (e) => {
-    if (e.button !== 0 || aiming !== null || viewer.aimedAtGeometry) return;
+    if (e.button !== 0 || aiming !== null || viewer.aimedAtGeometry || lasso) return;
     if (viewer.axes.pick(e.offsetX, e.offsetY)) return;
     if (viewer.pickNode(e.offsetX, e.offsetY) !== null) return;
     const edge = viewer.pickEdge(e.offsetX, e.offsetY);
@@ -503,7 +547,7 @@ async function boot() {
   // selection first: a face fills the screen, and a drag from one cannot be
   // both an orbit and an extrusion.
   canvas.addEventListener("pointerdown", (e) => {
-    if (e.button !== 0 || aiming !== null || growing || viewer.aimedAtGeometry) return;
+    if (e.button !== 0 || aiming !== null || growing || viewer.aimedAtGeometry || lasso) return;
     if (viewer.axes.pick(e.offsetX, e.offsetY)) return;
     if (viewer.pickNode(e.offsetX, e.offsetY) !== null) return;
     if (viewer.pickEdge(e.offsetX, e.offsetY) !== null) return;
@@ -531,8 +575,11 @@ async function boot() {
   let aimingWasSelected = false;
   /** Whether a face is being pulled out into a block. */
   let growing = false;
+  /** Where a rubber band was begun, while shift and the pointer are down. */
+  let lasso: [number, number] | undefined;
 
   canvas.addEventListener("pointermove", (e) => {
+    if (lasso) drawLasso(lasso, [e.offsetX, e.offsetY]);
     if (aiming !== null) aimAt(e.offsetX, e.offsetY);
     if (growing) {
       const height = viewer.aimExtrusion(e.offsetX, e.offsetY);
@@ -579,9 +626,9 @@ async function boot() {
     // — which is the whole reason for the mode: the two are at the same
     // pixels, and whichever answered first would hide the other.
     if (viewer.aimedAtGeometry) {
-      const tag = viewer.pickGeometry(x, y);
-      if (tag === null) clearSelection();
-      else toggleSurface(tag);
+      const spot = viewer.pickGeometry(x, y);
+      if (spot === null) clearSelection();
+      else toggleEntity(spot);
       return;
     }
     // Smallest target first: a handle, then a line, then the surface behind
@@ -682,11 +729,24 @@ async function boot() {
   }
 
   /** Nothing selected: no faces, no sheet. */
+  /**
+   * Which verbs the two selections make available.
+   *
+   * Attaching needs nodes to move and one entity to move them to, and a
+   * button that tells you so before you press it beats a message that
+   * tells you afterwards.
+   */
+  function showVerbs() {
+    $<HTMLButtonElement>("attach").disabled =
+      viewer.selectedNodes.length === 0 || viewer.geomSelection.length !== 1;
+  }
+
   function clearSelection() {
     viewer.selectedEdge = null;
     viewer.showSheet([]);
-    viewer.selectSurfaces([]);
-    viewer.selectNode(null);
+    viewer.selectGeom([]);
+    viewer.selectNodes([]);
+    showVerbs();
     choose(null);
   }
 
@@ -698,37 +758,58 @@ async function boot() {
    * one, so one has to be nameable without being moved.
    */
   function pickNode(name: number) {
-    const already = viewer.selectedNode === name;
-    viewer.selectNode(already ? null : name);
-    if (already) {
-      say("");
-      return;
-    }
-    const state = viewer.nodeState(name);
-    const on = state?.on ? ` on ${nameOf(state.on)}` : " on nothing";
-    say(`node ${name}${on}${state?.frozen ? ", frozen" : ""}`);
-  }
-
-  /** How a classification reads, the same way the kernel says it. */
-  function nameOf(on: { dim: number; tag: number }) {
-    return `${["corner", "curve", "surface"][on.dim] ?? "?"} ${on.tag}`;
+    const picked = viewer.selectedNodes;
+    const now = picked.includes(name) ? picked.filter((n) => n !== name) : [...picked, name];
+    viewer.selectNodes(now);
+    sayNodes(now);
   }
 
   /**
-   * Add a geometric surface to the selection, or take it out again.
+   * What the readout says about the nodes in hand.
+   *
+   * One of them is worth describing — what it is on, whether it moves —
+   * because that is the question you clicked it to ask. Four of them are
+   * worth counting, and how many are already on the geometry, because the
+   * question then is whether the gesture you are about to make has
+   * anything left to do.
+   */
+  function sayNodes(now: readonly number[]) {
+    showVerbs();
+    if (now.length === 0) {
+      say("");
+      return;
+    }
+    if (now.length === 1) {
+      const state = viewer.nodeState(now[0]);
+      const on = state?.on ? ` on ${spotName(state.on)}` : " on nothing";
+      say(`node ${now[0]}${on}${state?.frozen ? ", frozen" : ""}`);
+      return;
+    }
+    const pinned = now.filter((n) => viewer.nodeState(n)?.on).length;
+    say(`${now.length} nodes — ${pinned} on the geometry`);
+  }
+
+  /**
+   * Add a geometric entity to the selection, or take it out again.
    *
    * Its own list rather than the face selection's: a surface of the
    * geometry and a face of the blocking are different things, and the
    * verbs that act on them are different verbs.
    */
-  function toggleSurface(tag: number) {
-    const picked = viewer.surfaceSelection;
-    const now = picked.includes(tag) ? picked.filter((t) => t !== tag) : [...picked, tag];
-    viewer.selectSurfaces(now);
+  function toggleEntity(spot: Spot) {
+    const same = (a: Spot, b: Spot) => a.dim === b.dim && a.tag === b.tag;
+    const picked = viewer.geomSelection;
+    const now = picked.some((s) => same(s, spot))
+      ? picked.filter((s) => !same(s, spot))
+      : [...picked, spot];
+    viewer.selectGeom(now);
+    showVerbs();
     say(
       now.length === 0
-        ? "no surface selected — a box would take the whole geometry"
-        : `${now.length} surface${now.length === 1 ? "" : "s"} selected`,
+        ? "nothing selected — a box would take the whole geometry"
+        : now.length === 1
+          ? `${spotName(now[0])} selected`
+          : `${now.length} entities selected`,
     );
   }
 
@@ -748,8 +829,11 @@ async function boot() {
     $("picking").title =
       at === "geometry" ? "Aim at the blocks — M" : "Aim at the geometry — M";
     $("aim").textContent = at === "geometry" ? "picking geometry" : "picking blocks";
-    if (at === "blocks") viewer.selectSurfaces([]);
-    else clearSelection();
+    // Both selections stay. They used to be cleared on the way through,
+    // on the grounds that a selection you cannot see is a mystery — but
+    // the two are made to be held at once now: a handful of nodes and the
+    // entity to put them on are picked in different modes and used
+    // together. `Esc` is how you let go.
   }
 
   /** Put the whole blocking on the geometry. */
@@ -760,38 +844,79 @@ async function boot() {
   }
 
   /**
-   * Lock the picked node, or let it go.
+   * Put the selected nodes on the selected geometric entity, and move them
+   * there.
    *
-   * On the picked node rather than on a drag, because freezing is a thing
+   * The fast way onto a model, and the only way onto an entity of your
+   * choosing: `K` puts the whole blocking on whatever is nearest, which is
+   * right until it is not — the four corners of a box round a cylinder are
+   * nearer the tube than the circle they are meant to follow.
+   *
+   * One entity, several nodes: that is the shape of the act. Both
+   * selections are let go afterwards, because the next four corners and
+   * the next curve are the next gesture.
+   */
+  async function attach() {
+    const nodes = viewer.selectedNodes;
+    const picked = viewer.geomSelection;
+    if (nodes.length === 0) {
+      say("pick some nodes first — click them, or hold shift and drag a box round them");
+      return;
+    }
+    if (picked.length !== 1) {
+      say(
+        picked.length === 0
+          ? "pick what to put them on — press M and click a curve, a surface or a corner"
+          : "one entity at a time: a node goes on one thing",
+      );
+      return;
+    }
+    const reply = await kernel.apply({ op: "classify_node", nodes, on: picked[0] });
+    message = reply.message;
+    if (reply.ok) {
+      viewer.selectNodes([]);
+      viewer.selectGeom([]);
+    }
+    await refresh();
+  }
+
+  /**
+   * Lock the selected nodes, or let them go.
+   *
+   * On the selection rather than on a drag, because freezing is a thing
    * you say about a node and dragging is a thing you do to one — and a
    * frozen node cannot be dragged at all, so the gesture would have
    * nothing to attach to.
    */
   async function freezeNode() {
-    const node = viewer.selectedNode;
-    if (node === null) {
+    const nodes = viewer.selectedNodes;
+    if (nodes.length === 0) {
       say("pick a node first — click one");
       return;
     }
-    const was = viewer.nodeState(node)?.frozen ?? false;
-    const reply = await kernel.apply({ op: "freeze_node", node, frozen: !was });
+    // Thawed unless every one of them is frozen, so a mixed selection has
+    // an obvious answer: the key makes them agree, and agree the way most
+    // of a gesture is meant.
+    const all = nodes.every((n) => viewer.nodeState(n)?.frozen);
+    const reply = await kernel.apply({ op: "freeze_node", nodes, frozen: !all });
     message = reply.message;
     await refresh();
   }
 
-  /** Take the picked node off the geometry. It stays where it is; what
-   *  changes is that it may now go anywhere. */
+  /** Take the selected nodes off the geometry. They stay where they are;
+   *  what changes is that they may now go anywhere. */
   async function unclassifyNode() {
-    const node = viewer.selectedNode;
-    if (node === null) {
+    const picked = viewer.selectedNodes;
+    if (picked.length === 0) {
       say("pick a node first — click one");
       return;
     }
-    if (!viewer.nodeState(node)?.on) {
-      say(`node ${node} is on nothing already`);
+    const nodes = picked.filter((n) => viewer.nodeState(n)?.on);
+    if (nodes.length === 0) {
+      say(picked.length === 1 ? `node ${picked[0]} is on nothing already` : "none of them is on anything");
       return;
     }
-    const reply = await kernel.apply({ op: "classify_node", node });
+    const reply = await kernel.apply({ op: "classify_node", nodes });
     message = reply.message;
     await refresh();
   }
@@ -975,6 +1100,9 @@ async function boot() {
       $<HTMLButtonElement>(id).disabled = !loaded;
     }
     if (!loaded && viewer.aimedAtGeometry) setPicking("blocks");
+    // After the view: a cut can consume a node, and the selection is
+    // filtered to what the view still holds as it arrives.
+    showVerbs();
     showHistory(stats);
     // One line, out of the way. The counts are what you glance at; the mode
     // matters once, when you are working out which kernel you are talking to.
@@ -1161,6 +1289,7 @@ async function boot() {
     picking: () => setPicking(viewer.aimedAtGeometry ? "blocks" : "geometry"),
     box: () => boxGeometry(),
     classify,
+    attach,
     freeze: freezeNode,
     unclassify: unclassifyNode,
     glue: glueSelection,
@@ -1244,6 +1373,7 @@ async function boot() {
     ["picking", "picking"],
     ["box", "box"],
     ["classify", "classify"],
+    ["attach", "attach"],
     ["glue", "glue"],
     ["remove", "remove"],
     ["pillow", "pillow"],
@@ -1359,7 +1489,8 @@ async function boot() {
     grownBy: () => viewer.grownBy,
     picking: () => (viewer.aimedAtGeometry ? "geometry" : "blocks"),
     surfaceSelection: () => viewer.surfaceSelection,
-    selectSurfaces: (tags: number[]) => viewer.selectSurfaces(tags),
+    geomSelection: () => viewer.geomSelection,
+    selectGeom: (spots: Spot[]) => viewer.selectGeom(spots),
     pickGeometry: (x: number, y: number) => viewer.pickGeometry(x, y),
     geomCount: (group: GeomGroup) => viewer.geomCount(group),
     geomTags: (group: GeomGroup) => viewer.geomTags(group),
@@ -1384,7 +1515,11 @@ async function boot() {
     faceScreen: (name: number) => viewer.faceScreen(name),
     edgeScreen: (name: number) => viewer.edgeScreen(name),
     selection: () => viewer.selection,
-    selectedNode: () => viewer.selectedNode,
+    selectedNodes: () => viewer.selectedNodes,
+    selectNodes: (names: number[]) => viewer.selectNodes(names),
+    /** What a selection made from outside the pointer would have done to
+     *  the toolbar. The gestures call it themselves. */
+    showVerbs: () => showVerbs(),
     nodeState: (name: number) => viewer.nodeState(name),
     sheet: () => viewer.highlighted,
     selectedEdge: () => viewer.selectedEdge,

@@ -1653,22 +1653,26 @@ test("aiming at the geometry picks surfaces, and the blocks stay out of it", asy
   await expect(page.locator("#picking .as-blocks")).toBeHidden();
   expect(await page.evaluate(() => (window as any).__gecko.picking())).toBe("geometry");
   await expect(page.locator("#picking")).toHaveAttribute("aria-pressed", "true");
-  expect(await page.evaluate(() => (window as any).__gecko.selection())).toEqual([]);
+  // The face stays picked through the change of mode: a handful of cells
+  // and the entity to put them on are chosen in different modes and used
+  // together. `Esc` is how you let go.
+  expect(await page.evaluate(() => (window as any).__gecko.selection())).toHaveLength(1);
 
   await page.mouse.click(...middle);
   await page.waitForFunction(() => (window as any).__gecko.surfaceSelection().length === 1);
   const [tag] = (await page.evaluate(() =>
     (window as any).__gecko.surfaceSelection(),
   )) as number[];
-  await expect(page.locator("#status")).toContainText("1 surface selected");
+  await expect(page.locator("#status")).toContainText(`surface ${tag} selected`);
   // And it is drawn in the selection colour, like a picked face.
   expect(
     (await page.evaluate((t) => (window as any).__gecko.geomLook("surfaces", t), tag)) as {
       colour: string;
     },
   ).toMatchObject({ colour: "#ffcc33" });
-  // Nothing of the blocking answered the click.
-  expect(await page.evaluate(() => (window as any).__gecko.selection())).toEqual([]);
+  // Nothing of the blocking answered the click: the face selection is the
+  // one from before the change of mode, not a second one.
+  expect(await page.evaluate(() => (window as any).__gecko.selection())).toHaveLength(1);
 
   // Clicking it again puts it out, and the background lets go of the lot.
   await page.mouse.click(...middle);
@@ -1690,7 +1694,10 @@ test("a box is built round the geometry, or round what is selected", async ({ pa
   await page.keyboard.press("m");
   await page.evaluate(() => {
     const g = (window as any).__gecko;
-    g.selectSurfaces([1, 2]);
+    g.selectGeom([
+      { dim: 2, tag: 1 },
+      { dim: 2, tag: 2 },
+    ]);
   });
   await page.keyboard.press("b");
   await expect(page.locator("[data-test=blocks]")).toHaveText("2");
@@ -1702,7 +1709,7 @@ test("a box that cannot be built says why and builds nothing", async ({ page }) 
   const errors = await boot(page);
   await openCube(page);
   await page.keyboard.press("m");
-  await page.evaluate(() => (window as any).__gecko.selectSurfaces([1]));
+  await page.evaluate(() => (window as any).__gecko.selectGeom([{ dim: 2, tag: 1 }]));
   await page.keyboard.press("b");
   await expect(page.locator("#status")).toContainText("flat");
   await expect(page.locator("[data-test=blocks]")).toHaveText("0");
@@ -1836,7 +1843,10 @@ test("a node is picked, locked, and taken off the model", async ({ page }) => {
   )) as [number, number];
   const box = (await page.locator("#view").boundingBox())!;
   await page.mouse.click(box.x + at[0], box.y + at[1]);
-  await page.waitForFunction((n) => (window as any).__gecko.selectedNode() === n, name);
+  await page.waitForFunction(
+    (n) => (window as any).__gecko.selectedNodes().includes(n),
+    name,
+  );
   await expect(page.locator("#status")).toContainText("on corner");
 
   // Locked, and it stays locked until it is let go.
@@ -2282,5 +2292,137 @@ test("the box margin in the settings panel is the one the box is built to", asyn
   for (const [axis, want] of [3, 1.5, 4.5].entries()) {
     expect((await extent())[axis]).toBeCloseTo(want, 5);
   }
+  expect(errors).toEqual([]);
+});
+
+/** Every node's name, where the kernel has it, and where it is on screen. */
+async function handles(page: import("@playwright/test").Page) {
+  return (await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    return (g.names() as number[]).map((name) => ({
+      name,
+      at: g.nodePosition(name) as [number, number, number],
+      on: g.nodeScreen(name) as [number, number],
+    }));
+  })) as { name: number; at: [number, number, number]; on: [number, number] }[];
+}
+
+test("a curve is picked, not the surfaces it bounds", async ({ page }) => {
+  // Smallest target first, as everywhere else: a curve lies exactly on the
+  // surfaces it bounds, so whichever answered first would hide the other —
+  // and it is the curve you had to aim at.
+  const errors = await boot(page);
+  await boxedAndPinned(page);
+  await page.evaluate(() => (window as any).__gecko.snapTo("+z"));
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // The box rests exactly on the geometry, so the midpoint between two
+  // handles that share an edge is a point on the curve between them.
+  const nodes = await handles(page);
+  const a = nodes.find((n) => n.at.every((v) => Math.abs(v) < 1e-6))!;
+  const b = nodes.find(
+    (n) => Math.abs(n.at[0] - 1) < 1e-6 && Math.abs(n.at[1]) < 1e-6 && Math.abs(n.at[2]) < 1e-6,
+  )!;
+  const middle: [number, number] = [(a.on[0] + b.on[0]) / 2, (a.on[1] + b.on[1]) / 2];
+
+  const spot = await page.evaluate(
+    (at) => (window as any).__gecko.pickGeometry(at[0], at[1]),
+    middle,
+  );
+  expect(spot).toEqual({ dim: 1, tag: 201 });
+  expect(errors).toEqual([]);
+});
+
+test("four corners go onto one curve in one gesture", async ({ page }) => {
+  // The fast way onto a model: catch the handles in a rubber band, pick
+  // the entity they belong to, say so once.
+  const errors = await boot(page);
+  await boxedAndPinned(page);
+  await page.evaluate(() => (window as any).__gecko.snapTo("+x"));
+  await page.evaluate(() => (window as any).__gecko.settled());
+  await expect(page.locator("#attach")).toBeDisabled();
+
+  // The four at z = 0 — two of them behind the other two from here, which
+  // is the point: a band takes everything inside it, not what is in front.
+  const nodes = await handles(page);
+  const bottom = nodes.filter((n) => Math.abs(n.at[2]) < 1e-6);
+  expect(bottom).toHaveLength(4);
+  const box = (await page.locator("#view").boundingBox())!;
+  const xs = bottom.map((n) => n.on[0]);
+  const ys = bottom.map((n) => n.on[1]);
+  const pad = 12;
+  const from: [number, number] = [box.x + Math.min(...xs) - pad, box.y + Math.min(...ys) - pad];
+  const to: [number, number] = [box.x + Math.max(...xs) + pad, box.y + Math.max(...ys) + pad];
+
+  await page.keyboard.down("Shift");
+  await page.mouse.move(...from);
+  await page.mouse.down();
+  await page.mouse.move(from[0] + 5, to[1]);
+  await expect(page.locator("#lasso")).toBeVisible();
+  await page.mouse.move(...to, { steps: 5 });
+  await page.mouse.up();
+  await page.keyboard.up("Shift");
+  await expect(page.locator("#lasso")).toBeHidden();
+
+  expect(
+    ((await page.evaluate(() => (window as any).__gecko.selectedNodes())) as number[]).sort(),
+  ).toEqual(bottom.map((n) => n.name).sort());
+  await expect(page.locator("#status")).toContainText("4 nodes — 0 on the geometry");
+  // Still not enough: there is nothing to put them on yet.
+  await expect(page.locator("#attach")).toBeDisabled();
+
+  // Curve 201 runs along y = z = 0. Picked through the viewer rather than
+  // by aiming at it, which the test above does.
+  await page.evaluate(() => (window as any).__gecko.selectGeom([{ dim: 1, tag: 201 }]));
+  await page.evaluate(() => (window as any).__gecko.showVerbs());
+  await expect(page.locator("#attach")).toBeEnabled();
+
+  await page.keyboard.press("a");
+  await expect(page.locator("#status")).toContainText("curve 201");
+  await expect(page.locator("[data-test=pinned]")).toHaveText("4");
+
+  // And each of them was moved onto it, which is the half of this that
+  // changes the model.
+  const after = await handles(page);
+  for (const node of bottom) {
+    const now = after.find((n) => n.name === node.name)!;
+    expect(Math.abs(now.at[1])).toBeLessThan(1e-6);
+    expect(Math.abs(now.at[2])).toBeLessThan(1e-6);
+  }
+  // Both selections let go: the next four corners are the next gesture.
+  expect(await page.evaluate(() => (window as any).__gecko.selectedNodes())).toEqual([]);
+  await expect(page.locator("#attach")).toBeDisabled();
+
+  // One step back puts all four where they were.
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(page.locator("[data-test=pinned]")).toHaveText("0");
+  expect(errors).toEqual([]);
+});
+
+test("freezing and unclassifying take the whole selection", async ({ page }) => {
+  const errors = await boot(page);
+  await boxedAndPinned(page);
+  await page.keyboard.press("k");
+  await expect(page.locator("[data-test=pinned]")).toHaveText("8");
+
+  const names = (await page.evaluate(() => (window as any).__gecko.names())) as number[];
+  await page.evaluate((n) => (window as any).__gecko.selectNodes(n), names.slice(0, 3));
+  await page.evaluate(() => (window as any).__gecko.showVerbs());
+
+  await page.keyboard.press("l");
+  await expect(page.locator("#status")).toContainText("frozen");
+  expect(
+    await page.evaluate(() => (window as any).__gecko.stats().then((s: any) => s.classified.frozen)),
+  ).toBe(3);
+
+  // Thawed only when every one of them is frozen, so a mixed selection has
+  // an obvious answer.
+  await page.keyboard.press("l");
+  expect(
+    await page.evaluate(() => (window as any).__gecko.stats().then((s: any) => s.classified.frozen)),
+  ).toBe(0);
+
+  await page.keyboard.press("u");
+  await expect(page.locator("[data-test=pinned]")).toHaveText("5");
   expect(errors).toEqual([]);
 });

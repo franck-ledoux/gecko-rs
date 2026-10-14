@@ -180,16 +180,21 @@ pub enum Command {
         #[serde(default = "default_snap")]
         tolerance: f64,
     },
-    /// Put one node on a geometric entity, or take it off one.
+    /// Put nodes on a geometric entity, or take them off one.
+    ///
+    /// A list rather than one node, because the interface has a list: four
+    /// corners of a box onto the circle they are meant to follow is one
+    /// act, and it should be one step of undo and one settling of the
+    /// edges and faces above them rather than four of each.
     ClassifyNode {
-        node: u32,
-        /// Nothing frees the node.
+        nodes: Vec<u32>,
+        /// Nothing frees the nodes.
         #[serde(default)]
         on: Option<Spot>,
     },
-    /// Stop a node moving, or let it move again.
+    /// Stop nodes moving, or let them move again.
     FreezeNode {
-        node: u32,
+        nodes: Vec<u32>,
         frozen: bool,
     },
     /// Put the block structure back the way it was before the last command
@@ -561,31 +566,43 @@ impl Session {
                     view_changed: true,
                 })
             }
-            Command::ClassifyNode { node, on } => {
-                let node = CellId::from_raw(node);
+            Command::ClassifyNode { nodes, on } => {
                 let on = on.map(|s| On {
                     dim: s.dim,
                     tag: s.tag,
                 });
-                self.blocking.set_node_class(node, on)?;
-                // Put it where it now says it is, unless it is frozen, in
-                // which case nobody moves it — that is what frozen means.
-                if !self.blocking.is_frozen(node) {
-                    self.pull_onto_class(node)?;
+                // Every name checked before anything moves. Half a gesture
+                // carried out is worse than none of it: the undo would put
+                // back a state nobody asked for either.
+                let names = self.named(&nodes)?;
+                for node in &names {
+                    self.blocking.set_node_class(*node, on)?;
+                    // Put it where it now says it is, unless it is frozen,
+                    // in which case nobody moves it — that is what frozen
+                    // means.
+                    if !self.blocking.is_frozen(*node) {
+                        self.pull_onto_class(*node)?;
+                    }
                 }
                 Ok(Outcome {
                     message: match on {
-                        Some(on) => format!("node {node:?} put on {}", name_of(on)),
-                        None => format!("node {node:?} is on nothing now"),
+                        Some(on) => format!("{} put on {}", these(&names), name_of(on)),
+                        None => format!("{} on nothing now", these(&names)),
                     },
                     view_changed: true,
                 })
             }
-            Command::FreezeNode { node, frozen } => {
-                let node = CellId::from_raw(node);
-                self.blocking.set_frozen(node, frozen)?;
+            Command::FreezeNode { nodes, frozen } => {
+                let names = self.named(&nodes)?;
+                for node in &names {
+                    self.blocking.set_frozen(*node, frozen)?;
+                }
                 Ok(Outcome {
-                    message: format!("node {node:?} {}", if frozen { "frozen" } else { "thawed" }),
+                    message: format!(
+                        "{} {}",
+                        these(&names),
+                        if frozen { "frozen" } else { "thawed" }
+                    ),
                     view_changed: true,
                 })
             }
@@ -640,6 +657,25 @@ impl Session {
                 })
             }
         }
+    }
+
+    /// The names a command gave, checked against the model before any of
+    /// them is acted on.
+    ///
+    /// An empty list is refused rather than quietly doing nothing: it means
+    /// the interface sent a gesture with nothing selected, and a command
+    /// that changed nothing would still cost a step of undo.
+    fn named(&self, nodes: &[u32]) -> Result<Vec<CellId>, SessionError> {
+        if nodes.is_empty() {
+            return Err(SessionError::BadCommand("no node named".to_string()));
+        }
+        let names: Vec<CellId> = nodes.iter().copied().map(CellId::from_raw).collect();
+        for node in &names {
+            if self.blocking.node_by_id(*node).is_none() {
+                return Err(BlockingError::NoSuchNode(*node).into());
+            }
+        }
+        Ok(names)
     }
 
     fn add(&mut self, corners: [[f64; 3]; 8]) -> Result<Outcome, SessionError> {
@@ -1064,6 +1100,23 @@ impl Session {
             "segments": geometry.nb_segments(),
             "triangles": geometry.nb_triangles(),
         })
+    }
+}
+
+/// How a handful of nodes reads in a message: by name while you could
+/// still look them up, by number once you could not.
+fn these(nodes: &[CellId]) -> String {
+    match nodes {
+        [one] => format!("node {one:?}"),
+        _ if nodes.len() <= 4 => format!(
+            "nodes {}",
+            nodes
+                .iter()
+                .map(|n| format!("{n:?}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        _ => format!("{} nodes", nodes.len()),
     }
 }
 

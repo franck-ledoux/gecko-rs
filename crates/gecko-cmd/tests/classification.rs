@@ -149,7 +149,11 @@ fn a_face_goes_where_its_four_edges_agree_and_nowhere_else() {
     // Take one node off the model and the three faces that touch it lose
     // the edges they were inferring from, and so lose their own footing.
     let node = nodes(&s)[0]["id"].as_u64().unwrap() as u32;
-    s.apply(Command::ClassifyNode { node, on: None }).unwrap();
+    s.apply(Command::ClassifyNode {
+        nodes: vec![node],
+        on: None,
+    })
+    .unwrap();
     assert_eq!(classified(&s)["edges"], 9, "the three edges at that corner");
     assert_eq!(classified(&s)["faces"], 3, "and the three faces at it");
 }
@@ -235,7 +239,7 @@ fn an_edge_goes_where_its_two_ends_agree_and_nowhere_else() {
     // no curve holds both, surface 1 holds both.
     for (node, tag) in ends.iter().zip([101, 103]) {
         s.apply(Command::ClassifyNode {
-            node: *node,
+            nodes: vec![*node],
             on: Some(Spot { dim: 0, tag }),
         })
         .expect("put on a corner");
@@ -248,7 +252,7 @@ fn an_edge_goes_where_its_two_ends_agree_and_nowhere_else() {
 
     // Take one end off the model and the edge has nothing to stand on.
     s.apply(Command::ClassifyNode {
-        node: ends[0],
+        nodes: vec![ends[0]],
         on: None,
     })
     .unwrap();
@@ -264,7 +268,7 @@ fn a_node_on_a_surface_slides_on_it_and_does_not_come_off() {
     let mut s = on_the_box();
     let node = nodes(&s)[0]["id"].as_u64().unwrap() as u32;
     s.apply(Command::ClassifyNode {
-        node,
+        nodes: vec![node],
         on: Some(Spot { dim: 2, tag: 1 }),
     })
     .unwrap();
@@ -310,7 +314,7 @@ fn a_node_on_a_corner_cannot_move_at_all() {
     let mut s = on_the_box();
     let node = nodes(&s)[0]["id"].as_u64().unwrap() as u32;
     s.apply(Command::ClassifyNode {
-        node,
+        nodes: vec![node],
         on: Some(Spot { dim: 0, tag: 107 }),
     })
     .unwrap();
@@ -379,7 +383,11 @@ fn a_frozen_node_is_left_out_of_everything() {
     let mut s = on_the_box();
     let node = nodes(&s)[0]["id"].as_u64().unwrap() as u32;
     let before = nodes(&s)[0]["pos"].clone();
-    s.apply(Command::FreezeNode { node, frozen: true }).unwrap();
+    s.apply(Command::FreezeNode {
+        nodes: vec![node],
+        frozen: true,
+    })
+    .unwrap();
     assert_eq!(classified(&s)["frozen"], 1);
 
     // Not moved...
@@ -402,7 +410,7 @@ fn a_frozen_node_is_left_out_of_everything() {
 
     // Thawed, it joins in.
     s.apply(Command::FreezeNode {
-        node,
+        nodes: vec![node],
         frozen: false,
     })
     .unwrap();
@@ -431,7 +439,11 @@ fn the_classification_travels_in_the_view_buffer() {
     let mut s = on_the_box();
     s.apply(Command::Classify { tolerance: 0.02 }).unwrap();
     let node = nodes(&s)[0]["id"].as_u64().unwrap() as u32;
-    s.apply(Command::FreezeNode { node, frozen: true }).unwrap();
+    s.apply(Command::FreezeNode {
+        nodes: vec![node],
+        frozen: true,
+    })
+    .unwrap();
 
     let v = gecko_cmd::ViewBuffer::of(s.blocking(), None);
     assert_eq!(v.node_class_dim.len(), 8);
@@ -487,7 +499,7 @@ fn the_same_names_mean_the_same_thing_in_the_kernel() {
     let mut s = on_the_box();
     let node = nodes(&s)[0]["id"].as_u64().unwrap() as u32;
     s.apply(Command::ClassifyNode {
-        node,
+        nodes: vec![node],
         on: Some(Spot { dim: 1, tag: 205 }),
     })
     .unwrap();
@@ -551,7 +563,7 @@ fn on_the_bend() -> (Session, u32) {
             })
             .expect("a corner of the cube");
         s.apply(Command::ClassifyNode {
-            node: node["id"].as_u64().unwrap() as u32,
+            nodes: vec![node["id"].as_u64().unwrap() as u32],
             on: Some(Spot { dim: 0, tag }),
         })
         .unwrap();
@@ -724,7 +736,7 @@ fn under_the_lid() -> Session {
             continue;
         }
         s.apply(Command::ClassifyNode {
-            node: node["id"].as_u64().unwrap() as u32,
+            nodes: vec![node["id"].as_u64().unwrap() as u32],
             on: Some(Spot { dim: 1, tag: 201 }),
         })
         .unwrap();
@@ -844,4 +856,71 @@ fn how_near_a_dropped_node_has_to_come_is_the_gesture_s_own() {
         serde_json::json!([0.0, 0.0, 0.0]),
         "{landed}"
     );
+}
+
+#[test]
+fn four_corners_go_onto_one_curve_in_one_command() {
+    // The gesture the interface makes: pick the corners, pick the curve,
+    // say so once. One command rather than four, so it is one step of undo
+    // and one settling of the edges above them.
+    let mut s = on_the_box();
+    let bottom: Vec<u32> = nodes(&s)
+        .iter()
+        .filter(|n| n["pos"][2].as_f64().unwrap().abs() < 1e-9)
+        .map(|n| n["id"].as_u64().unwrap() as u32)
+        .collect();
+    assert_eq!(bottom.len(), 4, "the four corners at z = 0");
+
+    // Curve 201 is one side of the bottom ring, so all four cannot be on
+    // it at once — which is exactly the point: this says where they go, it
+    // does not ask where they would like to be.
+    let out = s
+        .apply(Command::ClassifyNode {
+            nodes: bottom.clone(),
+            on: Some(Spot { dim: 1, tag: 201 }),
+        })
+        .unwrap();
+    assert!(out.message.contains("curve 201"), "{}", out.message);
+    assert_eq!(classified(&s)["nodes"], 4);
+
+    // And each of them was projected onto it, which is the half of this
+    // that moves anything.
+    for id in &bottom {
+        let node = nodes(&s)
+            .into_iter()
+            .find(|n| n["id"] == *id)
+            .expect("the node");
+        assert_eq!(node["on"]["tag"], 201, "{node}");
+        // Curve 201 runs from (0,0,0) to (1,0,0): y and z are nought on it.
+        assert!(node["pos"][1].as_f64().unwrap().abs() < 1e-9, "{node}");
+        assert!(node["pos"][2].as_f64().unwrap().abs() < 1e-9, "{node}");
+    }
+
+    // One step back puts all four where they were.
+    s.apply(Command::Undo).unwrap();
+    assert_eq!(classified(&s)["nodes"], 0);
+}
+
+#[test]
+fn a_name_no_node_answers_to_leaves_the_others_alone() {
+    // Half a gesture carried out is worse than none of it: the undo would
+    // put back a state nobody asked for either.
+    let mut s = on_the_box();
+    let first = nodes(&s)[0]["id"].as_u64().unwrap() as u32;
+    assert!(s
+        .apply(Command::ClassifyNode {
+            nodes: vec![first, 9999],
+            on: Some(Spot { dim: 0, tag: 101 }),
+        })
+        .is_err());
+    assert_eq!(classified(&s)["nodes"], 0, "the first one went on anyway");
+
+    // And nothing at all is a refusal too, rather than a step of undo that
+    // changed nothing.
+    assert!(s
+        .apply(Command::FreezeNode {
+            nodes: vec![],
+            frozen: true,
+        })
+        .is_err());
 }

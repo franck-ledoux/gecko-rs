@@ -58,6 +58,15 @@ body.quad #panes { display: grid; }
 body.chrome-hidden #panes { opacity: 0; }
 #panes { transition: opacity .18s ease; }
 
+/* --- the rubber band ----------------------------------------------------- */
+
+#lasso {
+  position: fixed; z-index: 1; pointer-events: none;
+  border: 1px dashed var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: 2px;
+}
+
 /* --- the toolbar ------------------------------------------------------- */
 
 #bar {

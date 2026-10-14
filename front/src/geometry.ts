@@ -21,6 +21,32 @@ export type GeomGroup = "corners" | "curves" | "surfaces";
  *  and the order their keys run: `4` surfaces, `5` curves, `6` corners. */
 export const GEOM_GROUPS: readonly GeomGroup[] = ["surfaces", "curves", "corners"];
 
+/** One geometric entity, named the way the kernel names one: a dimension
+ *  and the gmsh entity tag. The same pair a classification carries. */
+export interface Spot {
+  dim: number;
+  tag: number;
+}
+
+export const CORNER = 0;
+export const CURVE = 1;
+export const SURFACE = 2;
+
+/** A group's dimension, and the other way round. Two tables rather than
+ *  arithmetic on the group's position in `GEOM_GROUPS`, which is in falling
+ *  order and would read as a subtraction nobody could check at a glance. */
+export const DIM_OF: Record<GeomGroup, number> = {
+  corners: CORNER,
+  curves: CURVE,
+  surfaces: SURFACE,
+};
+export const GROUP_OF: readonly GeomGroup[] = ["corners", "curves", "surfaces"];
+
+/** How an entity reads in a message, the same way the kernel says it. */
+export function spotName(on: Spot): string {
+  return `${GROUP_OF[on.dim]?.replace(/s$/, "") ?? "?"} ${on.tag}`;
+}
+
 export interface GeomSurface {
   /** The gmsh entity tag — the surface's name, and what a colour-by-id uses. */
   tag: number;

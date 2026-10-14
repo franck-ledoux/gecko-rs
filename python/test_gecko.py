@@ -1018,3 +1018,33 @@ def test_how_near_a_dropped_node_has_to_come_is_the_gestures_own(tmp_path):
     landed = next(n for n in s.nodes if n["id"] == node)
     assert landed["on"] == {"dim": 0, "tag": 101}
     assert landed["pos"] == [0.0, 0.0, 0.0]
+
+
+def test_several_nodes_go_onto_one_entity_at_once(tmp_path):
+    path = tmp_path / "box.msh"
+    path.write_text(BOX_MSH)
+    s = gecko.Session()
+    s.load_geometry(str(path))
+    s.box_geometry(margin=0.0)
+
+    bottom = [n["id"] for n in s.nodes if abs(n["pos"][2]) < 1e-9]
+    assert len(bottom) == 4
+
+    # One act: one step of undo, and the edges above them settled once.
+    s.classify_node(bottom, 1, 201)
+    assert s.stats["classified"]["nodes"] == 4
+    assert all(n["on"] == {"dim": 1, "tag": 201} for n in s.nodes if n["id"] in bottom)
+    # Curve 201 runs along y = z = 0, and each corner was projected onto it.
+    assert all(
+        abs(n["pos"][1]) < 1e-9 and abs(n["pos"][2]) < 1e-9
+        for n in s.nodes
+        if n["id"] in bottom
+    )
+
+    s.undo()
+    assert s.stats["classified"]["nodes"] == 0
+
+    # One on its own is still one, written the way anyone would write it.
+    s.freeze_node(bottom[0])
+    s.freeze_node(bottom[1:])
+    assert s.stats["classified"]["frozen"] == 4

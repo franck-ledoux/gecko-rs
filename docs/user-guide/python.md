@@ -174,11 +174,25 @@ things.
 
 #### `classify_node(node, dim, tag)` and `unclassify_node(node)`
 
-Put one node on an entity by hand — `dim` 0 a corner, 1 a curve, 2 a surface
-— or take it off one. Classifying pulls the node onto it; unclassifying
-leaves it where it is.
+Put nodes on an entity by hand — `dim` 0 a corner, 1 a curve, 2 a surface —
+or take them off one. Classifying pulls each node onto the entity;
+unclassifying leaves it where it is.
+
+`node` is one id or a list of them. A list is **one act**: one step of undo,
+and the edges and faces above those nodes settled once rather than once
+each.
+
+```python
+s.classify_node([3, 4, 5, 6], 1, 201)   # four corners onto one curve
+```
+
+Since each is pulled onto the entity, this is how you project a handful of
+corners onto the circle they are meant to follow — the thing `classify()`
+cannot do, putting every node on whatever is nearest.
 
 #### `freeze_node(node)` and `thaw_node(node)`
+
+One id or a list, as above.
 
 Stop a node moving, or let it move again. A frozen node is refused to every
 move and left out of `classify()`.

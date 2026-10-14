@@ -1833,7 +1833,7 @@ describe("wearing what it follows", () => {
     // surface it follows and then drew it on top of that surface.
     const { kernel, viewer } = await pinned();
     const names = viewer.names();
-    await kernel.apply({ op: "classify_node", node: names[0], on: { dim: 1, tag: 11 } });
+    await kernel.apply({ op: "classify_node", nodes: [names[0]], on: { dim: 1, tag: 11 } });
     await redraw(kernel, viewer);
     expect(handle(viewer, 0)).toBe(DEFAULTS.theme.nodes.toLowerCase());
 
@@ -1843,7 +1843,7 @@ describe("wearing what it follows", () => {
     expect(handle(viewer, 0)).toBe(DEFAULTS.theme.onCurve.toLowerCase());
     // One colour per *kind* of thing followed, not per entity: a second
     // node on another curve reads the same.
-    await kernel.apply({ op: "classify_node", node: names[1], on: { dim: 1, tag: 12 } });
+    await kernel.apply({ op: "classify_node", nodes: [names[1]], on: { dim: 1, tag: 12 } });
     await redraw(kernel, viewer);
     expect(handle(viewer, 1)).toBe(DEFAULTS.theme.onCurve.toLowerCase());
     // And a node on nothing keeps the group's own colour, which is what
@@ -1851,7 +1851,7 @@ describe("wearing what it follows", () => {
     expect(handle(viewer, 2)).toBe(DEFAULTS.theme.nodes.toLowerCase());
 
     // On a surface it is a third colour again.
-    await kernel.apply({ op: "classify_node", node: names[2], on: { dim: 2, tag: 1 } });
+    await kernel.apply({ op: "classify_node", nodes: [names[2]], on: { dim: 2, tag: 1 } });
     await redraw(kernel, viewer);
     expect(handle(viewer, 2)).toBe(DEFAULTS.theme.onSurface.toLowerCase());
   });
@@ -1871,8 +1871,8 @@ describe("wearing what it follows", () => {
     // play, and that is the more urgent thing to see.
     const { kernel, viewer } = await pinned();
     const names = viewer.names();
-    await kernel.apply({ op: "classify_node", node: names[0], on: { dim: 2, tag: 1 } });
-    await kernel.apply({ op: "freeze_node", node: names[0], frozen: true });
+    await kernel.apply({ op: "classify_node", nodes: [names[0]], on: { dim: 2, tag: 1 } });
+    await kernel.apply({ op: "freeze_node", nodes: [names[0]], frozen: true });
     await redraw(kernel, viewer);
     expect(handle(viewer, 0)).toBe(DEFAULTS.theme.frozen.toLowerCase());
     expect(viewer.nodeState(names[0])).toEqual({ on: { dim: 2, tag: 1 }, frozen: true });
@@ -1891,7 +1891,7 @@ describe("wearing what it follows", () => {
         .map((b) => (b as unknown as { enabled: boolean }).enabled);
 
     expect(dragging()).toEqual([true]);
-    await kernel.apply({ op: "freeze_node", node: names[0], frozen: true });
+    await kernel.apply({ op: "freeze_node", nodes: [names[0]], frozen: true });
     await redraw(kernel, viewer);
     expect(dragging()).toEqual([false]);
   });
@@ -1899,14 +1899,21 @@ describe("wearing what it follows", () => {
   it("marks the picked node, over everything else it might be", async () => {
     const { kernel, viewer } = await pinned();
     const names = viewer.names();
-    await kernel.apply({ op: "freeze_node", node: names[0], frozen: true });
+    await kernel.apply({ op: "freeze_node", nodes: [names[0]], frozen: true });
     await redraw(kernel, viewer);
 
-    viewer.selectNode(names[0]);
-    expect(viewer.selectedNode).toBe(names[0]);
+    viewer.selectNodes([names[0]]);
+    expect(viewer.selectedNodes).toEqual([names[0]]);
     expect(handle(viewer, 0)).toBe("#ffcc33");
-    viewer.selectNode(null);
+    viewer.selectNodes([]);
     expect(handle(viewer, 0)).toBe(DEFAULTS.theme.frozen.toLowerCase());
+
+    // Several at once, which is what the fast way onto a geometry needs:
+    // pick the four corners, pick the curve, say so once.
+    viewer.selectNodes([names[0], names[1], 9999]);
+    expect(viewer.selectedNodes).toEqual([names[0], names[1]]);
+    expect(handle(viewer, 0)).toBe("#ffcc33");
+    expect(handle(viewer, 1)).toBe("#ffcc33");
   });
 
   it("colours the wireframe edge by edge", async () => {
@@ -1923,10 +1930,13 @@ describe("wearing what it follows", () => {
     const plain = colours();
 
     // Two corners of the cube on one curve puts every edge between them
-    // on that curve.
-    for (const node of [names[0], names[1]]) {
-      await kernel.apply({ op: "classify_node", node, on: { dim: 1, tag: 11 } });
-    }
+    // on that curve — and both of them in one command, which is how the
+    // interface sends it.
+    await kernel.apply({
+      op: "classify_node",
+      nodes: [names[0], names[1]],
+      on: { dim: 1, tag: 11 },
+    });
     await redraw(kernel, viewer);
     expect(colours()).not.toEqual(plain);
   });

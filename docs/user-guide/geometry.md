@@ -94,15 +94,21 @@ told apart by size as well as by colour.
 `F` frames the geometry along with the blocks: a geometry with nothing on it
 yet is still what there is to see.
 
-## Selecting surfaces
+## Selecting entities
 
 `M`, or the hexagon button, aims the mouse at the **geometry** instead of at
 the blocks. The button wears the mode it is in — the hexagon cut into
 quadrilaterals for the blocks, whole for the geometry — and the readout
 along the bottom names it, because a toggle that looks the same either way
-is one you have to click to find out about. Clicking a surface then picks it, clicking it again puts it out,
-and the background or `Esc` lets go of the lot. A picked surface turns the
-selection colour, exactly as a picked face does.
+is one you have to click to find out about. Clicking an entity then picks
+it, clicking it again puts it out, and the background or `Esc` lets go of
+the lot. A picked entity turns the selection colour, exactly as a picked
+face does.
+
+Corners, curves and surfaces are all pickable, **smallest target first**: a
+curve lies exactly on the surfaces it bounds, so whichever answered first
+would hide the other — and it is the curve you had to aim at. That is the
+same rule as for the blocking's own handles, lines and faces.
 
 It is a mode rather than a priority, because the two really do overlap: a
 geometric surface and the block faces inside it are at the same pixels, and
@@ -113,9 +119,13 @@ handles either.
 The mode is **not remembered** between sessions. A mode you left on last
 week and have forgotten is a mystery rather than a preference.
 
-Curves and corners are not selectable. A surface carries triangles, so it
-has an area and a set of points, which is what the one thing you can do with
-a selection needs.
+The block selection and the geometry selection are **held at the same
+time**: they are made in different modes and used together — a handful of
+nodes, and the entity to put them on. See
+[Classification](classification.md#the-fast-way-onto-a-model).
+
+A box is built round the **surfaces** in the selection, a curve having no
+thickness to contain anything.
 
 ## A box round it
 

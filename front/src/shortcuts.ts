@@ -21,6 +21,7 @@ export const ACTIONS = [
   "box",
   "picking",
   "classify",
+  "attach",
   "freeze",
   "unclassify",
   "glue",
@@ -115,6 +116,13 @@ export const SHORTCUTS: readonly Shortcut[] = [
     key: "k",
     action: "classify",
     does: "put the whole blocking on the geometry",
+    group: "Edit",
+  },
+  {
+    show: "A",
+    key: "a",
+    action: "attach",
+    does: "put the selected nodes on the selected entity",
     group: "Edit",
   },
   {

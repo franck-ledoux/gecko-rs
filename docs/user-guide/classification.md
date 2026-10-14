@@ -11,17 +11,45 @@ not move it at all, its entity being a single point.
 
 ## With the mouse
 
-|                           |                                          |
-| ------------------------- | ---------------------------------------- |
-| `K`, or the magnet button | put the whole blocking on the geometry   |
-| click a node              | pick it — the readout says what it is on |
-| `L`                       | lock the picked node, or let it go       |
-| `U`                       | take the picked node off the geometry    |
+|                           |                                               |
+| ------------------------- | --------------------------------------------- |
+| click a node              | pick it, or put it out again                  |
+| shift-drag                | catch every handle inside the band            |
+| `A`                       | put the picked nodes on the picked entity     |
+| `K`, or the magnet button | put the whole blocking on whatever is nearest |
+| `L`                       | lock the picked nodes, or let them go         |
+| `U`                       | take the picked nodes off the geometry        |
 
-Picking a node is new: until now a node was something you dragged and
-nothing else. Locking and unclassifying are things you *say* about a node,
-so one has to be nameable without being moved. A press and release on a
-handle without moving it is a pick; anything further is still a drag.
+A press and release on a handle without moving it is a pick; anything
+further is still a drag. Locking and unclassifying are things you *say*
+about a node, so one has to be nameable without being moved.
+
+### The fast way onto a model
+
+`K` puts the whole blocking on whatever is nearest, which is right until it
+is not: the corners of a box round a cylinder are nearer the tube than the
+circle they are meant to follow. `A` is how you say where they go.
+
+For a cylinder, per circle:
+
+1. **Catch the four corners.** Hold shift and drag a band round them. It
+   takes everything *inside* it, including the handles on the far side of
+   the model — which is what you want when the four you are after are the
+   four at the bottom. Clicking them one by one does the same thing, and
+   either adds to what is already picked.
+1. **Pick the circle.** `M` to aim at the geometry, then click it. Curves
+   are pickable now, and a curve wins over the surfaces it bounds.
+1. **`A`.** All four go on that curve and are **projected onto it** — each
+   to its own nearest point, which for the corners of a box is the four
+   points at 45°, 135°, 225° and 315°.
+
+Both selections are let go afterwards, because the next four corners and
+the next curve are the next gesture. It is one command and so **one step of
+undo**, and the edges and faces above those nodes settle once rather than
+four times.
+
+The two selections are held at the same time and survive `M`: they are made
+in different modes and used together. `Esc` is how you let go of both.
 
 ### Reading it off the screen
 
@@ -164,8 +192,13 @@ A frozen node does not move. Not for a drag, not for a classification, not
 for anything, until it is thawed.
 
 ```python
-s.freeze_node(n)      # and s.thaw_node(n)
+s.freeze_node(n)              # and s.thaw_node(n)
+s.freeze_node([a, b, c])      # one node or several, here as everywhere
 ```
+
+With the mouse: pick the nodes and press `L`. A mixed selection is frozen
+rather than thawed — the key makes them agree, and agree the way most of a
+gesture is meant.
 
 A move of a frozen node is **refused** rather than quietly ignored: a caller
 told nothing would go on believing it happened. `classify()` leaves frozen
@@ -180,15 +213,17 @@ say:
 ```python
 s.unclassify_node(n)         # it stays where it is, and may now go anywhere
 s.classify_node(n, 1, 205)   # or put it somewhere by hand: a curve, tag 205
+s.classify_node([a, b, c, d], 1, 205)   # or four of them, in one act
 ```
 
 A constraint that gave way when pulled hard enough would be a constraint you
 could not rely on.
 
-With the mouse: click the node and press `U`. It stays where it is and may
-now go anywhere — and when you drop it somewhere else it takes hold of
+With the mouse: pick the nodes and press `U`. They stay where they are and
+may now go anywhere — and when you drop one somewhere else it takes hold of
 whatever is nearest *there*, which is the point of freeing it when the
-nearest thing here was the wrong one.
+nearest thing here was the wrong one. How near it has to come is **snap**
+in the settings panel.
 
 ## What is not classified
 

@@ -35,8 +35,16 @@ import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { PointerDragBehavior } from "@babylonjs/core/Behaviors/Meshes/pointerDragBehavior";
 import "@babylonjs/core/Culling/ray";
 import type { GeometryView, View } from "./decode";
-import type { GeomGroup } from "./geometry";
-import { geomBounds, geomCorners, geomCurves, geomSurfaces, GEOM_GROUPS } from "./geometry";
+import type { GeomGroup, Spot } from "./geometry";
+import {
+  DIM_OF,
+  geomBounds,
+  geomCorners,
+  geomCurves,
+  geomSurfaces,
+  GEOM_GROUPS,
+  SURFACE,
+} from "./geometry";
 import { AxisGizmo, MAIN_LAYER, orientationFor } from "./axes";
 import type { Axis } from "./axes";
 import {
@@ -386,13 +394,20 @@ export class Viewer {
    *  a mode you left on last week and have forgotten is a mystery, not a
    *  preference. */
   private picking: Picking = "blocks";
-  /** The geometric surfaces picked, by gmsh tag, in the order they were
-   *  picked. View state, like the face selection. */
-  private pickedSurfaces: number[] = [];
-  /** The node picked, by the kernel's name for it. One, not a list: what
-   *  you do with a picked node — freeze it, take it off the model — is one
-   *  node's business. */
-  private pickedNode: number | null = null;
+  /** The geometric entities picked, by dimension and gmsh tag, in the
+   *  order they were picked. View state, like the face selection.
+   *
+   *  Any of the three groups, not surfaces alone: a box is built round
+   *  surfaces, but what you put a corner of it *on* is as likely to be a
+   *  curve — the circle at the end of a cylinder, say. */
+  private pickedGeom: Spot[] = [];
+  /** The nodes picked, by the kernel's names for them, in the order they
+   *  were picked.
+   *
+   *  A list, because the things you do with picked nodes are worth doing
+   *  to four of them at once: putting the corners of a box on the circle
+   *  they are meant to follow is one act, not four. */
+  private pickedNodes: number[] = [];
   /** The face being grown, while the pointer is down on it: where it is,
    *  which way is out, and how far the pointer has asked for so far. */
   private growing?: { pick: Pick; centre: Vector3; normal: Vector3; corners: Vector3[] };
@@ -1048,31 +1063,44 @@ export class Viewer {
     return this.picking === "geometry";
   }
 
-  /** The geometric surfaces picked, by tag. */
-  get surfaceSelection(): number[] {
-    return [...this.pickedSurfaces];
+  /** The geometric entities picked. */
+  get geomSelection(): Spot[] {
+    return this.pickedGeom.map((spot) => ({ ...spot }));
   }
 
-  selectSurfaces(tags: readonly number[]) {
-    this.pickedSurfaces = [...tags];
+  /** Those of them that are surfaces, which is what a box is built round. */
+  get surfaceSelection(): number[] {
+    return this.pickedGeom.filter((s) => s.dim === SURFACE).map((s) => s.tag);
+  }
+
+  selectGeom(spots: readonly Spot[]) {
+    this.pickedGeom = spots.map((spot) => ({ ...spot }));
     this.rebuildGeometry();
   }
 
   /**
-   * Screen coordinates -> the geometric surface under them.
+   * Screen coordinates -> the geometric entity under them.
    *
    * Through a predicate of its own rather than by making the geometry
    * pickable: Babylon consults `isPickable` only when no predicate is
    * given, so the geometry can stay invisible to the pointer system —
    * which is what keeps it from stealing a click meant for a block — while
    * still being reachable deliberately, from here.
+   *
+   * Smallest target first — a corner, then a curve, then the surface
+   * behind them — because each is the thing you had to aim at to hit it,
+   * and a curve lies exactly on the surfaces it bounds.
    */
-  pickGeometry(x: number, y: number): number | null {
-    const mine = new Set(this.geomMeshes.surfaces.map((m) => m.name));
-    const hit = this.scene.pick(x, y, (m) => mine.has(m.name), false, this.cameraFor(x, y));
-    if (!hit?.hit || !hit.pickedMesh) return null;
-    const tag = Number(hit.pickedMesh.name.split("-").pop());
-    return Number.isFinite(tag) ? tag : null;
+  pickGeometry(x: number, y: number): Spot | null {
+    for (const group of ["corners", "curves", "surfaces"] as const) {
+      const mine = new Set(this.geomMeshes[group].map((m) => m.name));
+      if (!mine.size) continue;
+      const hit = this.scene.pick(x, y, (m) => mine.has(m.name), false, this.cameraFor(x, y));
+      if (!hit?.hit || !hit.pickedMesh) continue;
+      const tag = Number(hit.pickedMesh.name.split("-").pop());
+      if (Number.isFinite(tag)) return { dim: DIM_OF[group], tag };
+    }
+    return null;
   }
 
   /**
@@ -1084,7 +1112,7 @@ export class Viewer {
    */
   setGeometry(view: GeometryView) {
     this.geometry = view;
-    this.pickedSurfaces = [];
+    this.pickedGeom = [];
     this.rebuildGeometry();
     // The geometry counts towards the model's extent, so how close the
     // camera may come has to be worked out again.
@@ -1123,7 +1151,7 @@ export class Viewer {
     // Picked surfaces take the selection colour, whatever the colouring
     // says — the same convention as a picked face, so there is one thing
     // to learn rather than two.
-    if (group === "surfaces" && this.pickedSurfaces.includes(tag)) {
+    if (this.pickedGeom.some((s) => s.dim === DIM_OF[group] && s.tag === tag)) {
       return Color3.FromHexString(ANCHOR);
     }
     return this.entityColour(group, tag);
@@ -1161,7 +1189,7 @@ export class Viewer {
   private nodeColour(index: number): Color3 {
     const plain = this.prefs.theme.nodes;
     if (!this.view) return Color3.FromHexString(plain);
-    if (this.view.names[index] === this.pickedNode) return Color3.FromHexString(ANCHOR);
+    if (this.pickedNodes.includes(this.view.names[index])) return Color3.FromHexString(ANCHOR);
     if (this.view.nodeFrozen[index]) return Color3.FromHexString(this.prefs.theme.frozen);
     switch (this.prefs.nodes.colouring) {
       case "class":
@@ -1553,14 +1581,41 @@ export class Viewer {
     });
   }
 
-  /** The node picked, by the kernel's name, or nothing. */
-  get selectedNode(): number | null {
-    return this.pickedNode;
+  /** The nodes picked, by the kernel's names. */
+  get selectedNodes(): number[] {
+    return [...this.pickedNodes];
   }
 
-  selectNode(name: number | null) {
-    this.pickedNode = name;
+  selectNodes(names: readonly number[]) {
+    // Only those the view still has: a node named before a cut that
+    // consumed it is a name nothing answers to, and a selection that
+    // outlives its cells is a command refused later for no visible reason.
+    const live = new Set(this.view?.names ?? []);
+    this.pickedNodes = names.filter((n) => live.has(n));
     this.paintNodes();
+  }
+
+  /**
+   * Every node whose handle falls inside a rectangle on screen, in CSS
+   * pixels.
+   *
+   * Projected one by one rather than picked: a pick asks what is in front,
+   * and a lasso means *everything in there*, including the handles on the
+   * far side of the model. Which is what you want when the four corners
+   * you are after are the four at the bottom.
+   */
+  nodesInRect(x0: number, y0: number, x1: number, y1: number): number[] {
+    const [left, right] = x0 < x1 ? [x0, x1] : [x1, x0];
+    const [top, bottom] = y0 < y1 ? [y0, y1] : [y1, y0];
+    const out: number[] = [];
+    for (const mesh of this.nodes) {
+      const at = this.toScreen(mesh.position);
+      if (!at) continue;
+      if (at[0] >= left && at[0] <= right && at[1] >= top && at[1] <= bottom) {
+        out.push(mesh.metadata.name as number);
+      }
+    }
+    return out;
   }
 
   /** What a node is classified on, and whether it may move — for the
