@@ -1127,3 +1127,35 @@ def test_the_file_is_vtk_legacy(tmp_path):
     assert lines[2:5] == ["ASCII", "DATASET UNSTRUCTURED_GRID", "POINTS 8 double"]
     assert "CELLS 1 9" in lines
     assert "SCALARS block int 1" in lines
+
+
+def test_a_pillowed_node_leaves_its_classification_on_the_surface(tmp_path):
+    # The layer leaves a copy of each node where it was; that copy is the
+    # one still where the geometry is, so it is the one that keeps what
+    # the node was classified on. The node drawn in is somewhere new, and
+    # where it is is decided again.
+    path = tmp_path / "box.msh"
+    path.write_text(BOX_MSH)
+    s = gecko.Session()
+    s.load_geometry(str(path))
+    s.box_geometry(margin=0.0)
+    s.classify()
+    assert s.stats["classified"]["nodes"] == 8
+
+    before = {tuple(n["pos"]): n["on"] for n in s.nodes}
+    top = [f for f in s.faces if abs(f["centre"][2] - 1.0) < 1e-9]
+    assert len(top) == 1
+    s.pillow([(top[0]["id"], top[0]["block"])])
+
+    for n in s.nodes:
+        x, y, z = n["pos"]
+        if abs(z - 1.0) < 1e-9:
+            # The copy the layer left where the node was: it is the one
+            # still on the geometry, so it keeps what the node was on.
+            assert n["on"] == before[(x, y, 1.0)], n
+        elif z > 0.5:
+            # Drawn in, so off the corner it was: it slid down the upright
+            # of the cube that corner was on, and is on **that** now.
+            was = before[(x, y, 1.0)]
+            assert n["on"] != was, "it kept the entity it was pushed off"
+            assert n["on"]["dim"] > was["dim"], n

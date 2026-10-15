@@ -168,6 +168,15 @@ pub enum Command {
     /// so the model's surface does not move.
     Pillow {
         faces: Vec<PickedFace>,
+        /// How near a node drawn in has to be to a geometric entity to be
+        /// taken by it — the same share [`Command::Classify`] uses.
+        ///
+        /// Pillowing moves nodes, and a node somewhere new is on
+        /// something new: the corner of a box drawn in off the rim of a
+        /// disc is still on that disc. Only the nodes that moved are
+        /// looked at again.
+        #[serde(default = "default_snap")]
+        tolerance: f64,
     },
     /// Grow a new block out of a face, along the normal at its centre.
     ///
@@ -609,12 +618,18 @@ impl Session {
                     view_changed: true,
                 })
             }
-            Command::Pillow { faces } => {
+            Command::Pillow { faces, tolerance } => {
                 let patch: Vec<_> = faces
                     .iter()
                     .map(|f| (CellId::from_raw(f.face), CellId::from_raw(f.block)))
                     .collect();
-                self.blocking.pillow(&patch)?;
+                let drawn = self.blocking.pillow(&patch)?;
+                // The layer leaves a copy of each node where it was, and
+                // that copy keeps what the node was pinned to. The one
+                // that went in has moved, so where **it** is has to be
+                // looked at again — it has left the curve it was on and
+                // may still be on the surface that curve bounds.
+                self.settle_moved(&drawn, tolerance);
                 Ok(Outcome {
                     message: format!(
                         "pillowed {} face{} — {} nodes, {} edges, {} faces, {} blocks",
@@ -905,6 +920,32 @@ impl Session {
             seen.classified_edges,
             seen.classified_faces,
         ))
+    }
+
+    /// Decide again what these nodes are on, by where they are now.
+    ///
+    /// For an operation that **moves** nodes: the blanket
+    /// [`Command::Classify`] would undo every classification anybody had
+    /// made by hand, and leaving them as they were pins a node to a curve
+    /// it is no longer anywhere near — which drags the mesh out through
+    /// the boundary when it is projected, and turns the cells inside out.
+    fn settle_moved(&mut self, nodes: &[CellId], tolerance: f64) {
+        let Session {
+            blocking, geometry, ..
+        } = self;
+        let Some(geometry) = geometry.as_deref() else {
+            return;
+        };
+        let reach = [tolerance.max(0.0) * geometry.span(); 3];
+        blocking.classify_named(
+            nodes,
+            |at| {
+                geometry
+                    .nearest(at, reach)
+                    .map(|(dim, tag)| On { dim, tag })
+            },
+            |on, at| geometry.project(on.dim, on.tag, at),
+        );
     }
 
     /// Put a node where its classification says it is.

@@ -242,3 +242,49 @@ fn the_answer_is_the_same_every_time() {
     };
     assert_eq!(build(), build());
 }
+
+#[test]
+fn the_node_left_on_the_surface_keeps_what_the_node_that_moved_was_on() {
+    // The layer leaves a copy of each node where it was and draws the
+    // original in. Whatever the node was pinned to belongs to the copy:
+    // it is the one still where the geometry is, and the one that went in
+    // is inside the material. The other way round pins a node to a curve
+    // it is no longer anywhere near, and the mesh is dragged out through
+    // the boundary when it is projected.
+    use gecko_core::On;
+    let mut b = cube();
+    let (face, block) = face_at(&b, 2, 1.0);
+
+    let corner = b
+        .nodes()
+        .find(|(_, p)| p[2] > 0.5)
+        .expect("a node of the top face")
+        .0;
+    let was = b.position(b.node_by_id(corner).unwrap()).unwrap();
+    b.set_node_class(corner, Some(On { dim: 1, tag: 7 }))
+        .unwrap();
+    b.set_frozen(corner, true).unwrap();
+
+    let drawn = b.pillow(&[(face, block)]).unwrap();
+    assert!(!drawn.is_empty(), "nothing was drawn in");
+
+    // Where it was, there is a node on curve 7 — and it is still frozen,
+    // a frozen node having been frozen where it stood.
+    let outer = b
+        .nodes_in_full()
+        .find(|(_, p, _, _)| (0..3).all(|k| (p[k] - was[k]).abs() < 1e-9))
+        .expect("a node where the corner was");
+    assert_eq!(outer.2, Some(On { dim: 1, tag: 7 }), "the surface lost it");
+    assert!(outer.3, "the freeze did not come with it");
+
+    // And every node that was drawn in is on nothing and free to move:
+    // where it is now is the caller's business to decide again.
+    for node in &drawn {
+        let (_, _, on, frozen) = b
+            .nodes_in_full()
+            .find(|(id, _, _, _)| id == node)
+            .expect("a node that moved");
+        assert_eq!(on, None, "a node drawn in kept what it was on");
+        assert!(!frozen, "a node drawn in stayed frozen");
+    }
+}

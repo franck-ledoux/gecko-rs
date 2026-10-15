@@ -226,3 +226,166 @@ fn the_buffer_carries_the_skin_and_nothing_inside_it() {
     s.apply(Command::ClearMesh).unwrap();
     assert_eq!(s.mesh_buffer().len(), MESH_HEADER);
 }
+
+/// A cylinder's surface: two circular curves, two discs, one tube.
+fn cylinder(sides: usize, radius: f64, height: f64) -> String {
+    let mut nodes = vec![[0.0, 0.0, 0.0], [0.0, 0.0, height]];
+    for end in [0.0, height] {
+        for k in 0..sides {
+            let a = std::f64::consts::TAU * k as f64 / sides as f64;
+            nodes.push([radius * a.cos(), radius * a.sin(), end]);
+        }
+    }
+    let bottom = |k: usize| 3 + k % sides;
+    let top = |k: usize| 3 + sides + k % sides;
+    let mut elements: Vec<String> = Vec::new();
+    for k in 0..sides {
+        // The two rims, each a curve of its own.
+        elements.push(format!("1 2 0 201 {} {}", bottom(k), bottom(k + 1)));
+        elements.push(format!("1 2 0 202 {} {}", top(k), top(k + 1)));
+        // The two discs, wound outward, and the tube between them.
+        elements.push(format!("2 2 0 1 1 {} {}", bottom(k + 1), bottom(k)));
+        elements.push(format!("2 2 0 2 2 {} {}", top(k), top(k + 1)));
+        elements.push(format!(
+            "2 2 0 3 {} {} {}",
+            bottom(k),
+            bottom(k + 1),
+            top(k + 1)
+        ));
+        elements.push(format!("2 2 0 3 {} {} {}", bottom(k), top(k + 1), top(k)));
+    }
+    let mut out = String::from("$MeshFormat\n2.2 0 8\n$EndMeshFormat\n$Nodes\n");
+    out.push_str(&format!("{}\n", nodes.len()));
+    for (i, p) in nodes.iter().enumerate() {
+        out.push_str(&format!("{} {} {} {}\n", i + 1, p[0], p[1], p[2]));
+    }
+    out.push_str(&format!("$EndNodes\n$Elements\n{}\n", elements.len()));
+    for (i, e) in elements.iter().enumerate() {
+        out.push_str(&format!("{} {}\n", i + 1, e));
+    }
+    out.push_str("$EndElements\n");
+    out
+}
+
+/// Six times the volume of a hexahedron, by the divergence theorem over its
+/// six faces. Positive when the corners are wound the way VTK expects.
+fn six_volumes(p: &[[f64; 3]; 8]) -> f64 {
+    const FACES: [[usize; 4]; 6] = [
+        [0, 3, 2, 1],
+        [4, 5, 6, 7],
+        [0, 1, 5, 4],
+        [1, 2, 6, 5],
+        [2, 3, 7, 6],
+        [3, 0, 4, 7],
+    ];
+    let mut sum = 0.0;
+    for face in FACES {
+        for [a, b, c] in [[0, 1, 2], [0, 2, 3]] {
+            let (x, y, z) = (p[face[a]], p[face[b]], p[face[c]]);
+            sum += x[0] * (y[1] * z[2] - y[2] * z[1]) - x[1] * (y[0] * z[2] - y[2] * z[0])
+                + x[2] * (y[0] * z[1] - y[1] * z[0]);
+        }
+    }
+    sum
+}
+
+#[test]
+fn a_pillowed_cylinder_meshes_the_right_way_out() {
+    // The whole scenario, because this is the one that was wrong: box a
+    // cylinder, put the eight corners on the two rims, lay a layer along
+    // the four faces on the tube, and mesh it.
+    //
+    // The layer leaves a copy of each node where it was and draws the
+    // original in. If what the node was pinned to goes **in** with it
+    // rather than staying on the surface, the mesh along those edges is
+    // projected back out onto the rim, and the cells turn inside out.
+    let mut s = Session::new().unwrap();
+    s.apply(Command::LoadGeometry {
+        msh: cylinder(24, 1.0, 2.0),
+        name: "cylinder.msh".to_string(),
+    })
+    .unwrap();
+    s.apply(Command::BoxGeometry {
+        surfaces: vec![],
+        margin: 0.0,
+    })
+    .unwrap();
+
+    // The four corners of each end onto the rim they are meant to follow.
+    let nodes: Vec<serde_json::Value> = serde_json::from_str(&s.nodes_json()).unwrap();
+    for (z, tag) in [(0.0, 201), (2.0, 202)] {
+        let four: Vec<u32> = nodes
+            .iter()
+            .filter(|n| (n["pos"][2].as_f64().unwrap() - z).abs() < 0.5)
+            .map(|n| n["id"].as_u64().unwrap() as u32)
+            .collect();
+        assert_eq!(four.len(), 4);
+        s.apply(Command::ClassifyNode {
+            nodes: four,
+            on: Some(gecko_cmd::Spot { dim: 1, tag }),
+        })
+        .unwrap();
+    }
+
+    // The four faces on the tube: the ones off the axis. Not the discs.
+    let faces: Vec<serde_json::Value> = serde_json::from_str(&s.faces_json()).unwrap();
+    let patch: Vec<gecko_cmd::PickedFace> = faces
+        .iter()
+        .filter(|f| {
+            let at = &f["centre"];
+            at[0].as_f64().unwrap().abs() > 0.1 || at[1].as_f64().unwrap().abs() > 0.1
+        })
+        .map(|f| gecko_cmd::PickedFace {
+            face: f["id"].as_u64().unwrap() as u32,
+            block: f["block"].as_u64().unwrap() as u32,
+        })
+        .collect();
+    assert_eq!(patch.len(), 4, "the four faces on the tube");
+    s.apply(Command::Pillow {
+        faces: patch,
+        tolerance: gecko_cmd::SNAP_SHARE,
+    })
+    .unwrap();
+
+    // The nodes on the rim are the ones **out** at the radius, and the
+    // ones drawn in are on the discs they are still sitting in rather
+    // than on the rims they have left.
+    let nodes: Vec<serde_json::Value> = serde_json::from_str(&s.nodes_json()).unwrap();
+    for node in &nodes {
+        let p = node["pos"].as_array().unwrap();
+        let at = [0, 1, 2].map(|k| p[k].as_f64().unwrap());
+        let radius = (at[0] * at[0] + at[1] * at[1]).sqrt();
+        let on = &node["on"];
+        if radius > 0.9 {
+            assert_eq!(on["dim"], 1, "a node on the rim is on no curve: {node}");
+        } else {
+            assert_eq!(on["dim"], 2, "a node drawn in is not on its disc: {node}");
+        }
+    }
+
+    s.apply(Command::Mesh { segments: 4 }).unwrap();
+    let file = s.mesh_vtk().expect("a mesh");
+    let lines: Vec<&str> = file.lines().collect();
+    let count: usize = lines[4].split(' ').nth(1).unwrap().parse().unwrap();
+    let points: Vec<[f64; 3]> = lines[5..5 + count]
+        .iter()
+        .map(|l| {
+            let v: Vec<f64> = l.split(' ').map(|n| n.parse().unwrap()).collect();
+            [v[0], v[1], v[2]]
+        })
+        .collect();
+
+    let mut inside_out = 0;
+    for line in lines.iter().filter(|l| l.starts_with("8 ")) {
+        let ids: Vec<usize> = line
+            .split(' ')
+            .skip(1)
+            .map(|n| n.parse().unwrap())
+            .collect();
+        let at: [[f64; 3]; 8] = std::array::from_fn(|k| points[ids[k]]);
+        if six_volumes(&at) <= 0.0 {
+            inside_out += 1;
+        }
+    }
+    assert_eq!(inside_out, 0, "cells turned inside out");
+}

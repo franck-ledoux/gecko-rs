@@ -53,6 +53,25 @@ pub fn cube_corners(origin: [f64; 3], size: f64) -> [[f64; 3]; 8] {
     ]
 }
 
+/// The dart a corner of a freshly built block starts at.
+///
+/// [`Blocking::build_block`] lays the darts out face by face, four to a
+/// face, in [`HEX_FACES`] order — so a corner is found by looking for it
+/// in that table. Any of the three faces it is on will do: they all begin
+/// a dart there.
+fn corner_dart(base: DartIdType, corner: usize) -> DartIdType {
+    HEX_FACES
+        .iter()
+        .enumerate()
+        .find_map(|(face, corners)| {
+            corners
+                .iter()
+                .position(|c| *c == corner)
+                .map(|slot| base + (face * 4 + slot) as DartIdType)
+        })
+        .expect("every corner of a hexahedron is on some face")
+}
+
 /// Two points close enough to be the same node.
 fn same_point(a: [f64; 3], b: [f64; 3]) -> bool {
     (0..3).all(|k| (a[k] - b[k]).abs() < 1e-9)
@@ -684,10 +703,40 @@ impl Blocking {
         pick: impl Fn([f64; 3]) -> Option<On>,
         project: impl Fn(On, [f64; 3]) -> Option<[f64; 3]>,
     ) {
+        self.classify_some(|_| true, pick, project);
+    }
+
+    /// The same, for the nodes a caller names.
+    ///
+    /// What an operation that **moves** nodes needs afterwards: a node
+    /// somewhere new is on something new, and the only way to find out
+    /// what is to look. Pillowing is the case that wants it — the corner
+    /// of a box drawn in off the rim of a disc is still on that disc —
+    /// and reaching for the blanket version instead would undo every
+    /// classification anybody had made by hand.
+    pub fn classify_named(
+        &mut self,
+        nodes: &[CellId],
+        pick: impl Fn([f64; 3]) -> Option<On>,
+        project: impl Fn(On, [f64; 3]) -> Option<[f64; 3]>,
+    ) {
+        let wanted: HashSet<CellId> = nodes.iter().copied().collect();
+        self.classify_some(|tag| wanted.contains(&tag.id), pick, project);
+    }
+
+    fn classify_some(
+        &mut self,
+        which: impl Fn(&NodeTag) -> bool,
+        pick: impl Fn([f64; 3]) -> Option<On>,
+        project: impl Fn(On, [f64; 3]) -> Option<[f64; 3]>,
+    ) {
         let found: Vec<(VertexIdType, Option<On>, Option<[f64; 3]>)> = self
             .map
             .iter_vertices()
-            .filter(|v| !self.node_tag(*v).frozen)
+            .filter(|v| {
+                let tag = self.node_tag(*v);
+                !tag.frozen && which(&tag)
+            })
             .map(|v| {
                 let at = self.position(v).unwrap_or([0.0; 3]);
                 let on = pick(at);
@@ -1531,7 +1580,7 @@ impl Blocking {
     /// and moving it takes them with it. The mesh stays conforming and those
     /// blocks are deformed a little; that is the honest consequence of a
     /// shared node being shared.
-    pub fn pillow(&mut self, patch: &[(CellId, CellId)]) -> Result<(), BlockingError> {
+    pub fn pillow(&mut self, patch: &[(CellId, CellId)]) -> Result<Vec<CellId>, BlockingError> {
         if patch.is_empty() {
             return Err(BlockingError::EmptyPatch);
         }
@@ -1620,6 +1669,20 @@ impl Blocking {
             near.push(side);
         }
 
+        // What each node of the patch is pinned to, and where it is.
+        //
+        // Read before anything moves, because the node that is about to
+        // move is **not** the one that ends up where it is now: the layer
+        // puts a new node there, and that new one is the one on the
+        // geometry. See the hand-over below.
+        let was: Vec<([f64; 3], Option<On>, bool)> = facing
+            .keys()
+            .map(|node| {
+                let tag = self.node_tag(*node);
+                (self.position(*node).unwrap_or([0.0; 3]), tag.on, tag.frozen)
+            })
+            .collect();
+
         let mut moved: HashMap<VertexIdType, [f64; 3]> = HashMap::new();
         for (node, (inward, depth)) in &facing {
             let from = self.position(*node).unwrap_or([0.0; 3]);
@@ -1628,6 +1691,20 @@ impl Blocking {
         }
         for (node, to) in &moved {
             self.map.write_vertex(*node, (to[0], to[1], to[2]));
+            // And it lets go of the geometry on the way in. This node is
+            // **inside the material** now; what it used to follow is the
+            // business of the copy the layer leaves on the surface, and a
+            // node pinned to a curve it is no longer anywhere near drags
+            // the mesh out through the boundary when it is projected.
+            let tag = self.node_tag(*node);
+            self.map.write_attribute(
+                *node,
+                NodeTag {
+                    on: None,
+                    frozen: false,
+                    ..tag
+                },
+            );
         }
 
         // --- a block per face, laid into the space that opened ----------
@@ -1645,10 +1722,29 @@ impl Blocking {
             let mut corners = [[0.0; 3]; 8];
             corners[..4].copy_from_slice(&shrunk);
             corners[4..].copy_from_slice(&plan.points);
-            layers.push(Layer {
-                block: self.add_block(corners)?,
-                shrunk,
-            });
+            let (block, base) = self.build_block(corners)?;
+
+            // The far four of the new block are where the patch was, so
+            // they are the nodes on the geometry now. They take what the
+            // nodes that moved in were carrying — the classification and
+            // the freeze both, since a frozen node was frozen where it
+            // stood rather than wherever it is pushed to.
+            for (c, at) in corners.iter().enumerate().skip(4) {
+                let Some((_, on, frozen)) = was.iter().find(|(p, _, _)| same_point(*p, *at)) else {
+                    continue;
+                };
+                let vertex = self.map.vertex_id(corner_dart(base, c));
+                let tag = self.node_tag(vertex);
+                self.map.write_attribute(
+                    vertex,
+                    NodeTag {
+                        on: *on,
+                        frozen: *frozen,
+                        ..tag
+                    },
+                );
+            }
+            layers.push(Layer { block, shrunk });
         }
 
         // Each layer onto the block it came off, the existing face named
@@ -1707,7 +1803,22 @@ impl Blocking {
         }
 
         self.assign_missing_ids();
-        Ok(())
+
+        // The nodes that were drawn in, now that the gluing has settled
+        // which vertex is which. The caller wants them because each is
+        // somewhere new and so may be **on** something new: the corner of
+        // a box drawn in off the rim of a disc is still on that disc, and
+        // only the caller holds the triangles that say so.
+        let mut drawn: Vec<CellId> = Vec::new();
+        for v in self.map.iter_vertices() {
+            let at = self.position(v).unwrap_or([0.0; 3]);
+            if moved.values().any(|to| same_point(*to, at)) {
+                drawn.push(self.node_tag(v).id);
+            }
+        }
+        drawn.sort();
+        drawn.dedup();
+        Ok(drawn)
     }
 
     /// The side of `block` whose four corners are these four points.

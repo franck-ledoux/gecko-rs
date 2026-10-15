@@ -251,6 +251,19 @@ whatever is nearest *there*, which is the point of freeing it when the
 nearest thing here was the wrong one. How near it has to come is **snap**
 in the settings panel.
 
+## When a block moves under it
+
+Two operations move nodes and so have to decide what they are on again.
+
+**A cut** hands the pieces what was cut: the node in the middle of a cut
+edge is on what that edge was on, and is projected onto it. See
+[Cutting something that is classified](#cutting-something-that-is-classified).
+
+**Pillowing** leaves a copy of each node where it was and draws the original
+in. The copy keeps the classification, being the one still on the geometry;
+the node drawn in is looked at again by proximity, and lands on whatever it
+is on *now* — see [Pillowing](pillowing.md#what-happens-to-the-classification).
+
 ## What is not classified
 
 Blocks. The rule extends to them unchanged — a block on the

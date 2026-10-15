@@ -818,6 +818,7 @@ mod pillowing {
         let (face, block) = face_at(&s, 2, 1.0);
         s.apply(Command::Pillow {
             faces: vec![gecko_cmd::PickedFace { face, block }],
+            tolerance: SNAP_SHARE,
         })
         .unwrap();
 
@@ -848,6 +849,7 @@ mod pillowing {
             let (face, block) = face_at(&s, 2, 1.0);
             s.apply(Command::Pillow {
                 faces: vec![gecko_cmd::PickedFace { face, block }],
+                tolerance: SNAP_SHARE,
             })
             .unwrap();
             s

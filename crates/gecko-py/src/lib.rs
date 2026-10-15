@@ -165,12 +165,19 @@ impl PySession {
     /// blocks it belongs to. The blocks are drawn in and the layer fills the
     /// space, so the model's surface does not move. Faces inside the model
     /// are refused.
-    fn pillow(&self, patch: Vec<(u32, u32)>) -> PyResult<String> {
+    ///
+    /// The layer leaves a copy of each node where it was, and that copy
+    /// keeps what the node was classified on — it is the one still where
+    /// the geometry is. The node drawn in is somewhere new, so where it is
+    /// is decided again, within `tolerance`: the corner of a box drawn in
+    /// off the rim of a disc is still on that disc.
+    #[pyo3(signature = (patch, tolerance=0.02))]
+    fn pillow(&self, patch: Vec<(u32, u32)>, tolerance: f64) -> PyResult<String> {
         let faces: Vec<_> = patch
             .iter()
             .map(|(face, block)| serde_json::json!({ "face": face, "block": block }))
             .collect();
-        self.command(serde_json::json!({ "op": "pillow", "faces": faces }))
+        self.command(serde_json::json!({ "op": "pillow", "faces": faces, "tolerance": tolerance }))
     }
 
     /// Take one block away.

@@ -39,6 +39,26 @@ adding the face normals sends a node in the middle of a flat patch four times
 too far, and averaging them leaves a node on a corner short of both its
 faces.
 
+## What happens to the classification
+
+The layer leaves a copy of each node exactly where it was, and draws the
+original in. **The copy is the one on the geometry**, so it is the copy that
+keeps what the node was classified on — and its freeze with it, a frozen
+node having been frozen where it stood rather than wherever it is pushed to.
+
+The node drawn in is somewhere new, so where it is is decided again, by
+proximity, within the **snap** of the settings panel. It is not simply
+freed: the corner of a box drawn in off the rim of a disc is still sitting
+*on* that disc, and the corner of a box drawn in along an upright of the
+model slides down that upright and is still on it. Only the nodes that
+moved are looked at again, so nothing you classified by hand elsewhere is
+disturbed.
+
+Getting this backwards is worth describing, because it is invisible until
+you mesh: a node pinned to a curve it is no longer anywhere near drags the
+mesh along that curve out through the boundary, and the cells come out
+inside out.
+
 ## Inside the model
 
 A face with a block on each side works too, and the layer goes between them.
