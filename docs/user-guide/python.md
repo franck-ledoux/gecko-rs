@@ -241,6 +241,39 @@ How many steps back `undo()` can go; 0 turns it off, 50 is the most it will
 take. Shortening it drops the oldest states there and then. Each step is a
 copy of the whole block structure, which is why there is a number at all.
 
+### Meshing
+
+#### `mesh(segments=10)`
+
+Discretise every block into hexahedra, by transfinite interpolation. Cells
+classified on the geometry have their points **projected onto what they
+follow**, so the mesh follows the model rather than merely having its shape.
+See [Meshing](meshing.md).
+
+```python
+>>> s.mesh(6)
+'meshed — 343 nodes, 216 hexahedra'
+>>> s.stats["mesh"]
+{'generation': 1, 'nodes': 343, 'hexes': 216}
+```
+
+The mesh is kept until the blocking changes — a mesh of a model you have
+since edited is a lie — and it is not a step of undo, nothing of the
+blocking having moved.
+
+#### `set_segments(edge, segments)`
+
+How many segments the **sheet** through this edge is divided into. On the
+whole sheet, which is the only way it can mean anything: an edge divided
+into four against its neighbour's five leaves a face with nothing to match
+along.
+
+#### `export_vtk(path, segments=10)`
+
+Write the mesh out as VTK legacy ASCII, meshing first if nothing has been
+meshed since the last edit. `vtk` is the same file as a string, or `None`,
+and `clear_mesh()` forgets it.
+
 ### Looking at the session
 
 #### `edges`

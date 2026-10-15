@@ -302,6 +302,67 @@ impl PySession {
         self.command(serde_json::json!({ "op": "set_history", "steps": steps }))
     }
 
+    /// Say how many segments the sheet through this edge is divided into
+    /// when the blocking is meshed.
+    ///
+    /// On the whole sheet, which is the only way it can mean anything: an
+    /// edge divided into four against its neighbour's five leaves a face
+    /// with nothing to match along. Cutting a sheet gives both halves the
+    /// number the whole had.
+    fn set_segments(&self, edge: u32, segments: u32) -> PyResult<String> {
+        self.command(serde_json::json!({
+            "op": "set_segments", "edge": edge, "segments": segments,
+        }))
+    }
+
+    /// Discretise every block into hexahedra, by transfinite interpolation.
+    ///
+    /// `segments` is for the sheets nobody has set with [`set_segments`].
+    /// Cells classified on the geometry have their points **projected onto
+    /// what they follow**, so the mesh follows the model rather than merely
+    /// having its shape.
+    ///
+    /// The mesh is kept until the blocking changes — a mesh of a model you
+    /// have since edited is a lie — and `export_vtk` writes it out.
+    #[pyo3(signature = (segments=10))]
+    fn mesh(&self, segments: u32) -> PyResult<String> {
+        self.command(serde_json::json!({ "op": "mesh", "segments": segments }))
+    }
+
+    /// Forget the mesh.
+    fn clear_mesh(&self) -> PyResult<String> {
+        self.command(serde_json::json!({ "op": "clear_mesh" }))
+    }
+
+    /// Write the mesh to a file, as VTK legacy ASCII.
+    ///
+    /// Meshes first if nothing has been meshed since the last edit, so the
+    /// file is always of the blocking as it now stands.
+    #[pyo3(signature = (path, segments=10))]
+    fn export_vtk(&self, path: &str, segments: u32) -> PyResult<String> {
+        if self.locked(|s| s.mesh_vtk().is_none()) {
+            self.mesh(segments)?;
+        }
+        let file = self
+            .locked(|s| s.mesh_vtk())
+            .ok_or_else(|| PyValueError::new_err("there is nothing to mesh"))?;
+        std::fs::write(path, &file).map_err(|e| PyValueError::new_err(format!("{path}: {e}")))?;
+        Ok(format!("{} bytes written to {path}", file.len()))
+    }
+
+    /// The mesh as a VTK legacy file, or `None` if nothing has been meshed
+    /// since the last edit.
+    #[getter]
+    fn vtk(&self) -> Option<String> {
+        self.locked(|s| s.mesh_vtk())
+    }
+
+    /// The mesh's skin, in the bytes the browser decodes.
+    #[getter]
+    fn mesh_buffer(&self) -> Vec<u8> {
+        self.locked(|s| s.mesh_buffer())
+    }
+
     /// The sheet of hexahedra through an edge: every edge of it, with the
     /// direction a cut parameter would run in.
     fn sheet(&self, py: Python<'_>, edge: u32) -> PyResult<PyObject> {

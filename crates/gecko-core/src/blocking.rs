@@ -1239,7 +1239,8 @@ impl Blocking {
         // The two halves could be left to the inference — their ends now
         // agree about the same entity, so it would reach the same answer
         // — but there is no reason to make them wait for it.
-        let was = self.edge_tag(self.map.edge_id(darts[0])).on;
+        let parent = self.edge_tag(self.map.edge_id(darts[0]));
+        let was = parent.on;
         let middle = self.map.vertex_id(fresh[&darts[0]]);
         self.map.write_vertex(middle, (at[0], at[1], at[2]));
         self.map.write_attribute(
@@ -1258,6 +1259,10 @@ impl Blocking {
                 EdgeTag {
                     id: CellId::NONE,
                     on: was,
+                    // Both halves keep the parent's number, so a cut
+                    // doubles the nodes along this direction — which is
+                    // what cutting is for.
+                    segments: parent.segments,
                 },
             );
         }
@@ -1842,9 +1847,51 @@ impl Blocking {
             EdgeTag {
                 id: CellId::NONE,
                 on: was,
+                // Left unsaid: this edge runs **across** the face, so it
+                // belongs to a sheet of its own, and that sheet's other
+                // edges carry its number already. The mesher resolves a
+                // sheet to one number, so it picks this one up from them.
+                segments: 0,
             },
         );
         Some((u, v))
+    }
+
+    /// How many segments the sheet through this edge is divided into when
+    /// the blocking is meshed, and 0 for "nobody has said".
+    ///
+    /// Read per sheet rather than per edge: every edge of a sheet has to
+    /// carry the same number or the mesh does not match across the faces
+    /// between them. What is found is resolved to the **largest** number on
+    /// the sheet, so a sheet made by gluing two that were set differently
+    /// is still answered conformingly, and a new edge nobody has set picks
+    /// up the number its sheet already had.
+    pub fn sheet_segments(&self, edge: CellId) -> Result<u32, BlockingError> {
+        let index = self.edge_index();
+        Ok(self
+            .sheet_through(edge)?
+            .iter()
+            .filter_map(|s| index.get(&s.edge))
+            .map(|e| self.edge_tag(*e).segments)
+            .max()
+            .unwrap_or(0))
+    }
+
+    /// Say how many segments the sheet through this edge is divided into.
+    ///
+    /// On every edge of the sheet, which is the only way it can mean
+    /// anything: an edge divided into four against its neighbour's five
+    /// leaves a face with nothing to match along.
+    pub fn set_sheet_segments(&mut self, edge: CellId, segments: u32) -> Result<(), BlockingError> {
+        let index = self.edge_index();
+        for side in self.sheet_through(edge)? {
+            let Some(e) = index.get(&side.edge) else {
+                continue;
+            };
+            let tag = self.edge_tag(*e);
+            self.map.write_attribute(*e, EdgeTag { segments, ..tag });
+        }
+        Ok(())
     }
 
     /// The faces an edge belongs to, by identifier, without repeats.

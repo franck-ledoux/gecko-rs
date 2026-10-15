@@ -11,7 +11,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { NullEngine } from "@babylonjs/core/Engines/nullEngine";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
-import { decodeGeometry, decodeView } from "../../src/decode";
+import { decodeGeometry, decodeMesh, decodeView } from "../../src/decode";
 import { initKernel, WasmKernel } from "../../src/kernel-wasm";
 import {
   CLOSEST_APPROACH,
@@ -31,7 +31,7 @@ import {
 import { DEFAULTS, PRESETS } from "../../src/theme";
 import { readProbe } from "../../src/mode";
 import { colourForId, FAMILY, hexToRgb, hslToHex, UNNAMED } from "../../src/palette";
-import { buildSurface, edgeSegments, quadsToDraw } from "../../src/surface";
+import { buildSurface, edgeSegments, meshEdges, quadsToDraw } from "../../src/surface";
 import { geomBounds, geomCorners, geomCurves, geomSurfaces, GEOM_GROUPS } from "../../src/geometry";
 import {
   orthoExtents,
@@ -54,6 +54,49 @@ const CUBE = [
 
 beforeAll(async () => {
   await initKernel(readFileSync(new URL("../../src/pkg/gecko_bg.wasm", import.meta.url)));
+});
+
+describe("the mesh buffer", () => {
+  it("carries the skin, and nothing inside it", async () => {
+    const kernel = new WasmKernel();
+    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+
+    // Empty until something is meshed, and a buffer rather than a special
+    // case for the caller.
+    expect(decodeMesh(await kernel.mesh()).quads.length).toBe(0);
+
+    await kernel.apply({ op: "mesh", segments: 3 });
+    const view = decodeMesh(await kernel.mesh());
+    // Six faces of nine, and the 56 nodes on the outside of a 4 × 4 × 4
+    // lattice rather than the 64 of the whole of it.
+    expect(view.quads.length / 4).toBe(54);
+    expect(view.positions.length / 3).toBe(56);
+    expect(view.blocks.length).toBe(54);
+    expect([...view.blocks].every((b) => b === 0)).toBe(true);
+
+    // Every corner of the skin is on the surface of the cube.
+    for (let q = 0; q < view.quads.length; q++) {
+      const node = view.quads[q];
+      const at = [0, 1, 2].map((k) => view.positions[node * 3 + k] + view.centre[k]);
+      expect(at.some((x) => Math.abs(x) < 1e-6 || Math.abs(x - 1) < 1e-6)).toBe(true);
+    }
+
+    // And it goes when the blocking changes under it.
+    await kernel.apply({ op: "create_cube", origin: [3, 0, 0], size: 1 });
+    expect(decodeMesh(await kernel.mesh()).quads.length).toBe(0);
+  });
+
+  it("draws one line per side of the skin, however many quadrangles share it", async () => {
+    const kernel = new WasmKernel();
+    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    await kernel.apply({ op: "mesh", segments: 2 });
+    const view = decodeMesh(await kernel.mesh());
+
+    // A 2 × 2 × 2 mesh has 24 quadrangles of skin; their sides are the 48
+    // edges of the cube's own surface grid, not 96.
+    expect(view.quads.length / 4).toBe(24);
+    expect(meshEdges(view).length / 6).toBe(48);
+  });
 });
 
 describe("the binary transport", () => {
@@ -110,6 +153,7 @@ describe("the static kernel", () => {
       blocks: 0,
       geometry: { generation: 0 },
       history: { steps: 5, back: 0 },
+      mesh: { generation: 0 },
       classified: { nodes: 0, edges: 0, faces: 0, frozen: 0 },
     });
 
@@ -123,6 +167,7 @@ describe("the static kernel", () => {
       blocks: 1,
       geometry: { generation: 0 },
       history: { steps: 5, back: 1 },
+      mesh: { generation: 0 },
       classified: { nodes: 0, edges: 0, faces: 0, frozen: 0 },
     });
 
@@ -137,6 +182,7 @@ describe("the static kernel", () => {
       blocks: 1,
       geometry: { generation: 0 },
       history: { steps: 5, back: 1 },
+      mesh: { generation: 0 },
       classified: { nodes: 0, edges: 0, faces: 0, frozen: 0 },
     });
   });
@@ -303,6 +349,13 @@ describe("the contract the other mode has to meet", () => {
     const undo = { op: "undo" };
     expect((await kernel.apply(undo)).ok).toBe(true);
     commands.push(undo);
+
+    // And a mesh, which is the one command whose answer is a hundred
+    // times the size of the question. Both façades have to agree about
+    // the count, and `test_modes.py` compares the stats.
+    const meshed = { op: "mesh", segments: 2 };
+    expect((await kernel.apply(meshed)).ok).toBe(true);
+    commands.push(meshed);
 
     const bytes = await kernel.view();
     const stats = await kernel.stats();

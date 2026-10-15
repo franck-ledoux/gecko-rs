@@ -19,7 +19,7 @@ Only one is open at a time: they are drawn in the same place.
 ## Folding
 
 Every section of the display panel folds, and so does every group inside
-**Cells** and **Geometry**. A folded group is one line carrying what you
+**Cells**, **Geometry** and **Mesh**. A folded group is one line carrying what you
 reach for without thinking — its **show** box, its name, and a digest of how
 it is drawn right now (`uniform · 35%`, or `hidden`). Open it for the rest.
 
@@ -149,6 +149,13 @@ Nothing is internal until two blocks are [glued](gluing.md).
     has nothing to separate them and the wireframe disappears into the
     surface. The surfaces are drawn with a small depth bias to stop that. If
     you ever see edges flicker in and out, that bias is the thing to look at.
+
+## The mesh
+
+**Mesh** holds one group, the skin of the last mesh built — shown or not,
+one colour or one per block, and how far through it you can see. The element
+grid is drawn over it in the edge colour, which is the half of the picture
+that says what the discretisation did. See [Meshing](meshing.md).
 
 ## The geometry
 

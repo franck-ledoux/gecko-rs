@@ -222,7 +222,7 @@ test("colours can be changed, and are remembered", async ({ page }) => {
   // colour and no markup to keep in step: background, nodes, edges, faces,
   // blocks, the geometry's corners, curves and surfaces, frozen, and the
   // three that say what a cell follows.
-  await expect(page.locator("#swatches input[type=color]")).toHaveCount(12);
+  await expect(page.locator("#swatches input[type=color]")).toHaveCount(13);
   expect(await page.evaluate(() => (window as any).__gecko.theme())).toMatchObject({
     background: "#15171b",
   });
@@ -2573,5 +2573,97 @@ test("dragging a handle that is not picked moves it alone", async ({ page }) => 
     if (node.name === grab.name) expect(went).toBeGreaterThan(0.1);
     else expect(went).toBeLessThan(1e-9);
   }
+  expect(errors).toEqual([]);
+});
+
+test("a blocking is discretised and the skin of it is drawn", async ({ page }) => {
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  expect(await page.evaluate(() => (window as any).__gecko.skinCount())).toBe(0);
+
+  // Three segments a side, set in the settings panel before asking.
+  await openParams(page);
+  await page.locator("[data-test=segments]").fill("3");
+  await page.locator("[data-test=segments]").dispatchEvent("input");
+  await expect(page.locator("[data-test=segments-value]")).toHaveText("3");
+
+  await page.locator("#mesh").click();
+  await expect(page.locator("#status")).toContainText("64 nodes, 27 hexahedra");
+  await expect(page.locator("[data-test=mesh-hexes]")).toHaveText("27");
+  // Six faces of nine quadrangles: the skin, and nothing inside it.
+  expect(await page.evaluate(() => (window as any).__gecko.skinCount())).toBe(54);
+
+  // A mesh of a blocking you have since edited is a lie, and a lie that
+  // looks right — so it goes when the blocking moves.
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+  expect(await page.evaluate(() => (window as any).__gecko.skinCount())).toBe(0);
+  expect(errors).toEqual([]);
+});
+
+test("the lit sheet is made finer and coarser", async ({ page }) => {
+  const errors = await boot(page);
+  await page.evaluate(EDGE_NEAR);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+
+  const edge = (await page.evaluate(() => edgeNear([0.5, 0, 0]))) as number;
+  await page.evaluate((e) => (window as any).__gecko.pickEdgeByName(e), edge);
+  await expect(page.locator("#status")).toContainText("10 segments");
+
+  await page.keyboard.press("=");
+  await expect(page.locator("#status")).toContainText("11 segments");
+  await page.keyboard.press("-");
+  await page.keyboard.press("-");
+  await expect(page.locator("#status")).toContainText("9 segments");
+
+  // And the mesh is built to it: nine one way, the default ten the others.
+  await page.keyboard.press("e");
+  await expect(page.locator("[data-test=mesh-hexes]")).toHaveText(String(9 * 10 * 10));
+  expect(errors).toEqual([]);
+});
+
+test("the mesh is written out as VTK", async ({ page }) => {
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await openParams(page);
+  await page.locator("[data-test=segments]").fill("2");
+  await page.locator("[data-test=segments]").dispatchEvent("input");
+
+  // Out of the slider first: a key pressed into a field is typing, which
+  // is the whole point of that rule.
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+
+  // Nothing has been meshed yet: the key meshes first, so the file is of
+  // the blocking as it now stands.
+  const download = page.waitForEvent("download");
+  await page.keyboard.press("Shift+E");
+  const saved = await download;
+  expect(saved.suggestedFilename()).toMatch(/^gecko-\d{4}-\d{2}-\d{2}-\d{6}\.vtk$/);
+
+  const file = await readFile(await saved.path(), "utf8");
+  expect(file.split("\n")[0]).toBe("# vtk DataFile Version 2.0");
+  expect(file).toContain("DATASET UNSTRUCTURED_GRID");
+  expect(file).toContain("POINTS 27 double");
+  expect(file).toContain("CELLS 8 72");
+  expect(file).toContain("SCALARS block int 1");
+  expect(errors).toEqual([]);
+});
+
+test("the mesh has a fold of its own, and can be put away", async ({ page }) => {
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.keyboard.press("e");
+  await expect(page.locator("[data-test=mesh-hexes]")).toHaveText("1000");
+
+  await openSection(page, "mesh");
+  await expect(page.locator("#grp-mesh .digest")).toHaveText("uniform · 100%");
+  await page.locator("[data-test=mesh-visible]").uncheck();
+  // Still meshed — the kernel holds it — but nothing of it is drawn.
+  expect(await page.evaluate(() => (window as any).__gecko.skinCount())).toBe(0);
+  await expect(page.locator("[data-test=mesh-hexes]")).toHaveText("1000");
   expect(errors).toEqual([]);
 });

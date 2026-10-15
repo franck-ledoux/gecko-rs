@@ -62,6 +62,7 @@ test("a click in the browser is visible to the same Python session", async ({ pa
       blocks: 1,
       geometry: { generation: 0 },
       history: { steps: 5, back: 1 },
+      mesh: { generation: 0 },
       classified: { nodes: 0, edges: 0, faces: 0, frozen: 0 },
     });
   } finally {

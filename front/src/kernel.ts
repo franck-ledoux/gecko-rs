@@ -49,6 +49,10 @@ export interface Stats {
   /** How far back the session can go, and how far back it can go *now*.
    *  `back` is what decides whether the undo button is live. */
   history: { steps: number; back: number };
+  /** The mesh, if one has been built since the last edit. `generation`
+   *  counts builds **and** the edits that threw one away, so a client
+   *  holding the picture learns when it has gone. */
+  mesh: { generation: number; nodes?: number; hexes?: number };
 }
 
 /** One edge of a sheet, and the way round a cut parameter would run on it. */
@@ -59,7 +63,13 @@ export interface SheetEdge {
 }
 
 export type Sheet =
-  | { ok: true; edges: SheetEdge[]; blocks: number }
+  | {
+      ok: true;
+      edges: SheetEdge[];
+      blocks: number;
+      /** How many segments it is divided into when meshed. */
+      segments: number;
+    }
   | { ok: false; error: string };
 
 export type Mode = "static" | "station";
@@ -71,6 +81,11 @@ export interface Kernel {
   /** The geometry, in a buffer of its own. Asked for only when the
    *  generation in `stats` says it has changed. */
   geometry(): Promise<Uint8Array>;
+  /** The mesh's skin, on the same terms. Empty until something has been
+   *  meshed, and empty again as soon as an edit throws it away. */
+  mesh(): Promise<Uint8Array>;
+  /** The mesh as a VTK legacy file, or null if there is none. */
+  vtk(): Promise<string | null>;
   stats(): Promise<Stats>;
   /** The sheet of hexahedra through an edge. A question, not a change. */
   sheet(edge: number): Promise<Sheet>;

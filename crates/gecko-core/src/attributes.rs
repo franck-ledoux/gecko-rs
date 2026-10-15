@@ -52,6 +52,15 @@ pub struct EdgeTag {
     /// The geometric entity this edge is classified on, if any. Never set
     /// by measuring the edge: it is inferred from its two ends.
     pub on: Option<On>,
+    /// How many segments this edge is divided into when the blocking is
+    /// meshed. **0 means nobody has said**, and the mesher uses its
+    /// default.
+    ///
+    /// Stored per edge and read per **sheet**: every edge of a sheet has to
+    /// carry the same number or the mesh is not conforming, so setting one
+    /// sets them all, and the mesher resolves what it finds to a single
+    /// number per sheet whatever happened in between.
+    pub segments: u32,
 }
 
 /// Attribute of a 2-cell: a face.
@@ -153,8 +162,40 @@ macro_rules! classified_cell {
     };
 }
 
-classified_cell!(EdgeTag, EdgeIdType, OrbitPolicy::Edge);
 classified_cell!(FaceTag, FaceIdType, OrbitPolicy::Face);
+
+impl AttributeUpdate for EdgeTag {
+    /// As [`FaceTag`]'s, and the discretisation besides.
+    ///
+    /// Two edges becoming one take the **larger** of the two numbers, 0
+    /// meaning nobody said. The finer of two answers is the safe one: it
+    /// is the one that can represent what either side was asking for.
+    fn merge(a: Self, b: Self) -> Result<Self, AttributeError> {
+        Ok(Self {
+            id: a.id,
+            on: a.on.or(b.on),
+            segments: a.segments.max(b.segments),
+        })
+    }
+
+    /// One edge becoming two. Both halves keep the number, so cutting a
+    /// sheet doubles the nodes along that direction — which is what
+    /// cutting it is for.
+    fn split(a: Self) -> Result<(Self, Self), AttributeError> {
+        let fresh = Self {
+            id: CellId::NONE,
+            on: a.on,
+            segments: a.segments,
+        };
+        Ok((fresh, fresh))
+    }
+}
+
+impl AttributeBind for EdgeTag {
+    type StorageType = AttrSparseVec<Self>;
+    type IdentifierType = EdgeIdType;
+    const BIND_POLICY: OrbitPolicy = OrbitPolicy::Edge;
+}
 
 /// The same rule for the cells that have only a name: keep the first on a
 /// merge, clear both on a split.

@@ -10,18 +10,19 @@
 //! one script through both and comparing the bytes that come out.
 
 pub mod view;
+pub mod vtk;
 
 use std::collections::VecDeque;
 use std::sync::Arc;
 
 use gecko_core::ids::CellId;
-use gecko_core::{cube_corners, Blocking, BlockingError, On};
+use gecko_core::{cube_corners, Blocking, BlockingError, Mesh, On, SEGMENTS};
 use gecko_geom::model::GeometryError;
 use gecko_geom::{BoundsError, Geometry};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub use view::{GeometryBuffer, ViewBuffer};
+pub use view::{GeometryBuffer, MeshBuffer, ViewBuffer};
 
 #[derive(Debug, Error)]
 pub enum SessionError {
@@ -55,6 +56,12 @@ pub const HISTORY_STEPS: usize = 5;
 /// steps would be a hundred thousand copies, asked for by a typo.
 pub const MAX_HISTORY_STEPS: usize = 50;
 
+/// The most segments an edge may be asked for.
+///
+/// Not a technical limit: ten thousand segments on an edge is a billion
+/// hexahedra in the block it bounds, asked for by a typo.
+pub const MAX_SEGMENTS: u32 = 200;
+
 /// How near a node has to be to a geometric entity to be classified on it,
 /// as a share of the geometry's own size.
 ///
@@ -66,6 +73,10 @@ pub const SNAP_SHARE: f64 = 0.02;
 
 fn default_snap() -> f64 {
     SNAP_SHARE
+}
+
+fn default_segments() -> u32 {
+    SEGMENTS
 }
 
 /// A geometric entity, as a command names one.
@@ -207,6 +218,31 @@ pub enum Command {
         nodes: Vec<u32>,
         frozen: bool,
     },
+    /// Say how many segments the sheet through this edge is divided into
+    /// when the blocking is meshed.
+    ///
+    /// On the whole sheet, which is the only way it can mean anything: an
+    /// edge divided into four against its neighbour's five leaves a face
+    /// with nothing to match along.
+    SetSegments {
+        edge: u32,
+        segments: u32,
+    },
+    /// Discretise every block into hexahedra, and keep the result.
+    ///
+    /// Kept rather than handed back, because two things want it — the
+    /// picture and the file — and meshing twice to answer the same
+    /// question twice would be a waste of the only expensive thing here.
+    ///
+    /// It does **not** change the blocking, so it is not a step of undo.
+    /// It is dropped the moment the blocking changes, because a mesh of a
+    /// model you have since edited is a lie, and a lie that looks right.
+    Mesh {
+        #[serde(default = "default_segments")]
+        segments: u32,
+    },
+    /// Forget the mesh.
+    ClearMesh,
     /// Put the block structure back the way it was before the last command
     /// that changed it.
     ///
@@ -281,6 +317,15 @@ pub struct Session {
     past: VecDeque<State>,
     /// How many of those to keep.
     steps: usize,
+    /// The last mesh built, and a number that counts the builds.
+    ///
+    /// Beside the blocking rather than in it, like the geometry and for
+    /// the same reason: a combinatorial map of blocks has no business
+    /// holding a hundred thousand hexahedra. The number is how a client
+    /// knows the picture it is holding is not the current one — the same
+    /// bargain as `geometry_generation`.
+    mesh: Option<Mesh>,
+    mesh_generation: u32,
 }
 
 /// A session as it stood, as far as anything outside can tell.
@@ -304,6 +349,8 @@ impl Session {
             origin: None,
             past: VecDeque::new(),
             steps: HISTORY_STEPS,
+            mesh: None,
+            mesh_generation: 0,
         })
     }
 
@@ -349,8 +396,18 @@ impl Session {
             // edges nobody has ever classified. Two table lookups apiece,
             // no geometry measured.
             self.settle_classification();
+            // A mesh of a blocking that has since changed is a lie, and a
+            // lie that looks right. The number goes up so that a client
+            // holding the picture learns it has gone.
+            self.drop_mesh();
         }
         Ok(outcome)
+    }
+
+    fn drop_mesh(&mut self) {
+        if self.mesh.take().is_some() {
+            self.mesh_generation += 1;
+        }
     }
 
     /// The session as it stands, ready to be put back.
@@ -383,6 +440,7 @@ impl Session {
             });
         };
         let was = self.geometry.as_ref().map(Arc::as_ptr);
+        self.drop_mesh();
         self.blocking = state.blocking;
         self.geometry = state.geometry;
         self.origin = state.origin;
@@ -700,6 +758,46 @@ impl Session {
                 Ok(Outcome {
                     message: "geometry cleared".to_string(),
                     view_changed: true,
+                })
+            }
+            Command::SetSegments { edge, segments } => {
+                let edge = CellId::from_raw(edge);
+                let segments = segments.clamp(1, MAX_SEGMENTS);
+                self.blocking.set_sheet_segments(edge, segments)?;
+                Ok(Outcome {
+                    message: format!(
+                        "the sheet through {edge:?} is in {segments} segment{}",
+                        plural(segments as usize)
+                    ),
+                    // The blocking has not moved; what changed is a number
+                    // the next mesh will read.
+                    view_changed: false,
+                })
+            }
+            Command::Mesh { segments } => {
+                let segments = segments.clamp(1, MAX_SEGMENTS);
+                let mesh = {
+                    let Session {
+                        blocking, geometry, ..
+                    } = self;
+                    let geometry = geometry.as_deref();
+                    blocking.mesh(segments, |on, at| {
+                        geometry.and_then(|g| g.project(on.dim, on.tag, at))
+                    })
+                };
+                let message = format!("meshed — {}", vtk::count(&mesh));
+                self.mesh = Some(mesh);
+                self.mesh_generation += 1;
+                Ok(Outcome {
+                    message,
+                    view_changed: false,
+                })
+            }
+            Command::ClearMesh => {
+                self.drop_mesh();
+                Ok(Outcome {
+                    message: "mesh cleared".to_string(),
+                    view_changed: false,
                 })
             }
             // Caught in `apply`, which has to deal with them before it
@@ -1065,7 +1163,20 @@ impl Session {
                 // would take away. The edges alone do not say that, and
                 // taking out more than you meant to looks like a hole.
                 let blocks = self.blocking.sheet_blocks(&sheet);
-                serde_json::json!({ "ok": true, "edges": edges, "blocks": blocks }).to_string()
+                // And how many segments it is divided into when meshed,
+                // which is a property of the sheet rather than of any one
+                // of its edges — so this is where it is answered.
+                let segments = self
+                    .blocking
+                    .sheet_segments(CellId::from_raw(edge))
+                    .unwrap_or(0);
+                serde_json::json!({
+                    "ok": true,
+                    "edges": edges,
+                    "blocks": blocks,
+                    "segments": if segments == 0 { SEGMENTS } else { segments },
+                })
+                .to_string()
             }
             Err(e) => serde_json::json!({ "ok": false, "error": e.to_string() }).to_string(),
         }
@@ -1140,6 +1251,7 @@ impl Session {
             "blocks": seen.blocks,
             "geometry": self.geometry_json(),
             "history": { "steps": self.steps, "back": self.past.len() },
+            "mesh": self.mesh_json(),
             "classified": {
                 "nodes": seen.classified_nodes,
                 "edges": seen.classified_edges,
@@ -1148,6 +1260,40 @@ impl Session {
             },
         })
         .to_string()
+    }
+
+    /// What there is of a mesh, and **which** mesh.
+    ///
+    /// `generation` counts builds and drops alike: a client holds the
+    /// number it last drew and re-fetches when it differs, which is right
+    /// for a mesh that has just been thrown away by an edit as well as for
+    /// one just built.
+    fn mesh_json(&self) -> serde_json::Value {
+        match &self.mesh {
+            Some(mesh) => serde_json::json!({
+                "generation": self.mesh_generation,
+                "nodes": mesh.points.len(),
+                "hexes": mesh.hexes.len(),
+            }),
+            None => serde_json::json!({ "generation": self.mesh_generation }),
+        }
+    }
+
+    /// The mesh's skin, in the bytes both transports deliver it in.
+    ///
+    /// Rebased on the same origin as everything else in the scene, which
+    /// it has to be: they are drawn on top of each other.
+    pub fn mesh_buffer(&self) -> Vec<u8> {
+        let centre = self.origin.unwrap_or([0.0; 3]);
+        match &self.mesh {
+            Some(mesh) => MeshBuffer::of(mesh, centre).to_bytes(),
+            None => MeshBuffer::empty(centre),
+        }
+    }
+
+    /// The mesh as a VTK legacy file, or nothing if none has been built.
+    pub fn mesh_vtk(&self) -> Option<String> {
+        self.mesh.as_ref().map(|m| vtk::write(m, "gecko blocking"))
     }
 
     /// What there is of a geometry, and **which** geometry.

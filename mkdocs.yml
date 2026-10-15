@@ -56,6 +56,7 @@ nav:
       - Joining and removing blocks: user-guide/gluing.md
       - Sheets: user-guide/sheets.md
       - Pillowing: user-guide/pillowing.md
+      - Meshing: user-guide/meshing.md
       - Python API: user-guide/python.md
   - Developer Guide:
       - Architecture: developer-guide/architecture.md

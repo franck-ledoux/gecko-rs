@@ -100,6 +100,15 @@ export class RemoteKernel implements Kernel {
     return this.ask<Uint8Array>({ kind: "geometry" });
   }
 
+  mesh(): Promise<Uint8Array> {
+    return this.ask<Uint8Array>({ kind: "mesh" });
+  }
+
+  async vtk(): Promise<string | null> {
+    const raw = await this.ask<{ vtk: string | null }>({ kind: "vtk" });
+    return raw.vtk;
+  }
+
   async stats(): Promise<Stats> {
     const raw = await this.ask<{ stats: Stats }>({ kind: "stats" });
     return raw.stats;

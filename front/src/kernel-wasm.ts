@@ -42,6 +42,14 @@ export class WasmKernel implements Kernel {
     return this.session.geometryBuffer();
   }
 
+  async mesh(): Promise<Uint8Array> {
+    return this.session.meshBuffer();
+  }
+
+  async vtk(): Promise<string | null> {
+    return this.session.meshVtk() ?? null;
+  }
+
   async stats(): Promise<Stats> {
     return JSON.parse(this.session.statsJson()) as Stats;
   }

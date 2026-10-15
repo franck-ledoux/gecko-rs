@@ -10,7 +10,7 @@
 //! jitter and z-fighting. Rebasing costs nothing and cannot be retrofitted
 //! cheaply once a client assumes absolute coordinates.
 
-use gecko_core::Blocking;
+use gecko_core::{Blocking, Mesh};
 use gecko_geom::Geometry;
 use std::collections::HashMap;
 
@@ -424,6 +424,96 @@ impl GeometryBuffer {
     /// gets a buffer it can decode rather than a special case.
     pub fn empty(centre: [f64; 3]) -> Vec<u8> {
         GeometryBuffer {
+            centre,
+            ..Default::default()
+        }
+        .to_bytes()
+    }
+}
+
+pub const MESH_MAGIC: [u8; 4] = *b"GKM1";
+pub const MESH_VERSION: u32 = 1;
+/// magic + version + f64 centre + two counts.
+pub const MESH_HEADER: usize = 40;
+
+/// What the browser draws of the **mesh**: its skin, and nothing else.
+///
+/// The inside of a mesh is the overwhelming majority of it and is never
+/// seen. A hundred thousand hexahedra are six hundred thousand quadrangles
+/// of which perhaps twenty thousand are on the outside, so sending the
+/// whole thing would be thirty times the bytes for the same picture.
+///
+/// Its own buffer, and its own generation number, for the reason
+/// [`GeometryBuffer`] has one: it changes on a clock of its own — not when
+/// a node moves, but when somebody asks for a mesh, and when an edit
+/// throws the last one away.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MeshBuffer {
+    pub centre: [f64; 3],
+    /// Three f32 per node of the skin, relative to `centre`.
+    pub positions: Vec<f32>,
+    /// Four node indices per quadrangle.
+    pub quads: Vec<u32>,
+    /// The block each quadrangle came out of.
+    pub blocks: Vec<u32>,
+}
+
+impl MeshBuffer {
+    pub fn of(mesh: &Mesh, centre: [f64; 3]) -> MeshBuffer {
+        let (quads, blocks) = mesh.skin();
+        // Only the nodes the skin uses, renumbered: the interior ones are
+        // most of them, and none of them is drawn.
+        let mut seen: HashMap<u32, u32> = HashMap::new();
+        let mut positions = Vec::new();
+        let mut out = Vec::with_capacity(quads.len() * 4);
+        for quad in &quads {
+            for node in quad {
+                let next = seen.len() as u32;
+                let at = *seen.entry(*node).or_insert_with(|| {
+                    let p = mesh.points[*node as usize];
+                    positions.push((p[0] - centre[0]) as f32);
+                    positions.push((p[1] - centre[1]) as f32);
+                    positions.push((p[2] - centre[2]) as f32);
+                    next
+                });
+                out.push(at);
+            }
+        }
+        MeshBuffer {
+            centre,
+            positions,
+            quads: out,
+            blocks: blocks.iter().map(|b| b.get().unwrap_or(u32::MAX)).collect(),
+        }
+    }
+
+    /// The same flat little-endian encoding as the other two.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(
+            MESH_HEADER + (self.positions.len() + self.quads.len() + self.blocks.len()) * 4,
+        );
+        out.extend_from_slice(&MESH_MAGIC);
+        out.extend_from_slice(&MESH_VERSION.to_le_bytes());
+        for c in self.centre {
+            out.extend_from_slice(&c.to_le_bytes());
+        }
+        out.extend_from_slice(&((self.positions.len() / 3) as u32).to_le_bytes());
+        out.extend_from_slice(&((self.quads.len() / 4) as u32).to_le_bytes());
+        for x in &self.positions {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        for x in &self.quads {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        for x in &self.blocks {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        out
+    }
+
+    /// No mesh, as a buffer a client can decode rather than a special case.
+    pub fn empty(centre: [f64; 3]) -> Vec<u8> {
+        MeshBuffer {
             centre,
             ..Default::default()
         }

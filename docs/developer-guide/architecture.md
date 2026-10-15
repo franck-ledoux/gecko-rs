@@ -481,6 +481,63 @@ first blindly would throw away a constraint nobody withdrew.
 is not a claim about which cell it is, and a split moves nothing: both halves
 of a node on a curve are on that curve.
 
+## Meshing
+
+`Blocking::mesh` turns every block into a structured grid of hexahedra by
+transfinite interpolation, in three passes by dimension — edges, then faces
+from their four edges, then blocks from their six faces — each read by the
+one above it **after** its projection. The projection arrives as a closure,
+as it does for `classify_nodes`: nothing in `gecko-core` knows what a
+triangle is, and the crate that holds both the cells and the triangles is
+the one above it.
+
+How many segments an edge is divided into is a property of the **sheet**,
+not of the edge: every edge of a sheet must carry the same number or the
+mesh does not match across the faces between them. `sheet_segments` resolves
+what it finds to the largest number on the sheet, so a sheet made by gluing
+two that were set differently is still answered conformingly, and an edge
+nobody has set picks up the number its sheet already had. That is the whole
+conformity argument, and it is structural rather than checked.
+
+### Nodes are owned by the cell they lie in
+
+Two blocks glued along a face have to share the mesh nodes on that face. The
+obvious implementation meshes each block and welds coincident points, which
+works and needs a tolerance — and a tolerance is a number that is wrong for
+somebody's model. Instead every mesh node is **named by the cell of the
+blocking it lies in**:
+
+| Site                    | What it is                                                               |
+| ----------------------- | ------------------------------------------------------------------------ |
+| `Node(cell)`            | a corner of the blocking                                                 |
+| `Edge(cell, i)`         | a point along a block edge, counted from the end the map calls its first |
+| `Face(cell, a, b)`      | a point inside a block face, on **that face's** lattice                  |
+| `Inside(cell, i, j, k)` | a point inside a block, which belongs to nobody else                     |
+
+Cells are shared by construction, which is what the combinatorial map is
+for, so the sharing of nodes falls out of the naming. There is no tolerance
+in the mesher.
+
+The lattice of a face is read off the face's **own** β₁ cycle rather than
+either block's, which is what makes the two agree: the blocks either side
+see it wound opposite ways, and `Quad::of` undoes the turn and the
+reflection by the one thing both agree about — which corner is which. The
+divisions in it are exact, a side of a face running along one axis of the
+block.
+
+### What the browser gets
+
+The mesh's **skin**: the quadrangles belonging to one hexahedron rather than
+two, in `MeshBuffer` ("GKM1"), with only the nodes the skin uses. A hundred
+thousand hexahedra are six hundred thousand quadrangles of which perhaps
+twenty thousand are outside, so this is thirty times less for the same
+picture. Its own buffer and its own generation number, for the reason the
+geometry has them: it changes on a clock of its own.
+
+The session holds the last mesh and **drops it the moment the blocking
+changes**, bumping the generation so a client holding the picture learns it
+has gone. A mesh of a model you have since edited is a lie that looks right.
+
 ## What does not go through the kernel
 
 Exactly one thing, and it is worth naming because everything else does: **how

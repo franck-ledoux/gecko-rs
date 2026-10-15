@@ -34,7 +34,7 @@ import type { GreasedLineMesh } from "@babylonjs/core/Meshes/GreasedLine/greased
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { PointerDragBehavior } from "@babylonjs/core/Behaviors/Meshes/pointerDragBehavior";
 import "@babylonjs/core/Culling/ray";
-import type { GeometryView, View } from "./decode";
+import type { GeometryView, MeshView, View } from "./decode";
 import type { GeomGroup, Spot } from "./geometry";
 import {
   DIM_OF,
@@ -62,8 +62,10 @@ import { DEFAULTS, type GeomLayer, type Layer, type ViewPrefs } from "./theme";
 import { ANCHOR, FAMILY, MATE, colourForId } from "./palette";
 import type { SheetEdge } from "./kernel";
 import {
+  buildMesh,
   buildSurfaces,
   edgeSegments,
+  meshEdges,
   type SurfaceData,
   type SurfaceOptions,
 } from "./surface";
@@ -413,6 +415,13 @@ export class Viewer {
    *  to four of them at once: putting the corners of a box on the circle
    *  they are meant to follow is one act, not four. */
   private pickedNodes: number[] = [];
+  /** The mesh's skin as the kernel last sent it, and what is drawn of it:
+   *  one surface and one wireframe. Apart from everything else because it
+   *  arrives on a clock of its own — when somebody asks for a mesh — and
+   *  is thrown away by the first edit after that. */
+  private meshView?: MeshView;
+  private meshSkin?: Mesh;
+  private meshWire?: LinesMesh;
   /** The face being grown, while the pointer is down on it: where it is,
    *  which way is out, and how far the pointer has asked for so far. */
   private growing?: { pick: Pick; centre: Vector3; normal: Vector3; corners: Vector3[] };
@@ -736,6 +745,7 @@ export class Viewer {
     this.rebuildSurface("faces");
     this.rebuildSurface("blocks");
     this.rebuildGeometry();
+    this.rebuildMesh();
   }
 
   /** What the viewer is currently told to look like. */
@@ -1160,6 +1170,79 @@ export class Viewer {
       return Color3.FromHexString(ANCHOR);
     }
     return this.entityColour(group, tag);
+  }
+
+  /**
+   * Show a mesh, or take the last one away.
+   *
+   * Thrown away and rebuilt rather than patched, unlike the blocking's own
+   * surfaces: a mesh does not change a corner at a time — it is built
+   * whole, looked at, and replaced by the next one.
+   */
+  setMesh(view: MeshView | null) {
+    this.meshView = view?.blocks.length ? view : undefined;
+    this.rebuildMesh();
+  }
+
+  /** How many quadrangles of skin are **drawn**, for a test to read. What
+   *  the kernel holds is in its own stats; this is the picture. */
+  get skinCount(): number {
+    return this.meshSkin ? (this.meshView?.blocks.length ?? 0) : 0;
+  }
+
+  private rebuildMesh() {
+    this.meshSkin?.dispose();
+    this.meshSkin = undefined;
+    this.meshWire?.dispose();
+    this.meshWire = undefined;
+    const view = this.meshView;
+    const layer = this.prefs.mesh;
+    if (!view || !layer.visible) return;
+
+    const data = buildMesh(view, {
+      uniform: this.prefs.theme.mesh,
+      colouring: layer.colouring,
+    });
+    const skin = new Mesh("mesh-skin", this.scene);
+    const vertices = new VertexData();
+    vertices.positions = data.positions;
+    vertices.indices = data.indices;
+    vertices.colors = data.colors;
+    vertices.normals = normalsFor(data);
+    vertices.applyToMesh(skin, false);
+    const material = new StandardMaterial("meshMat", this.scene);
+    material.specularColor = Color3.Black();
+    material.backFaceCulling = false;
+    material.alpha = layer.alpha;
+    material.separateCullingPass = true;
+    material.zOffset = SURFACE_DEPTH_BIAS.factor;
+    material.zOffsetUnits = SURFACE_DEPTH_BIAS.units;
+    skin.material = material;
+    // Not pickable: a mesh is the answer rather than the thing being
+    // worked on, and a click through it has to reach the blocking.
+    skin.isPickable = false;
+    skin.layerMask = MAIN_LAYER;
+    skin.renderingGroupId = PASS.blocking;
+    this.meshSkin = skin;
+
+    // The element grid, which is the half of this that says what the
+    // discretisation actually did.
+    const flat = meshEdges(view);
+    const lines: Vector3[][] = [];
+    for (let at = 0; at < flat.length; at += 6) {
+      lines.push([
+        new Vector3(flat[at], flat[at + 1], flat[at + 2]),
+        new Vector3(flat[at + 3], flat[at + 4], flat[at + 5]),
+      ]);
+    }
+    if (lines.length) {
+      this.meshWire = CreateLineSystem("mesh-edges", { lines }, this.scene);
+      this.meshWire.color = Color3.FromHexString(this.prefs.theme.edges);
+      this.meshWire.alpha = layer.alpha;
+      this.meshWire.isPickable = false;
+      this.meshWire.layerMask = MAIN_LAYER;
+      this.meshWire.renderingGroupId = PASS.blocking;
+    }
   }
 
   /** What a geometric entity is drawn in: one colour for its group, or one

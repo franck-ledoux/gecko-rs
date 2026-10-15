@@ -27,6 +27,9 @@ export interface Theme {
   corners: string;
   curves: string;
   surfaces: string;
+  /** The mesh's skin. A family of its own: it is not the blocking and not
+   *  the geometry, it is what the two of them were for. */
+  mesh: string;
   /** A node nothing may move. Grey, and nothing else is: a frozen node is
    *  not a kind of classification, it is a cell that is out of play. */
   frozen: string;
@@ -50,6 +53,7 @@ export const SWATCHES: ReadonlyArray<{ key: keyof Theme; label: string }> = [
   { key: "corners", label: "corners" },
   { key: "curves", label: "curves" },
   { key: "surfaces", label: "surfaces" },
+  { key: "mesh", label: "mesh" },
   { key: "frozen", label: "frozen" },
   { key: "onCorner", label: "on a corner" },
   { key: "onCurve", label: "on a curve" },
@@ -66,6 +70,7 @@ export const PRESETS: Record<"dark" | "light", Theme> = {
     corners: "#6ee7a8",
     curves: "#2fbf71",
     surfaces: "#3f7d5e",
+    mesh: "#4f8f7a",
     frozen: "#9aa0a8",
     onCorner: "#d58cff",
     onCurve: "#a66ff0",
@@ -80,6 +85,7 @@ export const PRESETS: Record<"dark" | "light", Theme> = {
     corners: "#1d8a52",
     curves: "#157f4a",
     surfaces: "#a8d5bd",
+    mesh: "#8fc7b4",
     frozen: "#6b7280",
     onCorner: "#8e3fd4",
     onCurve: "#6f3fd4",
@@ -144,6 +150,12 @@ export const MAX_BOX_MARGIN = 0.5;
 export const SNAP_SHARE = 0.02;
 export const MAX_SNAP = 0.1;
 
+/** How many segments an edge is divided into when its sheet has not been
+ *  set, and the most the drawer offers. The kernel's own default is the
+ *  same ten; this is what the slider sends. */
+export const SEGMENTS = 10;
+export const MAX_SEGMENTS = 60;
+
 export interface ViewPrefs {
   theme: Theme;
   axes: boolean;
@@ -171,6 +183,8 @@ export interface ViewPrefs {
    *  an argument to the command it belongs to, and the kernel's constant is
    *  the default for anyone who does not send one. */
   box: { margin: number; snap: number };
+  /** How many segments a sheet nobody has set is meshed into. */
+  segments: number;
   /** Nodes are always drawn — they are what you grab — so all they carry
    *  is how they are coloured. */
   nodes: { colouring: Colouring };
@@ -184,6 +198,9 @@ export interface ViewPrefs {
   corners: GeomLayer;
   curves: GeomLayer;
   surfaces: GeomLayer;
+  /** The mesh's skin, on the same three terms. Nothing is picked on it and
+   *  nothing is exploded, so it takes no more than the geometry does. */
+  mesh: GeomLayer;
 }
 
 export const DEFAULTS: ViewPrefs = {
@@ -206,6 +223,7 @@ export const DEFAULTS: ViewPrefs = {
   shot: { scale: 2, transparent: false },
   history: HISTORY_STEPS,
   box: { margin: BOX_MARGIN, snap: SNAP_SHARE },
+  segments: SEGMENTS,
   // Both plain to begin with. Colouring by what a cell follows is a
   // question you ask once the blocking is on the model, not while you are
   // still putting it there.
@@ -224,6 +242,10 @@ export const DEFAULTS: ViewPrefs = {
   corners: { visible: true, colouring: "uniform", alpha: 1 },
   curves: { visible: true, colouring: "uniform", alpha: 1 },
   surfaces: { visible: true, colouring: "id", alpha: 0.3 },
+  // Shown and solid: a mesh you asked for is a mesh you want to look at,
+  // and what you are looking for in it — whether the elements are any good
+  // — is not visible through three other layers.
+  mesh: { visible: true, colouring: "uniform", alpha: 1 },
 };
 
 /** Out of range is clamped rather than refused: these come back from storage,
@@ -306,6 +328,10 @@ export function loadPrefs(): ViewPrefs {
         margin: within(stored.box?.margin, MAX_BOX_MARGIN, DEFAULTS.box.margin),
         snap: within(stored.box?.snap, MAX_SNAP, DEFAULTS.box.snap),
       },
+      segments:
+        typeof stored.segments === "number" && Number.isFinite(stored.segments)
+          ? Math.min(MAX_SEGMENTS, Math.max(1, Math.round(stored.segments)))
+          : DEFAULTS.segments,
       nodes: { colouring: colouring(stored.nodes?.colouring, DEFAULTS.nodes.colouring) },
       edges: {
         visible:
@@ -326,6 +352,7 @@ export function loadPrefs(): ViewPrefs {
       corners: geomLayer(stored.corners, DEFAULTS.corners),
       curves: geomLayer(stored.curves, DEFAULTS.curves),
       surfaces: geomLayer(stored.surfaces, DEFAULTS.surfaces),
+      mesh: geomLayer(stored.mesh, DEFAULTS.mesh),
     };
   } catch {
     return structuredClone(DEFAULTS);

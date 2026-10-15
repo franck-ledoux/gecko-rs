@@ -11,6 +11,7 @@
 pub mod attributes;
 pub mod blocking;
 pub mod ids;
+pub mod mesh;
 
 pub use attributes::{BlockTag, EdgeTag, FaceTag, NodeTag, On};
 pub use blocking::{
@@ -18,3 +19,4 @@ pub use blocking::{
     Settling, SheetEdge, HEX_FACES, PILLOW_SHARE,
 };
 pub use ids::{CellId, CornerKey};
+pub use mesh::{Mesh, SEGMENTS};

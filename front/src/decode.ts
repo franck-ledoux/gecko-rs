@@ -196,3 +196,65 @@ export function decodeGeometry(bytes: Uint8Array): GeometryView {
     cornerTags: take(i32, nCorners),
   };
 }
+
+/** What the kernel draws of the mesh: its skin, and nothing inside it. */
+export interface MeshView {
+  centre: [number, number, number];
+  /** Three f32 per node of the skin, relative to `centre`. */
+  positions: Float32Array;
+  /** Four node indices per quadrangle. */
+  quads: Uint32Array;
+  /** The block each quadrangle came out of. */
+  blocks: Uint32Array;
+}
+
+const MESH_MAGIC = 0x314d_4b47; // "GKM1" little-endian
+const MESH_HEADER = 40;
+
+/**
+ * The mesh buffer, in the same flat little-endian encoding as the other two.
+ *
+ * Empty until something has been meshed, and empty again as soon as an edit
+ * throws the last mesh away — which is a buffer with no quadrangles in it
+ * rather than a special case for the caller.
+ */
+export function decodeMesh(bytes: Uint8Array): MeshView {
+  if (bytes.byteLength < MESH_HEADER) {
+    throw new Error(`mesh buffer: ${bytes.byteLength} bytes is shorter than a header`);
+  }
+  if (bytes.byteOffset % 8 !== 0) bytes = new Uint8Array(bytes);
+
+  const head = new DataView(bytes.buffer, bytes.byteOffset, MESH_HEADER);
+  if (head.getUint32(0, true) !== MESH_MAGIC) throw new Error("mesh buffer: bad magic");
+  const version = head.getUint32(4, true);
+  if (version !== 1) throw new Error(`mesh buffer: version ${version} not understood`);
+
+  const centre: [number, number, number] = [
+    head.getFloat64(8, true),
+    head.getFloat64(16, true),
+    head.getFloat64(24, true),
+  ];
+  const nNodes = head.getUint32(32, true);
+  const nQuads = head.getUint32(36, true);
+
+  // Three f32 a node; four indices and a block apiece for the quadrangles.
+  const expected = MESH_HEADER + nNodes * 12 + nQuads * 20;
+  if (expected !== bytes.byteLength) {
+    throw new Error(
+      `mesh buffer: header declares ${expected} bytes, buffer holds ${bytes.byteLength}`,
+    );
+  }
+
+  let at = bytes.byteOffset + MESH_HEADER;
+  const take = <T>(make: (buffer: ArrayBufferLike, at: number, n: number) => T, n: number): T => {
+    const made = make(bytes.buffer, at, n);
+    at += n * 4;
+    return made;
+  };
+  return {
+    centre,
+    positions: take((b, o, n) => new Float32Array(b, o, n), nNodes * 3),
+    quads: take((b, o, n) => new Uint32Array(b, o, n), nQuads * 4),
+    blocks: take((b, o, n) => new Uint32Array(b, o, n), nQuads),
+  };
+}

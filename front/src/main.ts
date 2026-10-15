@@ -7,7 +7,7 @@
  */
 
 import { Engine } from "@babylonjs/core/Engines/engine";
-import { decodeGeometry, decodeView } from "./decode";
+import { decodeGeometry, decodeMesh, decodeView } from "./decode";
 import { readProbe, type Probe } from "./mode";
 import type { Kernel, Stats } from "./kernel";
 import { initKernel, WasmKernel } from "./kernel-wasm";
@@ -19,6 +19,7 @@ import {
   savePrefs,
   MAX_BOX_MARGIN,
   MAX_HISTORY,
+  MAX_SEGMENTS,
   MAX_SNAP,
   PRESETS,
   SHOT_SCALES,
@@ -26,7 +27,7 @@ import {
   type Theme,
 } from "./theme";
 import { actionFor, helpRows, type Action } from "./shortcuts";
-import { capture, save, shotName } from "./capture";
+import { capture, fileName, save, saveBlob, shotName } from "./capture";
 import type { Colouring } from "./surface";
 import { GEOM_GROUPS, spotName, type GeomGroup, type Spot } from "./geometry";
 import type { Axis } from "./axes";
@@ -98,6 +99,8 @@ async function boot() {
    *  how a load made from the Python console reaches a browser that never
    *  asked for one. Starts below zero so the first refresh fetches. */
   let geometryDrawn = -1;
+  /** And the mesh this tab has drawn, on the same terms. */
+  let meshDrawn = -1;
 
   // --- how it looks: viewer state, never the kernel's ---------------------
   const prefs = loadPrefs();
@@ -139,6 +142,7 @@ async function boot() {
     for (const group of GEOM_GROUPS) {
       say(group, digest(prefs[group].colouring, prefs[group].alpha, prefs[group].visible));
     }
+    say("mesh", digest(prefs.mesh.colouring, prefs.mesh.alpha, prefs.mesh.visible));
   }
 
   function setTheme(theme: Theme) {
@@ -365,6 +369,47 @@ async function boot() {
   }
   drawGeometryLayers();
 
+  /**
+   * The mesh's skin, drawn on the same three terms as a geometry group.
+   *
+   * A band of its own rather than one more cell group: a mesh is not part
+   * of the blocking, it is what the blocking was for, and it comes and
+   * goes on a clock of its own.
+   */
+  function drawMeshLayer() {
+    const layer = prefs.mesh;
+    $("mesh-layer").innerHTML =
+      summary(
+        "mesh",
+        "mesh",
+        "skin",
+        digest(layer.colouring, layer.alpha, layer.visible),
+        layer.visible,
+      ) +
+      modes("mesh", layer.colouring, false) +
+      slider("mesh-alpha", "opacity", 0, layer.alpha) +
+      `</details>`;
+
+    const find = (test: string) =>
+      $("mesh-layer").querySelector<HTMLInputElement>(`[data-test="${test}"]`)!;
+    find("mesh-visible").addEventListener("change", (e) => {
+      prefs.mesh.visible = (e.target as HTMLInputElement).checked;
+      redraw();
+    });
+    for (const value of ["uniform", "id"] as Colouring[]) {
+      find(`mesh-${value}`).addEventListener("change", () => {
+        prefs.mesh.colouring = value;
+        redraw();
+      });
+    }
+    find("mesh-alpha").addEventListener("input", (e) => {
+      prefs.mesh.alpha = Number((e.target as HTMLInputElement).value);
+      redraw();
+    });
+    keepFolds("mesh-layer");
+  }
+  drawMeshLayer();
+
   /** The panel is generated from the theme's own keys, so a colour added later
    *  needs no new markup. */
   function drawSwatches() {
@@ -437,6 +482,16 @@ async function boot() {
   };
   share("box-margin", "margin", MAX_BOX_MARGIN);
   share("snap", "snap", MAX_SNAP);
+
+  const segments = $<HTMLInputElement>("segments");
+  segments.max = String(MAX_SEGMENTS);
+  segments.value = String(prefs.segments);
+  $("segments-n").textContent = String(prefs.segments);
+  segments.addEventListener("input", () => {
+    prefs.segments = Number(segments.value);
+    $("segments-n").textContent = String(prefs.segments);
+    savePrefs(prefs);
+  });
 
   // --- how far back it can go ---------------------------------------------
   const history = $<HTMLInputElement>("history");
@@ -739,13 +794,16 @@ async function boot() {
     }
     viewer.selectedEdge = edge;
     viewer.showSheet(sheet.edges);
+    lit = sheet.segments;
     $<HTMLButtonElement>("remove").disabled = false;
     // The block count, not just the edges: it is what a removal would take
-    // away, and taking out more than you meant to looks like a hole.
+    // away, and taking out more than you meant to looks like a hole. And
+    // how many segments it is in, because that is the number `-` and `=`
+    // are about to change.
     say(
       `sheet through edge ${edge} — ${sheet.edges.length} edges` +
         ` across ${sheet.blocks} block${sheet.blocks === 1 ? "" : "s"},` +
-        ` drag along it to cut`,
+        ` ${sheet.segments} segments, drag along it to cut`,
     );
   }
 
@@ -855,6 +913,30 @@ async function boot() {
     // the two are made to be held at once now: a handful of nodes and the
     // entity to put them on are picked in different modes and used
     // together. `Esc` is how you let go.
+  }
+
+  /** How many segments the lit sheet is in, as the kernel last said. */
+  let lit = 0;
+
+  /**
+   * Make the lit sheet finer or coarser.
+   *
+   * On the sheet, which is the only thing it can be on: every edge of one
+   * has to carry the same number or the mesh has nothing to match along
+   * the faces between them. The kernel does the spreading; this says by
+   * how much.
+   */
+  async function resegment(by: number) {
+    const edge = viewer.selectedEdge;
+    if (edge === null) {
+      say("light a sheet first — click an edge");
+      return;
+    }
+    const segments = Math.max(1, lit + by);
+    const reply = await kernel.apply({ op: "set_segments", edge, segments });
+    message = reply.message;
+    if (reply.ok) lit = segments;
+    say(message);
   }
 
   /** Put the whole blocking on the geometry. */
@@ -1112,6 +1194,13 @@ async function boot() {
       geometryDrawn = stats.geometry.generation;
       viewer.setGeometry(decodeGeometry(await kernel.geometry()));
     }
+    // The mesh on the same terms, and for the same reason: it is the big
+    // buffer, and the number counts the edits that threw one away as well
+    // as the builds, so this is also how a stale picture goes.
+    if (stats.mesh.generation !== meshDrawn) {
+      meshDrawn = stats.mesh.generation;
+      viewer.setMesh(stats.mesh.nodes === undefined ? null : decodeMesh(await kernel.mesh()));
+    }
     // After the geometry, not before: framing has to see everything there
     // is to frame.
     if (frame) viewer.frameAll(frame === "jump");
@@ -1141,6 +1230,9 @@ async function boot() {
           // you are working towards and so the thing to glance at.
           `<span><b data-test="pinned">${stats.classified.nodes}</b>/` +
           `${stats.nodes} pinned</span>`) +
+      (stats.mesh.hexes === undefined
+        ? ""
+        : `<span><b data-test="mesh-hexes">${stats.mesh.hexes}</b> hexahedra</span>`) +
       `<span data-test="mode">${kernel.mode}</span>`;
     $("status").textContent = message;
     revision++;
@@ -1198,6 +1290,43 @@ async function boot() {
   /** The undo button is live exactly when there is something to undo. */
   function showHistory(stats: Stats) {
     $<HTMLButtonElement>("undo").disabled = stats.history.back === 0;
+  }
+
+  /**
+   * Discretise every block, and draw the skin of what comes out.
+   *
+   * The mesh is the kernel's, not the viewer's: it is built there, kept
+   * there until the next edit throws it away, and sent here as its skin —
+   * the inside of a mesh being most of it and never seen.
+   */
+  async function mesh() {
+    say("meshing…");
+    const reply = await kernel.apply({ op: "mesh", segments: prefs.segments });
+    message = reply.message;
+    await refresh();
+  }
+
+  /**
+   * Write the mesh out, as VTK legacy.
+   *
+   * Meshes first if nothing has been meshed since the last edit, so the
+   * file is always of the blocking as it now stands rather than of
+   * whatever it looked like when somebody last pressed the other key.
+   */
+  async function exportMesh() {
+    const stats = await kernel.stats();
+    if (stats.mesh.nodes === undefined) await mesh();
+    const file = await kernel.vtk();
+    if (file === null) {
+      say("there is nothing to mesh");
+      return;
+    }
+    saveBlob(
+      new Blob([file], { type: "text/plain" }),
+      fileName(new Date(), "vtk"),
+      document,
+    );
+    say(`${message} — written out`);
   }
 
   // --- the chrome ---------------------------------------------------------
@@ -1313,6 +1442,10 @@ async function boot() {
     box: () => boxGeometry(),
     classify,
     attach,
+    mesh,
+    export: exportMesh,
+    finer: () => resegment(1),
+    coarser: () => resegment(-1),
     freeze: freezeNode,
     unclassify: unclassifyNode,
     glue: glueSelection,
@@ -1397,6 +1530,7 @@ async function boot() {
     ["box", "box"],
     ["classify", "classify"],
     ["attach", "attach"],
+    ["mesh", "mesh"],
     ["glue", "glue"],
     ["remove", "remove"],
     ["pillow", "pillow"],
@@ -1519,6 +1653,7 @@ async function boot() {
     selectGeom: (spots: Spot[]) => viewer.selectGeom(spots),
     pickGeometry: (x: number, y: number) => viewer.pickGeometry(x, y),
     geomCount: (group: GeomGroup) => viewer.geomCount(group),
+    skinCount: () => viewer.skinCount,
     geomTags: (group: GeomGroup) => viewer.geomTags(group),
     geomLook: (group: GeomGroup, tag: number) => viewer.geomLook(group, tag),
     /** Load a geometry without a file picker, which a test cannot drive

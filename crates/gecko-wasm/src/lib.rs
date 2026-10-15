@@ -57,6 +57,19 @@ impl WasmSession {
         self.inner.sheet_json(edge)
     }
 
+    /// The mesh's skin, in the same bytes the station sends down its
+    /// socket. Empty until something has been meshed.
+    #[wasm_bindgen(js_name = meshBuffer)]
+    pub fn mesh_buffer(&self) -> Vec<u8> {
+        self.inner.mesh_buffer()
+    }
+
+    /// The mesh as a VTK legacy file, or nothing if none has been built.
+    #[wasm_bindgen(js_name = meshVtk)]
+    pub fn mesh_vtk(&self) -> Option<String> {
+        self.inner.mesh_vtk()
+    }
+
     #[wasm_bindgen(js_name = statsJson)]
     pub fn stats_json(&self) -> String {
         self.inner.stats_json()

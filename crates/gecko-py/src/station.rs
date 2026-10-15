@@ -212,6 +212,17 @@ fn answer(shared: &Arc<Shared>, me: u64, text: &str) -> Vec<Message> {
                     .into(),
             )]
         }
+        Some("vtk") => {
+            let vtk = {
+                let session = shared.session.lock().expect("session mutex");
+                session.mesh_vtk()
+            };
+            vec![Message::Text(
+                serde_json::json!({ "id": id, "vtk": vtk })
+                    .to_string()
+                    .into(),
+            )]
+        }
         Some("sheet") => {
             let edge = request["edge"].as_u64().unwrap_or(u64::MAX) as u32;
             let sheet: serde_json::Value = {
@@ -222,13 +233,13 @@ fn answer(shared: &Arc<Shared>, me: u64, text: &str) -> Vec<Message> {
             value["id"] = id.into();
             vec![Message::Text(value.to_string().into())]
         }
-        Some("view") | Some("geometry") => {
+        Some("view") | Some("geometry") | Some("mesh") => {
             let bytes = {
                 let session = shared.session.lock().expect("session mutex");
-                if request["kind"] == "view" {
-                    session.view_buffer()
-                } else {
-                    session.geometry_buffer()
+                match request["kind"].as_str() {
+                    Some("view") => session.view_buffer(),
+                    Some("geometry") => session.geometry_buffer(),
+                    _ => session.mesh_buffer(),
                 }
             };
             let mut framed = Vec::with_capacity(4 + bytes.len());

@@ -16,7 +16,7 @@
  * three faces is three different points.
  */
 
-import type { View } from "./decode";
+import type { MeshView, View } from "./decode";
 import { colourForId, FAMILY, hexToRgb } from "./palette";
 
 /**
@@ -238,4 +238,76 @@ export function edgeSegments(view: View, shrink: number): Float32Array {
     }
   }
   return out;
+}
+
+/**
+ * The mesh's skin, as a surface and as a wireframe.
+ *
+ * Its own builder rather than `buildSurface`'s: a mesh has no selection, no
+ * shrink and no classification — it is the answer rather than the thing
+ * being worked on — and it has a hundred times as many quadrangles, so the
+ * arithmetic per quadrangle is worth keeping to what it needs.
+ *
+ * Coloured by the **block** each quadrangle came out of, so a hexahedron
+ * wears the colour of the block it was cut from and the two pictures agree.
+ */
+export function buildMesh(
+  mesh: MeshView,
+  options: { uniform: string; colouring: Colouring },
+): SurfaceData {
+  const n = mesh.blocks.length;
+  if (!n) return EMPTY;
+  const positions = new Float32Array(n * 12);
+  const colors = new Float32Array(n * 16);
+  const indices = new Uint32Array(n * 6);
+  const uniform = hexToRgb(options.uniform);
+
+  for (let q = 0; q < n; q++) {
+    const rgb =
+      options.colouring === "id"
+        ? hexToRgb(colourForId(mesh.blocks[q], FAMILY.blocks))
+        : uniform;
+    for (let k = 0; k < 4; k++) {
+      const node = mesh.quads[q * 4 + k];
+      for (let axis = 0; axis < 3; axis++) {
+        positions[(q * 4 + k) * 3 + axis] = mesh.positions[node * 3 + axis];
+      }
+      colors.set([rgb[0], rgb[1], rgb[2], 1], (q * 4 + k) * 4);
+    }
+    const base = q * 4;
+    indices.set([base, base + 1, base + 2, base, base + 2, base + 3], q * 6);
+  }
+  return { positions, indices, colors, faces: new Uint32Array(n), blocks: mesh.blocks };
+}
+
+/**
+ * Every edge of the skin, once.
+ *
+ * Deduplicated by the pair of nodes it joins: each quadrangle has four
+ * sides and all but the ones round the rim are shared with a neighbour, so
+ * drawing them per quadrangle would draw nearly every line twice.
+ */
+export function meshEdges(mesh: MeshView): Float32Array {
+  const seen = new Set<number>();
+  const out: number[] = [];
+  const count = mesh.quads.length / 4;
+  for (let q = 0; q < count; q++) {
+    for (let k = 0; k < 4; k++) {
+      const a = mesh.quads[q * 4 + k];
+      const b = mesh.quads[q * 4 + ((k + 1) % 4)];
+      // One number for the pair, smaller end first, so a side met from
+      // either of its quadrangles is the same side.
+      const key = a < b ? a * 4294967296 + b : b * 4294967296 + a;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      for (const node of [a, b]) {
+        out.push(
+          mesh.positions[node * 3],
+          mesh.positions[node * 3 + 1],
+          mesh.positions[node * 3 + 2],
+        );
+      }
+    }
+  }
+  return new Float32Array(out);
 }

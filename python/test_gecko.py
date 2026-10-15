@@ -25,6 +25,7 @@ def test_a_session_starts_empty():
         "blocks": 0,
         "geometry": {"generation": 0},
         "history": {"steps": 5, "back": 0},
+        "mesh": {"generation": 0},
         "classified": {"nodes": 0, "edges": 0, "faces": 0, "frozen": 0},
     }
     assert s.url is None
@@ -1070,3 +1071,59 @@ def test_a_move_can_carry_the_other_nodes_with_it():
     # One gesture, one command, one step back.
     s.undo()
     assert {n["id"]: n["pos"] for n in s.nodes} == before
+
+
+# --- meshing ----------------------------------------------------------------
+
+
+def test_a_blocking_is_meshed_into_hexahedra():
+    s = gecko.Session()
+    s.create_cube()
+    assert s.stats["mesh"] == {"generation": 0}
+    assert s.vtk is None
+
+    assert s.mesh(3) == "meshed — 64 nodes, 27 hexahedra"
+    assert s.stats["mesh"] == {"generation": 1, "nodes": 64, "hexes": 27}
+
+    # Not a change to the blocking, so not a step of undo either.
+    s.undo()
+    assert cells(s)["blocks"] == 0
+
+
+def test_how_many_segments_is_a_property_of_the_sheet():
+    s = gecko.Session()
+    s.create_cube()
+    edge = s.edges[0]["id"]
+    assert "2 segments" in s.set_segments(edge, 2)
+
+    s.mesh(4)
+    assert s.stats["mesh"]["hexes"] == 2 * 4 * 4
+
+
+def test_a_mesh_does_not_outlive_the_blocking(tmp_path):
+    s = gecko.Session()
+    s.create_cube()
+    s.mesh(2)
+    assert s.vtk is not None
+
+    s.create_cube(origin=[3, 0, 0])
+    assert s.vtk is None, "the mesh outlived the blocking it was made from"
+
+    # And exporting meshes again rather than writing nothing.
+    path = tmp_path / "mesh.vtk"
+    s.export_vtk(str(path), segments=2)
+    assert "CELL_TYPES 16" in path.read_text(), "two blocks of eight"
+
+
+def test_the_file_is_vtk_legacy(tmp_path):
+    s = gecko.Session()
+    s.create_cube()
+    s.set_segments(s.edges[0]["id"], 1)
+    path = tmp_path / "mesh.vtk"
+    s.export_vtk(str(path), segments=1)
+
+    lines = path.read_text().splitlines()
+    assert lines[0] == "# vtk DataFile Version 2.0"
+    assert lines[2:5] == ["ASCII", "DATASET UNSTRUCTURED_GRID", "POINTS 8 double"]
+    assert "CELLS 1 9" in lines
+    assert "SCALARS block int 1" in lines

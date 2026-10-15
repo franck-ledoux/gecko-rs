@@ -21,13 +21,15 @@ export interface ShotOptions {
 }
 
 /** `gecko-2026-10-09-183012.png`: sorts by date and never collides. */
-export function shotName(at: Date): string {
+export function fileName(at: Date, extension: string): string {
   const two = (n: number) => String(n).padStart(2, "0");
   return (
     `gecko-${at.getFullYear()}-${two(at.getMonth() + 1)}-${two(at.getDate())}` +
-    `-${two(at.getHours())}${two(at.getMinutes())}${two(at.getSeconds())}.png`
+    `-${two(at.getHours())}${two(at.getMinutes())}${two(at.getSeconds())}.${extension}`
   );
 }
+
+export const shotName = (at: Date) => fileName(at, "png");
 
 /**
  * Render the scene to a PNG, and hand back a data URL.
@@ -78,7 +80,17 @@ export function dataUrlToBlob(dataUrl: string): Blob {
  * and parse back out again.
  */
 export function save(dataUrl: string, name: string, document: Document): void {
-  const url = URL.createObjectURL(dataUrlToBlob(dataUrl));
+  saveBlob(dataUrlToBlob(dataUrl), name, document);
+}
+
+/**
+ * The same, for something that is already bytes.
+ *
+ * A picture arrives as a data URL because that is what the renderer hands
+ * back; a mesh file arrives as text. Both leave the same way.
+ */
+export function saveBlob(blob: Blob, name: string, document: Document): void {
+  const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
   link.download = name;

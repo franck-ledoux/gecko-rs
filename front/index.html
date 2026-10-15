@@ -78,6 +78,13 @@
           <path d="M12 7.4v4.2M9.6 9.8 12 12.2l2.4-2.4" />
         </svg>
       </button>
+      <!-- A block cut into a grid: what discretising does to one. -->
+      <button id="mesh" title="Discretise every block — E, ⇧E writes it out" aria-label="Mesh">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3.5 6.5h17v13h-17Z" />
+          <path d="M9.2 6.5v13M14.8 6.5v13M3.5 10.8h17M3.5 15.2h17" />
+        </svg>
+      </button>
       <button id="glue" disabled title="Glue the two selected faces — G" aria-label="Glue faces">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M4 5.5h5v13H4ZM15 5.5h5v13h-5Z" />
@@ -164,6 +171,11 @@
         <div id="geometry"></div>
       </details>
 
+      <details class="section" id="sec-mesh">
+        <summary>Mesh</summary>
+        <div id="mesh-layer"></div>
+      </details>
+
       <details class="section" id="sec-colours">
         <summary>Colours</summary>
         <div id="swatches"></div>
@@ -204,6 +216,12 @@
         ><span>snap</span>
         <input id="snap" type="range" min="0" max="0.1" step="0.005" data-test="snap" />
         <b id="snap-n" data-test="snap-value">2%</b>
+      </label>
+
+      <label class="slider"
+        ><span>segments</span>
+        <input id="segments" type="range" min="1" max="60" step="1" data-test="segments" />
+        <b id="segments-n" data-test="segments-value">10</b>
       </label>
 
       <h2>History</h2>
