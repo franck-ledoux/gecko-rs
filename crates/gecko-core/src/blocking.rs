@@ -174,6 +174,16 @@ pub struct SheetEdge {
     pub to: VertexIdType,
 }
 
+/// One block of a chord, and the two faces the chord crosses it by.
+///
+/// The pair is unordered: walking a chord the other way round swaps them,
+/// and nothing that uses a chord cares which end it came in at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChordBlock {
+    pub block: CellId,
+    pub through: [CellId; 2],
+}
+
 /// Across a quadrangle: the edge opposite `from`→`to`, oriented to match.
 ///
 /// This is the whole orientation question, in one place and with no map in
@@ -244,6 +254,8 @@ pub enum BlockingError {
     BadParameter(f64),
     #[error("the sheet through edge {0:?} does not close into a surface")]
     BrokenSheet(CellId),
+    #[error("the chord through face {0:?} comes back through a block it has already crossed")]
+    TangledChord(CellId),
     #[error("nothing was selected to pillow")]
     EmptyPatch,
     #[error("face {0:?} is not a face of block {1:?}")]
@@ -1392,6 +1404,187 @@ impl Blocking {
             }
         }
         Ok(found.into_values().collect())
+    }
+
+    /// A dart of `face`, on `block`'s own side of it.
+    ///
+    /// A glued face has one on each side, and which side is being spoken
+    /// about is the whole content of a pick: the same face belongs to two
+    /// blocks and the chord through it runs a different way in each.
+    fn side_dart(&self, face: CellId, block: CellId) -> Result<DartIdType, BlockingError> {
+        let f = self
+            .face_by_id(face)
+            .ok_or(BlockingError::NoSuchFace(face))?;
+        let v = self
+            .block_by_id(block)
+            .ok_or(BlockingError::NoSuchBlock(block))?;
+        self.block_face_darts(v)
+            .into_iter()
+            .find(|&d| self.map.face_id(d) == f)
+            .ok_or(BlockingError::FaceNotOnBlock(face, block))
+    }
+
+    /// The chord of blocks through this face, in order.
+    ///
+    /// A **chord** is a dual curve: in at one face of a block, out at the
+    /// face opposite, and on through whatever is glued there. Exactly one
+    /// chord runs through any face — a face has one pair of opposite faces
+    /// across its own block — which is why one click names one.
+    ///
+    /// It is walked both ways from the face it was asked about, so the
+    /// answer does not depend on which end was clicked. It stops at the
+    /// model's boundary, where there is nothing glued on to go to, or when
+    /// it closes into a ring.
+    ///
+    /// A chord that meets **itself** — back through a block it has already
+    /// crossed, by a different pair of faces — is refused. Removing it would
+    /// take one block away twice, and inserting a layer along it would ask a
+    /// block to shrink in four directions it has already shrunk in.
+    pub fn chord_through(
+        &self,
+        face: CellId,
+        block: CellId,
+    ) -> Result<Vec<ChordBlock>, BlockingError> {
+        let start = self.side_dart(face, block)?;
+
+        // One block of the chord, read from a dart of the face it is entered
+        // by: the block, the face in, the face out, and the dart that leaves
+        // it — which is the way on to the next block.
+        let step = |d: DartIdType| {
+            let out = self.across_the_block(d);
+            (
+                ChordBlock {
+                    block: self.block_tag(self.map.volume_id(d)).id,
+                    through: [
+                        self.face_tag(self.map.face_id(d)).id,
+                        self.face_tag(self.map.face_id(out)).id,
+                    ],
+                },
+                out,
+            )
+        };
+
+        let mut ahead: Vec<ChordBlock> = Vec::new();
+        let mut closed = false;
+        let mut d = start;
+        loop {
+            let (here, out) = step(d);
+            ahead.push(here);
+            let next = self.map.beta::<3>(out);
+            if next == NULL_DART_ID {
+                break;
+            }
+            if next == start {
+                // A ring: going on would walk it for ever, and going back
+                // would walk it again the other way.
+                closed = true;
+                break;
+            }
+            d = next;
+        }
+
+        let mut behind: Vec<ChordBlock> = Vec::new();
+        if !closed {
+            let mut d = self.map.beta::<3>(start);
+            while d != NULL_DART_ID {
+                let (here, out) = step(d);
+                behind.push(here);
+                d = self.map.beta::<3>(out);
+            }
+        }
+        behind.reverse();
+        behind.extend(ahead);
+
+        let mut once: Vec<CellId> = behind.iter().map(|c| c.block).collect();
+        once.sort_unstable();
+        let crossings = once.len();
+        once.dedup();
+        if once.len() != crossings {
+            return Err(BlockingError::TangledChord(face));
+        }
+        Ok(behind)
+    }
+
+    /// The edges to draw to show a chord: the outline of every face it
+    /// crosses.
+    ///
+    /// A sheet is lit by its own edges, which is what a sheet *is*. A chord
+    /// is a thread through faces, and the readable picture of one is those
+    /// faces' outlines — a ladder of slices through the blocking, which is
+    /// exactly what a removal would take out. Consecutive blocks share a
+    /// face, so each edge comes back once.
+    pub fn chord_wire(&self, chord: &[ChordBlock]) -> Vec<(CellId, VertexIdType, VertexIdType)> {
+        let mut out: Vec<(CellId, VertexIdType, VertexIdType)> = Vec::new();
+        for step in chord {
+            for name in step.through {
+                let Some(face) = self.face_by_id(name) else {
+                    continue;
+                };
+                for dart in self.face_darts(face) {
+                    let edge = self.edge_tag(self.map.edge_id(dart)).id;
+                    if out.iter().any(|(seen, ..)| *seen == edge) {
+                        continue;
+                    }
+                    out.push((
+                        edge,
+                        self.map.vertex_id(dart),
+                        self.map.vertex_id(self.map.beta::<1>(dart)),
+                    ));
+                }
+            }
+        }
+        out
+    }
+
+    /// Take away every block of the chord through this face.
+    ///
+    /// One [`remove_block`][Self::remove_block] after another, in the order
+    /// the chord runs in. Each removal leaves whatever the block was glued to
+    /// closed again, so a chord taken out of the middle of a blocking leaves
+    /// a tunnel with sound walls rather than anything needing repair.
+    pub fn remove_chord(
+        &mut self,
+        face: CellId,
+        block: CellId,
+    ) -> Result<Vec<CellId>, BlockingError> {
+        let chord = self.chord_through(face, block)?;
+        let gone: Vec<CellId> = chord.iter().map(|c| c.block).collect();
+        for block in &gone {
+            self.remove_block(*block)?;
+        }
+        Ok(gone)
+    }
+
+    /// Insert a layer of hexahedra all the way along a chord — an **o-grid**.
+    ///
+    /// The chord is a tube of blocks, and what is pillowed is its **side**:
+    /// the four faces of each of its blocks that the chord does not cross.
+    /// Each block of the chord draws those four in and a ring of four new
+    /// blocks is laid into the space that opens up, so a cross-section of the
+    /// chord goes from one block to five — which is the o-grid.
+    ///
+    /// The faces at the two **ends** are deliberately left out, so the tube
+    /// stays open. A node on an end face belongs to two of the side faces and
+    /// to no other, so it moves along the mitre of those two: inwards across
+    /// the chord, and not one bit along it. The ends stay exactly where they
+    /// were, flush with whatever they were on.
+    pub fn pillow_chord(
+        &mut self,
+        face: CellId,
+        block: CellId,
+    ) -> Result<Vec<CellId>, BlockingError> {
+        let chord = self.chord_through(face, block)?;
+        let sides = self.block_faces();
+        let patch: Vec<(CellId, CellId)> = chord
+            .iter()
+            .flat_map(|step| {
+                sides
+                    .iter()
+                    .filter(|s| s.block == step.block && !step.through.contains(&s.face))
+                    .map(|s| (s.face, s.block))
+            })
+            .collect();
+        self.pillow(&patch)
     }
 
     /// Cut one edge in two, putting a node at `at`.

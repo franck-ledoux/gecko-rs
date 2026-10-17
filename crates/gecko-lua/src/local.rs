@@ -45,6 +45,15 @@ impl Kernel for Local {
             "stats" => session.stats_json(),
             "entities" => session.entities_json(),
             "sheet" => session.sheet_json(arg.trim().parse().unwrap_or(u32::MAX)),
+            // Two numbers, as a JSON array: `query` carries one string, and
+            // a chord is named by a face **and** the block it was clicked on.
+            "chord" => {
+                let pair: Vec<u32> = serde_json::from_str(arg).unwrap_or_default();
+                session.chord_json(
+                    pair.first().copied().unwrap_or(u32::MAX),
+                    pair.get(1).copied().unwrap_or(u32::MAX),
+                )
+            }
             // `null` when nothing has been meshed, which is a JSON answer
             // rather than a special case for the caller.
             "vtk" => serde_json::to_string(&session.mesh_vtk()).unwrap_or_else(|_| "null".into()),

@@ -605,12 +605,17 @@ async function boot() {
   let banding = false;
   window.addEventListener("keydown", (e) => {
     if (e.key.toLowerCase() === LASSO_KEY) banding = true;
+    if (e.key === "Shift") showChord(true);
   });
   window.addEventListener("keyup", (e) => {
     if (e.key.toLowerCase() === LASSO_KEY) banding = false;
+    if (e.key === "Shift") showChord(false);
   });
+  // A window that loses focus with a key held never sees the key go up, and
+  // a chord still lit over a model nobody is looking at is a lie.
   window.addEventListener("blur", () => {
     banding = false;
+    showChord(false);
   });
 
   canvas.addEventListener("pointermove", (e) => {
@@ -1026,12 +1031,89 @@ async function boot() {
       picked.length === 0
         ? ""
         : picked.length === 1
-          ? `face ${picked[0].face} (block ${picked[0].block}) selected`
+          ? `face ${picked[0].face} (block ${picked[0].block}) selected` +
+            ` — hold ⇧ for its chord`
           : picked.length === 2
-            ? `face ${picked[1].face} will be glued onto face ${picked[0].face}` +
-              ` — or pillow both`
+            ? `faces ${picked[0].face} and ${picked[1].face} will be welded` +
+              ` where they meet — or pillow both`
             : `${picked.length} faces — pillow takes them all`;
     $("status").textContent = message;
+  }
+
+  /**
+   * The one selected face, or nothing — with a word about why.
+   *
+   * A chord is named by one face. Two faces are a glue and several are a
+   * pillow, so there is no sensible reading of "the chord of these", and
+   * guessing at the first one would act on something nobody pointed at.
+   */
+  function soleFace(): { face: number; block: number } | null {
+    const picked = viewer.selection;
+    if (picked.length === 0) {
+      say("select a face first — click one");
+      return null;
+    }
+    if (picked.length > 1) {
+      say(`a chord runs through one face — ${picked.length} are selected, Esc clears them`);
+      return null;
+    }
+    return { face: picked[0].face, block: picked[0].block };
+  }
+
+  /**
+   * Light up the chord through the selected face, while ⇧ is held.
+   *
+   * One preview for both chord operations: what `⇧Del` would take away and
+   * what `⇧P` would wrap are the same thread, and the faces it crosses drawn
+   * as a ladder of slices is the whole of it. Held rather than toggled,
+   * because it answers a question asked in passing.
+   *
+   * A lit sheet is left alone. It is already showing what a cut would touch,
+   * and two threads lit at once would say neither.
+   */
+  function showChord(on: boolean) {
+    if (viewer.selectedEdge !== null) return;
+    const picked = viewer.selection;
+    if (picked.length !== 1) return;
+    if (!on) {
+      viewer.showSheet([]);
+      return;
+    }
+    const chord = kernel.chord(picked[0].face, picked[0].block);
+    if (!chord.ok) {
+      say(chord.error);
+      return;
+    }
+    viewer.showSheet(chord.edges);
+    say(
+      `chord through face ${picked[0].face} — ${chord.blocks}` +
+        ` block${chord.blocks === 1 ? "" : "s"}:` +
+        ` ⇧Del takes it out, ⇧P wraps it in an o-grid`,
+    );
+  }
+
+  /** Take out every block the chord through the selected face crosses. */
+  async function removeChord() {
+    const pick = soleFace();
+    if (!pick) return;
+    const reply = await send({ op: "remove_chord", face: pick.face, block: pick.block });
+    clearSelection();
+    message = reply.message;
+    // Not framed: taking something away is no reason to move the camera.
+    await refresh();
+  }
+
+  /** Lay an o-grid all along that chord. */
+  async function pillowChord() {
+    const pick = soleFace();
+    if (!pick) return;
+    const reply = await send({ op: "pillow_chord", face: pick.face, block: pick.block });
+    // Every face of the chord is a different cell now, and the lit wire was
+    // drawn from the names it had.
+    clearSelection();
+    message = reply.message;
+    // Not framed: the model's surface is where it was, which is the point.
+    await refresh();
   }
 
   async function pillowSelection() {
@@ -1468,6 +1550,8 @@ async function boot() {
     glue: glueSelection,
     remove: removeSelection,
     pillow: pillowSelection,
+    "remove-chord": removeChord,
+    "pillow-chord": pillowChord,
     clear: clearSelection,
     recentre,
     screenshot,

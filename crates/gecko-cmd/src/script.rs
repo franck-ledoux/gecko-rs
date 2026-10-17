@@ -64,6 +64,14 @@ pub fn line(command: &Command) -> String {
             format!("gecko.move_node({node}, {}{tail})", point(to))
         }
         Command::GlueFaces { first, second } => format!("gecko.glue_faces({first}, {second})"),
+        Command::RemoveChord { face, block } => {
+            format!("gecko.remove_chord({face}, {block})")
+        }
+        Command::PillowChord {
+            face,
+            block,
+            tolerance,
+        } => format!("gecko.pillow_chord({face}, {block}, {{ tolerance = {tolerance} }})"),
         Command::RemoveBlock { block } => format!("gecko.remove_block({block})"),
         Command::RemoveSheet { edge } => format!("gecko.remove_sheet({edge})"),
         Command::SplitSheet { edge, at } => {

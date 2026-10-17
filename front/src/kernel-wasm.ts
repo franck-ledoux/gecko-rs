@@ -8,7 +8,7 @@
  */
 
 import initWasm, { initSync, Session } from "./pkg/gecko";
-import type { Direct, Kernel, Reply, Sheet, Stats } from "./kernel";
+import type { Chord, Direct, Kernel, Reply, Sheet, Stats } from "./kernel";
 
 let ready = false;
 
@@ -48,6 +48,12 @@ export class WasmKernel implements Kernel {
             return this.session.entitiesJson();
           case "sheet":
             return this.session.sheetJson(Number(arg));
+          case "chord": {
+            // Two numbers, as a JSON array: one argument, and a chord is
+            // named by a face and the block it was clicked on.
+            const [face, block] = JSON.parse(arg) as [number, number];
+            return this.session.chordJson(face, block);
+          }
           case "vtk":
             return JSON.stringify(this.session.meshVtk() ?? null);
           case "script":
@@ -93,6 +99,10 @@ export class WasmKernel implements Kernel {
 
   sheet(edge: number): Sheet {
     return JSON.parse(this.session.sheetJson(edge)) as Sheet;
+  }
+
+  chord(face: number, block: number): Chord {
+    return JSON.parse(this.session.chordJson(face, block)) as Chord;
   }
 
   script(): string {

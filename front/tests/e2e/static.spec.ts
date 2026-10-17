@@ -2796,3 +2796,77 @@ test("the page's Lua and the terminal's agree, byte for byte", async ({ page }) 
   await expect(page.locator("[data-test=mesh-hexes]")).toHaveText("36");
   expect(errors).toEqual([]);
 });
+
+test("holding shift lights the chord, and ⇧Del takes it out", async ({ page }) => {
+  // The one gesture both chord operations share: hold ⇧ with a face
+  // selected and the thread through it lights up, so what is about to go
+  // is on screen before it goes.
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+
+  // Glued through the same door a script uses: what is under test is the
+  // keyboard, not the mouse, and the mouse has its own tests.
+  const seam = await page.evaluate(async () => {
+    const g = (window as any).__gecko;
+    const [first, second] = facingPair();
+    g.apply({ op: "glue_faces", first, second });
+    await g.refresh();
+    return first;
+  });
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 12);
+
+  // Selected from outside the pointer, with the block the surface lists it
+  // under — the pair a click would have given.
+  await page.evaluate((face) => {
+    const g = (window as any).__gecko;
+    const s = g.surface("faces");
+    const at = [...s.faces.keys()].find((q: number) => s.faces[q] === face)!;
+    g.choose({ face, block: s.blocks[at] });
+  }, seam);
+  await expect(page.locator("#status")).toContainText("hold ⇧ for its chord");
+  expect(await page.evaluate(() => (window as any).__gecko.sheet())).toEqual([]);
+
+  await page.keyboard.down("Shift");
+  await expect(page.locator("#status")).toContainText("2 blocks");
+  // Three faces along a chord of two blocks — two ends and the seam — four
+  // edges each.
+  expect(await page.evaluate(() => (window as any).__gecko.sheet().length)).toBe(12);
+
+  await page.keyboard.press("Delete");
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 0);
+  await page.keyboard.up("Shift");
+  await expect(page.locator("[data-test=blocks]")).toHaveText("0");
+  expect(errors).toEqual([]);
+});
+
+test("⇧P wraps that chord in an o-grid", async ({ page }) => {
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+
+  const seam = await page.evaluate(async () => {
+    const g = (window as any).__gecko;
+    const [first, second] = facingPair();
+    g.apply({ op: "glue_faces", first, second });
+    await g.refresh();
+    return first;
+  });
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 12);
+  await page.evaluate((face) => {
+    const g = (window as any).__gecko;
+    const s = g.surface("faces");
+    const at = [...s.faces.keys()].find((q: number) => s.faces[q] === face)!;
+    g.choose({ face, block: s.blocks[at] });
+  }, seam);
+
+  await page.keyboard.press("Shift+P");
+  // Five blocks where each of the two was, and the message says so.
+  await expect(page.locator("[data-test=blocks]")).toHaveText("10");
+  await expect(page.locator("#status")).toContainText("o-grid along 2 blocks");
+  expect(errors).toEqual([]);
+});

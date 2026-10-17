@@ -135,9 +135,14 @@ pub enum Command {
         #[serde(default = "default_snap")]
         snap: f64,
     },
-    /// Weld two blocks along a face. `first` stays where it is and `second`
-    /// is brought onto it, so the order is part of the command rather than a
-    /// detail of how it is carried out.
+    /// Weld two blocks along a face, each pair of corners meeting at the
+    /// point between them.
+    ///
+    /// Classification comes first: a frozen corner does not move and the
+    /// other comes to it, and a welded corner is left on the more
+    /// constrained of the two classifications and projected onto it. The
+    /// order of the two faces decides nothing but which name survives, and
+    /// which claim is kept when the two are tied.
     GlueFaces {
         first: u32,
         second: u32,
@@ -153,6 +158,28 @@ pub enum Command {
     /// other, with the seam half way between.
     RemoveSheet {
         edge: u32,
+    },
+    /// Take out the whole chord of blocks through a face.
+    ///
+    /// The face is given as the pair a click gives — the face and the block
+    /// it was picked on — though for a chord the side does not matter: the
+    /// same thread runs through the face either way.
+    RemoveChord {
+        face: u32,
+        block: u32,
+    },
+    /// Lay a layer of hexahedra all the way along a chord: an **o-grid**.
+    ///
+    /// The side faces of every block of the chord are pillowed and the two
+    /// ends are left alone, so each block of the chord becomes five and the
+    /// tube stays open at both ends.
+    PillowChord {
+        face: u32,
+        block: u32,
+        /// As [`Command::Pillow`]: how near a node drawn in has to be to a
+        /// geometric entity to be taken by it.
+        #[serde(default = "default_snap")]
+        tolerance: f64,
     },
     /// Cut the whole sheet of hexahedra through an edge, `at` along it.
     ///
@@ -619,6 +646,49 @@ impl Session {
                     script: None,
                     message: format!(
                         "sheet through {edge:?} removed — {} nodes, {} edges, {} faces, {} blocks",
+                        self.blocking.nb_nodes(),
+                        self.blocking.nb_edges(),
+                        self.blocking.nb_faces(),
+                        self.blocking.nb_blocks(),
+                    ),
+                    view_changed: true,
+                })
+            }
+            Command::RemoveChord { face, block } => {
+                let (face, block) = (CellId::from_raw(face), CellId::from_raw(block));
+                let gone = self.blocking.remove_chord(face, block)?;
+                Ok(Outcome {
+                    script: None,
+                    message: format!(
+                        "chord through face {face:?} removed, {} block{} — \
+                         {} nodes, {} edges, {} faces, {} blocks",
+                        gone.len(),
+                        if gone.len() == 1 { "" } else { "s" },
+                        self.blocking.nb_nodes(),
+                        self.blocking.nb_edges(),
+                        self.blocking.nb_faces(),
+                        self.blocking.nb_blocks(),
+                    ),
+                    view_changed: true,
+                })
+            }
+            Command::PillowChord {
+                face,
+                block,
+                tolerance,
+            } => {
+                let (face, block) = (CellId::from_raw(face), CellId::from_raw(block));
+                let along = self.blocking.chord_through(face, block)?.len();
+                let drawn = self.blocking.pillow_chord(face, block)?;
+                // As for a pillow: the nodes that went in have moved, and
+                // where they are now is a different question from where
+                // they were.
+                self.settle_moved(&drawn, tolerance);
+                Ok(Outcome {
+                    script: None,
+                    message: format!(
+                        "o-grid along {along} block{} — {} nodes, {} edges, {} faces, {} blocks",
+                        if along == 1 { "" } else { "s" },
                         self.blocking.nb_nodes(),
                         self.blocking.nb_edges(),
                         self.blocking.nb_faces(),
@@ -1289,6 +1359,39 @@ impl Session {
                     "edges": edges,
                     "blocks": blocks,
                     "segments": if segments == 0 { SEGMENTS } else { segments },
+                })
+                .to_string()
+            }
+            Err(e) => serde_json::json!({ "ok": false, "error": e.to_string() }).to_string(),
+        }
+    }
+
+    /// The chord through a face, for the view to light up.
+    ///
+    /// The same shape as [`sheet_json`][Self::sheet_json], so the same
+    /// drawing code shows both: a list of segments, and how many blocks are
+    /// at stake. A question, not a change — nothing is removed or pillowed
+    /// by asking.
+    pub fn chord_json(&self, face: u32, block: u32) -> String {
+        let (face, block) = (CellId::from_raw(face), CellId::from_raw(block));
+        match self.blocking.chord_through(face, block) {
+            Ok(chord) => {
+                let edges: Vec<_> = self
+                    .blocking
+                    .chord_wire(&chord)
+                    .iter()
+                    .map(|(id, from, to)| {
+                        serde_json::json!({
+                            "id": id.get(),
+                            "from": self.blocking.position(*from).unwrap_or([0.0; 3]),
+                            "to": self.blocking.position(*to).unwrap_or([0.0; 3]),
+                        })
+                    })
+                    .collect();
+                serde_json::json!({
+                    "ok": true,
+                    "edges": edges,
+                    "blocks": chord.len(),
                 })
                 .to_string()
             }

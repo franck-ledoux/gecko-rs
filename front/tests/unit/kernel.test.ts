@@ -2065,3 +2065,81 @@ describe("four views of one scene", () => {
     expect(camera.extents[3]).toBeCloseTo(-camera.half);
   });
 });
+
+describe("the chord through a face", () => {
+  /** Every face the kernel knows, the way a script reads them. */
+  interface Face {
+    id: number;
+    block: number;
+    centre: [number, number, number];
+  }
+  const faces = (kernel: WasmKernel): Face[] =>
+    JSON.parse(kernel.direct.query("faces", "")) as Face[];
+
+  /** Three unit cubes stacked along z and glued, as the kernel sees them. */
+  const slabs = () => {
+    const kernel = new WasmKernel();
+    for (const z of [0, 1, 2]) kernel.apply({ op: "create_cube", origin: [0, 0, z], size: 1 });
+    for (const z of [1, 2]) {
+      const pair = faces(kernel)
+        .filter((f) => Math.abs(f.centre[2] - z) < 1e-9)
+        .map((f) => f.id);
+      expect(pair).toHaveLength(2);
+      kernel.apply({ op: "glue_faces", first: pair[0], second: pair[1] });
+    }
+    return kernel;
+  };
+
+  const flatAt = (kernel: WasmKernel, z: number) => {
+    const face = faces(kernel).find((f) => Math.abs(f.centre[2] - z) < 1e-9);
+    expect(face).toBeDefined();
+    return { face: face!.id, block: face!.block };
+  };
+
+  it("comes back as something the sheet drawing can light", () => {
+    const kernel = slabs();
+    const { face, block } = flatAt(kernel, 0);
+    const chord = kernel.chord(face, block);
+    expect(chord.ok).toBe(true);
+    if (!chord.ok) return;
+
+    // Three blocks, and the outline of each face it crosses: four faces
+    // along the chord — two ends and two seams — four edges each.
+    expect(chord.blocks).toBe(3);
+    expect(chord.edges).toHaveLength(16);
+    for (const edge of chord.edges) {
+      expect(edge.from).toHaveLength(3);
+      expect(edge.to).toHaveLength(3);
+    }
+
+    // And it draws, headless, with the same call a sheet uses.
+    const viewer = new Viewer(new NullEngine());
+    viewer.applyPrefs(DEFAULTS);
+    viewer.setView(decodeView(kernel.view()));
+    viewer.showSheet(chord.edges);
+    expect(viewer.scene.getMeshByName("sheet")).not.toBeNull();
+    viewer.showSheet([]);
+    expect(viewer.scene.getMeshByName("sheet")).toBeNull();
+  });
+
+  it("says so rather than throwing when there is no such face", () => {
+    const kernel = slabs();
+    const chord = kernel.chord(4242, 0);
+    expect(chord.ok).toBe(false);
+    if (chord.ok) return;
+    expect(chord.error).toContain("no face");
+  });
+
+  it("is the same thread from either side of an internal face", () => {
+    // A face with a block on each side is listed once per block, and the
+    // chord through it does not depend on which side was clicked.
+    const kernel = slabs();
+    const both = faces(kernel).filter((f) => Math.abs(f.centre[2] - 1) < 1e-9);
+    expect(both).toHaveLength(2);
+    const answers = both.map((f) => {
+      const chord = kernel.chord(f.id, f.block);
+      return chord.ok ? chord.blocks : -1;
+    });
+    expect(answers).toEqual([3, 3]);
+  });
+});

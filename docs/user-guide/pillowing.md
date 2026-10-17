@@ -10,6 +10,10 @@ point of it.
 Click the faces you want, then the pillow button, or `P`. Every selected face
 is lit, so what the layer will cover is visible before it exists.
 
+To put a layer all the way along a **chord** instead of round a patch you
+picked by hand, see [Chords](chords.md): one click, `⇧P`, and the o-grid runs
+the length of the thread.
+
 The selection has no limit. A glue wants exactly two faces; a pillow takes as
 many as are picked, and clicking a face again takes it back out.
 

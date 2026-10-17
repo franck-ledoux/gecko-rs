@@ -112,6 +112,26 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
         ))
     })?;
 
+    command(lua, &gecko, &kernel, "remove_chord", |lua, a| {
+        Ok(json!({
+            "op": "remove_chord",
+            "face": at(lua, &a, 0)?,
+            "block": at(lua, &a, 1)?,
+        }))
+    })?;
+    command(lua, &gecko, &kernel, "pillow_chord", |lua, a| {
+        let o = options(lua, &a, 2)?;
+        Ok(with(
+            json!({
+                "op": "pillow_chord",
+                "face": at(lua, &a, 0)?,
+                "block": at(lua, &a, 1)?,
+            }),
+            &o,
+            &["tolerance"],
+        ))
+    })?;
+
     // --- sheets ----------------------------------------------------------
     command(lua, &gecko, &kernel, "split_sheet", |lua, a| {
         Ok(json!({
@@ -203,6 +223,16 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
             "sheet",
             lua.create_function(move |lua, edge: u32| {
                 answer(lua, &host.query("sheet", &edge.to_string()))
+            })?,
+        )?;
+    }
+
+    {
+        let host = Rc::clone(&kernel);
+        gecko.set(
+            "chord",
+            lua.create_function(move |lua, (face, block): (u32, u32)| {
+                answer(lua, &host.query("chord", &json!([face, block]).to_string()))
             })?,
         )?;
     }

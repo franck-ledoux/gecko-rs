@@ -137,3 +137,9 @@ name.
 
 Cells the sheet does not touch keep their names. The corner keys survive
 throughout, so the cells that had a corner go on recognising it.
+
+## And the other dual thing
+
+A sheet is a layer, and the thread crosswise through the blocks is a
+**chord** — named by a face rather than an edge, and with two operations of
+its own. See [Chords](chords.md).

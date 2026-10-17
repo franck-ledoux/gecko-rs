@@ -944,6 +944,167 @@ mod sheet_removal {
     }
 }
 
+/// Chords: the thread through a face, and the two operations on it.
+mod chords {
+    use super::*;
+
+    /// Three unit slabs stacked along z and glued, so one chord runs
+    /// through all three.
+    fn three_slabs() -> Session {
+        let mut s = Session::new().unwrap();
+        for z in [0.0, 1.0, 2.0] {
+            s.apply(Command::CreateCube {
+                origin: [0.0, 0.0, z],
+                size: 1.0,
+            })
+            .unwrap();
+        }
+        for z in [1.0, 2.0] {
+            let faces: serde_json::Value = serde_json::from_str(&s.faces_json()).unwrap();
+            let pair: Vec<u32> = faces
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|f| (f["centre"][2].as_f64().unwrap() - z).abs() < 1e-9)
+                .map(|f| f["id"].as_u64().unwrap() as u32)
+                .collect();
+            assert_eq!(pair.len(), 2);
+            s.apply(Command::GlueFaces {
+                first: pair[0],
+                second: pair[1],
+            })
+            .unwrap();
+        }
+        s
+    }
+
+    /// The `(face, block)` pair a click on the face at this height gives.
+    fn flat_at_z(s: &Session, z: f64) -> (u32, u32) {
+        let faces: serde_json::Value = serde_json::from_str(&s.faces_json()).unwrap();
+        let found = faces
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| {
+                (f["centre"][2].as_f64().unwrap() - z).abs() < 1e-9
+                    && (f["centre"][0].as_f64().unwrap() - 0.5).abs() < 1e-9
+            })
+            .cloned()
+            .expect("a face there");
+        (
+            found["id"].as_u64().unwrap() as u32,
+            found["block"].as_u64().unwrap() as u32,
+        )
+    }
+
+    fn blocks(s: &Session) -> u64 {
+        serde_json::from_str::<serde_json::Value>(&s.stats_json()).unwrap()["blocks"]
+            .as_u64()
+            .unwrap()
+    }
+
+    #[test]
+    fn removing_a_chord_goes_through_the_json_door_like_everything_else() {
+        let mut s = three_slabs();
+        let (face, block) = flat_at_z(&s, 0.0);
+        let raw = s.apply_json(&format!(
+            r#"{{"op":"remove_chord","face":{face},"block":{block}}}"#
+        ));
+        let reply: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(reply["ok"], true, "{raw}");
+        assert!(
+            reply["outcome"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("3 blocks"),
+            "{raw}"
+        );
+        assert_eq!(blocks(&s), 0, "the whole stack was the chord");
+    }
+
+    #[test]
+    fn an_o_grid_goes_through_the_json_door_like_everything_else() {
+        let mut s = three_slabs();
+        let (face, block) = flat_at_z(&s, 0.0);
+        let raw = s.apply_json(&format!(
+            r#"{{"op":"pillow_chord","face":{face},"block":{block}}}"#
+        ));
+        let reply: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(reply["ok"], true, "{raw}");
+        assert_eq!(blocks(&s), 15, "five where there was one, three times over");
+
+        // The ends of the tube did not move: nothing is past either of them.
+        let nodes: Vec<serde_json::Value> = serde_json::from_str(&s.nodes_json()).unwrap();
+        let z: Vec<f64> = nodes
+            .iter()
+            .map(|n| n["pos"][2].as_f64().unwrap())
+            .collect();
+        assert!(z.iter().all(|&v| v > -1e-9 && v < 3.0 + 1e-9), "{z:?}");
+        assert_eq!(z.iter().filter(|v| v.abs() < 1e-9).count(), 8);
+    }
+
+    #[test]
+    fn both_write_themselves_into_the_script() {
+        let mut s = three_slabs();
+        let (face, block) = flat_at_z(&s, 0.0);
+        s.apply(Command::PillowChord {
+            face,
+            block,
+            tolerance: 0.01,
+        })
+        .unwrap();
+        let script = s.script();
+        assert!(
+            script.contains(&format!("gecko.pillow_chord({face}, {block},")),
+            "{script}"
+        );
+
+        let mut other = three_slabs();
+        let (face, block) = flat_at_z(&other, 0.0);
+        other.apply(Command::RemoveChord { face, block }).unwrap();
+        assert!(
+            other
+                .script()
+                .contains(&format!("gecko.remove_chord({face}, {block})")),
+            "{}",
+            other.script()
+        );
+    }
+
+    #[test]
+    fn an_o_grid_can_be_taken_back() {
+        let mut s = three_slabs();
+        let before = s.view_buffer();
+        let (face, block) = flat_at_z(&s, 0.0);
+        s.apply(Command::PillowChord {
+            face,
+            block,
+            tolerance: 0.01,
+        })
+        .unwrap();
+        assert_eq!(blocks(&s), 15);
+        s.apply(Command::Undo).unwrap();
+        assert_eq!(blocks(&s), 3);
+        assert_eq!(s.view_buffer(), before, "byte for byte where it was");
+    }
+
+    #[test]
+    fn a_name_no_face_answers_to_is_reported_and_changes_nothing() {
+        let mut s = three_slabs();
+        let before = s.view_buffer();
+        for op in ["remove_chord", "pillow_chord"] {
+            let raw = s.apply_json(&format!(r#"{{"op":"{op}","face":4242,"block":0}}"#));
+            let reply: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            assert_eq!(reply["ok"], false, "{raw}");
+            assert!(
+                reply["error"].as_str().unwrap().contains("no face"),
+                "{raw}"
+            );
+            assert_eq!(s.view_buffer(), before);
+        }
+    }
+}
+
 #[test]
 fn a_face_is_grown_into_a_block_through_the_door() {
     let mut s = Session::new().unwrap();

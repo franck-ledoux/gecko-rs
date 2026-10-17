@@ -58,6 +58,7 @@ nav:
       - Classification: user-guide/classification.md
       - Joining and removing blocks: user-guide/gluing.md
       - Sheets: user-guide/sheets.md
+      - Chords: user-guide/chords.md
       - Pillowing: user-guide/pillowing.md
       - Meshing: user-guide/meshing.md
       - Scripting: user-guide/scripting.md

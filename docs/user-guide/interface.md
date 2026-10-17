@@ -39,7 +39,9 @@ does. Any key dismisses it.
 | `U`         | take the picked node off the geometry         |
 | `G`         | glue the two selected faces                   |
 | `Del` `⌫`   | remove the selection: a block, or a lit sheet |
+| `⇧Del` `⇧⌫` | remove the whole chord through that face      |
 | `P`         | pillow the selected faces                     |
+| `⇧P`        | o-grid all along that chord                   |
 | `⌘Z`        | take back the last change (ctrl `Z` on a PC)  |
 | `Esc`       | clear the selection                           |
 | `F`         | frame everything                              |

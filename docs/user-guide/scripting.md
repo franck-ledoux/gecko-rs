@@ -51,6 +51,8 @@ shorthand for a call with one table.
 | `gecko.remove_block(id)`, `gecko.glue_faces(a, b)`           |                                         |
 | `gecko.extrude_face(face, block, height)`                    |                                         |
 | `gecko.pillow({ {face, block}, … }, { tolerance = 0.02 })`   |                                         |
+| `gecko.remove_chord(face, block)`                            | the whole thread through a face         |
+| `gecko.pillow_chord(face, block, { tolerance = 0.02 })`      | an o-grid along it                      |
 | `gecko.split_sheet(edge, 0.5)`, `gecko.remove_sheet(edge)`   |                                         |
 | `gecko.set_segments(edge, 8)`                                | on the whole sheet                      |
 | `gecko.move_node(id, {x,y,z}, { carrying = {…}, snap = 0 })` |                                         |
@@ -64,7 +66,8 @@ shorthand for a call with one table.
 | `gecko.undo()`, `gecko.set_history(n)`                       |                                         |
 
 And the reads, each a plain table: `nodes()`, `edges()`, `faces()`,
-`blocks()`, `entities()`, `stats()`, `sheet(edge)`, `vtk()`, `script()`.
+`blocks()`, `entities()`, `stats()`, `sheet(edge)`, `chord(face, block)`,
+`vtk()`, `script()`.
 
 ```lua
 for _, node in ipairs(gecko.nodes()) do

@@ -57,6 +57,14 @@ impl WasmSession {
         self.inner.sheet_json(edge)
     }
 
+    /// The chord through a face, the same way. The block is which side of
+    /// the face was clicked; a chord does not depend on it, and the kernel
+    /// still has to be told which block a face belongs to.
+    #[wasm_bindgen(js_name = chordJson)]
+    pub fn chord_json(&self, face: u32, block: u32) -> String {
+        self.inner.chord_json(face, block)
+    }
+
     /// The mesh's skin, in the same bytes the station sends down its
     /// socket. Empty until something has been meshed.
     #[wasm_bindgen(js_name = meshBuffer)]

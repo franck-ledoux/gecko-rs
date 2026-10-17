@@ -60,6 +60,11 @@ export interface SheetEdge {
   to: [number, number, number];
 }
 
+/** The chord through a face: what to draw, and what is at stake. */
+export type Chord =
+  | { ok: true; edges: SheetEdge[]; blocks: number }
+  | { ok: false; error: string };
+
 export type Sheet =
   | {
       ok: true;
@@ -100,6 +105,10 @@ export interface Kernel {
   stats(): Stats;
   /** The sheet of hexahedra through an edge. A question, not a change. */
   sheet(edge: number): Sheet;
+
+  /** The chord of blocks through a face, named as a click names it. Also a
+   *  question: nothing is removed or pillowed by asking. */
+  chord(face: number, block: number): Chord;
   /** The session as a Lua script: what it would take to arrive here. */
   script(): string;
 }
