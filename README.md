@@ -14,6 +14,13 @@ One kernel, in one place: **the page**. It carries the kernel compiled to wasm
 and a Lua 5.4 interpreter beside it, so the mouse and a script drive the same
 session with nothing in between.
 
+**[Open it in your browser](https://franck-ledoux.github.io/gecko-rs/app/)** —
+nothing to install, because a page that carries its own kernel needs no
+server. The [documentation](https://franck-ledoux.github.io/gecko-rs/) is
+published beside it.
+
+What follows is for building it yourself.
+
 ## Three commands
 
 ```bash

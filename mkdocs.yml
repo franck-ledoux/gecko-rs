@@ -46,6 +46,10 @@ plugins:
 
 nav:
   - Home: index.md
+  # An external link: the application is published beside this site by the
+  # same workflow, and a reader looking for it should not have to read a
+  # paragraph to find out it exists.
+  - Open gecko: https://franck-ledoux.github.io/gecko-rs/app/
   - User Guide:
       - The interface: user-guide/interface.md
       - Running it: user-guide/running.md

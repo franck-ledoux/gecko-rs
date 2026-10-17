@@ -1,5 +1,14 @@
 # gecko-rs
 
+### [▶ Open gecko in your browser](https://franck-ledoux.github.io/gecko-rs/app/)
+
+Nothing to install: the page carries the kernel and a Lua interpreter, and
+runs on a static host. Everything works there except the filesystem — a
+script that reads a file is told there is none, and one that writes gets a
+download.
+
+______________________________________________________________________
+
 A Rust port of [GECKO](https://github.com/franck-ledoux/gecko), rebuilt step by
 step.
 
@@ -18,11 +27,8 @@ same session with nothing between them and no server anywhere.
 ./gecko     # open it
 ```
 
-The same page is published beside this site, at
-[`/app/`](https://franck-ledoux.github.io/gecko-rs/app/) — it carries its own
-kernel and its own interpreter, so a static host is all it ever needed.
-Everything works there except the filesystem: a script that reads a file is
-told there is none, and one that writes gets a download.
+That is for working on it. To **use** it, there is nothing to build:
+[open it in your browser](https://franck-ledoux.github.io/gecko-rs/app/).
 
 ```lua
 gecko.load_geometry("cylinder.msh")
