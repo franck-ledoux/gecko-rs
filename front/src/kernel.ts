@@ -17,6 +17,9 @@ export interface Reply {
   ok: boolean;
   message: string;
   viewChanged: boolean;
+  /** The line of Lua that would have made this command, for the console
+   *  to echo. Absent for the commands that leave no line. */
+  script?: string;
 }
 
 /**
@@ -74,7 +77,24 @@ export type Sheet =
 
 export type Mode = "static" | "station";
 
+/**
+ * The same session, reached **synchronously**.
+ *
+ * Only the in-page kernel can answer this way, and only Lua needs it: a
+ * script's `for` loop cannot be unwound into promises halfway through. A
+ * kernel at the other end of a socket has no such door and says so by not
+ * having this.
+ */
+export interface Direct {
+  apply(command: string): string;
+  /** A read by name: `nodes`, `edges`, `faces`, `blocks`, `stats`,
+   *  `entities`, `sheet`, `vtk`. */
+  query(kind: string, arg: string): string;
+}
+
 export interface Kernel {
+  /** Present when the session is in this very tab. */
+  readonly direct?: Direct;
   readonly mode: Mode;
   apply(command: Record<string, unknown>): Promise<Reply>;
   view(): Promise<Uint8Array>;

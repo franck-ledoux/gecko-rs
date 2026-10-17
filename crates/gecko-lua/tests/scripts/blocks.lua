@@ -22,3 +22,10 @@ assert(gecko.stats().blocks == 1, "and one of them taken away")
 local ok, why = pcall(gecko.remove_block, 999)
 assert(not ok, "a block that does not exist was removed")
 assert(tostring(why):find("999"), "the message says which: " .. tostring(why))
+
+-- Nothing is nothing: a cell on no entity has `on == nil`, which is how
+-- anybody would write it. A sentinel that is not nil but prints like it
+-- would be a trap.
+for _, edge in ipairs(gecko.edges()) do
+  assert(edge.on == nil, "an unclassified edge is not on nil")
+end

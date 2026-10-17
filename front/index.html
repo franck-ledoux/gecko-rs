@@ -78,6 +78,12 @@
           <path d="M12 7.4v4.2M9.6 9.8 12 12.2l2.4-2.4" />
         </svg>
       </button>
+      <button id="console-open" title="Scripts — ;" aria-label="Script console" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3.5 4.5h17v15h-17Z" />
+          <path d="M7 9.5l3 2.5-3 2.5M12.5 15h4.5" />
+        </svg>
+      </button>
       <!-- A block cut into a grid: what discretising does to one. -->
       <button id="mesh" title="Discretise every block — E, ⇧E writes it out" aria-label="Mesh">
         <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -231,6 +237,25 @@
         <b id="history-n" data-test="history-steps">5</b>
       </label>
     </aside>
+
+    <!-- Lua, and what it has said. Over the canvas like everything else,
+         and shut unless asked for. -->
+    <section id="console" aria-label="Script console">
+      <header>
+        <span>Lua</span>
+        <button id="console-save" title="Save the session as a script">save</button>
+        <button id="console-clear" title="Clear what is on screen">clear</button>
+      </header>
+      <div id="console-out" data-test="console-out"></div>
+      <textarea
+        id="console-in"
+        data-test="console-in"
+        rows="1"
+        spellcheck="false"
+        autocomplete="off"
+        placeholder="enter runs it, shift-enter makes a line"
+      ></textarea>
+    </section>
 
     <!-- The rubber band, while shift is held and the pointer is down. Drawn
          over the canvas rather than in it: a rectangle in the scene would

@@ -984,3 +984,96 @@ fn a_refused_extrusion_comes_back_as_a_refusal_rather_than_a_panic() {
     assert!(reply.contains(r#""ok":false"#), "{reply}");
     assert!(reply.contains("positive distance"), "{reply}");
 }
+
+#[test]
+fn the_session_writes_itself_out_as_lua() {
+    // The history, in the one form that can be run again. Not a diary:
+    // an undo takes its line back off rather than writing one.
+    let mut s = Session::new().unwrap();
+    s.apply(Command::CreateCube {
+        origin: [0.0, 0.0, 0.0],
+        size: 1.0,
+    })
+    .unwrap();
+    let out = s
+        .apply(Command::CreateCube {
+            origin: [3.0, 0.0, 0.0],
+            size: 2.0,
+        })
+        .unwrap();
+    // Every outcome carries its own line, for a console to echo.
+    assert_eq!(
+        out.script.as_deref(),
+        Some("gecko.create_cube{ origin = {3, 0, 0}, size = 2 }")
+    );
+
+    s.apply(Command::SplitSheet {
+        edge: first_edge(&s),
+        at: 0.25,
+    })
+    .unwrap();
+
+    let script = s.script();
+    assert!(script.starts_with("-- Written by gecko"), "{script}");
+    let lines: Vec<&str> = script.lines().filter(|l| !l.starts_with("--")).collect();
+    assert_eq!(
+        lines,
+        vec![
+            "gecko.create_cube{ origin = {0, 0, 0}, size = 1 }",
+            "gecko.create_cube{ origin = {3, 0, 0}, size = 2 }",
+            "gecko.split_sheet(0, 0.25)",
+        ]
+    );
+
+    // An undo takes the last line off, so the script is a recipe for where
+    // the session now is rather than for everything anybody tried.
+    s.apply(Command::Undo).unwrap();
+    assert_eq!(
+        s.script().lines().filter(|l| !l.starts_with("--")).count(),
+        2
+    );
+    // And the undo itself leaves no line.
+    assert!(!s.script().contains("undo"));
+}
+
+#[test]
+fn the_journal_does_not_keep_a_copy_of_every_mesh_ever_loaded() {
+    // A geometry command carries the whole file, because a browser has no
+    // path to send. The journal wants the name.
+    let mut s = Session::new().unwrap();
+    s.apply(Command::LoadGeometry {
+        msh: SQUARE.to_string(),
+        name: "square.msh".to_string(),
+    })
+    .unwrap();
+    assert!(
+        s.script().contains(r#"gecko.load_geometry("square.msh")"#),
+        "{}",
+        s.script()
+    );
+    assert!(
+        !s.script().contains("$MeshFormat"),
+        "the file went into the journal"
+    );
+}
+
+const SQUARE: &str = "\
+$MeshFormat
+2.2 0 8
+$EndMeshFormat
+$Nodes
+3
+1 0 0 0
+2 1 0 0
+3 0 1 0
+$EndNodes
+$Elements
+1
+1 2 2 0 1 1 2 3
+$EndElements
+";
+
+fn first_edge(s: &Session) -> u32 {
+    let edges: serde_json::Value = serde_json::from_str(&s.edges_json()).unwrap();
+    edges[0]["id"].as_u64().unwrap() as u32
+}

@@ -88,7 +88,12 @@ export class RemoteKernel implements Kernel {
       command,
     });
     return raw.ok
-      ? { ok: true, message: raw.outcome!.message, viewChanged: raw.outcome!.viewChanged }
+      ? {
+          ok: true,
+          message: raw.outcome!.message,
+          viewChanged: raw.outcome!.viewChanged,
+          script: raw.outcome!.script,
+        }
       : { ok: false, message: raw.error ?? "unknown error", viewChanged: false };
   }
 

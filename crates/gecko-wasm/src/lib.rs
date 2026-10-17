@@ -70,6 +70,40 @@ impl WasmSession {
         self.inner.mesh_vtk()
     }
 
+    /// The reads a script asks for, each the same JSON the other
+    /// transports deliver.
+    #[wasm_bindgen(js_name = nodesJson)]
+    pub fn nodes_json(&self) -> String {
+        self.inner.nodes_json()
+    }
+
+    #[wasm_bindgen(js_name = edgesJson)]
+    pub fn edges_json(&self) -> String {
+        self.inner.edges_json()
+    }
+
+    #[wasm_bindgen(js_name = facesJson)]
+    pub fn faces_json(&self) -> String {
+        self.inner.faces_json()
+    }
+
+    #[wasm_bindgen(js_name = blocksJson)]
+    pub fn blocks_json(&self) -> String {
+        self.inner.blocks_json()
+    }
+
+    #[wasm_bindgen(js_name = entitiesJson)]
+    pub fn entities_json(&self) -> String {
+        self.inner.entities_json()
+    }
+
+    /// The session as a Lua script — its history, in the one form that
+    /// can be run again.
+    #[wasm_bindgen(js_name = script)]
+    pub fn script(&self) -> String {
+        self.inner.script()
+    }
+
     #[wasm_bindgen(js_name = statsJson)]
     pub fn stats_json(&self) -> String {
         self.inner.stats_json()

@@ -20,6 +20,12 @@ command -v uv >/dev/null || {
 uv pip install --quiet maturin pytest
 rustup target list --installed | grep -qx wasm32-unknown-unknown \
   || rustup target add wasm32-unknown-unknown
+[ -f "$HOME/emsdk/emsdk_env.sh" ] || {
+  echo "the Emscripten SDK is required for the Lua module:" >&2
+  echo "  git clone https://github.com/emscripten-core/emsdk ~/emsdk" >&2
+  echo "  cd ~/emsdk && ./emsdk install latest && ./emsdk activate latest" >&2
+  exit 1
+}
 
 echo "── format and lint ───────────────────────────────────────────"
 cargo fmt --all --check
@@ -30,6 +36,9 @@ cargo test --workspace --exclude gecko-py
 
 echo "── browser façade (wasm) ─────────────────────────────────────"
 ./build-wasm.sh
+
+echo "── the interpreter the page runs (emscripten) ────────────────"
+./build-lua.sh
 
 echo "── decode, scene and transport, headless (Vitest + NullEngine) "
 (cd front && npm run test:unit)

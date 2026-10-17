@@ -52,6 +52,7 @@ export const ACTIONS = [
   "theme",
   "drawer",
   "params",
+  "console",
   "chrome",
   "help",
 ] as const;
@@ -210,6 +211,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
 
   { show: "Tab", key: "tab", action: "drawer", does: "how it is drawn", group: "Window" },
   { show: ",", key: ",", action: "params", does: "what the operations do", group: "Window" },
+  { show: ";", key: ";", action: "console", does: "the script console", group: "Window" },
   { show: "⇧Tab", key: "tab", shift: true, action: "chrome", does: "hide everything", group: "Window" },
   { show: "S", key: "s", action: "screenshot", does: "save a picture", group: "Window" },
   { show: "H", key: "h", action: "help", does: "this card", group: "Window" },

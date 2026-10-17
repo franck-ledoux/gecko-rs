@@ -28,6 +28,7 @@ import {
 } from "./theme";
 import { actionFor, helpRows, type Action } from "./shortcuts";
 import { capture, fileName, save, saveBlob, shotName } from "./capture";
+import { Interpreter, type Answer } from "./lua";
 import type { Colouring } from "./surface";
 import { GEOM_GROUPS, spotName, type GeomGroup, type Spot } from "./geometry";
 import type { Axis } from "./axes";
@@ -742,7 +743,7 @@ async function boot() {
   }
 
   async function extrude(from: Pick, height: number) {
-    const reply = await kernel.apply({
+    const reply = await send({
       op: "extrude_face",
       face: from.face,
       block: from.block,
@@ -760,7 +761,7 @@ async function boot() {
     const at = viewer.aimedAt;
     viewer.aimCut(null);
     if (at === null) return;
-    const reply = await kernel.apply({ op: "split_sheet", edge, at });
+    const reply = await send({ op: "split_sheet", edge, at });
     // Every name on the sheet means something else now, this edge included.
     clearSelection();
     message = reply.message;
@@ -933,7 +934,7 @@ async function boot() {
       return;
     }
     const segments = Math.max(1, lit + by);
-    const reply = await kernel.apply({ op: "set_segments", edge, segments });
+    const reply = await send({ op: "set_segments", edge, segments });
     message = reply.message;
     if (reply.ok) lit = segments;
     say(message);
@@ -941,7 +942,7 @@ async function boot() {
 
   /** Put the whole blocking on the geometry. */
   async function classify() {
-    const reply = await kernel.apply({ op: "classify", tolerance: prefs.box.snap });
+    const reply = await send({ op: "classify", tolerance: prefs.box.snap });
     message = reply.message;
     await refresh();
   }
@@ -974,7 +975,7 @@ async function boot() {
       );
       return;
     }
-    const reply = await kernel.apply({ op: "classify_node", nodes, on: picked[0] });
+    const reply = await send({ op: "classify_node", nodes, on: picked[0] });
     message = reply.message;
     if (reply.ok) {
       viewer.selectNodes([]);
@@ -1001,7 +1002,7 @@ async function boot() {
     // an obvious answer: the key makes them agree, and agree the way most
     // of a gesture is meant.
     const all = nodes.every((n) => viewer.nodeState(n)?.frozen);
-    const reply = await kernel.apply({ op: "freeze_node", nodes, frozen: !all });
+    const reply = await send({ op: "freeze_node", nodes, frozen: !all });
     message = reply.message;
     await refresh();
   }
@@ -1019,7 +1020,7 @@ async function boot() {
       say(picked.length === 1 ? `node ${picked[0]} is on nothing already` : "none of them is on anything");
       return;
     }
-    const reply = await kernel.apply({ op: "classify_node", nodes });
+    const reply = await send({ op: "classify_node", nodes });
     message = reply.message;
     await refresh();
   }
@@ -1028,7 +1029,7 @@ async function boot() {
     // The margin is sent, because it is adjustable: the kernel's constant
     // is what you get when nobody says, and the slider in the settings
     // panel is somebody saying.
-    const reply = await kernel.apply({
+    const reply = await send({
       op: "box_geometry",
       surfaces: viewer.surfaceSelection,
       margin: prefs.box.margin,
@@ -1078,7 +1079,7 @@ async function boot() {
   async function pillowSelection() {
     const picked = viewer.selection;
     if (!picked.length) return;
-    const reply = await kernel.apply({
+    const reply = await send({
       op: "pillow",
       faces: picked.map((p) => ({ face: p.face, block: p.block })),
     });
@@ -1093,7 +1094,7 @@ async function boot() {
   async function glueSelection() {
     const [first, second] = viewer.selection;
     if (first === undefined || second === undefined) return;
-    const reply = await kernel.apply({
+    const reply = await send({
       op: "glue_faces",
       first: first.face,
       second: second.face,
@@ -1127,7 +1128,7 @@ async function boot() {
           ? { op: "remove_block", block: first.block }
           : null;
     if (!command) return;
-    const reply = await kernel.apply(command);
+    const reply = await send(command);
     clearSelection();
     message = reply.message;
     // Not framed: taking something away is no reason to move the camera.
@@ -1148,7 +1149,7 @@ async function boot() {
 
   async function loadGeometry(name: string, msh: string) {
     say(`reading ${name}…`);
-    const reply = await kernel.apply({ op: "load_geometry", msh, name });
+    const reply = await send({ op: "load_geometry", msh, name });
     message = reply.message;
     // Framed: a geometry you have just opened is the thing to look at, and
     // it may be nowhere near where the camera was pointing.
@@ -1174,6 +1175,77 @@ async function boot() {
   function recentre() {
     viewer.frameAll();
     say("view recentred");
+  }
+
+  /**
+   * Every command the interface sends, in one place.
+   *
+   * The kernel hands back the line of Lua that would have made it, and
+   * this is where that line reaches the console — so what you did with the
+   * mouse and what you typed end up in the same history, in order.
+   */
+  async function send(command: Record<string, unknown>) {
+    const reply = await kernel.apply(command);
+    if (reply.script) echo("did", reply.script);
+    return reply;
+  }
+
+  // --- the console ---------------------------------------------------------
+  /** Started the first time it is opened: the interpreter is two thirds of
+   *  a megabyte, and a page nobody scripts should not pay for it. */
+  let lua: Interpreter | undefined;
+  const typed: string[] = [];
+  let walking = 0;
+
+  function echo(kind: "said" | "did" | "was" | "bad", text: string) {
+    if (!text) return;
+    const line = document.createElement("p");
+    line.className = kind;
+    line.textContent = (kind === "said" ? "> " : "") + text;
+    $("console-out").append(line);
+    $("console-out").scrollTop = $("console-out").scrollHeight;
+  }
+
+  async function showConsole(open: boolean) {
+    document.body.classList.toggle("console-open", open);
+    $("console-open").setAttribute("aria-pressed", String(open));
+    if (!open) return;
+    $("console-in").focus();
+    if (lua) return;
+    const direct = kernel.direct;
+    if (!direct) {
+      echo("bad", "the console needs the kernel in this tab");
+      return;
+    }
+    echo("did", "loading Lua…");
+    lua = await Interpreter.open(direct, {
+      // A page has no files of its own. Writing hands the browser a
+      // download instead, which is the nearest honest thing to a path.
+      read: () => null,
+      write: (path, text) => {
+        saveBlob(new Blob([text], { type: "text/plain" }), path.split(/[\\/]/).pop()!, document);
+        return "";
+      },
+    });
+    echo("did", "ready — gecko.stats() to look, gecko.script() for the history");
+  }
+
+  /** Run what was typed, and show what came of it. */
+  async function runLua(source: string) {
+    if (!source.trim() || !lua) return;
+    typed.push(source);
+    walking = typed.length;
+    echo("said", source);
+    const answer: Answer = lua.run(source);
+    if (answer.out) echo("was", answer.out.replace(/\n$/, ""));
+    if (answer.ok) {
+      if (answer.value !== undefined) echo("was", answer.value);
+    } else {
+      echo("bad", answer.error ?? "it went wrong");
+    }
+    // A script is any number of commands; the scene catches up once, at
+    // the end of it.
+    await refresh();
   }
 
   /** Say something in the readout. */
@@ -1247,7 +1319,7 @@ async function boot() {
 
   async function createCube() {
     const stats = await kernel.stats();
-    const reply = await kernel.apply({
+    const reply = await send({
       op: "create_cube",
       origin: nextOrigin(stats.blocks),
       size: 1,
@@ -1267,7 +1339,7 @@ async function boot() {
    * made, which after the cut is taken back is a name nothing answers to.
    */
   async function undoLast() {
-    const reply = await kernel.apply({ op: "undo" });
+    const reply = await send({ op: "undo" });
     clearSelection();
     message = reply.message;
     await refresh();
@@ -1283,7 +1355,7 @@ async function boot() {
    * thing the session holds.
    */
   async function setHistory() {
-    await kernel.apply({ op: "set_history", steps: prefs.history });
+    await send({ op: "set_history", steps: prefs.history });
     showHistory(await kernel.stats());
   }
 
@@ -1301,7 +1373,7 @@ async function boot() {
    */
   async function mesh() {
     say("meshing…");
-    const reply = await kernel.apply({ op: "mesh", segments: prefs.segments });
+    const reply = await send({ op: "mesh", segments: prefs.segments });
     message = reply.message;
     await refresh();
   }
@@ -1491,6 +1563,7 @@ async function boot() {
     },
     theme: () => setTheme(isLight(prefs.theme.background) ? PRESETS.dark : PRESETS.light),
     drawer: () => showPanel("drawer", !prefs.drawer),
+    console: () => void showConsole(!document.body.classList.contains("console-open")),
     params: () => showPanel("params", !prefs.params),
     chrome: () => {
       prefs.chrome = !prefs.chrome;
@@ -1540,10 +1613,56 @@ async function boot() {
     ["shot", "screenshot"],
     ["display", "drawer"],
     ["settings", "params"],
+    ["console-open", "console"],
     ["help-open", "help"],
   ] as [string, Action][]) {
     $(id).addEventListener("click", () => run(action));
   }
+
+  // --- the console's own keys ---------------------------------------------
+  //
+  // Enter runs, shift-enter makes a line, and the arrows walk what you have
+  // typed — the three things every console does and that are noticed only
+  // when one of them is missing.
+  $("console-in").addEventListener("keydown", (e) => {
+    const event = e as KeyboardEvent;
+    const field = $<HTMLTextAreaElement>("console-in");
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      const source = field.value;
+      field.value = "";
+      field.rows = 1;
+      void runLua(source);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      void showConsole(false);
+      return;
+    }
+    if ((event.key === "ArrowUp" || event.key === "ArrowDown") && typed.length) {
+      // Only when the line is a single one: inside a block, the arrows are
+      // how you move about in it.
+      if (field.value.includes("\n")) return;
+      event.preventDefault();
+      walking = Math.min(typed.length, Math.max(0, walking + (event.key === "ArrowUp" ? -1 : 1)));
+      field.value = typed[walking] ?? "";
+      return;
+    }
+    // Grow with what is in it, up to the cap the stylesheet sets.
+    requestAnimationFrame(() => {
+      field.rows = Math.min(8, field.value.split("\n").length);
+    });
+  });
+  $("console-clear").addEventListener("click", () => {
+    $("console-out").replaceChildren();
+    $("console-in").focus();
+  });
+  $("console-save").addEventListener("click", () => {
+    const script = JSON.parse(kernel.direct?.query("script", "") ?? '""') as string;
+    saveBlob(new Blob([script], { type: "text/plain" }), fileName(new Date(), "lua"), document);
+    say("the session written out as a script");
+  });
 
   // Any key closes the help card, which is why it is checked before the
   // table: a card you have to find the right key to dismiss is a trap.
@@ -1578,7 +1697,7 @@ async function boot() {
   viewer.onDrop(async (name, to, carrying) => {
     // With the reach the settings panel asks for: a node dropped near an
     // entity is taken by it, and a reach of nothing means it is not.
-    const reply = await kernel.apply({
+    const reply = await send({
       op: "move_node",
       node: name,
       to,

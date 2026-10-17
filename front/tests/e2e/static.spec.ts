@@ -2667,3 +2667,109 @@ test("the mesh has a fold of its own, and can be put away", async ({ page }) => 
   await expect(page.locator("[data-test=mesh-hexes]")).toHaveText("1000");
   expect(errors).toEqual([]);
 });
+
+/** Open the console and wait for the interpreter to be there. */
+async function openConsole(page: import("@playwright/test").Page) {
+  if (!(await page.evaluate(() => document.body.classList.contains("console-open")))) {
+    await page.locator("#console-open").click();
+  }
+  await expect(page.locator("#console")).toBeVisible();
+  await expect(page.locator("[data-test=console-out]")).toContainText("ready", {
+    timeout: 30_000,
+  });
+}
+
+/** Type a chunk and run it. */
+async function lua(page: import("@playwright/test").Page, source: string) {
+  await page.locator("[data-test=console-in]").fill(source);
+  await page.locator("[data-test=console-in]").press("Enter");
+}
+
+test("the console runs Lua, and the scene catches up", async ({ page }) => {
+  // The whole point of having a language: a loop and a conditional
+  // driving the kernel, from the page, with no server anywhere.
+  const errors = await boot(page);
+  await openConsole(page);
+
+  await lua(page, "for i = 1, 3 do gecko.create_cube{ origin = {i * 1.5, 0, 0} } end");
+  await expect(page.locator("[data-test=blocks]")).toHaveText("3");
+  // And the scene drew them, rather than the readout merely saying so.
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 24);
+
+  // A value comes back, and a table is opened out rather than printed as
+  // an address.
+  await lua(page, "return gecko.stats()");
+  await expect(page.locator("[data-test=console-out]")).toContainText("blocks = 3");
+
+  // `print` goes to the scrollback.
+  await lua(page, 'print("nodes:", #gecko.nodes())');
+  await expect(page.locator("[data-test=console-out]")).toContainText("nodes:\t24");
+  expect(errors).toEqual([]);
+});
+
+test("what the mouse does is written in the console as Lua", async ({ page }) => {
+  // The session's history, kept by the kernel so that both doors — the
+  // mouse and the console — write into the same one, in order.
+  const errors = await boot(page);
+  await openConsole(page);
+
+  await page.locator("#cube").click();
+  await expect(page.locator("[data-test=console-out]")).toContainText(
+    "gecko.create_cube{ origin = {0, 0, 0}, size = 1 }",
+  );
+
+  await lua(page, "gecko.create_cube{ origin = {3, 0, 0} }");
+  await expect(page.locator("[data-test=blocks]")).toHaveText("2");
+
+  // Both of them are in the script, in the order they happened.
+  await lua(page, "return gecko.script()");
+  const shown = (await page.locator("[data-test=console-out]").textContent()) ?? "";
+  expect(shown, "the two commands are not in order in the script").toMatch(
+    /size = 1 \}\s*gecko\.create_cube\{ origin = \{3, 0, 0\}/,
+  );
+
+  // An undo takes the line back off: the script is a recipe for where the
+  // session now is, not a diary of what anybody tried.
+  //
+  // Out of the console's line first — a key pressed into a field is
+  // typing, console or not, and ⌘Z in a text box undoes the text.
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(page.locator("[data-test=blocks]")).toHaveText("1");
+  await lua(page, 'print(select(2, gecko.script():gsub("create_cube", "")))');
+  await expect(page.locator("[data-test=console-out]")).toContainText("\n1");
+  expect(errors).toEqual([]);
+});
+
+test("a mistake in a script is reported, not swallowed", async ({ page }) => {
+  const errors = await boot(page);
+  await openConsole(page);
+
+  await lua(page, "this is not lua");
+  await expect(page.locator("#console-out .bad")).toContainText("syntax error");
+
+  // A refusal from the kernel arrives the same way, and stops the chunk
+  // where it went wrong rather than letting it carry on.
+  await lua(page, "gecko.create_cube() gecko.remove_block(99) gecko.create_cube()");
+  await expect(page.locator("#console-out .bad").last()).toContainText("99");
+  await expect(page.locator("[data-test=blocks]")).toHaveText("1");
+  expect(errors).toEqual([]);
+});
+
+test("the session is saved as a script", async ({ page }) => {
+  const errors = await boot(page);
+  await openConsole(page);
+  await lua(page, "gecko.create_cube() gecko.mesh{ segments = 2 }");
+  await expect(page.locator("[data-test=mesh-hexes]")).toHaveText("8");
+
+  const download = page.waitForEvent("download");
+  await page.locator("#console-save").click();
+  const saved = await download;
+  expect(saved.suggestedFilename()).toMatch(/^gecko-\d{4}-\d{2}-\d{2}-\d{6}\.lua$/);
+
+  const file = await readFile(await saved.path(), "utf8");
+  expect(file).toContain("-- Written by gecko");
+  expect(file).toContain("gecko.create_cube{ origin = {0, 0, 0}, size = 1 }");
+  expect(file).toContain("gecko.mesh{ segments = 2 }");
+  expect(errors).toEqual([]);
+});

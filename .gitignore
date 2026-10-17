@@ -8,3 +8,4 @@ site
 front/test-results
 front/playwright-report
 __pycache__
+front/src/lua/

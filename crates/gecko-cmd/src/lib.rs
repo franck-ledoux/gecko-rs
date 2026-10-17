@@ -9,6 +9,7 @@
 //! and it is what makes the two modes testable against each other, by replaying
 //! one script through both and comparing the bytes that come out.
 
+pub mod script;
 pub mod view;
 pub mod vtk;
 
@@ -290,6 +291,11 @@ pub struct PickedFace {
 #[serde(rename_all = "camelCase")]
 pub struct Outcome {
     pub message: String,
+    /// The line of Lua that would have made this command, for a console to
+    /// echo. Absent for the commands that leave no line — an undo takes
+    /// one off, and a setting is not a step.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub script: Option<String>,
     /// The view is stale and must be re-fetched. The kernel says so; a client
     /// never guesses, which is what keeps the two from drifting apart.
     pub view_changed: bool,
@@ -335,6 +341,12 @@ pub struct Session {
     /// bargain as `geometry_generation`.
     mesh: Option<Mesh>,
     mesh_generation: u32,
+    /// Everything that was done, in order, as the commands that did it.
+    ///
+    /// This is the session's history, and it is kept here rather than in
+    /// any client because both of them — the mouse and the console — go
+    /// through this one door. [`script::write`] turns it into Lua.
+    journal: Vec<Command>,
 }
 
 /// A session as it stood, as far as anything outside can tell.
@@ -347,6 +359,10 @@ struct State {
     blocking: Blocking,
     geometry: Option<Arc<Geometry>>,
     origin: Option<[f64; 3]>,
+    /// How long the journal was. An undo cuts it back to here, so the
+    /// script always describes the session as it now stands rather than
+    /// everything anybody ever tried.
+    journal: usize,
 }
 
 impl Session {
@@ -360,6 +376,7 @@ impl Session {
             steps: HISTORY_STEPS,
             mesh: None,
             mesh_generation: 0,
+            journal: Vec::new(),
         })
     }
 
@@ -393,7 +410,12 @@ impl Session {
         // about what one refresh of the view costs, which is the right price
         // for being able to take a thing back.
         let before = (self.steps > 0).then(|| self.capture()).transpose()?;
-        let outcome = self.run(command)?;
+        // Kept before the command is consumed, and trimmed: a geometry
+        // command carries the whole file, and the journal wants the name.
+        let written = trim(command.clone());
+        let mut outcome = self.run(command)?;
+        outcome.script = Some(script::line(&written));
+        self.journal.push(written);
         if outcome.view_changed {
             if let Some(state) = before {
                 self.push(state);
@@ -425,6 +447,7 @@ impl Session {
             blocking: self.blocking.snapshot()?,
             geometry: self.geometry.clone(),
             origin: self.origin,
+            journal: self.journal.len(),
         })
     }
 
@@ -444,6 +467,7 @@ impl Session {
     fn undo(&mut self) -> Result<Outcome, SessionError> {
         let Some(state) = self.past.pop_back() else {
             return Ok(Outcome {
+                script: None,
                 message: "nothing to undo".to_string(),
                 view_changed: false,
             });
@@ -453,6 +477,7 @@ impl Session {
         self.blocking = state.blocking;
         self.geometry = state.geometry;
         self.origin = state.origin;
+        self.journal.truncate(state.journal);
         // Forwards even when the geometry goes backwards: the number says
         // "not the one you last drew", and a client that saw it fall would
         // have no reason to trust it the next time it rose.
@@ -460,6 +485,7 @@ impl Session {
             self.geometry_generation += 1;
         }
         Ok(Outcome {
+            script: None,
             message: format!(
                 "undone — {} nodes, {} edges, {} faces, {} blocks, {} step{} back left",
                 self.blocking.nb_nodes(),
@@ -479,6 +505,7 @@ impl Session {
             self.past.pop_front();
         }
         Outcome {
+            script: None,
             message: match self.steps {
                 0 => "undo is off".to_string(),
                 1 => "one step of undo".to_string(),
@@ -551,6 +578,7 @@ impl Session {
                 }
 
                 Ok(Outcome {
+                    script: None,
                     message: if moved + held > 1 {
                         format!(
                             "{moved} node{} moved{}",
@@ -573,6 +601,7 @@ impl Session {
                 let block = CellId::from_raw(block);
                 self.blocking.remove_block(block)?;
                 Ok(Outcome {
+                    script: None,
                     message: format!(
                         "block {block:?} removed — {} nodes, {} edges, {} faces, {} blocks",
                         self.blocking.nb_nodes(),
@@ -587,6 +616,7 @@ impl Session {
                 let edge = CellId::from_raw(edge);
                 self.blocking.remove_sheet(edge)?;
                 Ok(Outcome {
+                    script: None,
                     message: format!(
                         "sheet through {edge:?} removed — {} nodes, {} edges, {} faces, {} blocks",
                         self.blocking.nb_nodes(),
@@ -608,6 +638,7 @@ impl Session {
                     self.pull_onto_class(node)?;
                 }
                 Ok(Outcome {
+                    script: None,
                     message: format!(
                         "sheet through {edge:?} cut at {at:.3} — {} nodes, {} edges, {} faces, {} blocks",
                         self.blocking.nb_nodes(),
@@ -631,6 +662,7 @@ impl Session {
                 // may still be on the surface that curve bounds.
                 self.settle_moved(&drawn, tolerance);
                 Ok(Outcome {
+                    script: None,
                     message: format!(
                         "pillowed {} face{} — {} nodes, {} edges, {} faces, {} blocks",
                         faces.len(),
@@ -651,6 +683,7 @@ impl Session {
                 let (face, block) = (CellId::from_raw(face), CellId::from_raw(block));
                 let grown = self.blocking.extrude_face(face, block, height)?;
                 Ok(Outcome {
+                    script: None,
                     message: format!(
                         "block {grown:?} grown from face {face:?} by {height:.3} — \
                          {} nodes, {} edges, {} faces, {} blocks",
@@ -689,6 +722,7 @@ impl Session {
                 // rebasing origin is settled over the geometry as well, and a
                 // geometry far from the blocks moves it.
                 Ok(Outcome {
+                    script: None,
                     message,
                     view_changed: true,
                 })
@@ -696,6 +730,7 @@ impl Session {
             Command::Classify { tolerance } => {
                 let (nodes, edges, faces) = self.classify(tolerance)?;
                 Ok(Outcome {
+                    script: None,
                     message: format!(
                         "classified {nodes} node{}, {edges} edge{} and {faces} face{} \
                          onto the geometry",
@@ -725,6 +760,7 @@ impl Session {
                     }
                 }
                 Ok(Outcome {
+                    script: None,
                     message: match on {
                         Some(on) => format!("{} put on {}", these(&names), name_of(on)),
                         None => format!("{} on nothing now", these(&names)),
@@ -738,6 +774,7 @@ impl Session {
                     self.blocking.set_frozen(*node, frozen)?;
                 }
                 Ok(Outcome {
+                    script: None,
                     message: format!(
                         "{} {}",
                         these(&names),
@@ -756,6 +793,7 @@ impl Session {
                     format!("{} surface{}", surfaces.len(), plural(surfaces.len()))
                 };
                 Ok(Outcome {
+                    script: None,
                     message: format!(
                         "block {id:?} boxes {round} — \
                          {} nodes, {} edges, {} faces, {} blocks",
@@ -771,6 +809,7 @@ impl Session {
                 self.geometry = None;
                 self.geometry_generation += 1;
                 Ok(Outcome {
+                    script: None,
                     message: "geometry cleared".to_string(),
                     view_changed: true,
                 })
@@ -780,6 +819,7 @@ impl Session {
                 let segments = segments.clamp(1, MAX_SEGMENTS);
                 self.blocking.set_sheet_segments(edge, segments)?;
                 Ok(Outcome {
+                    script: None,
                     message: format!(
                         "the sheet through {edge:?} is in {segments} segment{}",
                         plural(segments as usize)
@@ -804,6 +844,7 @@ impl Session {
                 self.mesh = Some(mesh);
                 self.mesh_generation += 1;
                 Ok(Outcome {
+                    script: None,
                     message,
                     view_changed: false,
                 })
@@ -811,6 +852,7 @@ impl Session {
             Command::ClearMesh => {
                 self.drop_mesh();
                 Ok(Outcome {
+                    script: None,
                     message: "mesh cleared".to_string(),
                     view_changed: false,
                 })
@@ -826,6 +868,7 @@ impl Session {
                 let (first, second) = (CellId::from_raw(first), CellId::from_raw(second));
                 self.blocking.glue_faces(first, second)?;
                 Ok(Outcome {
+                    script: None,
                     message: format!(
                         "faces {first:?} and {second:?} glued — {} nodes, {} edges, {} faces, {} blocks",
                         self.blocking.nb_nodes(),
@@ -861,6 +904,7 @@ impl Session {
     fn add(&mut self, corners: [[f64; 3]; 8]) -> Result<Outcome, SessionError> {
         let id = self.blocking.add_block(corners)?;
         Ok(Outcome {
+            script: None,
             message: format!(
                 "block {:?} added — {} nodes, {} edges, {} faces, {} blocks",
                 id,
@@ -1332,6 +1376,12 @@ impl Session {
         }
     }
 
+    /// The session as a Lua script: what a reader would have typed to
+    /// arrive where it now is.
+    pub fn script(&self) -> String {
+        script::write(&self.journal)
+    }
+
     /// The mesh as a VTK legacy file, or nothing if none has been built.
     pub fn mesh_vtk(&self) -> Option<String> {
         self.mesh.as_ref().map(|m| vtk::write(m, "gecko blocking"))
@@ -1371,6 +1421,22 @@ fn these(nodes: &[CellId]) -> String {
                 .join(", ")
         ),
         _ => format!("{} nodes", nodes.len()),
+    }
+}
+
+/// A command as the journal keeps it.
+///
+/// A geometry arrives with the whole file in its hand, because a browser
+/// has no path to send — and a journal holding a copy of every mesh ever
+/// loaded would be the session's memory spent on nothing anybody reads.
+/// The name is what the script needs.
+fn trim(command: Command) -> Command {
+    match command {
+        Command::LoadGeometry { name, .. } => Command::LoadGeometry {
+            msh: String::new(),
+            name,
+        },
+        other => other,
     }
 }
 

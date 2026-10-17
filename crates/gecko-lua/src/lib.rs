@@ -31,12 +31,15 @@
 //! so the plumbing is [`Kernel`], four methods wide, and everything above
 //! it is written once.
 
+#[cfg(feature = "local")]
 mod local;
 
+#[cfg(feature = "local")]
 pub use local::Local;
 
 use std::rc::Rc;
 
+use mlua::serde::SerializeOptions;
 use mlua::{Lua, LuaSerdeExt, Table, Value, Variadic};
 use serde_json::{json, Map, Value as Json};
 
@@ -189,7 +192,9 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
     })?;
 
     // --- the reads -------------------------------------------------------
-    for kind in ["nodes", "edges", "faces", "blocks", "stats", "entities"] {
+    for kind in [
+        "nodes", "edges", "faces", "blocks", "stats", "entities", "script",
+    ] {
         read(lua, &gecko, &kernel, kind, kind)?;
     }
     {
@@ -290,9 +295,18 @@ fn read(
 }
 
 /// JSON from the kernel, as a Lua table.
+///
+/// `null` arrives as **nil**, not as a sentinel. A node that is on nothing
+/// has `on = nil`, and `if node.on then` is how anybody would write that —
+/// a sentinel that is not nil but prints like nothing is a trap.
 fn answer(lua: &Lua, json: &str) -> mlua::Result<Value> {
     let value: Json = serde_json::from_str(json).map_err(mlua::Error::external)?;
-    lua.to_value(&value)
+    lua.to_value_with(
+        &value,
+        SerializeOptions::new()
+            .serialize_none_to_null(false)
+            .serialize_unit_to_null(false),
+    )
 }
 
 /// The n-th positional argument, as JSON.

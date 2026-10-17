@@ -27,10 +27,51 @@ export class WasmKernel implements Kernel {
     this.session = new Session();
   }
 
+  /**
+   * The synchronous door, for Lua.
+   *
+   * The same session the asynchronous methods reach — this is the one
+   * call underneath them, without the promise a socket would have needed.
+   */
+  get direct() {
+    return {
+      apply: (command: string) => this.session.applyJson(command),
+      query: (kind: string, arg: string) => {
+        switch (kind) {
+          case "nodes":
+            return this.session.nodesJson();
+          case "edges":
+            return this.session.edgesJson();
+          case "faces":
+            return this.session.facesJson();
+          case "blocks":
+            return this.session.blocksJson();
+          case "stats":
+            return this.session.statsJson();
+          case "entities":
+            return this.session.entitiesJson();
+          case "sheet":
+            return this.session.sheetJson(Number(arg));
+          case "vtk":
+            return JSON.stringify(this.session.meshVtk() ?? null);
+          case "script":
+            return JSON.stringify(this.session.script());
+          default:
+            return "null";
+        }
+      },
+    };
+  }
+
   async apply(command: Record<string, unknown>): Promise<Reply> {
     const raw = JSON.parse(this.session.applyJson(JSON.stringify(command)));
     return raw.ok
-      ? { ok: true, message: raw.outcome.message, viewChanged: raw.outcome.viewChanged }
+      ? {
+          ok: true,
+          message: raw.outcome.message,
+          viewChanged: raw.outcome.viewChanged,
+          script: raw.outcome.script,
+        }
       : { ok: false, message: raw.error, viewChanged: false };
   }
 

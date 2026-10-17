@@ -48,6 +48,7 @@ impl Kernel for Local {
             // `null` when nothing has been meshed, which is a JSON answer
             // rather than a special case for the caller.
             "vtk" => serde_json::to_string(&session.mesh_vtk()).unwrap_or_else(|_| "null".into()),
+            "script" => serde_json::to_string(&session.script()).unwrap_or_else(|_| "null".into()),
             _ => "null".to_string(),
         }
     }

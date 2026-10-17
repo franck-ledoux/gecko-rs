@@ -345,6 +345,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gecko-lua-wasm"
+version = "0.1.0"
+dependencies = [
+ "gecko-lua",
+ "mlua",
+ "serde_json",
+]
+
+[[package]]
 name = "gecko-py"
 version = "0.1.0"
 dependencies = [

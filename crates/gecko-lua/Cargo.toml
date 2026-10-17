@@ -4,8 +4,15 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# The host that holds a session in this very process. Off for the page,
+# where the session is in another wasm module and `gecko-cmd` has no
+# business being compiled in twice.
+default = ["local"]
+local = ["dep:gecko-cmd"]
+
 [dependencies]
-gecko-cmd = { path = "../gecko-cmd" }
+gecko-cmd = { path = "../gecko-cmd", optional = true }
 mlua = { version = "0.12", features = ["lua54", "vendored", "serialize"] }
 serde_json = "1"
 
