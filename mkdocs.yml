@@ -57,6 +57,7 @@ nav:
       - Sheets: user-guide/sheets.md
       - Pillowing: user-guide/pillowing.md
       - Meshing: user-guide/meshing.md
+      - Scripting: user-guide/scripting.md
       - Python API: user-guide/python.md
   - Developer Guide:
       - Architecture: developer-guide/architecture.md

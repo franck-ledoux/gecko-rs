@@ -29,6 +29,7 @@ import {
 import { actionFor, helpRows, type Action } from "./shortcuts";
 import { capture, fileName, save, saveBlob, shotName } from "./capture";
 import { Interpreter, type Answer } from "./lua";
+import * as files from "./files";
 import type { Colouring } from "./surface";
 import { GEOM_GROUPS, spotName, type GeomGroup, type Spot } from "./geometry";
 import type { Axis } from "./axes";
@@ -1218,15 +1219,9 @@ async function boot() {
       return;
     }
     echo("did", "loading Lua…");
-    lua = await Interpreter.open(direct, {
-      // A page has no files of its own. Writing hands the browser a
-      // download instead, which is the nearest honest thing to a path.
-      read: () => null,
-      write: (path, text) => {
-        saveBlob(new Blob([text], { type: "text/plain" }), path.split(/[\\/]/).pop()!, document);
-        return "";
-      },
-    });
+    // Files, when the page was served by `gecko` on this machine; a
+    // download when it was not.
+    lua = await Interpreter.open(direct, files);
     echo("did", "ready — gecko.stats() to look, gecko.script() for the history");
   }
 

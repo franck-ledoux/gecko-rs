@@ -2773,3 +2773,26 @@ test("the session is saved as a script", async ({ page }) => {
   expect(file).toContain("gecko.mesh{ segments = 2 }");
   expect(errors).toEqual([]);
 });
+
+test("the page's Lua and the terminal's agree, byte for byte", async ({ page }) => {
+  // The same script runs in two hosts: one holds the session, the other
+  // reaches it through JavaScript. Everything above those four primitives
+  // is the same code, and this is what says so — the script computes a
+  // digest of the VTK it produces and asserts it against a number the
+  // Rust suite pinned by running the very same file.
+  const errors = await boot(page);
+  await openConsole(page);
+
+  const script = await readFile(
+    new URL("../../../crates/gecko-lua/tests/scripts/agree.lua", import.meta.url),
+    "utf8",
+  );
+  await lua(page, script);
+
+  // Its own assertions did the work; what matters here is that none of
+  // them fired.
+  await expect(page.locator("[data-test=console-out]")).toContainText("digest");
+  expect(await page.locator("#console-out .bad").count(), "the hosts disagree").toBe(0);
+  await expect(page.locator("[data-test=mesh-hexes]")).toHaveText("36");
+  expect(errors).toEqual([]);
+});

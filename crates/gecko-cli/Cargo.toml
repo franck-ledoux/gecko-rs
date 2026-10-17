@@ -1,0 +1,21 @@
+[package]
+name = "gecko-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The local launcher: serve the page, or run a script without one."
+
+[[bin]]
+name = "gecko"
+path = "src/main.rs"
+
+[dependencies]
+gecko-cmd = { workspace = true }
+gecko-lua = { path = "../gecko-lua" }
+mlua = { version = "0.12", features = ["lua54", "vendored"] }
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros"] }
+include_dir = "0.7"
+mime_guess = "2"
+serde_json = { workspace = true }
+serde = { workspace = true }

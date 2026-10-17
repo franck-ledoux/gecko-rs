@@ -193,7 +193,7 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
 
     // --- the reads -------------------------------------------------------
     for kind in [
-        "nodes", "edges", "faces", "blocks", "stats", "entities", "script",
+        "nodes", "edges", "faces", "blocks", "stats", "entities", "script", "vtk",
     ] {
         read(lua, &gecko, &kernel, kind, kind)?;
     }

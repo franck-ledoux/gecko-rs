@@ -308,6 +308,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "gecko-cli"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "gecko-cmd",
+ "gecko-lua",
+ "include_dir",
+ "mime_guess",
+ "mlua",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "gecko-cmd"
 version = "0.1.0"
 dependencies = [
