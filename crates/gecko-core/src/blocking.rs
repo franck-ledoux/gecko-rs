@@ -256,6 +256,8 @@ pub enum BlockingError {
     BadHeight(f64),
     #[error("node {0:?} is frozen; thaw it before moving it")]
     Frozen(CellId),
+    #[error("nodes {0:?} and {1:?} are both frozen, and not in the same place")]
+    FrozenApart(CellId, CellId),
 }
 
 impl From<DartReleaseError> for BlockingError {
@@ -274,6 +276,25 @@ impl From<DartReleaseError> for BlockingError {
 /// Pure, and separate from the gluing, because it is the only part of this
 /// with a choice in it. Note what it cannot do: two blocks turned against each
 /// other have no right answer here, only a least bad quarter turn.
+/// A corner of a glue whose two nodes were classified on entities with
+/// nothing in common — so one of the two classifications was dropped.
+///
+/// Not an error: gluing a node on one curve to a node on another is a
+/// perfectly ordinary thing to ask for, and the answer is that the welded
+/// node cannot be on both. The caller is told which one survived so it can
+/// pass that on rather than leaving it to be discovered later.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Unmet {
+    pub node: CellId,
+    pub kept: On,
+    pub dropped: On,
+}
+
+/// How far apart two points are.
+fn apart(p: [f64; 3], q: [f64; 3]) -> f64 {
+    (0..3).map(|k| (p[k] - q[k]).powi(2)).sum::<f64>().sqrt()
+}
+
 pub fn best_pairing(a: &[[f64; 3]; 4], b: &[[f64; 3]; 4]) -> usize {
     let cost = |m: usize| -> f64 {
         (0..4)
@@ -869,19 +890,13 @@ impl Blocking {
             .map(move |v| (self.node_tag(v).id, self.position(v).unwrap_or([0.0; 3])))
     }
 
-    /// Glue two faces together, welding the blocks they belong to.
-    ///
-    /// The second face is moved onto the first, and the first's position is
-    /// what survives. That is not merely a convention: honeycomb merges two
-    /// vertices by **averaging** them, so sewing faces that are apart would
-    /// leave the shared corners half way between the two. Making them coincide
-    /// first settles the question here, where the rule lives, instead of
-    /// depending on a merge policy that belongs to the map.
-    ///
-    /// Only the four corners of the face move. The rest of the second block
-    /// stays where it is, so gluing blocks that are far apart deforms one of
-    /// them rather than carrying it over.
-    pub fn glue_faces(&mut self, first: CellId, second: CellId) -> Result<(), BlockingError> {
+    /// Two faces that may legally be glued to each other: both exist, they
+    /// are not the same one, and neither is already welded to something.
+    fn two_free_faces(
+        &self,
+        first: CellId,
+        second: CellId,
+    ) -> Result<(FaceIdType, FaceIdType), BlockingError> {
         let a = self
             .face_by_id(first)
             .ok_or(BlockingError::NoSuchFace(first))?;
@@ -896,7 +911,182 @@ impl Blocking {
                 return Err(BlockingError::AlreadyGlued(name));
             }
         }
+        Ok((a, b))
+    }
 
+    /// Glue two faces together, welding each pair of corners **at the point
+    /// between them**.
+    ///
+    /// The operation a user asks for. Neither block is the privileged one:
+    /// two blocks brought together meet in the middle, so each gives way by
+    /// half instead of one of them being dragged the whole distance onto the
+    /// other.
+    ///
+    /// Classification overrides that, because it says something the glue does
+    /// not know. Per pair of corners:
+    ///
+    /// * **both frozen** — somebody has pinned both. If they coincide there is
+    ///   nothing to decide; if they do not, there is no legal answer and the
+    ///   glue is refused rather than moving a node somebody froze.
+    /// * **one frozen** — it does not move, and the other comes to it.
+    /// * **neither** — the midpoint, projected onto whatever the welded node
+    ///   turns out to be classified on. A node on a circle must end up on the
+    ///   circle, and the midpoint of two points on a circle is not on it.
+    ///
+    /// and the classification of the welded node is the **more constrained**
+    /// of the two: a corner is on a curve, and it is also on both surfaces
+    /// that meet there, so the curve is what it must stay on. That is what
+    /// `common` is asked for — the geometry's `meet`, not its common
+    /// container — because the honest answer is often neither of the
+    /// two: gluing a node on one surface to a node on another welds it onto
+    /// the curve where they meet. When they share nothing at all, the lower
+    /// dimension wins and the pair is reported in the return so the caller
+    /// can say what it dropped.
+    ///
+    /// Both closures come from the geometry, which lives a layer up: the
+    /// block structure holds no triangles and cannot project anything by
+    /// itself. With no geometry loaded, `|_, _| None` twice degrades this to
+    /// the midpoint rule, which is the right answer when nothing is
+    /// classified.
+    pub fn glue_faces(
+        &mut self,
+        first: CellId,
+        second: CellId,
+        common: impl Fn(On, On, [f64; 3]) -> Option<On>,
+        project: impl Fn(On, [f64; 3]) -> Option<[f64; 3]>,
+    ) -> Result<Vec<Unmet>, BlockingError> {
+        let (a, b) = self.two_free_faces(first, second)?;
+        let (da, db) = (self.face_darts(a), self.face_darts(b));
+        let corner = |d: DartIdType| {
+            self.position(self.map.vertex_id(d))
+                .unwrap_or([f64::NAN; 3])
+        };
+        let (pa, pb) = (da.map(corner), db.map(corner));
+        let turn = best_pairing(&pa, &pb);
+
+        // Two frozen corners "coincide" relative to the size of what is being
+        // glued, not to an absolute number: a blocking of a turbine blade and
+        // one of a building are the same shape to a thousandth of a side.
+        let side = (0..4)
+            .map(|i| apart(pa[i], pa[(i + 1) % 4]))
+            .fold(0.0, f64::max);
+        let slack = 1e-6 * side.max(f64::MIN_POSITIVE);
+
+        // Decide all four pairs before a single node moves. A refused glue
+        // has to leave the blocking exactly as it was, and the only way to
+        // promise that is to find out everything first.
+        struct Welded {
+            here: VertexIdType,
+            there: VertexIdType,
+            at: [f64; 3],
+            on: Option<On>,
+            frozen: bool,
+        }
+        let mut welds: Vec<Welded> = Vec::with_capacity(4);
+        let mut unmet: Vec<Unmet> = Vec::new();
+        for i in 0..4 {
+            let (here, there) = (
+                self.map.vertex_id(da[i]),
+                self.map.vertex_id(db[(turn + 4 - i) % 4]),
+            );
+            let (ta, tb) = (self.node_tag(here), self.node_tag(there));
+            let (qa, qb) = (pa[i], pb[(turn + 4 - i) % 4]);
+
+            // Where this corner is heading, as far as can be said before the
+            // classification is settled — and that is what settles it, when
+            // two entities share more than one thing.
+            let hint = match (ta.frozen, tb.frozen) {
+                (true, _) => qa,
+                (false, true) => qb,
+                (false, false) => [
+                    0.5 * (qa[0] + qb[0]),
+                    0.5 * (qa[1] + qb[1]),
+                    0.5 * (qa[2] + qb[2]),
+                ],
+            };
+
+            let on = match (ta.on, tb.on) {
+                (None, None) => None,
+                (Some(only), None) | (None, Some(only)) => Some(only),
+                (Some(x), Some(y)) if x == y => Some(x),
+                (Some(x), Some(y)) => Some(common(x, y, hint).unwrap_or_else(|| {
+                    // Nothing in common. The more constrained entity is the
+                    // one a node can be on while being near the other, so it
+                    // is the one to keep — and a tie goes to the first face,
+                    // as its name does when the two nodes merge.
+                    let (kept, dropped) = if y.dim < x.dim { (y, x) } else { (x, y) };
+                    unmet.push(Unmet {
+                        node: ta.id,
+                        kept,
+                        dropped,
+                    });
+                    kept
+                })),
+            };
+
+            let at = match (ta.frozen, tb.frozen) {
+                (true, true) if apart(qa, qb) > slack => {
+                    return Err(BlockingError::FrozenApart(ta.id, tb.id))
+                }
+                // A frozen node is where somebody put it: `hint` is
+                // already that point, and no projection may move it off.
+                (true, _) | (false, true) => hint,
+                // Here there is nobody to contradict.
+                (false, false) => on.and_then(|o| project(o, hint)).unwrap_or(hint),
+            };
+
+            welds.push(Welded {
+                here,
+                there,
+                at,
+                on,
+                frozen: ta.frozen || tb.frozen,
+            });
+        }
+
+        for w in &welds {
+            for v in [w.here, w.there] {
+                self.map.write_vertex(v, (w.at[0], w.at[1], w.at[2]));
+            }
+        }
+
+        self.map.sew::<3>(da[0], db[(turn + 3) % 4])?;
+        self.assign_missing_ids();
+
+        // The map's own merge keeps "either of the two, and the first when
+        // both" — a reasonable default everywhere else, and not the rule for
+        // a glue. What this operation decided is written over it.
+        for (i, w) in welds.iter().enumerate() {
+            let v = self.map.vertex_id(da[i]);
+            let mut tag = self.node_tag(v);
+            tag.on = w.on;
+            tag.frozen = w.frozen;
+            self.map.write_attribute(v, tag);
+        }
+
+        Ok(unmet)
+    }
+
+    /// Glue two faces together, welding the blocks they belong to, and
+    /// **move the second onto the first**.
+    ///
+    /// For a caller that has already put the two faces in the same place:
+    /// pillowing and extrusion both build a block against a face and then
+    /// glue it there, so the corners coincide already and which one survives
+    /// cannot be told apart. [`glue_faces`][Self::glue_faces] is the
+    /// operation a user asks for, and it welds at the midpoint instead.
+    ///
+    /// The position has to be settled one way or the other before the sew:
+    /// honeycomb merges two vertices by **averaging** them, so sewing faces
+    /// that are apart leaves the shared corners half way between the two,
+    /// whatever anybody intended. Deciding it here keeps the rule where it
+    /// can be read, instead of in a merge policy that belongs to the map.
+    ///
+    /// Only the four corners of the face move. The rest of the second block
+    /// stays where it is, so gluing blocks that are far apart deforms one of
+    /// them rather than carrying it over.
+    pub fn glue_onto(&mut self, first: CellId, second: CellId) -> Result<(), BlockingError> {
+        let (a, b) = self.two_free_faces(first, second)?;
         let (da, db) = (self.face_darts(a), self.face_darts(b));
         let corner = |d: DartIdType| {
             self.position(self.map.vertex_id(d))
@@ -1553,7 +1743,7 @@ impl Blocking {
         // Which face to weld is known because we built the block: it is the
         // one the first dart is on. Nothing is searched for by position.
         let against = self.face_tag(self.map.face_id(first)).id;
-        self.glue_faces(face, against)?;
+        self.glue_onto(face, against)?;
         Ok(grown)
     }
 
@@ -1754,7 +1944,7 @@ impl Blocking {
             let under = self
                 .face_at(layer.block, &layer.shrunk)
                 .ok_or(BlockingError::LostFace)?;
-            self.glue_faces(side.face, under)?;
+            self.glue_onto(side.face, under)?;
             if let Some(behind) = plan.behind {
                 let sides = self.block_faces();
                 let far = self
@@ -1763,7 +1953,7 @@ impl Blocking {
                 let over = self
                     .face_at(layer.block, &plan.points)
                     .ok_or(BlockingError::LostFace)?;
-                self.glue_faces(far.face, over)?;
+                self.glue_onto(far.face, over)?;
             }
         }
 
@@ -1796,7 +1986,7 @@ impl Blocking {
                         })
                     });
                     if let (Some(x), Some(y)) = (here, there) {
-                        self.glue_faces(x, y)?;
+                        self.glue_onto(x, y)?;
                     }
                 }
             }
@@ -2336,7 +2526,7 @@ mod surgery {
                 .face
         };
         let (first, second) = (seam(&b, names[0]), seam(&b, names[1]));
-        b.glue_faces(first, second).unwrap();
+        b.glue_onto(first, second).unwrap();
 
         // An edge lying in the seam belongs to both blocks: four darts.
         let shared = b
@@ -2448,7 +2638,7 @@ mod cutting {
                 .face
         };
         let (first, second) = (seam(&b, names[0]), seam(&b, names[1]));
-        b.glue_faces(first, second).unwrap();
+        b.glue_onto(first, second).unwrap();
 
         b.split_sheet(along(&b, 2), 0.25).unwrap();
 

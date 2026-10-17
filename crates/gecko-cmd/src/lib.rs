@@ -866,11 +866,40 @@ impl Session {
             )),
             Command::GlueFaces { first, second } => {
                 let (first, second) = (CellId::from_raw(first), CellId::from_raw(second));
-                self.blocking.glue_faces(first, second)?;
+                // The geometry has to be lent to the glue rather than asked
+                // about afterwards: the corners meet in the middle, and a
+                // welded corner has to land on whatever the two of them
+                // leave it classified on, which only the triangles know.
+                let Session {
+                    blocking, geometry, ..
+                } = self;
+                let geometry = geometry.as_deref();
+                let unmet = blocking.glue_faces(
+                    first,
+                    second,
+                    |a, b, near| {
+                        geometry.and_then(|g| {
+                            g.meet((a.dim, a.tag), (b.dim, b.tag), near)
+                                .map(|(dim, tag)| On { dim, tag })
+                        })
+                    },
+                    |on, at| geometry.and_then(|g| g.project(on.dim, on.tag, at)),
+                )?;
+                let dropped = unmet
+                    .iter()
+                    .map(|u| {
+                        format!(
+                            "; node {:?} kept {} and left {}",
+                            u.node,
+                            name_of(u.kept),
+                            name_of(u.dropped)
+                        )
+                    })
+                    .collect::<String>();
                 Ok(Outcome {
                     script: None,
                     message: format!(
-                        "faces {first:?} and {second:?} glued — {} nodes, {} edges, {} faces, {} blocks",
+                        "faces {first:?} and {second:?} glued — {} nodes, {} edges, {} faces, {} blocks{dropped}",
                         self.blocking.nb_nodes(),
                         self.blocking.nb_edges(),
                         self.blocking.nb_faces(),

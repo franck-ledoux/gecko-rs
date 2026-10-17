@@ -224,3 +224,118 @@ fn each_dimension_has_a_tolerance_of_its_own() {
     assert_eq!(g.nearest([0.1, 0.01, 0.0], [0.0; 3]), None);
     assert_eq!(g.nearest(near_corner, [0.0; 3]), Some((CURVE, 11)));
 }
+
+/// A square of ground with an arch over it, sharing **both** of its sides.
+///
+/// ```text
+///        M───────N           surface 1  the ground, z = 0
+///       /       /            surface 2  the arch, over it
+///      /       /             curves 12 at x = 1, 14 at x = 0 — both of
+///     A───────B                         them on the ground *and* on the
+///     │       │                         arch, which is the point
+///     D───────C              corners 21 at A, 22 at B
+/// ```
+///
+/// Two surfaces meeting along one curve is the ordinary case; meeting along
+/// two is what makes the position matter, and a cylinder split into halves
+/// is exactly this.
+fn arch() -> Geometry {
+    let (a, b, c, d) = (
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [1.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],
+    );
+    let (m, n) = ([0.5, 0.0, 1.0], [0.5, 1.0, 1.0]);
+    let mut g = Build::default();
+    g.element(POINT, 21, &[a]);
+    g.element(POINT, 22, &[b]);
+    g.element(LINE, 12, &[b, c]);
+    g.element(LINE, 14, &[a, d]);
+    // The ground.
+    g.element(TRIANGLE, 1, &[a, b, c]);
+    g.element(TRIANGLE, 1, &[a, c, d]);
+    // The arch, rising from one side and coming down on the other.
+    g.element(TRIANGLE, 2, &[a, m, n]);
+    g.element(TRIANGLE, 2, &[a, n, d]);
+    g.element(TRIANGLE, 2, &[m, b, c]);
+    g.element(TRIANGLE, 2, &[m, c, n]);
+    g.done()
+}
+
+#[test]
+fn what_two_surfaces_meet_along_is_the_curve_between_them() {
+    let g = arch();
+    // Neither of the two is the answer: a point on both is on their seam.
+    // Which seam cannot be answered without the position — here there are
+    // two, and nothing but the point says which one a weld is on.
+    assert_eq!(
+        g.meet((SURFACE, 1), (SURFACE, 2), [0.0, 0.5, 0.0]),
+        Some((CURVE, 14))
+    );
+    assert_eq!(
+        g.meet((SURFACE, 1), (SURFACE, 2), [1.0, 0.5, 0.0]),
+        Some((CURVE, 12))
+    );
+}
+
+#[test]
+fn the_more_constrained_of_two_nested_entities_is_the_answer() {
+    let g = arch();
+    // A point on the curve is already on the surface it bounds, so the
+    // curve is the statement to keep — and the order of the two arguments
+    // is not supposed to matter.
+    for near in [[1.0, 0.5, 0.0], [0.0, 0.0, 0.0]] {
+        assert_eq!(g.meet((CURVE, 12), (SURFACE, 1), near), Some((CURVE, 12)));
+        assert_eq!(g.meet((SURFACE, 1), (CURVE, 12), near), Some((CURVE, 12)));
+    }
+    // And a corner beats the curve through it, for the same reason.
+    assert_eq!(
+        g.meet((CORNER, 21), (CURVE, 14), [0.0, 0.0, 0.0]),
+        Some((CORNER, 21))
+    );
+}
+
+#[test]
+fn a_weld_at_the_end_of_a_seam_lands_on_the_corner() {
+    let g = arch();
+    // Corner 21 is on both surfaces too, and at the origin it is just as
+    // near as curve 14 is. A tie goes to the lower dimension, which is the
+    // stronger claim and the better answer: that really is the end.
+    assert_eq!(
+        g.meet((SURFACE, 1), (SURFACE, 2), [0.0, 0.0, 0.0]),
+        Some((CORNER, 21))
+    );
+    // A little way along the seam, the curve wins again.
+    assert_eq!(
+        g.meet((SURFACE, 1), (SURFACE, 2), [0.0, 0.4, 0.0]),
+        Some((CURVE, 14))
+    );
+}
+
+#[test]
+fn an_entity_meets_itself_and_nothing_else_is_needed() {
+    let g = arch();
+    for e in [(SURFACE, 1), (CURVE, 12), (CORNER, 21)] {
+        assert_eq!(g.meet(e, e, [0.3, 0.3, 0.3]), Some(e));
+    }
+    // Including from outside it, where the nearest point of the surface is
+    // on its own boundary curve: that curve is on the surface, so a search
+    // for what they share would tie and hand back the curve. An entity
+    // meets itself and that is the end of it.
+    assert_eq!(
+        g.meet((SURFACE, 1), (SURFACE, 1), [2.0, 0.5, 0.0]),
+        Some((SURFACE, 1))
+    );
+}
+
+#[test]
+fn two_entities_that_share_nothing_meet_nowhere() {
+    let g = arch();
+    // The far side of the ground is not on the arch, and nothing is on
+    // both. Said so rather than guessed at.
+    assert_eq!(g.meet((CURVE, 14), (CURVE, 12), [0.5, 0.5, 0.0]), None);
+    assert_eq!(g.meet((CORNER, 21), (CURVE, 12), [0.5, 0.5, 0.0]), None);
+    // And an entity nobody has heard of meets nothing.
+    assert_eq!(g.meet((CURVE, 99), (SURFACE, 1), [0.0; 3]), None);
+}

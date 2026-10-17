@@ -1056,3 +1056,147 @@ fn at(session: &Session, names: &[u32]) -> Vec<[f64; 3]> {
         })
         .collect()
 }
+
+/// Classify every node at this height onto `on`, and say how many.
+fn classify_at_z(session: &mut Session, z: f64, on: Spot) -> usize {
+    let at: Vec<u32> = nodes(session)
+        .into_iter()
+        .filter(|n| (n["pos"][2].as_f64().unwrap() - z).abs() < 1e-9)
+        .map(|n| n["id"].as_u64().unwrap() as u32)
+        .collect();
+    session
+        .apply(Command::ClassifyNode {
+            nodes: at.clone(),
+            on: Some(on),
+        })
+        .expect("classified");
+    at.len()
+}
+
+#[test]
+fn a_weld_between_two_surfaces_lands_on_the_curve_they_share() {
+    // The whole chain, from a command down: gluing a node on the tube to a
+    // node on the lid cannot leave it on either — the one point that is on
+    // both is on the rim. Neither block knew about the rim; the geometry
+    // did, and the glue asked it.
+    let mut s = Session::new().unwrap();
+    s.apply(Command::LoadGeometry {
+        msh: LID.to_string(),
+        name: "lid.msh".to_string(),
+    })
+    .unwrap();
+    // One cube in the tube, resting its floor on the tube's wall.
+    s.apply(Command::CreateCube {
+        origin: [0.0, 0.0, 0.0],
+        size: 1.0,
+    })
+    .unwrap();
+    assert_eq!(classify_at_z(&mut s, 0.0, Spot { dim: 2, tag: 1 }), 4);
+
+    // And one below it, held against the lid — which pulls its ceiling up
+    // to z = 0, where the other block's floor already is. Classified while
+    // it is still down at −0.5, so which four nodes are meant is never in
+    // question.
+    s.apply(Command::AddBlock {
+        corners: gecko_core::cube_corners([0.0, 0.0, -1.5], 1.0),
+    })
+    .unwrap();
+    assert_eq!(classify_at_z(&mut s, -0.5, Spot { dim: 2, tag: 2 }), 4);
+
+    let faces: Vec<serde_json::Value> = serde_json::from_str(&s.faces_json()).unwrap();
+    let flat: Vec<u32> = faces
+        .iter()
+        .filter(|f| f["centre"][2].as_f64().unwrap().abs() < 1e-9)
+        .map(|f| f["id"].as_u64().unwrap() as u32)
+        .collect();
+    assert_eq!(flat.len(), 2, "one face from each block, both at z = 0");
+
+    let message = s
+        .apply(Command::GlueFaces {
+            first: flat[0],
+            second: flat[1],
+        })
+        .expect("two free faces")
+        .message;
+
+    let welded: Vec<serde_json::Value> = nodes(&s)
+        .into_iter()
+        .filter(|n| n["pos"][2].as_f64().unwrap().abs() < 1e-9)
+        .collect();
+    assert_eq!(welded.len(), 4, "eight nodes became four: {message}");
+    for n in &welded {
+        assert_eq!(
+            n["on"],
+            serde_json::json!({ "dim": 1, "tag": 201 }),
+            "on the rim, not on either surface — {message}"
+        );
+    }
+    assert!(!message.contains("left"), "nothing was dropped: {message}");
+}
+
+#[test]
+fn a_weld_between_two_strangers_says_which_classification_it_dropped() {
+    // The bottom of the box and its top share nothing at all: no curve, no
+    // corner. One of the two claims has to go, and which one went is said
+    // out loud rather than left to be discovered in a mesh.
+    let mut s = Session::new().unwrap();
+    s.apply(Command::LoadGeometry {
+        msh: BOX.to_string(),
+        name: "box.msh".to_string(),
+    })
+    .unwrap();
+    s.apply(Command::CreateCube {
+        origin: [0.0, 0.0, 0.0],
+        size: 1.0,
+    })
+    .unwrap();
+    s.apply(Command::AddBlock {
+        corners: gecko_core::cube_corners([0.0, 0.0, -1.0], 1.0),
+    })
+    .unwrap();
+
+    let faces: Vec<serde_json::Value> = serde_json::from_str(&s.faces_json()).unwrap();
+    let flat: Vec<u32> = faces
+        .iter()
+        .filter(|f| f["centre"][2].as_f64().unwrap().abs() < 1e-9)
+        .map(|f| f["id"].as_u64().unwrap() as u32)
+        .collect();
+    assert_eq!(flat.len(), 2);
+
+    // The upper block's floor on surface 1, the lower block's ceiling on
+    // surface 2 — which pulls it up to z = 1, a long way from where it was.
+    let first_block_floor: Vec<u32> = nodes(&s)
+        .into_iter()
+        .filter(|n| n["pos"][2].as_f64().unwrap().abs() < 1e-9)
+        .map(|n| n["id"].as_u64().unwrap() as u32)
+        .collect();
+    s.apply(Command::ClassifyNode {
+        nodes: first_block_floor[..4].to_vec(),
+        on: Some(Spot { dim: 2, tag: 1 }),
+    })
+    .unwrap();
+    s.apply(Command::ClassifyNode {
+        nodes: first_block_floor[4..].to_vec(),
+        on: Some(Spot { dim: 2, tag: 2 }),
+    })
+    .unwrap();
+
+    let message = s
+        .apply(Command::GlueFaces {
+            first: flat[0],
+            second: flat[1],
+        })
+        .expect("two free faces")
+        .message;
+
+    assert!(
+        message.contains("kept surface 1 and left surface 2")
+            || message.contains("kept surface 2 and left surface 1"),
+        "{message}"
+    );
+    assert_eq!(
+        message.matches("; node").count(),
+        4,
+        "once per corner: {message}"
+    );
+}

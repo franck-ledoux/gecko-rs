@@ -49,31 +49,72 @@ gecko.stats()   -- {nodes = 12, edges = 20, faces = 11, blocks = 2}
 centre. A face with a block on each side is listed once per block, as the
 surface is.
 
-## What moves, and what does not
+## Where the seam ends up
 
-**Only the four corners of the second face move.** The rest of that block
-stays where it is, so gluing two blocks that are far apart deforms one of them
-rather than carrying it over. For blocks already side by side — the usual case
-— nothing is distorted at all.
+**The two faces meet in the middle.** Each pair of corners is welded at the
+point between them, so both blocks give way by half and neither is dragged the
+whole distance onto the other. Only those four corners move: the rest of each
+block stays where it is, so gluing two blocks that are far apart deforms both
+of them a little rather than carrying one over. For blocks already side by
+side — the usual case — nothing moves at all.
 
 The corners are paired by the quarter turn that moves them least. A glue is
 necessarily orientation-reversing, which leaves exactly four candidates, and
 the closest wins. Two blocks turned against each other have no right answer
 here, only a least bad quarter turn.
 
-!!! note "Why the first face wins, and why it has to be said"
-    The map merges two vertices by **averaging** them. Left to it, a glue
-    across a gap would leave the seam half way between the two faces. The
-    second face is therefore moved onto the first *before* the sewing, so the
-    average is of two points that already coincide — settling the question
-    where the rule lives rather than reaching into a merge policy that
-    belongs to the map.
+### What the classification does to that
+
+A node pinned to the geometry is pinned for a reason the glue does not know,
+so classification comes first. Per pair of corners:
+
+| the two corners                | where the weld goes                               |
+| ------------------------------ | ------------------------------------------------- |
+| neither frozen nor classified  | half way                                          |
+| one of them **frozen**         | it does not move, and the other comes to it       |
+| both frozen, in the same place | there, and nothing to decide                      |
+| both frozen, apart             | **refused** — there is no legal answer            |
+| **classified**                 | half way, then projected onto what the weld is on |
+
+and the welded node is left on the **more constrained** of the two
+classifications:
+
+- one entity contains the other — the contained one survives. A node on a
+  circle welded to a node on the cylinder it bounds is on the circle, which is
+  the stronger statement and implies the other.
+- the two entities meet — what they share survives, and it is often neither of
+  them. Welding a node on one surface to a node on another puts it on the
+  curve where the two meet.
+- they share nothing — the lower dimension survives, and the status line says
+  which claim was dropped: `node 7 kept curve 3 and left surface 5`.
+
+Two surfaces can meet along more than one curve, and then the position settles
+it: the nearest of the shared entities wins. A weld right at the end of a seam
+lands on the corner there, which is nearer than the rest of the curve only
+when it really is the end.
+
+!!! note "Why the position has to be settled here"
+    The map merges two vertices by **averaging** them, so a glue across a gap
+    lands half way whether anybody meant it to or not. Rather than let a merge
+    policy that belongs to the map decide where a seam goes, both corners are
+    written to the chosen point *before* the sewing — and then the average is
+    of two points that already coincide. The midpoint is the default because
+    it is the honest reading of "weld these two", not because it is what the
+    map would have done.
+
+!!! note "Pillowing and extrusion glue differently"
+    Both build a block against an existing face and then glue it there, so
+    their corners coincide already and the midpoint rule cannot be told from
+    any other. They use a glue of their own that says the second face moves
+    onto the first, which is what a caller that has already placed both faces
+    wants.
 
 ## What is refused
 
 - a face glued to itself;
 - a face that is already glued to another block;
-- a name no face answers to.
+- a name no face answers to;
+- a pair of corners that are both frozen and not in the same place.
 
 A refused glue changes nothing at all, and says why.
 

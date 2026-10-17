@@ -41,7 +41,7 @@ fn glued() -> Blocking {
         seam(&b, names[0], 1.0).unwrap(),
         seam(&b, names[1], 1.0).unwrap(),
     );
-    b.glue_faces(first, second).unwrap();
+    b.glue_onto(first, second).unwrap();
     b
 }
 
@@ -106,7 +106,7 @@ fn the_neighbour_can_be_glued_again() {
         seam(&b, fresh[0], 1.0).unwrap(),
         seam(&b, fresh[1], 1.0).unwrap(),
     );
-    b.glue_faces(first, second).expect("the seam is free again");
+    b.glue_onto(first, second).expect("the seam is free again");
     assert_eq!(cells(&b), (12, 20, 11, 2));
 }
 
@@ -121,13 +121,13 @@ fn removing_the_middle_of_three_leaves_two() {
         seam(&b, names[0], 1.0).unwrap(),
         seam(&b, names[1], 1.0).unwrap(),
     );
-    b.glue_faces(a, c).unwrap();
+    b.glue_onto(a, c).unwrap();
     let names = blocks(&b);
     let (a, c) = (
         seam(&b, names[1], 2.0).unwrap(),
         seam(&b, names[2], 2.0).unwrap(),
     );
-    b.glue_faces(a, c).unwrap();
+    b.glue_onto(a, c).unwrap();
     assert_eq!(cells(&b), (16, 28, 16, 3));
 
     // Take the one in the middle, which is glued on both sides.

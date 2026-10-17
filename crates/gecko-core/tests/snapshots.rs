@@ -69,7 +69,7 @@ fn pair() -> Blocking {
             .face
     };
     let (first, second) = (face_at_x(0, 1.0), face_at_x(1, 1.0));
-    b.glue_faces(first, second).unwrap();
+    b.glue_onto(first, second).unwrap();
 
     let edge = b.edges().next().unwrap().0;
     b.split_sheet(edge, 0.5).unwrap();

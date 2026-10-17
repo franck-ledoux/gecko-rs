@@ -135,7 +135,7 @@ fn two_glued_blocks_share_the_nodes_on_the_face_between_them() {
             .face
     };
     let (first, second) = (face_at(0, 1.0), face_at(1, 1.0));
-    b.glue_faces(first, second).unwrap();
+    b.glue_onto(first, second).unwrap();
 
     let mesh = b.mesh(3, flat);
     assert_eq!(mesh.hexes.len(), 2 * 3 * 3 * 3);

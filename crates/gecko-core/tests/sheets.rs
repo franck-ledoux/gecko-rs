@@ -37,7 +37,7 @@ fn glued() -> Blocking {
         seam(&b, names[0], 1.0).unwrap(),
         seam(&b, names[1], 1.0).unwrap(),
     );
-    b.glue_faces(first, second).unwrap();
+    b.glue_onto(first, second).unwrap();
     b
 }
 
@@ -218,7 +218,7 @@ mod removal {
                 .map(|s| s.face)
                 .collect();
             assert_eq!(pair.len(), 2, "two faces meet at z = {z}");
-            b.glue_faces(pair[0], pair[1]).unwrap();
+            b.glue_onto(pair[0], pair[1]).unwrap();
         }
         b
     }
@@ -335,7 +335,7 @@ mod removal {
             }
         }
         for (first, second) in pairs {
-            b.glue_faces(first, second).unwrap();
+            b.glue_onto(first, second).unwrap();
         }
         b
     }

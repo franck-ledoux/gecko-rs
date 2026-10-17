@@ -81,7 +81,7 @@ fn gluing_two_blocks_welds_their_cells() {
 
     let first = face_at_x(&b, 0, 1.0);
     let second = face_at_x(&b, 1, 1.0);
-    b.glue_faces(first, second).expect("two touching faces");
+    b.glue_onto(first, second).expect("two touching faces");
 
     // Four pairs of nodes became four nodes, four pairs of edges four edges,
     // and the two faces one. The blocks are untouched: gluing joins them, it
@@ -97,7 +97,7 @@ fn the_surface_then_has_a_face_with_a_block_on_each_side() {
     // What the viewer calls an internal face, and the first one that has ever
     // existed here: a name that turns up twice in the surface, once per block.
     let mut b = touching();
-    b.glue_faces(face_at_x(&b, 0, 1.0), face_at_x(&b, 1, 1.0))
+    b.glue_onto(face_at_x(&b, 0, 1.0), face_at_x(&b, 1, 1.0))
         .unwrap();
 
     let sides = b.block_faces();
@@ -128,7 +128,7 @@ fn the_first_face_decides_where_the_seam_lands() {
 
     let first = face_at_x(&b, 0, 1.0);
     let second = face_at_x(&b, 1, 1.5);
-    b.glue_faces(first, second).unwrap();
+    b.glue_onto(first, second).unwrap();
 
     // The seam is at x = 1, where the first face was — not at 1.25.
     let seam: Vec<_> = b
@@ -156,18 +156,18 @@ fn a_face_cannot_be_glued_twice_or_to_itself() {
     let second = face_at_x(&b, 1, 1.0);
 
     assert!(matches!(
-        b.glue_faces(first, first),
+        b.glue_onto(first, first),
         Err(BlockingError::SameFace)
     ));
     assert!(matches!(
-        b.glue_faces(first, CellId::from_raw(9999)),
+        b.glue_onto(first, CellId::from_raw(9999)),
         Err(BlockingError::NoSuchFace(_))
     ));
 
-    b.glue_faces(first, second).unwrap();
+    b.glue_onto(first, second).unwrap();
     // Whatever that face is called now, both names are spent.
     assert!(matches!(
-        b.glue_faces(first, second),
+        b.glue_onto(first, second),
         Err(BlockingError::AlreadyGlued(_)) | Err(BlockingError::NoSuchFace(_))
     ));
 }
@@ -177,7 +177,7 @@ fn a_refused_glue_changes_nothing() {
     let mut b = touching();
     let before = (b.nb_nodes(), b.nb_edges(), b.nb_faces(), b.nb_blocks());
     let first = face_at_x(&b, 0, 1.0);
-    assert!(b.glue_faces(first, CellId::from_raw(9999)).is_err());
+    assert!(b.glue_onto(first, CellId::from_raw(9999)).is_err());
     assert_eq!(
         (b.nb_nodes(), b.nb_edges(), b.nb_faces(), b.nb_blocks()),
         before

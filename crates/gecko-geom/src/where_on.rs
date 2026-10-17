@@ -174,6 +174,54 @@ impl Geometry {
         self.common_of(&[a, b], at_least)
     }
 
+    /// The most constrained entity that is on **both** — the other direction
+    /// from [`common`](Self::common).
+    ///
+    /// What **welding two classified nodes into one** needs, and it is the
+    /// opposite question. `common` asks what contains both, because an edge
+    /// between two corners lies on a surface they share. A welded node is a
+    /// single point that has to satisfy both statements at once, and a point
+    /// on a curve is already on every surface that curve bounds — so the
+    /// curve is the statement to keep, not the surface.
+    ///
+    /// Three cases, in order:
+    ///
+    /// * one **contains** the other — keep the contained one, which is the
+    ///   stronger claim: a node on a circle glued to a node on the cylinder
+    ///   it bounds is on the circle. An entity contains itself, so the two
+    ///   being the same thing needs no case of its own — and it does need
+    ///   answering before the search below, which would tie between a
+    ///   surface and its own boundary for a point outside it.
+    /// * they **meet** — keep what they share: two surfaces welded along
+    ///   their seam give the curve of the seam.
+    /// * they share **nothing**, and there is no answer. Said so, rather
+    ///   than guessed at.
+    ///
+    /// Of the entities they share, the one **nearest `near`** wins, and a tie
+    /// goes to the lower dimension. Two surfaces can meet along more than one
+    /// curve — two halves of a cylinder meet along both of its sides — and
+    /// nothing but the position can say which one this weld is on. A curve
+    /// always runs at least as close as its own end corners, so the corner
+    /// only wins when the weld really is at the end of the curve, where it is
+    /// the better answer.
+    pub fn meet(&self, a: (u8, i32), b: (u8, i32), near: [f64; 3]) -> Option<(u8, i32)> {
+        if self.containing(a.0, a.1).contains(&b) {
+            return Some(a);
+        }
+        if self.containing(b.0, b.1).contains(&a) {
+            return Some(b);
+        }
+        self.containment()
+            .keys()
+            .filter(|&&e| {
+                let up = self.containing(e.0, e.1);
+                up.contains(&a) && up.contains(&b)
+            })
+            .filter_map(|&e| self.distance(e.0, e.1, near).map(|d| (d, e)))
+            .min_by(|(d, e), (f, g)| d.total_cmp(f).then(e.0.cmp(&g.0)))
+            .map(|(_, e)| e)
+    }
+
     /// The point of an entity nearest `p`, or nothing when no entity answers
     /// to that pair.
     pub fn project(&self, dim: u8, tag: i32, p: [f64; 3]) -> Option<[f64; 3]> {
