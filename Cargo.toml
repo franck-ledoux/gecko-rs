@@ -4,6 +4,7 @@ members = [
     "crates/gecko-core",
     "crates/gecko-geom",
     "crates/gecko-cmd",
+    "crates/gecko-lua",
     "crates/gecko-wasm",
     "crates/gecko-py",
 ]

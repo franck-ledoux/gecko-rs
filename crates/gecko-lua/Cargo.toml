@@ -1,0 +1,13 @@
+[package]
+name = "gecko-lua"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+gecko-cmd = { path = "../gecko-cmd" }
+mlua = { version = "0.12", features = ["lua54", "vendored", "serialize"] }
+serde_json = "1"
+
+[dev-dependencies]
+mlua = { version = "0.12", features = ["lua54", "vendored"] }
