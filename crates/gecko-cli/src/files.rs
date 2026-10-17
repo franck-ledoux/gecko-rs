@@ -35,6 +35,12 @@ impl Files {
     /// folder" and "serve the disk" are different promises, and only the
     /// first was made to a path nobody wrote out in full.
     ///
+    /// On Windows, "written out in full" means a drive: `C:\tmp\x` is
+    /// absolute and `/tmp/x` is not — it names the root of *some* drive,
+    /// and which one would be a guess. So that one is refused rather than
+    /// resolved under the root, where it would mean something different
+    /// again.
+    ///
     /// Walked component by component rather than handed to the
     /// filesystem, so it answers the same for a file that does not exist
     /// yet — which every write is.

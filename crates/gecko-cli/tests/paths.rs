@@ -43,7 +43,23 @@ fn an_absolute_path_is_taken_as_given() {
     // server bound to this machine. It is the same authority as `gecko
     // run`, and mangling it into the root is how a file ends up in a
     // directory named after itself.
-    let files = here();
-    let at = files.at("/tmp/gecko/mesh.vtk").expect("a path");
-    assert_eq!(at, PathBuf::from("/tmp/gecko/mesh.vtk"));
+    //
+    // "In full" means a drive on Windows, which is why this is two
+    // strings rather than one — the first version of this test said
+    // `/tmp` everywhere and Windows was right to disagree.
+    let full = if cfg!(windows) {
+        r"C:\tmp\gecko\mesh.vtk"
+    } else {
+        "/tmp/gecko/mesh.vtk"
+    };
+    assert_eq!(here().at(full), Some(PathBuf::from(full)));
+}
+
+#[test]
+#[cfg(windows)]
+fn a_root_without_a_drive_is_refused() {
+    // `/tmp/x` names the root of *some* drive, and which one would be a
+    // guess. Resolving it under the folder gecko was started in would
+    // mean something different again, so it is refused outright.
+    assert_eq!(here().at("/tmp/x"), None);
 }
