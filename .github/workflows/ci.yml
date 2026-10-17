@@ -92,11 +92,22 @@ jobs:
           path: front/playwright-report
           retention-days: 7
 
+      # The page itself, for the site to publish. It is built here anyway —
+      # `check.sh` needs it to run the browser suite — so publishing it
+      # costs an upload rather than a second toolchain.
+      - name: Keep the page for the site
+        uses: actions/upload-artifact@v4
+        with:
+          name: page
+          path: front/dist
+          retention-days: 1
+
   # Builds the site on every push, which is what keeps the links honest:
   # docs.sh passes --strict, so a dead link or a page missing from the
   # navigation fails here rather than greeting a reader.
   docs:
     name: Documentation
+    needs: full
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -117,6 +128,15 @@ jobs:
 
       - name: Build the site
         run: ./docs.sh
+
+      # The application, under the documentation that describes it. The
+      # page carries its own kernel and its own interpreter, so a static
+      # host is all it ever needed.
+      - name: Put the page under /app
+        uses: actions/download-artifact@v4
+        with:
+          name: page
+          path: site/app
 
       - name: Keep it for the deploy job
         uses: actions/upload-pages-artifact@v3

@@ -18,6 +18,12 @@ same session with nothing between them and no server anywhere.
 ./gecko     # open it
 ```
 
+The same page is published beside this site, at
+[`/app/`](https://franck-ledoux.github.io/gecko-rs/app/) — it carries its own
+kernel and its own interpreter, so a static host is all it ever needed.
+Everything works there except the filesystem: a script that reads a file is
+told there is none, and one that writes gets a download.
+
 ```lua
 gecko.load_geometry("cylinder.msh")
 gecko.box_geometry{ margin = 0 }
