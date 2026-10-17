@@ -19,11 +19,22 @@ const collecting = !!process.env.GECKO_COVERAGE;
 
 export default defineConfig({
   testDir: "tests/e2e",
-  // One worker: two instrumented browsers reading counters and resolving
-  // source maps over the same cache wedge each other, and a coverage run is
-  // not a run anybody waits on. One retry, because a wedged browser is a
-  // wedged browser and not a finding.
-  workers: collecting ? 1 : undefined,
+  /**
+   * Two, and one while collecting coverage.
+   *
+   * Playwright's own default is half the cores, which on a sixteen-core
+   * machine is eight browsers — and each of these is a software-rendered
+   * browser pulling two wasm modules from one `vite preview`. Past a couple,
+   * workers stop getting slower and start getting **stuck**: eight of them
+   * left eight tests waiting the entire fifteen minutes of a run for pages
+   * that normally load in a second, while their neighbours passed in two.
+   * Four left three or four stuck. One is reliable.
+   *
+   * Fewer is not slower overall here, and CI runs on two cores where this
+   * changes nothing. Collecting coverage goes down to one and gets a retry:
+   * reading counters and resolving source maps is heavier still.
+   */
+  workers: collecting ? 1 : 2,
   retries: collecting ? 1 : 0,
   timeout: collecting ? 120_000 : 30_000,
   // Merges what each worker collected, and does nothing at all unless
