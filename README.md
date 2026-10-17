@@ -1,6 +1,8 @@
 # gecko-rs
 
 [![Build & Test](https://github.com/franck-ledoux/gecko-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/franck-ledoux/gecko-rs/actions/workflows/ci.yml)
+[![kernel coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Ffranck-ledoux.github.io%2Fgecko-rs%2Fcoverage%2Fkernel-badge.json)](https://franck-ledoux.github.io/gecko-rs/coverage/)
+[![page coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Ffranck-ledoux.github.io%2Fgecko-rs%2Fcoverage%2Fpage-badge.json)](https://franck-ledoux.github.io/gecko-rs/coverage/)
 
 A Rust port of [GECKO](https://github.com/franck-ledoux/gecko), rebuilt step by
 step.
@@ -18,6 +20,29 @@ session with nothing in between.
 nothing to install, because a page that carries its own kernel needs no
 server. The [documentation](https://franck-ledoux.github.io/gecko-rs/) is
 published beside it.
+
+## Installing a version of it
+
+The [latest release](https://github.com/franck-ledoux/gecko-rs/releases/latest)
+carries one binary per machine. Each is the whole application — the page is
+baked into it — so there is nothing else to put anywhere:
+
+|                                   |                                                                                                                           |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| macOS, Apple silicon              | [`gecko-macos-arm64`](https://github.com/franck-ledoux/gecko-rs/releases/latest/download/gecko-macos-arm64)               |
+| Linux, x86-64                     | [`gecko-linux-x86_64`](https://github.com/franck-ledoux/gecko-rs/releases/latest/download/gecko-linux-x86_64)             |
+| Windows, x86-64                   | [`gecko-windows-x86_64.exe`](https://github.com/franck-ledoux/gecko-rs/releases/latest/download/gecko-windows-x86_64.exe) |
+| the static page, to host yourself | [`gecko-web.zip`](https://github.com/franck-ledoux/gecko-rs/releases/latest/download/gecko-web.zip)                       |
+
+```bash
+chmod +x gecko-macos-arm64
+xattr -d com.apple.quarantine gecko-macos-arm64   # macOS only: it is unsigned
+./gecko-macos-arm64                               # in a folder of meshes
+```
+
+Those links always point at the newest release. What a release is for, over
+the page above: **files**. The binary lends the page the directory it was
+started in, so a script can read a `.msh` and write a mesh out.
 
 What follows is for building it yourself.
 
@@ -84,6 +109,7 @@ the same bytes. See [Scripting](docs/user-guide/scripting.md).
 ./dev           # the page from Vite with hot reload, a file server behind it
 ./view          # the page alone, shorter loop
 ./check.sh      # format, lint, every suite, the page in a real browser
+./coverage      # two numbers — the kernel, and the page — and the reports
 ./docs.sh       # the documentation site, into site/
 ```
 
@@ -100,8 +126,10 @@ passes locally passes there.
 ## What it can do today
 
 - **build**: a cube, a box round a geometry, a block grown out of a face;
-- **edit**: glue, remove, cut a sheet, remove a sheet and close the gap,
-  pillow a patch — with five steps of undo, settable;
+- **edit**: glue (welding corner to corner at the point between them), remove,
+  cut a sheet, remove a sheet and close the gap, pillow a patch, remove a
+  whole chord of blocks, lay an o-grid along one — with five steps of undo,
+  settable;
 - **read a geometry**: a gmsh surface mesh (MSH 2.2) as a boundary
   representation — surfaces, curves and corners, drawn beside the blocks;
 - **classify**: nodes onto corners, curves and surfaces, by hand or by

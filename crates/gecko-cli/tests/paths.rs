@@ -2,15 +2,7 @@
 
 use std::path::PathBuf;
 
-/// The module under test is the binary's, so it is reached the way a
-/// binary's modules are: by including the file. Only the path arithmetic
-/// is wanted here, so the two that touch the disk are unused and said to
-/// be.
-#[path = "../src/files.rs"]
-#[allow(dead_code)]
-mod files;
-
-use files::Files;
+use gecko_cli::files::Files;
 
 fn here() -> Files {
     // The root is wherever the process is, which for a test is the crate.

@@ -20,6 +20,18 @@ fetches the last of those.
 **CI runs this same script.** There is one description of what passing means,
 and what passes locally passes there.
 
+And, to know how much of it the suites touch:
+
+```bash
+./coverage
+```
+
+Two numbers — the kernel and the page — with a floor under each. It is not
+part of `./check.sh`: instrumenting everything costs minutes that a check run
+before every commit should not, and a floor is a condition of **delivery**.
+CI runs it on `main` and on tags, one half per job. See
+[Testing](testing.md#coverage-in-two-numbers).
+
 ## What depends on what
 
 The order in `build` and in `check.sh` is not arbitrary:

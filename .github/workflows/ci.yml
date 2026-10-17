@@ -102,12 +102,74 @@ jobs:
           path: front/dist
           retention-days: 1
 
+      # Coverage for the page, here rather than in a job of its own: this
+      # one already has the emsdk, both wasm modules, the bundle and the
+      # browser, and setting all that up again would cost more minutes than
+      # the measurement does. The suites are run a second time with the
+      # collector on, which is a minute, and `check.sh` stays untouched so
+      # what a developer runs locally is still what runs here.
+      #
+      # **After** the page has been uploaded, and that order matters: a
+      # coverage run rebuilds the bundle unminified, and the site must have
+      # the one that ships.
+      - name: What the page's own tests reach
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        run: ./coverage page
+
+      - name: Keep it for the site
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-page
+          path: |
+            target/coverage/page/e2e
+            target/coverage/page-badge.json
+          retention-days: 1
+
+  # The kernel's own coverage. A job of its own because it needs no
+  # emscripten, no bundle and no browser — just the crates, instrumented —
+  # and it runs **only on main and on tags**: a floor is a condition of
+  # delivery, and every branch paying for it would be minutes for nothing.
+  coverage:
+    name: Coverage, the kernel
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+
+      # A prebuilt binary: compiling the tool would cost more than running it.
+      - uses: taiki-e/install-action@cargo-llvm-cov
+
+      # The same script a developer runs, one half of it. The floors live
+      # there, so there is one place to read them and one place to change
+      # them.
+      - name: Instrument, run everything, and mind the floor
+        run: ./coverage kernel
+
+      - name: Keep it for the site
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-kernel
+          path: |
+            target/coverage/kernel/html
+            target/coverage/kernel-badge.json
+          retention-days: 1
+
   # Builds the site on every push, which is what keeps the links honest:
   # docs.sh passes --strict, so a dead link or a page missing from the
   # navigation fails here rather than greeting a reader.
   docs:
     name: Documentation
-    needs: full
+    # Waits for coverage when it runs, and does not wait for it when it is
+    # skipped: a needed job that is skipped would otherwise skip this one,
+    # and a branch would stop building the site.
+    needs: [full, coverage]
+    if: ${{ !cancelled() && needs.full.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -137,6 +199,37 @@ jobs:
         with:
           name: page
           path: site/app
+
+      # Both coverage reports, under the documentation that explains what
+      # they do and do not measure. Skipped on a branch, where the two jobs
+      # above do not run: `continue-on-error` rather than a condition, so
+      # this stays one list of steps however the run was triggered.
+      - name: Put the kernel's coverage under /coverage/kernel
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-kernel
+          path: coverage-kernel
+
+      - name: Put the page's coverage under /coverage/page
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-page
+          path: coverage-page
+
+      - name: Lay them out, with an index
+        run: |
+          mkdir -p site/coverage
+          if [ -d coverage-kernel/kernel/html ]; then
+            cp -R coverage-kernel/kernel/html site/coverage/kernel
+            cp coverage-kernel/kernel-badge.json site/coverage/
+          fi
+          if [ -d coverage-page/page/e2e ]; then
+            cp -R coverage-page/page/e2e site/coverage/page
+            cp coverage-page/page-badge.json site/coverage/
+          fi
+          python3 tools/coverage_index.py site/coverage
 
       - name: Keep it for the deploy job
         uses: actions/upload-pages-artifact@v3

@@ -80,3 +80,60 @@ cd front && npx playwright test
 ```
 
 The last one needs artefacts the others do not; see [Building](building.md).
+
+## Coverage, in two numbers
+
+```bash
+./coverage            # both halves, and the reports to read them in
+./coverage kernel     # the crates only
+./coverage page       # the page only
+```
+
+Two numbers, not one: a Rust kernel and a TypeScript interface are measured by
+different machinery and read by different people, and an average of the two
+would describe neither. The floors live at the top of `./coverage`, which is
+also what CI runs — one half per job — so there is one place to read them and
+one place to change them.
+
+|            | measured by                                              | reaches                                                     |
+| ---------- | -------------------------------------------------------- | ----------------------------------------------------------- |
+| **kernel** | `cargo llvm-cov` over the workspace                      | the block structure, the session, the commands, the Lua API |
+| **page**   | V8 counters, from Vitest **and** from Playwright, merged | decoding, the scene, and every gesture                      |
+
+The page's two suites are merged as a union over lines, because neither alone
+is the page: the headless suite reaches the decoding and the scene, and the
+browser suite reaches the gestures. `GECKO_COVERAGE=1` is what turns the
+browser collection on — the `page` fixture is wrapped only then, so
+`./check.sh` runs exactly as it did.
+
+### What it does not measure, and why
+
+- **The kernel as the browser runs it.** Neither `wasm32-unknown-unknown` nor
+  emscripten instruments under `llvm-cov`, so the kernel's figure comes from
+  the native tests. The same code, built another way — which is an honest
+  claim about the code and not about the build.
+- **The glue between the page and wasm**, which only the browser suite
+  exercises, and only as "it passed".
+- **`gecko-cli`'s server and entry point.** `serve.rs` and `main.rs` have no
+  automated test: nothing starts the binary and asks it for a file. Neither
+  has `front/src/files.ts`, the other end of the same conversation — the
+  page's synchronous file access, which only exists when the binary is
+  serving. All three are counted, uncovered, rather than excluded: a gap that
+  shows is worth more than a number that flatters.
+
+The two wasm crates **are** excluded, by name. A crate that cannot be
+instrumented at all would drag the figure down for a reason that has nothing
+to do with how well it is tested, and both are thin wrappers over what is
+measured.
+
+### A floor, not a target
+
+`--floor` fails the run when a number drops below it. It is a ratchet: raised
+when a batch earns it, never quietly lowered to meet the code. Lowering one is
+a decision, and the message says so.
+
+A percentage is a poor goal and a decent alarm. What the suites are actually
+for is written at the top of this page: a test that cannot fail when the code
+is wrong is worse than no test, and no amount of coverage says whether a test
+has teeth. `./coverage` prints the eight least covered files for that reason —
+the list is a reading suggestion, not a score.

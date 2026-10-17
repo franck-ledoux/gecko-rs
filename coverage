@@ -6,67 +6,94 @@
 # would describe neither. So: one figure for the crates, one for the page, a
 # floor under each, and an HTML report for both under `target/coverage`.
 #
+#   ./coverage            both halves, with the reports
+#   ./coverage kernel     the crates only
+#   ./coverage page       the page only
+#   ./coverage … --check  the floors and the badge, and no HTML
+#
+# CI runs this very script, one half per job, so the floors live in one place
+# and what passes here passes there.
+#
 # What is **not** measured, said plainly:
 #
 #   * the kernel as the browser runs it. Neither wasm target instruments
-#     under llvm-cov, so the figure below comes from the native tests. The
+#     under llvm-cov, so the kernel figure comes from the native tests — the
 #     same code, built another way.
 #   * the glue between the page and wasm, which only the browser suite
-#     exercises and only as "it passed".
-#
-# `--check` is what CI runs: the floors, and no HTML.
+#     exercises, and only as "it passed".
 set -euo pipefail
 cd "$(dirname "$0")"
 export PATH="$HOME/.cargo/bin:$PATH"
 
 # The ratchet. Raised when a batch earns it, never quietly lowered: a floor
 # that moves down to meet the code is not a floor.
-FLOOR_KERNEL=${FLOOR_KERNEL:-80}
-FLOOR_PAGE=${FLOOR_PAGE:-60}
+FLOOR_KERNEL=${FLOOR_KERNEL:-90}
+FLOOR_PAGE=${FLOOR_PAGE:-72}
 
+half=both
 check=no
-[ "${1:-}" = "--check" ] && check=yes
+for arg in "$@"; do
+  case "$arg" in
+    kernel | page | both) half=$arg ;;
+    --check) check=yes ;;
+    *)
+      echo "usage: ./coverage [kernel|page] [--check]" >&2
+      exit 2
+      ;;
+  esac
+done
 
 out=target/coverage
 mkdir -p "$out"
 
-command -v cargo-llvm-cov >/dev/null 2>&1 || {
-  echo "── installing cargo-llvm-cov ─────────────────────────────────"
-  rustup component add llvm-tools-preview
-  cargo install cargo-llvm-cov --locked
-}
+if [ "$half" = kernel ] || [ "$half" = both ]; then
+  command -v cargo-llvm-cov >/dev/null 2>&1 || {
+    echo "── installing cargo-llvm-cov ─────────────────────────────────"
+    rustup component add llvm-tools-preview
+    cargo install cargo-llvm-cov --locked
+  }
 
-echo "── the kernel, the session and the Lua API (Rust) ────────────"
-# The two wasm crates are left out: emscripten and wasm32 do not instrument,
-# and a crate that cannot be measured drags an honest number down for a
-# dishonest reason. Everything they contain is a thin wrapper over what is
-# measured here.
-cargo llvm-cov clean --workspace
-cargo llvm-cov --no-report --workspace \
-  --exclude gecko-wasm --exclude gecko-lua-wasm
-cargo llvm-cov report --lcov --output-path "$out/kernel.lcov" \
-  --ignore-filename-regex '(tests?/|gecko-wasm|gecko-lua-wasm)'
-[ "$check" = yes ] || cargo llvm-cov report --html --output-dir "$out/kernel" \
-  --ignore-filename-regex '(tests?/|gecko-wasm|gecko-lua-wasm)'
+  echo "── the kernel, the session and the Lua API (Rust) ────────────"
+  # The two wasm crates are left out: emscripten and wasm32 do not
+  # instrument, and a crate that cannot be measured would drag an honest
+  # number down for a dishonest reason. Both are thin wrappers over what is
+  # measured here.
+  cargo llvm-cov clean --workspace
+  cargo llvm-cov --no-report --workspace \
+    --exclude gecko-wasm --exclude gecko-lua-wasm
+  ignore='(tests?/|gecko-wasm|gecko-lua-wasm)'
+  cargo llvm-cov report --lcov --output-path "$out/kernel.lcov" \
+    --ignore-filename-regex "$ignore"
+  [ "$check" = yes ] || cargo llvm-cov report --html \
+    --output-dir "$out/kernel" --ignore-filename-regex "$ignore"
+  python3 tools/coverage.py "$out/kernel.lcov" \
+    --label "kernel coverage" --badge "$out/kernel-badge.json" \
+    --floor "$FLOOR_KERNEL" --worst 8
+fi
 
-echo "── the page, headless and in a browser (V8) ──────────────────"
-# Both suites, merged: the unit tests reach the decoding and the scene, the
-# browser tests reach the gestures, and neither alone is the page.
-(cd front && npx vitest run --coverage)
-(cd front && pkill -f "vite preview" >/dev/null 2>&1 || true)
-(cd front && GECKO_COVERAGE=1 npx playwright test)
-
-echo "── the two numbers ───────────────────────────────────────────"
-python3 tools/coverage.py "$out/kernel.lcov" \
-  --label "kernel coverage" --badge "$out/kernel-badge.json" \
-  --floor "$FLOOR_KERNEL" --worst 5
-python3 tools/coverage.py front/coverage/unit/lcov.info front/coverage/e2e/lcov.info \
-  --label "page coverage" --badge "$out/page-badge.json" \
-  --floor "$FLOOR_PAGE" --worst 5
+if [ "$half" = page ] || [ "$half" = both ]; then
+  echo "── the page, headless and in a browser (V8) ──────────────────"
+  # Both suites, merged: the unit tests reach the decoding and the scene,
+  # the browser tests reach the gestures, and neither alone is the page.
+  # A stale preview server would serve a stale bundle to both.
+  pkill -f "vite preview" >/dev/null 2>&1 || true
+  (cd front && npx vitest run --coverage)
+  (cd front && GECKO_COVERAGE=1 npx playwright test)
+  python3 tools/coverage.py front/coverage/unit/lcov.info front/coverage/e2e/lcov.info \
+    --label "page coverage" --badge "$out/page-badge.json" \
+    --floor "$FLOOR_PAGE" --worst 8
+  [ "$check" = yes ] || { rm -rf "$out/page"; cp -R front/coverage "$out/page"; }
+fi
 
 if [ "$check" = no ]; then
-  cp -R front/coverage "$out/page"
   echo
-  echo "the reports: $out/kernel/html/index.html"
-  echo "             $out/page/e2e/index.html"
+  # `if`, not `[ … ] && echo`: under `set -e` a false test as the last
+  # command of the script is the script's exit status, and a run that
+  # measured everything would report failure for having nothing to print.
+  if [ -d "$out/kernel" ]; then
+    echo "the kernel's report: $out/kernel/html/index.html"
+  fi
+  if [ -d "$out/page" ]; then
+    echo "the page's report:   $out/page/e2e/index.html"
+  fi
 fi

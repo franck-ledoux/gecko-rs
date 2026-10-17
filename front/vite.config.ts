@@ -19,5 +19,18 @@ export default defineConfig({
     strictPort: true,
     proxy: files ? { "/file": { target: `http://127.0.0.1:${files}` } } : undefined,
   },
-  build: { target: "es2022", outDir: "dist", sourcemap: true },
+  build: {
+    target: "es2022",
+    outDir: "dist",
+    sourcemap: true,
+    // Unminified for a coverage run, and only then. V8 counts byte ranges
+    // in what the browser loaded: minified, those ranges map back onto a
+    // *fraction* of each source line, so the browser's numbers and the
+    // headless ones would be shares of two different denominators and
+    // could not be merged. Unminified, both measure the same lines.
+    //
+    // The same caveat as the kernel's: this is the same source, built
+    // another way.
+    minify: process.env.GECKO_COVERAGE ? false : "esbuild",
+  },
 });

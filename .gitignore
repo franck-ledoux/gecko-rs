@@ -7,6 +7,7 @@ front/artifacts
 site
 front/test-results
 front/playwright-report
+front/coverage
 __pycache__
 front/src/lua/*.js
 front/src/lua/*.wasm

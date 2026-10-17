@@ -5,6 +5,12 @@ edition.workspace = true
 license.workspace = true
 description = "The local launcher: serve the page, or run a script without one."
 
+# The library is where `files` and `serve` live, so the tests link the same
+# code the binary does rather than a second copy of the source.
+[lib]
+name = "gecko_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "gecko"
 path = "src/main.rs"

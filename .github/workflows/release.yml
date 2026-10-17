@@ -1,0 +1,144 @@
+# A tag, and the things a reader can download.
+#
+# Fired by pushing `v0.1.0` and nothing else: a release costs minutes and
+# publishes something permanent, so it is never a side effect of a commit.
+#
+# The page is built **once** — it needs the Emscripten SDK, both wasm modules
+# and the bundler — and the three binaries then download it as an artefact.
+# `include_dir!` bakes it into each one, so a binary is the whole application:
+# no server to install, no files to put anywhere.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  page:
+    name: The page, built once
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown, wasm32-unknown-emscripten
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: front/package-lock.json
+
+      - name: Install the Emscripten SDK
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+          actions-cache-folder: emsdk-cache
+
+      - name: The kernel, the interpreter, and the bundle
+        run: |
+          npm ci --no-audit --no-fund
+          (cd front && npm ci --no-audit --no-fund)
+          ./build-wasm.sh
+          ./build-lua.sh
+          (cd front && npm run build)
+
+      # For the three binary jobs to bake in.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: page
+          path: front/dist
+          retention-days: 1
+
+      # And for anyone who would rather host it themselves: the whole
+      # application as static files, which is all it ever needed.
+      - name: Zip it for the release
+        run: |
+          mkdir -p release
+          (cd front/dist && zip -qr ../../release/gecko-web.zip .)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: asset-web
+          path: release
+          retention-days: 1
+
+  binaries:
+    name: ${{ matrix.asset }}
+    needs: page
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset: gecko-linux-x86_64
+            built: target/release/gecko
+          - os: macos-latest
+            asset: gecko-macos-arm64
+            built: target/release/gecko
+          - os: windows-latest
+            asset: gecko-windows-x86_64.exe
+            built: target/release/gecko.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # The page the binary serves, built by the job above rather than three
+      # times over: the Emscripten SDK is the expensive part, and it has
+      # nothing to do with which machine the binary is for.
+      - uses: actions/download-artifact@v4
+        with:
+          name: page
+          path: front/dist
+
+      - name: Build the binary
+        run: cargo build --release -p gecko-cli
+
+      - name: Name it after the machine it is for
+        shell: bash
+        run: |
+          mkdir -p release
+          cp "${{ matrix.built }}" "release/${{ matrix.asset }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: asset-${{ matrix.asset }}
+          path: release
+          retention-days: 1
+
+  publish:
+    name: Publish the release
+    needs: [page, binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: asset-*
+          merge-multiple: true
+          path: release
+
+      # The notes are the changelog's own section for this version. One
+      # description of what changed, not two that can disagree.
+      - name: Take the notes out of the changelog
+        run: python3 tools/release_notes.py "${GITHUB_REF_NAME#v}" > notes.md
+
+      - name: Create it
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file notes.md \
+            release/*

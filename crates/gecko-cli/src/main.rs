@@ -11,8 +11,7 @@
 //! The same Lua API either way — one binding, in `gecko-lua`, over a trait
 //! four methods wide — so a script that works in the console works here.
 
-mod files;
-mod serve;
+use gecko_cli::serve;
 
 use std::process::ExitCode;
 use std::rc::Rc;

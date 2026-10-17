@@ -3,7 +3,7 @@
  * and needs no server for either.
  */
 
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./coverage";
 import { readFile } from "node:fs/promises";
 
 /**
