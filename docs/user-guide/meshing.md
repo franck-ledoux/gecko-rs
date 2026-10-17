@@ -82,8 +82,8 @@ have since edited is a lie, and a lie that looks right; press `E` again.
 `gecko-2026-10-15-183012.vtk` — and meshes first if nothing has been meshed
 since the last edit, so the file is always of the blocking as it now stands.
 
-```python
-s.export_vtk("mesh.vtk", segments=12)
+```lua
+gecko.export_vtk("mesh.vtk")
 ```
 
 An unstructured grid of cells of type 12, `VTK_HEXAHEDRON`, in the usual VTK

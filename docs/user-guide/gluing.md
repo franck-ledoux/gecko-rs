@@ -25,26 +25,27 @@ Dragging from a face turns the view, as it always did; only a click that does
 not move selects. And a node handle still wins wherever the two overlap, even
 with an opaque face in front of it.
 
-## From Python
+## From a script
 
 A script has no mouse, so it names a face from the listing:
 
-```python
-import gecko
+```lua
+gecko.create_cube{ origin = {0, 0, 0}, size = 1 }
+gecko.create_cube{ origin = {1.5, 0, 0}, size = 1 }
 
-s = gecko.Session()
-s.create_cube([0, 0, 0], 1.0)
-s.create_cube([1.5, 0, 0], 1.0)
+-- The two faces that look at each other, found by where they are.
+local pair = {}
+for _, face in ipairs(gecko.faces()) do
+  if math.abs(face.centre[1] - 1) < 1e-9 or math.abs(face.centre[1] - 1.5) < 1e-9 then
+    pair[#pair + 1] = face.id
+  end
+end
 
-blocks = sorted({f["block"] for f in s.faces})
-first = next(f for f in s.faces if f["block"] == blocks[0] and f["centre"][0] == 1.0)
-second = next(f for f in s.faces if f["block"] == blocks[1] and f["centre"][0] == 1.5)
-
-s.glue_faces(first["id"], second["id"])
-s.stats    # {'nodes': 12, 'edges': 20, 'faces': 11, 'blocks': 2}
+gecko.glue_faces(pair[1], pair[2])
+gecko.stats()   -- {nodes = 12, edges = 20, faces = 11, blocks = 2}
 ```
 
-`s.faces` gives each face its stable name, the block it bounds, and its
+`gecko.faces()` gives each face its stable name, the block it bounds, and its
 centre. A face with a block on each side is listed once per block, as the
 surface is.
 
@@ -84,7 +85,7 @@ the quadrangles are listed per (face, block) pair, so a pick knows which
 block's side it landed on — even for a face that has one on each. The status
 line names the block before you commit to it.
 
-From Python, `s.remove_block(id)`, with the names from `s.blocks`.
+From a script, `gecko.remove_block(id)`, with the names from `gecko.blocks()`.
 
 **Whatever it was glued to keeps its own cells.** They are split off on the
 way out, not deleted with it: the neighbour comes out of the operation a
@@ -144,5 +145,5 @@ lands back where it started.
 A face inside the model is refused. It has a block on each side already, and
 nothing left to be glued to.
 
-From Python, `s.extrude_face(face, block, height)`, with the `(face, block)`
-pair `s.faces` reports.
+From a script, `gecko.extrude_face(face, block, height)`, with the `(face, block)`
+pair `gecko.faces()` reports.

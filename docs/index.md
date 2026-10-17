@@ -8,59 +8,65 @@ The block structure sits on a **3-dimensional combinatorial map**
 the Rust counterpart of what `CGAL::Combinatorial_map` gives the C++ version:
 darts, attributes at every dimension, merge and split functors.
 
-One kernel, reachable two ways.
-
-## Static mode
-
-Files you drop on a web site. The page carries the kernel, compiled to wasm.
-No server, no Python, nothing to install.
+One kernel, in one place: **the page**. It carries the kernel compiled to
+wasm and a Lua 5.4 interpreter beside it, so the mouse and a script drive the
+same session with nothing between them and no server anywhere.
 
 ```bash
-./build-wasm.sh
-cd front && npm install && npm run dev
+./setup     # once: toolchains, emsdk, node packages
+./build     # the kernel, the interpreter, the page, the binary
+./gecko     # open it
 ```
 
-See [Static mode](user-guide/static.md).
+```lua
+gecko.load_geometry("cylinder.msh")
+gecko.box_geometry{ margin = 0 }
 
-## Station mode
+for _, node in ipairs(gecko.nodes()) do
+  if node.pos[3] < 0.5 then
+    gecko.classify_node(node.id, 1, 201)
+  end
+end
 
-A local Python module holds the kernel and serves it to a browser. The console
-and the mouse drive the same live object, in both directions.
-
-```python
-import gecko
-
-s = gecko.Session()
-s.create_cube([0, 0, 0], 1.0)
-s.show()                        # opens a tab; the view follows the console
-
-n = s.nodes[0]                  # {"id": …, "pos": [x, y, z]}
-s.move_node(n["id"], [0.5, -0.2, 0])
+gecko.mesh{ segments = 8 }
+gecko.export_vtk("mesh.vtk")
 ```
 
-See [Station mode](user-guide/station.md) and the [Python API](user-guide/python.md).
+The same script runs in the console, in the page, or from a terminal with
+`gecko run script.lua` — and a test checks the two hosts produce the same
+bytes. See [Scripting](user-guide/scripting.md).
 
 ## What it can do today
 
-Create a cube, and move a node — from Rust, from Python, and from the page,
-where nodes are dragged with the mouse.
+- **build**: a cube, a box round a geometry, a block grown out of a face;
+- **edit**: glue, remove, cut a sheet, remove a sheet and close the gap,
+  pillow a patch — with five steps of undo, settable;
+- **read a geometry**: a gmsh surface mesh (MSH 2.2) as a boundary
+  representation — surfaces, curves and corners;
+- **classify**: put nodes on corners, curves and surfaces by hand or by
+  proximity, slide them along what they follow, freeze them;
+- **mesh**: every block discretised by transfinite interpolation, following
+  the geometry the cells are classified on, written out as VTK legacy;
+- **look at it**: every group shown, coloured, faded and shrunk on its own,
+  one view or four, with a picture saved at publication size;
+- **script**: loops and conditionals over all of it, and the session's own
+  history written back out as Lua.
 
-That is deliberately little. The project is being rebuilt one step at a time,
-and each step settles a design question before the next is piled on top. What
-is not there yet: undo, geometric validity, classification, Bézier curves and
-Coons surfaces, any other topological operation (sewing, sheet cutting,
-deletion, pillowing), meshing, file reading.
+Not there yet: geometric validity, Bézier curves and Coons surfaces for the
+blocking itself, grading along an edge.
 
 ## Where to look next
 
+- [The interface](user-guide/interface.md) — the toolbar, the keys, the panels.
+- [Scripting](user-guide/scripting.md) — the console, the API, `gecko run`.
 - [Architecture](developer-guide/architecture.md) — why there is one door into
   the kernel, and what that buys.
 - [Building](developer-guide/building.md) — the toolchain and the one command
   that runs everything.
-- [Testing](developer-guide/testing.md) — four tiers, and what belongs in each.
+- [Testing](developer-guide/testing.md) — the tiers, and what belongs in each.
 
 ## Licence
 
-AGPL-3.0-only, like GECKO. Section 13 is not decoration here: the station
-**serves the interface over HTTP**, so anyone deploying a modified version owes
-its source to the people connecting to it.
+AGPL-3.0-only, like GECKO. Section 13 is not decoration here: `gecko`
+**serves the interface over HTTP**, so anyone deploying a modified version
+owes its source to the people connecting to it.

@@ -29,7 +29,6 @@ import {
   type Axis,
 } from "../../src/axes";
 import { DEFAULTS, PRESETS } from "../../src/theme";
-import { readProbe } from "../../src/mode";
 import { colourForId, FAMILY, hexToRgb, hslToHex, UNNAMED } from "../../src/palette";
 import { buildSurface, edgeSegments, meshEdges, quadsToDraw } from "../../src/surface";
 import { geomBounds, geomCorners, geomCurves, geomSurfaces, GEOM_GROUPS } from "../../src/geometry";
@@ -59,14 +58,14 @@ beforeAll(async () => {
 describe("the mesh buffer", () => {
   it("carries the skin, and nothing inside it", async () => {
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
 
     // Empty until something is meshed, and a buffer rather than a special
     // case for the caller.
-    expect(decodeMesh(await kernel.mesh()).quads.length).toBe(0);
+    expect(decodeMesh(kernel.mesh()).quads.length).toBe(0);
 
-    await kernel.apply({ op: "mesh", segments: 3 });
-    const view = decodeMesh(await kernel.mesh());
+    kernel.apply({ op: "mesh", segments: 3 });
+    const view = decodeMesh(kernel.mesh());
     // Six faces of nine, and the 56 nodes on the outside of a 4 × 4 × 4
     // lattice rather than the 64 of the whole of it.
     expect(view.quads.length / 4).toBe(54);
@@ -82,15 +81,15 @@ describe("the mesh buffer", () => {
     }
 
     // And it goes when the blocking changes under it.
-    await kernel.apply({ op: "create_cube", origin: [3, 0, 0], size: 1 });
-    expect(decodeMesh(await kernel.mesh()).quads.length).toBe(0);
+    kernel.apply({ op: "create_cube", origin: [3, 0, 0], size: 1 });
+    expect(decodeMesh(kernel.mesh()).quads.length).toBe(0);
   });
 
   it("draws one line per side of the skin, however many quadrangles share it", async () => {
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
-    await kernel.apply({ op: "mesh", segments: 2 });
-    const view = decodeMesh(await kernel.mesh());
+    kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    kernel.apply({ op: "mesh", segments: 2 });
+    const view = decodeMesh(kernel.mesh());
 
     // A 2 × 2 × 2 mesh has 24 quadrangles of skin; their sides are the 48
     // edges of the cube's own surface grid, not 96.
@@ -102,8 +101,8 @@ describe("the mesh buffer", () => {
 describe("the binary transport", () => {
   it("decodes the buffer the kernel encodes", async () => {
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "add_block", corners: CUBE });
-    const view = decodeView(await kernel.view());
+    kernel.apply({ op: "add_block", corners: CUBE });
+    const view = decodeView(kernel.view());
 
     expect(view.positions.length / 3).toBe(8);
     expect(view.names.length).toBe(8);
@@ -121,16 +120,16 @@ describe("the binary transport", () => {
     expect(() => decodeView(new Uint8Array(64))).toThrow(/bad magic/);
 
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "add_block", corners: CUBE });
-    const good = await kernel.view();
+    kernel.apply({ op: "add_block", corners: CUBE });
+    const good = kernel.view();
     expect(() => decodeView(good.slice(0, good.length - 8))).toThrow(/declares/);
   });
 
   it("keeps precision for a model far from the origin", async () => {
     const far = CUBE.map((p) => [p[0] + 1e6, p[1] + 2e6, p[2] - 5e5]);
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "add_block", corners: far });
-    const view = decodeView(await kernel.view());
+    kernel.apply({ op: "add_block", corners: far });
+    const view = decodeView(kernel.view());
 
     expect([...view.positions].every((x) => Math.abs(x) <= 0.5 + 1e-6)).toBe(true);
     // Recompose f64 centre + f32 offset and land back on the cube.
@@ -145,8 +144,7 @@ describe("the binary transport", () => {
 describe("the static kernel", () => {
   it("reports what it did, and refuses what it cannot do", async () => {
     const kernel = new WasmKernel();
-    expect(kernel.mode).toBe("static");
-    expect(await kernel.stats()).toEqual({
+    expect(kernel.stats()).toEqual({
       nodes: 0,
       edges: 0,
       faces: 0,
@@ -157,10 +155,10 @@ describe("the static kernel", () => {
       classified: { nodes: 0, edges: 0, faces: 0, frozen: 0 },
     });
 
-    const reply = await kernel.apply({ op: "add_block", corners: CUBE });
+    const reply = kernel.apply({ op: "add_block", corners: CUBE });
     expect(reply.ok).toBe(true);
     expect(reply.viewChanged).toBe(true);
-    expect(await kernel.stats()).toEqual({
+    expect(kernel.stats()).toEqual({
       nodes: 8,
       edges: 12,
       faces: 6,
@@ -171,11 +169,11 @@ describe("the static kernel", () => {
       classified: { nodes: 0, edges: 0, faces: 0, frozen: 0 },
     });
 
-    const bad = await kernel.apply({ op: "nonesuch" });
+    const bad = kernel.apply({ op: "nonesuch" });
     expect(bad.ok).toBe(false);
     expect(bad.viewChanged).toBe(false);
     // A refused command must leave the session alone.
-    expect(await kernel.stats()).toEqual({
+    expect(kernel.stats()).toEqual({
       nodes: 8,
       edges: 12,
       faces: 6,
@@ -193,15 +191,15 @@ describe("the scene is a function of the view", () => {
     const viewer = new Viewer(new NullEngine());
     const kernel = new WasmKernel();
 
-    await kernel.apply({ op: "add_block", corners: CUBE });
-    viewer.setView(decodeView(await kernel.view()));
+    kernel.apply({ op: "add_block", corners: CUBE });
+    viewer.setView(decodeView(kernel.view()));
     expect(viewer.nodeCount).toBe(8);
     expect(viewer.edgeCount).toBe(12);
 
     // A second block, standing apart: the counts follow the kernel, not a
     // guess made here.
-    await kernel.apply({ op: "add_block", corners: CUBE.map((p) => [p[0] + 3, p[1], p[2]]) });
-    viewer.setView(decodeView(await kernel.view()));
+    kernel.apply({ op: "add_block", corners: CUBE.map((p) => [p[0] + 3, p[1], p[2]]) });
+    viewer.setView(decodeView(kernel.view()));
     expect(viewer.nodeCount).toBe(16);
     expect(viewer.edgeCount).toBe(24);
     // The rebasing origin has not followed the new cube. It is there so f32
@@ -213,8 +211,8 @@ describe("the scene is a function of the view", () => {
   it("frames the model from its bounds, and leaves the direction alone", async () => {
     const viewer = new Viewer(new NullEngine());
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "add_block", corners: CUBE });
-    viewer.setView(decodeView(await kernel.view()));
+    kernel.apply({ op: "add_block", corners: CUBE });
+    viewer.setView(decodeView(kernel.view()));
 
     // Looking at it from somewhere deliberate, and from too far away.
     viewer.camera.alpha = 1.234;
@@ -239,8 +237,8 @@ describe("the scene is a function of the view", () => {
     // rather than trusted.
     const viewer = new Viewer(new NullEngine());
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "create_cube", origin: [7, -3, 5], size: 2 });
-    viewer.setView(decodeView(await kernel.view()));
+    kernel.apply({ op: "create_cube", origin: [7, -3, 5], size: 2 });
+    viewer.setView(decodeView(kernel.view()));
 
     viewer.camera.alpha = 0.5;
     viewer.camera.beta = 1.1;
@@ -252,8 +250,8 @@ describe("the scene is a function of the view", () => {
   it("glides rather than jumping, unless told to jump", async () => {
     const viewer = new Viewer(new NullEngine());
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "add_block", corners: CUBE });
-    viewer.setView(decodeView(await kernel.view()));
+    kernel.apply({ op: "add_block", corners: CUBE });
+    viewer.setView(decodeView(kernel.view()));
     viewer.camera.radius = 99;
 
     viewer.frameAll();
@@ -281,19 +279,19 @@ describe("the contract the other mode has to meet", () => {
       { op: "add_block", corners: CUBE.map((p) => [p[0], p[1] + 3, p[2] - 1]) },
     ];
     for (const command of commands) {
-      expect((await kernel.apply(command)).ok).toBe(true);
+      expect((kernel.apply(command)).ok).toBe(true);
     }
     // Move a node too, naming it the way a client does — out of the view.
-    const name = decodeView(await kernel.view()).names[2];
+    const name = decodeView(kernel.view()).names[2];
     const move = { op: "move_node", node: name, to: [0.25, -0.5, 1.75] };
-    expect((await kernel.apply(move)).ok).toBe(true);
+    expect((kernel.apply(move)).ok).toBe(true);
     commands.push(move);
 
     // And a glue, because it is the first operation that walks an orbit and
     // orders what it finds. Non-determinism there would show up here and
     // nowhere else — which is exactly how an earlier prototype's HashSet was
     // caught.
-    const view = decodeView(await kernel.view());
+    const view = decodeView(kernel.view());
     const centre = (q: number) => {
       const at = [0, 0, 0];
       for (let k = 0; k < 4; k++)
@@ -314,13 +312,13 @@ describe("the contract the other mode has to meet", () => {
         }
       }
     const glue = { op: "glue_faces", first: pair[0], second: pair[1] };
-    expect((await kernel.apply(glue)).ok).toBe(true);
+    expect((kernel.apply(glue)).ok).toBe(true);
     commands.push(glue);
 
     // And a removal, which walks an orbit, unsews, and hands darts back to
     // the pool. Whether the pool hands them out again in the same order is
     // exactly the kind of thing only this test would notice.
-    const standing = decodeView(await kernel.view());
+    const standing = decodeView(kernel.view());
     // The block that was not part of the glue: the one whose faces are all
     // still on the boundary.
     const glued = new Set(
@@ -330,7 +328,7 @@ describe("the contract the other mode has to meet", () => {
     );
     const lonely = [...standing.quadBlocks].find((b) => !glued.has(b))!;
     const remove = { op: "remove_block", block: lonely };
-    expect((await kernel.apply(remove)).ok).toBe(true);
+    expect((kernel.apply(remove)).ok).toBe(true);
     commands.push(remove);
 
     // And a cut taken back. An undo puts a copy of the whole structure
@@ -339,26 +337,26 @@ describe("the contract the other mode has to meet", () => {
     // here with different bytes, and only this test would see it.
     const cut = {
       op: "split_sheet",
-      edge: decodeView(await kernel.view()).edgeNames[0],
+      edge: decodeView(kernel.view()).edgeNames[0],
       at: 0.5,
     };
-    expect((await kernel.apply(cut)).ok).toBe(true);
+    expect((kernel.apply(cut)).ok).toBe(true);
     commands.push(cut);
-    expect((await kernel.stats()).blocks).toBe(4);
+    expect((kernel.stats()).blocks).toBe(4);
 
     const undo = { op: "undo" };
-    expect((await kernel.apply(undo)).ok).toBe(true);
+    expect((kernel.apply(undo)).ok).toBe(true);
     commands.push(undo);
 
     // And a mesh, which is the one command whose answer is a hundred
     // times the size of the question. Both façades have to agree about
     // the count, and `test_modes.py` compares the stats.
     const meshed = { op: "mesh", segments: 2 };
-    expect((await kernel.apply(meshed)).ok).toBe(true);
+    expect((kernel.apply(meshed)).ok).toBe(true);
     commands.push(meshed);
 
-    const bytes = await kernel.view();
-    const stats = await kernel.stats();
+    const bytes = kernel.view();
+    const stats = kernel.stats();
     expect(stats.blocks).toBe(2);
 
     mkdirSync(new URL("../../artifacts/", import.meta.url), { recursive: true });
@@ -390,23 +388,23 @@ describe("creating a cube and moving a node", () => {
 
   it("refuses a cube with no size, and changes nothing", async () => {
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
-    const before = await kernel.view();
+    kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    const before = kernel.view();
 
-    const reply = await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 0 });
+    const reply = kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 0 });
     expect(reply.ok).toBe(false);
     expect(reply.message).toMatch(/strictly positive/);
-    expect(await kernel.view()).toEqual(before);
+    expect(kernel.view()).toEqual(before);
   });
 
   it("moves the node the view named, and only that one", async () => {
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
-    const before = decodeView(await kernel.view());
+    kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    const before = decodeView(kernel.view());
     const name = before.names[5];
 
-    expect((await kernel.apply({ op: "move_node", node: name, to: [7, 8, 9] })).ok).toBe(true);
-    const after = decodeView(await kernel.view());
+    expect((kernel.apply({ op: "move_node", node: name, to: [7, 8, 9] })).ok).toBe(true);
+    const after = decodeView(kernel.view());
 
     // The names are the thing that survives; the order need not.
     expect([...after.names].sort()).toEqual([...before.names].sort());
@@ -423,11 +421,11 @@ describe("creating a cube and moving a node", () => {
 
   it("refuses to move a node that does not exist", async () => {
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
-    const before = await kernel.view();
-    const reply = await kernel.apply({ op: "move_node", node: 4242, to: [1, 2, 3] });
+    kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    const before = kernel.view();
+    const reply = kernel.apply({ op: "move_node", node: 4242, to: [1, 2, 3] });
     expect(reply.ok).toBe(false);
-    expect(await kernel.view()).toEqual(before);
+    expect(kernel.view()).toEqual(before);
   });
 });
 
@@ -435,8 +433,8 @@ describe("the scene carries the kernel's names", () => {
   it("gives every sphere a name, and finds it back from the screen", async () => {
     const viewer = new Viewer(new NullEngine());
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
-    const view = decodeView(await kernel.view());
+    kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    const view = decodeView(kernel.view());
     viewer.setView(view);
     viewer.frameAll();
     viewer.render();
@@ -455,8 +453,8 @@ describe("the scene carries the kernel's names", () => {
     const viewer = new Viewer(new NullEngine());
     const kernel = new WasmKernel();
     // Far from the origin, so the rebasing has to be undone correctly.
-    await kernel.apply({ op: "create_cube", origin: [1000, 0, 0], size: 1 });
-    const view = decodeView(await kernel.view());
+    kernel.apply({ op: "create_cube", origin: [1000, 0, 0], size: 1 });
+    const view = decodeView(kernel.view());
     viewer.setView(view);
 
     const corners = Array.from(view.names).map((n) => viewer.nodePosition(n)!);
@@ -513,8 +511,8 @@ describe("the orientation gizmo", () => {
   it("lives on its own layer, so neither camera draws the other's meshes", async () => {
     const viewer = new Viewer(new NullEngine());
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
-    viewer.setView(decodeView(await kernel.view()));
+    kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    viewer.setView(decodeView(kernel.view()));
 
     // Two cameras, and the pointer picking is pinned to the main one — the
     // drag behaviours run on that, and must not see the corner.
@@ -543,8 +541,8 @@ describe("the orientation gizmo", () => {
   it("can be hidden, and snaps the camera when asked", async () => {
     const viewer = new Viewer(new NullEngine());
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
-    viewer.setView(decodeView(await kernel.view()));
+    kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    viewer.setView(decodeView(kernel.view()));
 
     expect(viewer.axes.visible).toBe(true);
     viewer.axes.setVisible(false);
@@ -562,8 +560,8 @@ describe("the orientation gizmo", () => {
   it("finds an axis back from the corner it was drawn in", async () => {
     const viewer = new Viewer(new NullEngine());
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
-    viewer.setView(decodeView(await kernel.view()));
+    kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    viewer.setView(decodeView(kernel.view()));
     viewer.frameAll();
     viewer.render();
 
@@ -581,8 +579,8 @@ describe("the theme", () => {
   it("reaches the scene", async () => {
     const viewer = new Viewer(new NullEngine());
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
-    viewer.setView(decodeView(await kernel.view()));
+    kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    viewer.setView(decodeView(kernel.view()));
 
     viewer.applyPrefs({ ...DEFAULTS, theme: PRESETS.light });
     expect(viewer.scene.clearColor.toHexString()).toBe(
@@ -597,7 +595,7 @@ describe("the theme", () => {
     // arrives afterwards.
     const fresh = new Viewer(new NullEngine());
     fresh.applyPrefs({ ...DEFAULTS, theme: PRESETS.light });
-    fresh.setView(decodeView(await kernel.view()));
+    fresh.setView(decodeView(kernel.view()));
     expect(
       (fresh.scene.getMeshByName("node0")!.material as StandardMaterial).emissiveColor.toHexString(),
     ).toBe(Color3.FromHexString(PRESETS.light.nodes).toHexString());
@@ -609,9 +607,9 @@ describe("node handles", () => {
     const viewer = new Viewer(new NullEngine());
     const kernel = new WasmKernel();
     for (let i = 0; i < cubes; i++) {
-      await kernel.apply({ op: "create_cube", origin: [i * 1.5, 0, 0], size: 1 });
+      kernel.apply({ op: "create_cube", origin: [i * 1.5, 0, 0], size: 1 });
     }
-    viewer.setView(decodeView(await kernel.view()));
+    viewer.setView(decodeView(kernel.view()));
     viewer.frameAll();
     viewer.render();
     return viewer;
@@ -641,8 +639,8 @@ describe("node handles", () => {
     const viewer = new Viewer(new NullEngine());
     for (const size of [0.01, 1, 1000]) {
       const kernel = new WasmKernel();
-      await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size });
-      viewer.setView(decodeView(await kernel.view()));
+      kernel.apply({ op: "create_cube", origin: [0, 0, 0], size });
+      viewer.setView(decodeView(kernel.view()));
       viewer.frameAll();
       viewer.render();
       expect(apparent(viewer)).toBeCloseTo(HANDLE_PIXELS, 6);
@@ -670,40 +668,13 @@ describe("which camera is the active one", () => {
     // camera's controls and to build the ray the drag follows.
     const viewer = new Viewer(new NullEngine());
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
-    viewer.setView(decodeView(await kernel.view()));
+    kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    viewer.setView(decodeView(kernel.view()));
 
     viewer.render();
     expect(viewer.scene.activeCamera).toBe(viewer.camera);
     viewer.render();
     expect(viewer.scene.activeCamera).toBe(viewer.camera);
-  });
-});
-
-describe("reading the mode probe", () => {
-  it("knows a station when it hears one", () => {
-    expect(readProbe(200, "station")).toBe("station");
-    // The station's own server adds no newline; a proxy might.
-    expect(readProbe(200, "station\n")).toBe("station");
-  });
-
-  it("knows a static host", () => {
-    // No such route: the deployed site, which carries its own kernel.
-    expect(readProbe(404, "not found")).toBe("static");
-    // A host that serves index.html for anything, which is why the body is
-    // read at all rather than just the code.
-    expect(readProbe(200, "<!doctype html>")).toBe("static");
-  });
-
-  it("waits when a station is promised and missing", () => {
-    // This is the one. Vite forwards `mode` to the station, so with no station
-    // behind it the answer is a 502/500 from the proxy — not "no station
-    // here". Read as static, the page starts a kernel of its own and then
-    // ignores every command typed in Python, while looking perfectly alive.
-    expect(readProbe(500, "")).toBe("waiting");
-    expect(readProbe(502, "Error: connect ECONNREFUSED")).toBe("waiting");
-    // And a fetch that threw, which this reports as status 0.
-    expect(readProbe(0, "")).toBe("waiting");
   });
 });
 
@@ -782,8 +753,8 @@ describe("choosing which quadrangles to draw", () => {
 
   it("keeps a face on the boundary either way", async () => {
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
-    const view = decodeView(await kernel.view());
+    kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    const view = decodeView(kernel.view());
     // A free-standing block has six faces and none of them is shared, so
     // hiding internal faces hides nothing.
     expect(quadsToDraw(view, "face", true)).toHaveLength(6);
@@ -794,8 +765,8 @@ describe("choosing which quadrangles to draw", () => {
 describe("building a surface", () => {
   const cube = async () => {
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
-    return decodeView(await kernel.view());
+    kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    return decodeView(kernel.view());
   };
 
   const options = (over: Partial<Parameters<typeof buildSurface>[1]> = {}) => ({
@@ -869,8 +840,8 @@ describe("building a surface", () => {
 describe("shrinking the edges", () => {
   it("pulls each one towards its own midpoint", async () => {
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
-    const view = decodeView(await kernel.view());
+    kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    const view = decodeView(kernel.view());
 
     const whole = edgeSegments(view, 1);
     const half = edgeSegments(view, 0.5);
@@ -891,9 +862,9 @@ describe("the surfaces in the scene", () => {
   const show = async (prefs: Parameters<Viewer["applyPrefs"]>[0]) => {
     const viewer = new Viewer(new NullEngine());
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
     viewer.applyPrefs(prefs);
-    viewer.setView(decodeView(await kernel.view()));
+    viewer.setView(decodeView(kernel.view()));
     return viewer;
   };
 
@@ -946,10 +917,10 @@ describe("the surfaces in the scene", () => {
     const viewer = new Viewer(new NullEngine());
     const kernel = new WasmKernel();
     for (const x of [0, 2, 4]) {
-      await kernel.apply({ op: "create_cube", origin: [x, 0, 0], size: 1 });
+      kernel.apply({ op: "create_cube", origin: [x, 0, 0], size: 1 });
     }
     viewer.applyPrefs({ ...DEFAULTS, blocks: { ...DEFAULTS.blocks, visible: true } });
-    viewer.setView(decodeView(await kernel.view()));
+    viewer.setView(decodeView(kernel.view()));
 
     expect(viewer.meshCount("faces")).toBe(3);
     expect(viewer.meshCount("blocks")).toBe(3);
@@ -1060,12 +1031,12 @@ describe("changing a setting without rebuilding the scene", () => {
   const shown = async (blocks = false) => {
     const viewer = new Viewer(new NullEngine());
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
     viewer.applyPrefs({
       ...DEFAULTS,
       blocks: { ...DEFAULTS.blocks, visible: blocks },
     });
-    viewer.setView(decodeView(await kernel.view()));
+    viewer.setView(decodeView(kernel.view()));
     return viewer;
   };
 
@@ -1147,10 +1118,10 @@ describe("how close the camera may get", () => {
   it("stops short of the model rather than passing through it", async () => {
     const viewer = new Viewer(new NullEngine());
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
     // No frameAll: a station tab is told the kernel moved and redraws
     // without reframing, and the limits still have to be right.
-    viewer.setView(decodeView(await kernel.view()));
+    viewer.setView(decodeView(kernel.view()));
 
     const diagonal = Math.sqrt(3);
     expect(viewer.camera.lowerRadiusLimit).toBeCloseTo(diagonal * CLOSEST_APPROACH, 5);
@@ -1190,10 +1161,10 @@ describe("picking faces to glue", () => {
   const twoCubes = async () => {
     const viewer = new Viewer(new NullEngine());
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
-    await kernel.apply({ op: "create_cube", origin: [1, 0, 0], size: 1 });
+    kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    kernel.apply({ op: "create_cube", origin: [1, 0, 0], size: 1 });
     viewer.applyPrefs(DEFAULTS);
-    viewer.setView(decodeView(await kernel.view()));
+    viewer.setView(decodeView(kernel.view()));
     return { viewer, kernel };
   };
 
@@ -1231,7 +1202,7 @@ describe("picking faces to glue", () => {
 
   it("glues, and the model becomes one object", async () => {
     const { viewer, kernel } = await twoCubes();
-    const view = decodeView(await kernel.view());
+    const view = decodeView(kernel.view());
 
     // The two faces that meet at x = 1, found the way a mouse would: by
     // where they are.
@@ -1243,14 +1214,14 @@ describe("picking faces to glue", () => {
     const meeting = [...view.quadFaces.keys()].filter((q) => Math.abs(centreX(q) - 1) < 1e-6);
     expect(meeting).toHaveLength(2);
 
-    const reply = await kernel.apply({
+    const reply = kernel.apply({
       op: "glue_faces",
       first: view.quadFaces[meeting[0]],
       second: view.quadFaces[meeting[1]],
     });
     expect(reply.ok, reply.message).toBe(true);
 
-    const after = decodeView(await kernel.view());
+    const after = decodeView(kernel.view());
     expect(after.positions.length / 3).toBe(12);
     expect(after.edges.length / 2).toBe(20);
     expect(after.quads.length / 4).toBe(12);
@@ -1281,9 +1252,9 @@ describe("the frame a screen position is reported in", () => {
     }
     const viewer = new Viewer(engine);
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
     viewer.applyPrefs(DEFAULTS);
-    viewer.setView(decodeView(await kernel.view()));
+    viewer.setView(decodeView(kernel.view()));
     viewer.frameAll();
     viewer.render();
     return viewer;
@@ -1470,9 +1441,9 @@ describe("lighting up a sheet", () => {
   const cube = async () => {
     const viewer = new Viewer(new NullEngine());
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
+    kernel.apply({ op: "create_cube", origin: [0, 0, 0], size: 1 });
     viewer.applyPrefs(DEFAULTS);
-    viewer.setView(decodeView(await kernel.view()));
+    viewer.setView(decodeView(kernel.view()));
     return { viewer, kernel };
   };
 
@@ -1498,7 +1469,7 @@ describe("lighting up a sheet", () => {
     const names = viewer.edgeNames().slice(0, 2);
     viewer.showSheet(names.map((id) => ({ id, from: [0, 0, 0], to: [1, 0, 0] }) as const));
 
-    viewer.setView(decodeView(await kernel.view()));
+    viewer.setView(decodeView(kernel.view()));
     expect(viewer.highlighted).toEqual(names);
     expect(viewer.scene.getMeshByName("sheet")).not.toBeNull();
 
@@ -1550,7 +1521,7 @@ $EndElements
 
 async function withGeometry() {
   const kernel = new WasmKernel();
-  const reply = await kernel.apply({ op: "load_geometry", msh: SQUARE_MSH, name: "square.msh" });
+  const reply = kernel.apply({ op: "load_geometry", msh: SQUARE_MSH, name: "square.msh" });
   expect(reply.ok, reply.message).toBe(true);
   return kernel;
 }
@@ -1558,7 +1529,7 @@ async function withGeometry() {
 describe("the geometry's own buffer", () => {
   it("decodes what the kernel encodes", async () => {
     const kernel = await withGeometry();
-    const geometry = decodeGeometry(await kernel.geometry());
+    const geometry = decodeGeometry(kernel.geometry());
 
     expect(geometry.positions.length / 3).toBe(4);
     expect(geometry.triangles.length / 3).toBe(2);
@@ -1574,11 +1545,11 @@ describe("the geometry's own buffer", () => {
     // The whole reason for a generation number rather than a flag on an
     // outcome: it is just as right for a change this client did not make.
     const kernel = new WasmKernel();
-    expect((await kernel.stats()).geometry.generation).toBe(0);
-    expect((await kernel.stats()).geometry.surfaces).toBeUndefined();
+    expect((kernel.stats()).geometry.generation).toBe(0);
+    expect((kernel.stats()).geometry.surfaces).toBeUndefined();
 
-    await kernel.apply({ op: "load_geometry", msh: SQUARE_MSH, name: "square.msh" });
-    expect((await kernel.stats()).geometry).toEqual({
+    kernel.apply({ op: "load_geometry", msh: SQUARE_MSH, name: "square.msh" });
+    expect((kernel.stats()).geometry).toEqual({
       generation: 1,
       corners: 4,
       curves: 4,
@@ -1587,8 +1558,8 @@ describe("the geometry's own buffer", () => {
       triangles: 2,
     });
 
-    await kernel.apply({ op: "clear_geometry" });
-    expect((await kernel.stats()).geometry.generation).toBe(2);
+    kernel.apply({ op: "clear_geometry" });
+    expect((kernel.stats()).geometry.generation).toBe(2);
   });
 
   it("hands back something decodable even when there is no geometry", async () => {
@@ -1599,7 +1570,7 @@ describe("the geometry's own buffer", () => {
 
   it("refuses a buffer whose header and body disagree", async () => {
     const kernel = await withGeometry();
-    const bytes = await kernel.geometry();
+    const bytes = kernel.geometry();
     expect(() => decodeGeometry(bytes.slice(0, bytes.length - 4))).toThrow(/bytes/);
     const wrong = new Uint8Array(bytes);
     wrong[4] = 9;
@@ -1610,7 +1581,7 @@ describe("the geometry's own buffer", () => {
 describe("a geometry made into meshes", () => {
   it("gathers triangles into one surface per tag, sharing their nodes", async () => {
     const kernel = await withGeometry();
-    const view = decodeGeometry(await kernel.geometry());
+    const view = decodeGeometry(kernel.geometry());
     const surfaces = geomSurfaces(view);
 
     expect(surfaces).toHaveLength(1);
@@ -1624,7 +1595,7 @@ describe("a geometry made into meshes", () => {
 
   it("keeps each curve and each corner its own thing", async () => {
     const kernel = await withGeometry();
-    const view = decodeGeometry(await kernel.geometry());
+    const view = decodeGeometry(kernel.geometry());
 
     const curves = geomCurves(view);
     expect(curves.map((c) => c.tag)).toEqual([11, 12, 13, 14]);
@@ -1634,7 +1605,7 @@ describe("a geometry made into meshes", () => {
 
   it("reports the extent the camera has to frame", async () => {
     const kernel = await withGeometry();
-    const box = geomBounds(decodeGeometry(await kernel.geometry()))!;
+    const box = geomBounds(decodeGeometry(kernel.geometry()))!;
     expect(box.lo).toEqual([-0.5, -0.5, 0]);
     expect(box.hi).toEqual([0.5, 0.5, 0]);
     expect(geomBounds(decodeGeometry(await new WasmKernel().geometry()))).toBeNull();
@@ -1645,8 +1616,8 @@ describe("the geometry in the scene", () => {
   async function scene() {
     const kernel = await withGeometry();
     const viewer = new Viewer(new NullEngine());
-    viewer.setView(decodeView(await kernel.view()));
-    viewer.setGeometry(decodeGeometry(await kernel.geometry()));
+    viewer.setView(decodeView(kernel.view()));
+    viewer.setGeometry(decodeGeometry(kernel.geometry()));
     return viewer;
   }
 
@@ -1743,12 +1714,12 @@ describe("the geometry in the scene", () => {
     // A geometry with no blocks on it yet is still what there is to see.
     const kernel = await withGeometry();
     const viewer = new Viewer(new NullEngine());
-    viewer.setView(decodeView(await kernel.view()));
+    viewer.setView(decodeView(kernel.view()));
     const empty = viewer.camera.radius;
     viewer.frameAll(true);
     expect(viewer.camera.radius, "nothing to frame yet").toBe(empty);
 
-    viewer.setGeometry(decodeGeometry(await kernel.geometry()));
+    viewer.setGeometry(decodeGeometry(kernel.geometry()));
     viewer.frameAll(true);
     expect(viewer.camera.radius).toBeGreaterThan(1);
   });
@@ -1783,9 +1754,9 @@ describe("aiming an extrusion", () => {
 describe("growing a block out of a face", () => {
   async function cubeScene() {
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "add_block", corners: CUBE });
+    kernel.apply({ op: "add_block", corners: CUBE });
     const viewer = new Viewer(new NullEngine());
-    viewer.setView(decodeView(await kernel.view()));
+    viewer.setView(decodeView(kernel.view()));
     return { kernel, viewer };
   }
 
@@ -1863,11 +1834,11 @@ describe("growing a block out of a face", () => {
 describe("wearing what it follows", () => {
   async function pinned() {
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "load_geometry", msh: SQUARE_MSH, name: "square.msh" });
-    await kernel.apply({ op: "add_block", corners: CUBE });
+    kernel.apply({ op: "load_geometry", msh: SQUARE_MSH, name: "square.msh" });
+    kernel.apply({ op: "add_block", corners: CUBE });
     const viewer = new Viewer(new NullEngine());
-    viewer.setView(decodeView(await kernel.view()));
-    viewer.setGeometry(decodeGeometry(await kernel.geometry()));
+    viewer.setView(decodeView(kernel.view()));
+    viewer.setGeometry(decodeGeometry(kernel.geometry()));
     return { kernel, viewer };
   }
 
@@ -1877,7 +1848,7 @@ describe("wearing what it follows", () => {
       .toLowerCase();
 
   async function redraw(kernel: WasmKernel, viewer: Viewer) {
-    viewer.setView(decodeView(await kernel.view()));
+    viewer.setView(decodeView(kernel.view()));
   }
 
   it("says what a node follows only when asked to", async () => {
@@ -1886,7 +1857,7 @@ describe("wearing what it follows", () => {
     // surface it follows and then drew it on top of that surface.
     const { kernel, viewer } = await pinned();
     const names = viewer.names();
-    await kernel.apply({ op: "classify_node", nodes: [names[0]], on: { dim: 1, tag: 11 } });
+    kernel.apply({ op: "classify_node", nodes: [names[0]], on: { dim: 1, tag: 11 } });
     await redraw(kernel, viewer);
     expect(handle(viewer, 0)).toBe(DEFAULTS.theme.nodes.toLowerCase());
 
@@ -1896,7 +1867,7 @@ describe("wearing what it follows", () => {
     expect(handle(viewer, 0)).toBe(DEFAULTS.theme.onCurve.toLowerCase());
     // One colour per *kind* of thing followed, not per entity: a second
     // node on another curve reads the same.
-    await kernel.apply({ op: "classify_node", nodes: [names[1]], on: { dim: 1, tag: 12 } });
+    kernel.apply({ op: "classify_node", nodes: [names[1]], on: { dim: 1, tag: 12 } });
     await redraw(kernel, viewer);
     expect(handle(viewer, 1)).toBe(DEFAULTS.theme.onCurve.toLowerCase());
     // And a node on nothing keeps the group's own colour, which is what
@@ -1904,7 +1875,7 @@ describe("wearing what it follows", () => {
     expect(handle(viewer, 2)).toBe(DEFAULTS.theme.nodes.toLowerCase());
 
     // On a surface it is a third colour again.
-    await kernel.apply({ op: "classify_node", nodes: [names[2]], on: { dim: 2, tag: 1 } });
+    kernel.apply({ op: "classify_node", nodes: [names[2]], on: { dim: 2, tag: 1 } });
     await redraw(kernel, viewer);
     expect(handle(viewer, 2)).toBe(DEFAULTS.theme.onSurface.toLowerCase());
   });
@@ -1924,8 +1895,8 @@ describe("wearing what it follows", () => {
     // play, and that is the more urgent thing to see.
     const { kernel, viewer } = await pinned();
     const names = viewer.names();
-    await kernel.apply({ op: "classify_node", nodes: [names[0]], on: { dim: 2, tag: 1 } });
-    await kernel.apply({ op: "freeze_node", nodes: [names[0]], frozen: true });
+    kernel.apply({ op: "classify_node", nodes: [names[0]], on: { dim: 2, tag: 1 } });
+    kernel.apply({ op: "freeze_node", nodes: [names[0]], frozen: true });
     await redraw(kernel, viewer);
     expect(handle(viewer, 0)).toBe(DEFAULTS.theme.frozen.toLowerCase());
     expect(viewer.nodeState(names[0])).toEqual({ on: { dim: 2, tag: 1 }, frozen: true });
@@ -1944,7 +1915,7 @@ describe("wearing what it follows", () => {
         .map((b) => (b as unknown as { enabled: boolean }).enabled);
 
     expect(dragging()).toEqual([true]);
-    await kernel.apply({ op: "freeze_node", nodes: [names[0]], frozen: true });
+    kernel.apply({ op: "freeze_node", nodes: [names[0]], frozen: true });
     await redraw(kernel, viewer);
     expect(dragging()).toEqual([false]);
   });
@@ -1952,7 +1923,7 @@ describe("wearing what it follows", () => {
   it("marks the picked node, over everything else it might be", async () => {
     const { kernel, viewer } = await pinned();
     const names = viewer.names();
-    await kernel.apply({ op: "freeze_node", nodes: [names[0]], frozen: true });
+    kernel.apply({ op: "freeze_node", nodes: [names[0]], frozen: true });
     await redraw(kernel, viewer);
 
     viewer.selectNodes([names[0]]);
@@ -1985,7 +1956,7 @@ describe("wearing what it follows", () => {
     // Two corners of the cube on one curve puts every edge between them
     // on that curve — and both of them in one command, which is how the
     // interface sends it.
-    await kernel.apply({
+    kernel.apply({
       op: "classify_node",
       nodes: [names[0], names[1]],
       on: { dim: 1, tag: 11 },
@@ -2054,9 +2025,9 @@ describe("four views of one scene", () => {
 
   it("draws four cameras when split and one when not", async () => {
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "add_block", corners: CUBE });
+    kernel.apply({ op: "add_block", corners: CUBE });
     const viewer = new Viewer(new NullEngine());
-    viewer.setView(decodeView(await kernel.view()));
+    viewer.setView(decodeView(kernel.view()));
 
     // One view and the corner triad.
     expect(viewer.scene.activeCameras).toHaveLength(2);
@@ -2073,9 +2044,9 @@ describe("four views of one scene", () => {
   it("locks an axis view to its axis, and frames it on the model", async () => {
     // A view down X that can be turned off X is a third 3-D view.
     const kernel = new WasmKernel();
-    await kernel.apply({ op: "add_block", corners: CUBE });
+    kernel.apply({ op: "add_block", corners: CUBE });
     const viewer = new Viewer(new NullEngine());
-    viewer.setView(decodeView(await kernel.view()));
+    viewer.setView(decodeView(kernel.view()));
     viewer.setQuad(true);
 
     viewer.aimAt(10, 10);

@@ -1,7 +1,7 @@
 # Port checks shared by ./dev and ./view.
 #
 # Both scripts need a fixed port — 5173 so a bookmark keeps working, and the
-# station's so the dev server can be told in advance where to forward. A fixed
+# file server's so the dev server can be told in advance where to forward. A fixed
 # port means a leftover process from an earlier run is in the way, and the two
 # ways that goes wrong are both quiet:
 #

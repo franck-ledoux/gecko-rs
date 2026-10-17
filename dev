@@ -1,86 +1,34 @@
 #!/usr/bin/env bash
-# The whole loop in one command: a Python session, a browser watching it, and
-# a TypeScript edit reloading the view without losing the session's state.
+# The edit-and-try loop: the page from Vite with hot reload, and `gecko`
+# behind it so scripts can still reach real files.
 #
-#   ./dev            a Python console
-#   ./dev notebook   JupyterLab instead
+#   ./dev
 #
-# The page comes from Vite rather than from the station, so hot reload works;
-# Vite forwards the mode probe and the socket to the station behind it.
+# A TypeScript edit reloads the page in place. A Rust edit means building
+# the kernel again — run this once more.
 set -euo pipefail
 cd "$(dirname "$0")"
 export PATH="$HOME/.cargo/bin:$PATH"
 
-command -v uv >/dev/null || {
-  echo "uv is required: https://docs.astral.sh/uv/getting-started/installation/" >&2
-  exit 1
-}
-
 export GECKO_PORT="${GECKO_PORT:-8731}"
-export GECKO_VIEW="http://localhost:5173/"
 
 source scripts/ports.sh
 require_free 5173 "the dev server"
-require_free "$GECKO_PORT" "the station"
+require_free "$GECKO_PORT" "the file server"
 
 [ -d node_modules ] || npm install --no-audit --no-fund
 [ -d front/node_modules ] || (cd front && npm install --no-audit --no-fund)
-[ -x .venv/bin/python ] || uv venv --quiet
-uv pip install --quiet maturin
 
-echo "── building the kernel ───────────────────────────────────────"
+echo "── the kernel, and the interpreter ───────────────────────────"
 ./build-wasm.sh
 ./build-lua.sh
-# Debug, not release: this is the edit-and-try loop, and the difference is
-# twenty seconds a go.
-# `--release`, and it is not optional. A debug build of a combinatorial
-# map is eight to fifteen times slower: at fifty blocks a refresh goes
-# from thirty milliseconds to a third of a second, and every edit feels
-# like treacle. The compile is slower; the loop is not.
-(cd crates/gecko-py && VIRTUAL_ENV="$PWD/../../.venv" ../../.venv/bin/maturin develop --release --quiet)
 
-echo "── starting the dev server ───────────────────────────────────"
-(cd front && npm run dev -- --clearScreen false) &
-VITE=$!
-# INT and TERM as well as EXIT: on EXIT alone a Ctrl-C through to the shell
-# leaves the dev server running, holding 5173 and forwarding to a station that
-# has just died with the console. That is the state this run started in.
-trap 'kill $VITE 2>/dev/null || true' EXIT INT TERM
+echo "── a file server, for scripts that read and write ────────────"
+cargo build --release -p gecko-cli
+./target/release/gecko --port "$GECKO_PORT" --no-open &
+server=$!
+trap 'kill $server 2>/dev/null || true' EXIT
 
-for _ in $(seq 1 60); do
-  curl -sf -o /dev/null "$GECKO_VIEW" && break
-  # The server was started in the background, so it can have exited while we
-  # wait — and then this loop would be answered by somebody else's server.
-  kill -0 $VITE 2>/dev/null || { echo "the dev server stopped before it was ready" >&2; exit 1; }
-  sleep 0.5
-done
-
-case "${1:-console}" in
-  notebook)
-    cat <<NOTE
-
-  gecko — paste this into the first cell:
-
-      import os, gecko
-      s = gecko.Session()
-      s.show(port=int(os.environ["GECKO_PORT"]), open=False)
-
-  Open $GECKO_VIEW in a tab to watch it. Before or after the cell: the
-  page waits for a station rather than starting a kernel of its own.
-
-NOTE
-    uv run --with jupyterlab jupyter lab
-    ;;
-  console)
-    # The browser is opened by console.py, once the station is really
-    # listening. Opened from here it raced Python's start-up and won, which is
-    # not what you want: the tab reaches a dev server with no station behind
-    # it yet. The page now waits for one instead of carrying its own kernel,
-    # but there is no reason to make it wait.
-    ./.venv/bin/python -i scripts/console.py
-    ;;
-  *)
-    echo "usage: ./dev [console|notebook]" >&2
-    exit 2
-    ;;
-esac
+echo "── the page, with hot reload ─────────────────────────────────"
+echo "   http://localhost:5173/"
+(cd front && npx vite --host 127.0.0.1)

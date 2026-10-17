@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# The four artefacts, in the order they depend on each other.
+#
+#   ./build
+#
+# The page embeds the kernel and the interpreter; the binary embeds the
+# page. So: kernel, interpreter, page, binary.
+set -euo pipefail
+cd "$(dirname "$0")"
+export PATH="$HOME/.cargo/bin:$PATH"
+
+echo "── the kernel, compiled to wasm ──────────────────────────────"
+./build-wasm.sh
+
+echo "── the Lua interpreter, compiled to wasm ─────────────────────"
+./build-lua.sh
+
+echo "── the page ──────────────────────────────────────────────────"
+(cd front && npm run build >/dev/null) && echo "   front/dist"
+
+echo "── the binary, with the page inside it ───────────────────────"
+# Release, and it is not optional for `gecko run`: a debug build of a
+# combinatorial map is eight to fifteen times slower, and a script that
+# meshes is doing that work here rather than in the page.
+cargo build --release -p gecko-cli
+echo "   target/release/gecko"
+
+echo
+echo "Ready. ./gecko to open it, ./gecko run <script.lua> without a browser."

@@ -5,9 +5,9 @@ import { defineConfig, devices } from "@playwright/test";
  * present: slower, and reproducible on a laptop and on a runner with no GPU
  * alike, which matters more.
  *
- * `webServer` serves the **built** bundle for the static mode, so the thing
- * under test is the thing that ships. The station spec starts its own Python
- * process instead — the point of that mode is that Python is the server.
+ * `webServer` serves the **built** bundle, so the thing under test is the
+ * thing that ships — the page, with the kernel and the interpreter inside
+ * it. Nothing else is running: there is no server to have.
  */
 export default defineConfig({
   testDir: "tests/e2e",

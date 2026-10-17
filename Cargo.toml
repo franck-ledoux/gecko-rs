@@ -8,7 +8,6 @@ members = [
     "crates/gecko-lua-wasm",
     "crates/gecko-cli",
     "crates/gecko-wasm",
-    "crates/gecko-py",
 ]
 
 [workspace.package]

@@ -23,7 +23,7 @@ echo "── site ────────────────────�
 ./.venv/bin/mkdocs build --strict
 
 echo "── rust reference ────────────────────────────────────────────"
-cargo doc --workspace --exclude gecko-py --no-deps
+cargo doc --workspace --no-deps
 rm -rf site/api
 cp -r target/doc site/api
 

@@ -8,14 +8,18 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-[ -f "$HOME/emsdk/emsdk_env.sh" ] || {
-  echo "the Emscripten SDK is required to build the Lua module:" >&2
-  echo "  git clone https://github.com/emscripten-core/emsdk ~/emsdk" >&2
-  echo "  cd ~/emsdk && ./emsdk install latest && ./emsdk activate latest" >&2
-  exit 1
-}
-# shellcheck disable=SC1091
-source "$HOME/emsdk/emsdk_env.sh" >/dev/null 2>&1
+# Already on the PATH — a shell that sourced it, or CI — or in the usual
+# place. Both, because `./setup` puts it in the usual place and the runner
+# puts it somewhere else entirely.
+if ! command -v emcc >/dev/null; then
+  [ -f "$HOME/emsdk/emsdk_env.sh" ] || {
+    echo "the Emscripten SDK is required to build the Lua module:" >&2
+    echo "  ./setup   (or see https://emscripten.org)" >&2
+    exit 1
+  }
+  # shellcheck disable=SC1091
+  source "$HOME/emsdk/emsdk_env.sh" >/dev/null 2>&1
+fi
 
 rustup target list --installed | grep -qx wasm32-unknown-emscripten \
   || rustup target add wasm32-unknown-emscripten

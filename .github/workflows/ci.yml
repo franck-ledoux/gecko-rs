@@ -15,6 +15,8 @@ env:
 
 jobs:
   # The kernel alone, everywhere. Fast, and it is what most changes touch.
+  # `gecko-lua` builds Lua from C, so this is also where a platform without
+  # a working C compiler would say so.
   rust:
     name: Rust (${{ matrix.os }})
     strategy:
@@ -36,93 +38,16 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Lint
-        # gecko-py is excluded: linking an extension module needs a Python
-        # interpreter's symbols, which only maturin arranges. It is built and
-        # tested in the `python` job instead.
-        run: cargo clippy --workspace --exclude gecko-py --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Test
-        run: cargo test --workspace --exclude gecko-py
+        run: cargo test --workspace
 
-  # Built once, not three times. The bundle is JavaScript — the same bytes on
-  # every platform — but it depends on the wasm façade, so producing it needs
-  # the Rust toolchain too. That dependency is why the Python job below cannot
-  # simply be a lighter one.
-  bundle:
-    name: Viewer bundle
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install the Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-
-      - uses: Swatinem/rust-cache@v2
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: front/package-lock.json
-
-      - name: Build
-        run: |
-          npm ci
-          ./build-wasm.sh
-          cd front && npm ci && npm run build
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: viewer-bundle
-          path: front/dist
-          retention-days: 1
-
-  # The wheel has to build and work on every platform someone might install it
-  # on, viewer included.
-  python:
-    name: Python wheel (${{ matrix.os }})
-    needs: bundle
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
-        with:
-          enable-cache: true
-
-      - name: Fetch the viewer bundle
-        # The wheel embeds it, so it has to be in place before maturin runs.
-        uses: actions/download-artifact@v4
-        with:
-          name: viewer-bundle
-          path: front/dist
-
-      - name: Install the package
-        # --system: setup-python already provided the interpreter, so there is
-        # no reason for a virtual environment here.
-        run: uv pip install --system ./crates/gecko-py pytest
-
-      - name: Test
-        run: python -m pytest python -q
-
-  # The only place the whole chain can run: the cross-mode test needs the wasm
-  # façade and the Python one to have been built from the same tree.
+  # The whole chain, in one place: the page needs both wasm modules, and the
+  # browser suite needs the page. There is nothing to split out — the pieces
+  # only mean anything together.
   full:
-    name: Both modes end to end
+    name: The whole page, in a browser
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -131,7 +56,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-          targets: wasm32-unknown-unknown
+          targets: wasm32-unknown-unknown, wasm32-unknown-emscripten
 
       - uses: Swatinem/rust-cache@v2
 
@@ -141,14 +66,13 @@ jobs:
           cache: npm
           cache-dependency-path: front/package-lock.json
 
-      - uses: actions/setup-python@v5
+      # mlua compiles to WebAssembly through emscripten only, which is why
+      # the interpreter is a second module rather than part of the kernel.
+      - name: Install the Emscripten SDK
+        uses: mymindstorm/setup-emsdk@v14
         with:
-          python-version: "3.12"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
-        with:
-          enable-cache: true
+          version: latest
+          actions-cache-folder: emsdk-cache
 
       - name: Install the browser Playwright drives
         working-directory: front
@@ -184,6 +108,8 @@ jobs:
         with:
           python-version: "3.12"
 
+      # MkDocs is a Python tool. That is a documentation toolchain, not a
+      # dependency of anything that ships.
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
         with:

@@ -1,5 +1,6 @@
 /**
- * Static mode: the page carries its own kernel. No server, no Python.
+ * The page, end to end: it carries its own kernel and its own interpreter,
+ * and needs no server for either.
  */
 
 import { expect, test } from "@playwright/test";
@@ -92,7 +93,6 @@ async function boot(page: import("@playwright/test").Page) {
 
 test("boots with its own kernel and nothing else", async ({ page }) => {
   const errors = await boot(page);
-  await expect(page.locator("[data-test=mode]")).toHaveText("static");
   await expect(page.locator("[data-test=blocks]")).toHaveText("0");
   expect(errors, "no console errors, no wasm panic").toEqual([]);
 });
@@ -2412,14 +2412,14 @@ test("freezing and unclassifying take the whole selection", async ({ page }) => 
   await page.keyboard.press("l");
   await expect(page.locator("#status")).toContainText("frozen");
   expect(
-    await page.evaluate(() => (window as any).__gecko.stats().then((s: any) => s.classified.frozen)),
+    await page.evaluate(() => (window as any).__gecko.stats().classified.frozen),
   ).toBe(3);
 
   // Thawed only when every one of them is frozen, so a mixed selection has
   // an obvious answer.
   await page.keyboard.press("l");
   expect(
-    await page.evaluate(() => (window as any).__gecko.stats().then((s: any) => s.classified.frozen)),
+    await page.evaluate(() => (window as any).__gecko.stats().classified.frozen),
   ).toBe(0);
 
   await page.keyboard.press("u");

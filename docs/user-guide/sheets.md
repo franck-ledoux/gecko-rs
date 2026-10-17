@@ -88,13 +88,13 @@ it. A cut cannot be undone, and a click is cheap to make by accident.
 The parameter is clamped just short of either end: a cut at 0 or 1 is not a
 cut, and the kernel refuses it.
 
-From Python:
+From a script:
 
-```python
-s.create_cube([0, 0, 0], 1.0)
-edge = ...                  # a name from s.sheet(...)
-s.split_sheet(edge, 0.25)
-s.stats     # {'nodes': 12, 'edges': 20, 'faces': 11, 'blocks': 2}
+```lua
+gecko.create_cube()
+local edge = gecko.edges()[1].id
+gecko.split_sheet(edge, 0.25)
+gecko.stats()   -- {nodes = 12, edges = 20, faces = 11, blocks = 2}
 ```
 
 ## Taking a sheet out
@@ -120,7 +120,7 @@ of neighbouring blocks share their corners, so closing the first pair moved
 the corners the next pair was to be found by. It failed after the blocks
 were already gone, too, which left a hole.
 
-From Python, `s.remove_sheet(edge)`.
+From a script, `gecko.remove_sheet(edge)`.
 
 A sheet that comes back round onto itself is refused: one of its own blocks
 is on the far side of a cap, and there is no outside to close against. That

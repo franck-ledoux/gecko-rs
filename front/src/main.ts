@@ -8,10 +8,8 @@
 
 import { Engine } from "@babylonjs/core/Engines/engine";
 import { decodeGeometry, decodeMesh, decodeView } from "./decode";
-import { readProbe, type Probe } from "./mode";
-import type { Kernel, Stats } from "./kernel";
+import type { Stats } from "./kernel";
 import { initKernel, WasmKernel } from "./kernel-wasm";
-import { RemoteKernel } from "./kernel-remote";
 import { Viewer, type Group, type Pick } from "./viewer";
 import {
   isLight,
@@ -37,44 +35,6 @@ import "./style.css";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
-const PROBE_PAUSE = 500;
-
-/**
- * Ask whether a station is serving this page, and keep asking while the answer
- * is "not yet".
- *
- * Never falls back to a local kernel once a station has been promised: a page
- * that is wired to Python and silently is not is worse than a page that says
- * it is waiting.
- */
-async function detectMode(waiting: () => void): Promise<Kernel> {
-  for (;;) {
-    let answer: Probe;
-    try {
-      const response = await fetch("mode", { cache: "no-store" });
-      answer = readProbe(response.status, await response.text());
-    } catch {
-      answer = readProbe(0, "");
-    }
-
-    if (answer === "static") {
-      await initKernel();
-      return new WasmKernel();
-    }
-    if (answer === "station") {
-      const scheme = location.protocol === "https:" ? "wss" : "ws";
-      try {
-        return await RemoteKernel.connect(`${scheme}://${location.host}/ws`);
-      } catch {
-        // The probe was answered and the socket was not: the station went down
-        // between the two. Wait for it like any other absent station.
-      }
-    }
-    waiting();
-    await new Promise((r) => setTimeout(r, PROBE_PAUSE));
-  }
-}
-
 /** Where to put the next cube, so successive ones stand side by side.
  *  Placement is the interface's business; the kernel takes an origin. */
 function nextOrigin(blocks: number): [number, number, number] {
@@ -82,13 +42,10 @@ function nextOrigin(blocks: number): [number, number, number] {
 }
 
 async function boot() {
-  // Said out loud, and marked on the body so a test can wait for it: this is
-  // the state the page used to hide by pretending to be a static build.
-  const kernel = await detectMode(() => {
-    document.body.dataset.waiting = "1";
-    $("status").textContent = "waiting for the Python station…";
-  });
-  delete document.body.dataset.waiting;
+  // The one thing that has to be waited for: the kernel's own wasm.
+  // Everything after it is in this tab and answers at once.
+  await initKernel();
+  const kernel = new WasmKernel();
 
   const canvas = $<HTMLCanvasElement>("view");
   const engine = new Engine(canvas, true, { preserveDrawingBuffer: true }, true);
@@ -787,7 +744,7 @@ async function boot() {
   /** Light the sheet through an edge, whether or not it was already lit. */
   async function selectEdge(edge: number) {
     choose(null);
-    const sheet = await kernel.sheet(edge);
+    const sheet = kernel.sheet(edge);
     if (!sheet.ok) {
       viewer.showSheet([]);
       viewer.selectedEdge = null;
@@ -1186,7 +1143,7 @@ async function boot() {
    * mouse and what you typed end up in the same history, in order.
    */
   async function send(command: Record<string, unknown>) {
-    const reply = await kernel.apply(command);
+    const reply = kernel.apply(command);
     if (reply.script) echo("did", reply.script);
     return reply;
   }
@@ -1259,14 +1216,14 @@ async function boot() {
     // the whole cost this generation number exists to avoid.
     if (stats.geometry.generation !== geometryDrawn) {
       geometryDrawn = stats.geometry.generation;
-      viewer.setGeometry(decodeGeometry(await kernel.geometry()));
+      viewer.setGeometry(decodeGeometry(kernel.geometry()));
     }
     // The mesh on the same terms, and for the same reason: it is the big
     // buffer, and the number counts the edits that threw one away as well
     // as the builds, so this is also how a stale picture goes.
     if (stats.mesh.generation !== meshDrawn) {
       meshDrawn = stats.mesh.generation;
-      viewer.setMesh(stats.mesh.nodes === undefined ? null : decodeMesh(await kernel.mesh()));
+      viewer.setMesh(stats.mesh.nodes === undefined ? null : decodeMesh(kernel.mesh()));
     }
     // After the geometry, not before: framing has to see everything there
     // is to frame.
@@ -1300,20 +1257,13 @@ async function boot() {
       (stats.mesh.hexes === undefined
         ? ""
         : `<span><b data-test="mesh-hexes">${stats.mesh.hexes}</b> hexahedra</span>`) +
-      `<span data-test="mode">${kernel.mode}</span>`;
+      "";
     $("status").textContent = message;
     revision++;
   }
 
-  // In the station the kernel moves without this tab asking: someone typed in
-  // the Python console. This is the whole point of the mode.
-  kernel.onChanged(() => {
-    message = "changed from Python";
-    void refresh();
-  });
-
   async function createCube() {
-    const stats = await kernel.stats();
+    const stats = kernel.stats();
     const reply = await send({
       op: "create_cube",
       origin: nextOrigin(stats.blocks),
@@ -1351,7 +1301,7 @@ async function boot() {
    */
   async function setHistory() {
     await send({ op: "set_history", steps: prefs.history });
-    showHistory(await kernel.stats());
+    showHistory(kernel.stats());
   }
 
   /** The undo button is live exactly when there is something to undo. */
@@ -1381,9 +1331,9 @@ async function boot() {
    * whatever it looked like when somebody last pressed the other key.
    */
   async function exportMesh() {
-    const stats = await kernel.stats();
+    const stats = kernel.stats();
     if (stats.mesh.nodes === undefined) await mesh();
-    const file = await kernel.vtk();
+    const file = kernel.vtk();
     if (file === null) {
       say("there is nothing to mesh");
       return;
@@ -1654,7 +1604,7 @@ async function boot() {
     $("console-in").focus();
   });
   $("console-save").addEventListener("click", () => {
-    const script = JSON.parse(kernel.direct?.query("script", "") ?? '""') as string;
+    const script = kernel.script();
     saveBlob(new Blob([script], { type: "text/plain" }), fileName(new Date(), "lua"), document);
     say("the session written out as a script");
   });
@@ -1722,7 +1672,6 @@ async function boot() {
   // State, not pixels: everything an end-to-end test needs, with no reliance
   // on GPU output or on the DOM's current shape.
   (window as unknown as Record<string, unknown>).__gecko = {
-    mode: () => kernel.mode,
     stats: () => kernel.stats(),
     message: () => message,
     revision: () => revision,

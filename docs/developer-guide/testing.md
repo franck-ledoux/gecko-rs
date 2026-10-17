@@ -3,12 +3,12 @@
 Four tiers. Each answers a question the one below it cannot, and nothing is
 tested twice.
 
-| Tier                     | Tool                      | What it covers                                         | Time    |
-| ------------------------ | ------------------------- | ------------------------------------------------------ | ------- |
-| Kernel and session       | `cargo test`              | the map, naming, commands, the buffer layout           | ~0.05 s |
-| Decode, scene, transport | Vitest + **`NullEngine`** | decoding, scene building, picking, the camera          | ~0.3 s  |
-| Both modes               | Playwright + SwiftShader  | the app, in a browser, with a real mouse               | ~7 s    |
-| The façades agree        | pytest                    | the Python API, and its agreement with the static mode | ~0.05 s |
+| Tier               | Tool                      | What it covers                                      | Time   |
+| ------------------ | ------------------------- | --------------------------------------------------- | ------ |
+| Kernel and session | `cargo test`              | the map, naming, commands, the buffer layout        | ~0.3 s |
+| The scripting API  | Lua scripts, run by Rust  | every call a script can make, as a reader writes it | ~0.2 s |
+| Decode and scene   | Vitest + **`NullEngine`** | decoding, scene building, picking, the camera       | ~0.6 s |
+| The whole page     | Playwright + SwiftShader  | the app, in a browser, with a real mouse            | ~35 s  |
 
 ## `NullEngine` is the one that earns its keep
 
@@ -18,18 +18,24 @@ all testable there in milliseconds — including turning a screen coordinate bac
 into a node's name, which sounds like it needs a GPU and does not.
 
 That leaves Playwright to cover only what genuinely needs a browser: real
-pointer events, the layout, the two transports end to end.
+pointer events, the layout, and the interpreter in the page.
+
+## The suite written in Lua
+
+`crates/gecko-lua/tests/scripts/` is one file per subject, each run as a test
+by a harness that reports the Lua line a failure came from. What is being
+tested is the API a reader will write against, so the test *is* an example of
+writing against it — and the examples cannot go stale, because they run.
 
 ## The test that justifies the architecture
 
-`front/tests/unit/kernel.test.ts` drives a sequence through the wasm façade and
-records what came out — the commands, the stats, a digest of the buffer.
-`python/test_modes.py` replays that same sequence through PyO3 and checks the
-bytes agree.
+Lua runs in two hosts: one holds the session, the other reaches it through
+JavaScript. `agree.lua` builds a model, meshes it, and digests the VTK it
+produces; the Rust suite pins that number by running the file, and a
+Playwright test feeds **the same file** to the page's console.
 
-It can only pass while both façades are pure transports onto
-`gecko_cmd::Session`. The moment either grows logic of its own, this is what
-notices. It skips, loudly, if the Vitest suite has not run first.
+It can only pass while everything above the four primitives is one piece of
+code. The moment either host grows a habit of its own, this is what notices.
 
 ## Browser tests
 
@@ -37,9 +43,10 @@ SwiftShader rather than whatever GPU is present: slower, and identical on a
 laptop and on a runner with no GPU, which matters more. The `webServer` serves
 the **built** bundle, so the thing under test is the thing that ships.
 
-The station spec starts its own Python process — the point of that mode is that
-Python is the server — and talks to it over stdin. That is what lets a test say:
-drag a node in a browser, then ask Python where it thinks that node is.
+Playwright reuses a server already listening rather than starting its own, so
+a `vite preview` left running from an earlier look will serve a **stale**
+bundle to the whole suite. It has caught me three times, each time as a test
+that passed when it should not have. Stop the leftover first.
 
 ## Two things the tests had to be taught
 
@@ -67,11 +74,9 @@ rebaselining chore, not a test.
 ## Running one tier
 
 ```bash
-cargo test --workspace --exclude gecko-py
+cargo test --workspace            # the kernel, and the Lua suite
 cd front && npm run test:unit
 cd front && npx playwright test
-uv run python -m pytest python -q
 ```
 
-The last two need artefacts the earlier ones produce; see
-[Building](building.md).
+The last one needs artefacts the others do not; see [Building](building.md).

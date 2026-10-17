@@ -108,11 +108,11 @@ are working towards.
 The usual order is: [box the geometry](geometry.md#a-box-round-it), pull the
 box roughly onto the shape, then classify.
 
-```python
-s.load_geometry("part.msh")
-s.box_geometry()      # one block, standing clear of the shape
-...                   # drag its corners onto the model
-s.classify()          # and pin what is near enough
+```lua
+gecko.load_geometry("part.msh")
+gecko.box_geometry()   -- one block, standing clear of the shape
+...                    -- drag its corners onto the model
+gecko.classify()       -- and pin what is near enough
 ```
 
 `classify(tolerance=0.02)` does the whole blocking at once. The tolerance is
@@ -217,9 +217,9 @@ It is one command, so it is one step of undo for one gesture.
 A frozen node does not move. Not for a drag, not for a classification, not
 for anything, until it is thawed.
 
-```python
-s.freeze_node(n)              # and s.thaw_node(n)
-s.freeze_node([a, b, c])      # one node or several, here as everywhere
+```lua
+gecko.freeze_node(n)          -- and gecko.thaw_node(n)
+gecko.freeze_node{a, b, c}    -- one node or several, here as everywhere
 ```
 
 With the mouse: pick the nodes and press `L`. A mixed selection is frozen
@@ -236,10 +236,10 @@ projection is a move.
 Dragging a classified node away does not free it. Freeing it is something you
 say:
 
-```python
-s.unclassify_node(n)         # it stays where it is, and may now go anywhere
-s.classify_node(n, 1, 205)   # or put it somewhere by hand: a curve, tag 205
-s.classify_node([a, b, c, d], 1, 205)   # or four of them, in one act
+```lua
+gecko.unclassify_node(n)        -- it stays where it is, and may go anywhere
+gecko.classify_node(n, 1, 205)  -- or put it by hand: a curve, tag 205
+gecko.classify_node({a, b, c, d}, 1, 205)   -- or four of them, in one act
 ```
 
 A constraint that gave way when pulled hard enough would be a constraint you

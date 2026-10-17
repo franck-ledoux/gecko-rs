@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# The application, from this clone.
+#
+#   ./gecko                    serve the page and open it
+#   ./gecko run script.lua     run a script, no browser
+#   ./gecko --help
+#
+# `cargo install --path crates/gecko-cli` puts the same thing on your PATH
+# as `gecko`, which is nicer from a folder of meshes.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+[ -x target/release/gecko ] || {
+  echo "nothing built yet — running ./build first" >&2
+  ./build
+}
+# From wherever you called it, not from the clone: `gecko` lends the page
+# the files of the folder it was started in.
+cd - >/dev/null
+exec "$OLDPWD/target/release/gecko" "$@"

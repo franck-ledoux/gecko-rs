@@ -6,21 +6,18 @@ alongside the blocks so you can see what you are meshing.
 
 ## Opening one
 
-The folder button, or `O`, opens a `.msh` file. From Python:
+The folder button, or `O`, opens a `.msh` file. From a script:
 
-```python
-import gecko
-
-s = gecko.Session()
-s.load_geometry("sphere.msh")
-# 'sphere.msh loaded — 2 corners, 1 curve, 1 surface (2986 triangles),
-#  18220 elements of other kinds ignored'
+```lua
+gecko.load_geometry("sphere.msh")
+-- 'sphere.msh loaded — 2 corners, 1 curve, 1 surface (2986 triangles),
+--  18220 elements of other kinds ignored'
 ```
 
 The browser has no filesystem to name, so what travels is the **contents** of
 the file, not a path. `load_geometry` reads the file and builds the same
 command the folder button does — which is why a geometry opened in either
-place turns up in the other, like everything else in a station session.
+place turns up in the other, the console and the mouse being one session.
 
 ## What a file has to say
 
@@ -135,8 +132,8 @@ containing just the surfaces selected.
 It is almost always the first block of a session: something that contains the
 shape, to be cut and fitted onto it afterwards. The C++ GECKO has the same
 button, and the same margin — each half-side is grown by **10%**, so the box
-stands clear of the geometry rather than resting on it. From Python,
-`s.box_geometry(margin=0)` for one that rests on it exactly.
+stands clear of the geometry rather than resting on it. From a script,
+`gecko.box_geometry{ margin = 0 }` for one that rests on it exactly.
 
 The box is square to the world. A version along the shape's own axes of
 inertia was built and taken out again: a shape with a round or square
@@ -161,5 +158,5 @@ reads is a table nobody notices is wrong.
 
 ## Dropping it
 
-`s.clear_geometry()` from Python. The blocks are untouched either way: loading
+`gecko.clear_geometry()` from a script. The blocks are untouched either way: loading
 and clearing a geometry never changes a single cell of the block structure.

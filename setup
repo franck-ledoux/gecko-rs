@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Everything this machine needs, once.
+#
+#   ./setup
+#
+# Safe to run again: each step looks before it leaps, so a second run is
+# mostly a list of things already in place.
+set -euo pipefail
+cd "$(dirname "$0")"
+export PATH="$HOME/.cargo/bin:$PATH"
+
+missing() {
+  echo "$1 is required: $2" >&2
+  exit 1
+}
+
+command -v cargo >/dev/null || missing "Rust (stable)" "https://rustup.rs"
+command -v node >/dev/null || missing "Node 20 or later" "https://nodejs.org"
+
+echo "── Rust targets ──────────────────────────────────────────────"
+# The kernel is built by wasm-bindgen for one target; the Lua interpreter
+# is built by emscripten for the other, because mlua only supports WASM
+# that way. They are two modules in the page for exactly that reason.
+for target in wasm32-unknown-unknown wasm32-unknown-emscripten; do
+  if rustup target list --installed | grep -qx "$target"; then
+    echo "   $target — already there"
+  else
+    rustup target add "$target"
+  fi
+done
+
+echo "── the Emscripten SDK ────────────────────────────────────────"
+if command -v emcc >/dev/null; then
+  echo "   emcc is already on your PATH"
+elif [ -f "$HOME/emsdk/emsdk_env.sh" ]; then
+  echo "   ~/emsdk — already there"
+else
+  echo "   fetching it into ~/emsdk — about a gigabyte, once"
+  git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$HOME/emsdk"
+  (cd "$HOME/emsdk" && ./emsdk install latest && ./emsdk activate latest)
+fi
+
+echo "── node packages ─────────────────────────────────────────────"
+[ -d node_modules ] || npm install --no-audit --no-fund
+[ -d front/node_modules ] || (cd front && npm install --no-audit --no-fund)
+echo "   done"
+
+echo "── a browser for the tests ───────────────────────────────────"
+(cd front && npx playwright install chromium >/dev/null) && echo "   done"
+
+echo
+echo "Ready. Next:"
+echo "    ./build     the kernel, the interpreter, the page, the binary"
+echo "    ./gecko     open it"

@@ -1,24 +1,23 @@
 # Architecture
 
-Two modes, one kernel. Most of the design follows from refusing to let that be
-two kernels that are kept in step by hand.
+One kernel, in one place. Most of the design follows from refusing to let
+that become two kernels kept in step by hand.
 
 ## One door
 
-Every mutation goes through `gecko_cmd::Session::apply`. The wasm façade and
-the PyO3 façade translate and do nothing else — `gecko-wasm/src/lib.rs` and
-`gecko-py/src/lib.rs` read side by side, with the same methods in the same
-order.
+Every mutation goes through `gecko_cmd::Session::apply`. Everything above it
+translates and does nothing else: the wasm façade is JSON in and bytes out,
+and `gecko-lua` turns a Lua call into the same JSON.
 
-That rule is what makes "the console and the mouse drive the same live object"
-true rather than aspirational. It is also what makes it *checkable*: replay one
-sequence through both façades and compare the bytes that come out. If either
-grows logic of its own, the bytes diverge and
-`python/test_modes.py` says so.
+That rule is what makes "a script and the mouse drive the same live object"
+true rather than aspirational. It is also what makes it *checkable*: the
+session keeps a journal of the commands it was given, and
+[writes it back out as Lua](#the-session-as-a-script) — so what the mouse did
+and what a script did are the same list.
 
-A convenience written in one façade would have to be written again in the
+A convenience written in one place would have to be written again in the
 other, so anything worth offering is a command. `create_cube` is a command
-rather than a Python helper for exactly that reason — and as a side effect the
+rather than a helper for exactly that reason — and as a side effect the
 journal records the intent instead of eight anonymous points.
 
 ```
@@ -29,66 +28,84 @@ journal records the intent instead of eight anonymous points.
             │ gecko-cmd  Session::apply │  the only way in
             └─────────────┬─────────────┘
           ┌───────────────┴───────────────┐
-    ┌─────┴──────┐                 ┌──────┴─────┐
-    │ gecko-wasm │                 │ gecko-py   │
-    │  (static)  │                 │ (station)  │
-    └─────┬──────┘                 └──────┬─────┘
-          └───────────────┬───────────────┘
+    ┌─────┴──────┐                 ┌──────┴──────┐
+    │ gecko-wasm │                 │ gecko-lua   │  the scripting API
+    │ the kernel │                 │ 4 primitives│
+    └─────┬──────┘                 └──────┬──────┘
+          │                    ┌──────────┴──────────┐
+          │              ┌─────┴─────┐        ┌──────┴──────┐
+          │              │ gecko-cli │        │gecko-lua-   │
+          │              │ (terminal)│        │wasm (page)  │
+          │              └───────────┘        └──────┬──────┘
+          └───────────────┬──────────────────────────┘
                    ┌──────┴──────┐
-                   │ Babylon.js  │  the same front end either way
+                   │ Babylon.js  │  the page: kernel and interpreter both
                    └─────────────┘
 ```
 
-## Two transports, one front end
+## One kernel, in the page
 
-The TypeScript is identical in both modes. Only where it gets its data differs:
+There is no server in the architecture. The page carries the kernel compiled
+to wasm and a Lua interpreter beside it, so a script's `for` loop reaches the
+session with nothing in between — no socket, no promise, no process.
 
-| File                             | Role                                                 |
-| -------------------------------- | ---------------------------------------------------- |
-| `front/src/kernel.ts`            | the interface: `apply`, `view`, `stats`, `onChanged` |
-| `front/src/kernel-wasm.ts`       | static — the kernel this tab owns                    |
-| `front/src/kernel-remote.ts`     | station — the kernel Python holds                    |
-| `front/src/viewer.ts`, `main.ts` | cannot tell them apart                               |
+| File                             | Role                                       |
+| -------------------------------- | ------------------------------------------ |
+| `front/src/kernel.ts`            | the interface: `apply`, `view`, `stats`, … |
+| `front/src/kernel-wasm.ts`       | the one implementation, synchronous        |
+| `front/src/lua.ts`               | the wire between the interpreter and it    |
+| `front/src/viewer.ts`, `main.ts` | the application, written against the first |
 
-Two decisions there are expensive to retrofit, so they were made at the start:
+The interface was asynchronous for as long as there was a second kernel at
+the end of a socket, holding the session in another process. There is not any
+more, and the promises went with it: a promise per call, for an answer that
+is already there, is a story about a server that no longer exists.
 
-**The interface is asynchronous everywhere**, even in the static mode where
-every answer is immediate. Otherwise every call site would assume a synchronous
-reply, and the station could only be added by rewriting all of them.
+What the local binary adds is **files**, and only files. `gecko` serves the
+page and answers two endpoints; the session it serves is the page's, not its
+own. `gecko run` has a session of its own and no page at all. They are two
+instances of one program rather than two halves of one session, and that is
+what keeps the architecture a single line.
 
-**`onChanged` exists from the start.** In the station the kernel moves without
-this tab asking — someone typed in the Python console. A client that only polls
-after its own commands would never see it.
+### Two wasm modules, and the four primitives between them
 
-A change also carries its **origin**, and a tab ignores its own. Without that a
-tab refreshes twice for its own click, and announces that Python did it.
+mlua supports WebAssembly through `wasm32-unknown-emscripten` only, and
+wasm-bindgen targets `wasm32-unknown-unknown`. An object built by one toolchain
+cannot be linked into a module built by the other, so Lua rides **beside** the
+kernel rather than inside it.
 
-### Which mode, and what "not yet" means
+The boundary that makes this cheap is `gecko_lua::Kernel`, four methods wide:
 
-The page asks its own origin for `mode` and reads three answers, not two
-(`front/src/mode.ts`):
+| Method             | In the terminal       | In the page                           |
+| ------------------ | --------------------- | ------------------------------------- |
+| `apply(json)`      | `Session::apply_json` | JavaScript, into the other module     |
+| `query(kind, arg)` | the read's method     | the same way                          |
+| `read(path)`       | `std::fs`             | an endpoint `gecko` lends, or nothing |
+| `write(path, …)`   | `std::fs`             | the same, or a download               |
 
-| Answer                  | Means                                     |
-| ----------------------- | ----------------------------------------- |
-| `2xx` and `station`     | a station is behind this origin           |
-| `4xx`, or anything else | a static host — this tab carries a kernel |
-| `5xx`, or a throw       | a station is **meant** to be here         |
+Everything above those four — every call a script can make, every conversion
+between JSON and Lua tables — is written once, in Rust. `agree.lua` runs the
+same script through both hosts and checks the bytes agree, which is what
+stops that claim from quietly becoming false.
 
-The third row is the one worth the table. In the development loop `mode` is
-*forwarded* to the station by the dev server, so a 5xx from it does not mean
-"no station here" — it means the proxy had nothing to forward to, which is
-exactly what a tab opened before the Python session sees.
+The alternative was moving the kernel to emscripten as well, which would have
+meant hand-writing the glue wasm-bindgen generates and putting everything
+already shipping on a Tier 2 target. The risk belongs in a crate of a hundred
+lines, not under the whole application.
 
-Read as a static host, that answer starts a kernel in the tab, and the page
-then looks completely healthy while ignoring every command typed in the
-console. So the page never falls back once a station has been promised: it says
-it is waiting, keeps probing, and comes alive when one answers. A tab can be
-opened before its station, and a station can be restarted under a tab.
+## The session as a script
 
-The body carries `data-waiting` while that is going on, which is what the test
-waits for. Checking the status code alone is not enough either way: a static
-host that serves `index.html` for unknown paths answers `200` to everything, so
-a success is also checked for its content.
+`Session` keeps the commands it was given, and `script::line` renders one as
+the Lua call that would have made it. The `match` is over the whole command
+set, so a command added without a line **does not compile** — a history with
+a hole in it is worse than no history, because it looks complete.
+
+Each outcome carries its own line, which is how what you do with the mouse
+appears in the console. An undo truncates the journal to the length recorded
+in the state it restores, so the script is a recipe for where the session is
+rather than a diary of everything anybody tried. A geometry's *name* is kept
+rather than the file it arrived with, which would be a copy of every mesh
+ever loaded.
 
 ## Welding two blocks
 
@@ -195,8 +212,8 @@ too.
     over the map. `nodes_in_full`, `edges`, `census`, `reclassify`
     and `classify_nodes` exist for that reason, and `BlockFace` carries
     what its face is classified on rather than leaving the caller to look
-    it up. There is a budget test in `python/test_gecko.py` that fails by
-    two orders of magnitude if any of them goes back.
+    it up. The reads are what a script calls in a loop, so a scan put
+    back among them is felt immediately.
 
     Where it started to matter is inside one operation. A sheet cut resolves
     every edge of the sheet, and a scan each made the whole thing quadratic:
@@ -287,7 +304,8 @@ for `assign_missing_ids`.
 ## The view buffer
 
 What the browser draws, in the one shape both modes deliver it. The static page
-reads it straight out of wasm memory; the station sends the identical bytes down
+reads it straight out of wasm memory; a script asking for the same session
+gets the identical bytes
 a WebSocket. One producer, one decoder.
 
 Little-endian throughout. Version 6.
@@ -417,8 +435,8 @@ A **generation number**, in `stats`. It counts loads rather than describing
 one; a client holds the number it last drew and re-fetches when it differs.
 
 A flag on the outcome of the command would do for a load this client made
-itself, and nothing at all for one made from the Python console — which the
-station announces only as "something changed". Counts would not do either: two
+itself, and nothing at all for one made by a script. Counts would not do
+either: two
 geometries of identical size are still two geometries, and a client comparing
 counts would go on drawing the first.
 
@@ -542,8 +560,7 @@ has gone. A mesh of a model you have since edited is a lie that looks right.
 
 Exactly one thing, and it is worth naming because everything else does: **how
 the scene looks**. Colours and the triad's visibility are view state. They are
-kept in the browser, per viewer, and in station mode two tabs on one session
-may look nothing alike.
+kept in the browser, per viewer, and two tabs may look nothing alike.
 
 The line is that the kernel describes what *exists*; it has no opinion on what
 colour that is on your screen. Anything that would change what another client
@@ -553,8 +570,8 @@ sees belongs in a command; anything that only changes what *you* see does not.
 
 During a drag the scene **previews against its own copy** of the view — the
 sphere and the edges reaching it follow the mouse — and the kernel is told once,
-at the drop. Telling it on every mouse move would be a network round trip per
-pixel in the station.
+at the drop. Telling it on every mouse move would be a command, an undo step
+and a rebuilt view per pixel.
 
 So the view diverges from the kernel for the length of the gesture. That is a
 deliberate exception to "the view is a function of the kernel", and it ends at

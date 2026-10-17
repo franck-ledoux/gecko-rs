@@ -1,12 +1,14 @@
 /**
- * Static mode: the kernel is in this tab.
+ * The kernel, in this tab.
  *
- * Every method resolves immediately. The promises are not pretence — they are
- * what lets the same application code run against the station.
+ * A thin wrapper over the wasm session: it turns JSON into the shapes the
+ * application is written against, and nothing else. What it does **not**
+ * do is make anything asynchronous — the session is here, and a promise
+ * per call would be a story about a server that no longer exists.
  */
 
 import initWasm, { initSync, Session } from "./pkg/gecko";
-import type { Kernel, Reply, Sheet, Stats } from "./kernel";
+import type { Direct, Kernel, Reply, Sheet, Stats } from "./kernel";
 
 let ready = false;
 
@@ -19,7 +21,6 @@ export async function initKernel(source?: BufferSource): Promise<void> {
 }
 
 export class WasmKernel implements Kernel {
-  readonly mode = "static" as const;
   private session: Session;
 
   constructor() {
@@ -27,13 +28,8 @@ export class WasmKernel implements Kernel {
     this.session = new Session();
   }
 
-  /**
-   * The synchronous door, for Lua.
-   *
-   * The same session the asynchronous methods reach — this is the one
-   * call underneath them, without the promise a socket would have needed.
-   */
-  get direct() {
+  /** The same session as JSON, which is what the interpreter speaks. */
+  get direct(): Direct {
     return {
       apply: (command: string) => this.session.applyJson(command),
       query: (kind: string, arg: string) => {
@@ -63,7 +59,7 @@ export class WasmKernel implements Kernel {
     };
   }
 
-  async apply(command: Record<string, unknown>): Promise<Reply> {
+  apply(command: Record<string, unknown>): Reply {
     const raw = JSON.parse(this.session.applyJson(JSON.stringify(command)));
     return raw.ok
       ? {
@@ -75,32 +71,31 @@ export class WasmKernel implements Kernel {
       : { ok: false, message: raw.error, viewChanged: false };
   }
 
-  async view(): Promise<Uint8Array> {
+  view(): Uint8Array {
     return this.session.viewBuffer();
   }
 
-  async geometry(): Promise<Uint8Array> {
+  geometry(): Uint8Array {
     return this.session.geometryBuffer();
   }
 
-  async mesh(): Promise<Uint8Array> {
+  mesh(): Uint8Array {
     return this.session.meshBuffer();
   }
 
-  async vtk(): Promise<string | null> {
+  vtk(): string | null {
     return this.session.meshVtk() ?? null;
   }
 
-  async stats(): Promise<Stats> {
+  stats(): Stats {
     return JSON.parse(this.session.statsJson()) as Stats;
   }
 
-  async sheet(edge: number): Promise<Sheet> {
+  sheet(edge: number): Sheet {
     return JSON.parse(this.session.sheetJson(edge)) as Sheet;
   }
 
-  /** Nothing else holds this kernel, so nothing else can change it. */
-  onChanged(_listener: () => void): void {}
-
-  close(): void {}
+  script(): string {
+    return this.session.script();
+  }
 }

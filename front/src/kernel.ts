@@ -1,16 +1,11 @@
 /**
- * What the application talks to, in both modes.
+ * What the application talks to: the session, in this very tab.
  *
- * **Asynchronous on purpose, even where it need not be.** In the static mode
- * the kernel is in this very tab and every answer is immediate; in the station
- * mode it is in a Python process at the other end of a socket. Writing the
- * application against a synchronous interface would quietly bake the first case
- * into every call site, and the second could then only be added by rewriting
- * all of them.
- *
- * `onChanged` is the other half of that: in the station, the kernel can change
- * without this tab asking — someone typed in the Python console. A client that
- * only ever polls after its own commands would simply not see it.
+ * **Synchronous**, because it is here. It was asynchronous for as long as
+ * there was a second kernel at the end of a socket, and a promise per call
+ * was the price of pretending the two were alike. There is one kernel now
+ * — the page holds it, and Lua holds it, and the binary that serves the
+ * page does not — so the pretence has gone with the socket.
  */
 
 export interface Reply {
@@ -75,41 +70,36 @@ export type Sheet =
     }
   | { ok: false; error: string };
 
-export type Mode = "static" | "station";
-
 /**
- * The same session, reached **synchronously**.
+ * The same session as JSON, which is what the interpreter speaks.
  *
- * Only the in-page kernel can answer this way, and only Lua needs it: a
- * script's `for` loop cannot be unwound into promises halfway through. A
- * kernel at the other end of a socket has no such door and says so by not
- * having this.
+ * Lua asks for the nodes in the middle of a `for` loop; the call cannot be
+ * unwound into a promise, and it has no use for the typed shapes above —
+ * it turns JSON into Lua tables itself.
  */
 export interface Direct {
   apply(command: string): string;
   /** A read by name: `nodes`, `edges`, `faces`, `blocks`, `stats`,
-   *  `entities`, `sheet`, `vtk`. */
+   *  `entities`, `sheet`, `vtk`, `script`. */
   query(kind: string, arg: string): string;
 }
 
 export interface Kernel {
-  /** Present when the session is in this very tab. */
-  readonly direct?: Direct;
-  readonly mode: Mode;
-  apply(command: Record<string, unknown>): Promise<Reply>;
-  view(): Promise<Uint8Array>;
+  /** The same session, as JSON: the door Lua goes through. */
+  readonly direct: Direct;
+  apply(command: Record<string, unknown>): Reply;
+  view(): Uint8Array;
   /** The geometry, in a buffer of its own. Asked for only when the
    *  generation in `stats` says it has changed. */
-  geometry(): Promise<Uint8Array>;
+  geometry(): Uint8Array;
   /** The mesh's skin, on the same terms. Empty until something has been
    *  meshed, and empty again as soon as an edit throws it away. */
-  mesh(): Promise<Uint8Array>;
+  mesh(): Uint8Array;
   /** The mesh as a VTK legacy file, or null if there is none. */
-  vtk(): Promise<string | null>;
-  stats(): Promise<Stats>;
+  vtk(): string | null;
+  stats(): Stats;
   /** The sheet of hexahedra through an edge. A question, not a change. */
-  sheet(edge: number): Promise<Sheet>;
-  /** Register interest in changes this client did not make. */
-  onChanged(listener: () => void): void;
-  close(): void;
+  sheet(edge: number): Sheet;
+  /** The session as a Lua script: what it would take to arrive here. */
+  script(): string;
 }

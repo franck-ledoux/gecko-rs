@@ -18,12 +18,16 @@ Each selected face becomes one new block. One face on a cube gives two blocks
 same operation. All six faces give seven: the cube, drawn in, inside a shell
 of six slabs welded to each other.
 
-From Python, with the `(face, block)` pairs from `s.faces`:
+From a script, with the `{face, block}` pairs from `gecko.faces()`:
 
-```python
-s.create_cube([0, 0, 0], 1.0)
-s.pillow([(f["id"], f["block"]) for f in s.faces])
-s.stats     # {'nodes': 16, 'edges': 32, 'faces': 24, 'blocks': 7}
+```lua
+gecko.create_cube()
+local patch = {}
+for _, face in ipairs(gecko.faces()) do
+  patch[#patch + 1] = { face.id, face.block }
+end
+gecko.pillow(patch)
+gecko.stats()   -- {nodes = 16, edges = 32, faces = 24, blocks = 7}
 ```
 
 ## How thick

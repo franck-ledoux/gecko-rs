@@ -48,8 +48,7 @@ nav:
   - Home: index.md
   - User Guide:
       - The interface: user-guide/interface.md
-      - Static mode: user-guide/static.md
-      - Station mode: user-guide/station.md
+      - Running it: user-guide/running.md
       - Appearance: user-guide/display.md
       - Geometry: user-guide/geometry.md
       - Classification: user-guide/classification.md
@@ -58,7 +57,6 @@ nav:
       - Pillowing: user-guide/pillowing.md
       - Meshing: user-guide/meshing.md
       - Scripting: user-guide/scripting.md
-      - Python API: user-guide/python.md
   - Developer Guide:
       - Architecture: developer-guide/architecture.md
       - Building: developer-guide/building.md

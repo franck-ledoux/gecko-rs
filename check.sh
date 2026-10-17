@@ -1,54 +1,42 @@
 #!/usr/bin/env bash
-# Everything, in the order that fails fastest — and in the order the artefacts
-# require: the front bundle is embedded in the Python wheel, so it has to be
-# built before maturin runs, and the Vitest suite writes the file pytest
-# replays.
+# Everything, in the order that fails fastest — and in the order the
+# artefacts require: the page embeds the kernel and the interpreter, so
+# both are built before the bundle is, and the bundle is baked into the
+# binary, so it is built before `cargo test` reaches `gecko-cli`.
 #
 # CI runs this very script, so what passes here is what passes there.
 set -euo pipefail
 cd "$(dirname "$0")"
 export PATH="$HOME/.cargo/bin:$PATH"
 
-# --- bootstrap, so a fresh clone needs nothing but rust, node and uv ---
-command -v uv >/dev/null || {
-  echo "uv is required: https://docs.astral.sh/uv/getting-started/installation/" >&2
-  exit 1
-}
+# --- bootstrap, so a fresh clone needs rust, node and emsdk and no more ---
 [ -d node_modules ] || npm install --no-audit --no-fund
 [ -d front/node_modules ] || (cd front && npm install --no-audit --no-fund)
-[ -x .venv/bin/python ] || uv venv --quiet
-uv pip install --quiet maturin pytest
 rustup target list --installed | grep -qx wasm32-unknown-unknown \
   || rustup target add wasm32-unknown-unknown
-[ -f "$HOME/emsdk/emsdk_env.sh" ] || {
-  echo "the Emscripten SDK is required for the Lua module:" >&2
-  echo "  git clone https://github.com/emscripten-core/emsdk ~/emsdk" >&2
-  echo "  cd ~/emsdk && ./emsdk install latest && ./emsdk activate latest" >&2
+command -v emcc >/dev/null || [ -f "$HOME/emsdk/emsdk_env.sh" ] || {
+  echo "the Emscripten SDK is required for the Lua module: ./setup" >&2
   exit 1
 }
+
+echo "── the kernel, for the page ──────────────────────────────────"
+./build-wasm.sh
+
+echo "── the interpreter, for the page ─────────────────────────────"
+./build-lua.sh
+
+echo "── the page itself ───────────────────────────────────────────"
+(cd front && npm run build)
 
 echo "── format and lint ───────────────────────────────────────────"
 cargo fmt --all --check
-cargo clippy --workspace --exclude gecko-py --all-targets -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 
-echo "── kernel and session (Rust) ─────────────────────────────────"
-cargo test --workspace --exclude gecko-py
+echo "── kernel, session, and the Lua API (Rust) ───────────────────"
+cargo test --workspace
 
-echo "── browser façade (wasm) ─────────────────────────────────────"
-./build-wasm.sh
-
-echo "── the interpreter the page runs (emscripten) ────────────────"
-./build-lua.sh
-
-echo "── decode, scene and transport, headless (Vitest + NullEngine) "
+echo "── decode and scene, headless (Vitest + NullEngine) ──────────"
 (cd front && npm run test:unit)
 
-echo "── front bundle, then the wheel that embeds it ───────────────"
-(cd front && npm run build)
-(cd crates/gecko-py && VIRTUAL_ENV="$PWD/../../.venv" ../../.venv/bin/maturin develop --release -q)
-
-echo "── both modes in a real browser (Playwright) ─────────────────"
+echo "── the whole page in a real browser (Playwright) ─────────────"
 (cd front && npx playwright test)
-
-echo "── Python façade, and its agreement with the static mode ─────"
-./.venv/bin/python -m pytest python -q

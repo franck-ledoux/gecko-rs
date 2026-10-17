@@ -8,8 +8,11 @@ Generated from the source by rustdoc, and published alongside this site.
 <a href="../../api/gecko_cmd/index.html"><strong>gecko-cmd</strong></a>
 — the session: commands, outcomes, the view buffer.
 
+<a href="../../api/gecko_lua/index.html"><strong>gecko-lua</strong></a>
+— the scripting API, and the four-method trait both its hosts answer.
+
 <a href="../../api/gecko_wasm/index.html"><strong>gecko-wasm</strong></a>
-— the browser façade.
+— the kernel as the page sees it.
 
 !!! note "Why it is a separate site"
     GECKO folds its C++ reference into these pages with `mkdoxy`. There is no
@@ -20,9 +23,9 @@ Generated from the source by rustdoc, and published alongside this site.
 To read it locally:
 
 ```bash
-cargo doc --workspace --exclude gecko-py --no-deps --open
+cargo doc --workspace --no-deps --open
 ```
 
-`gecko-py` is excluded for the same reason it is excluded from `cargo test`:
-building it needs maturin. Its API is the [Python one](../user-guide/python.md),
-documented by hand — one class and eight methods do not need a generator.
+The Lua API is documented by hand, in [Scripting](../user-guide/scripting.md):
+what a reader needs there is the call and what it does, not the Rust type
+that carries it.

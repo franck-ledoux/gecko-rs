@@ -1,7 +1,7 @@
 # Appearance and the triad
 
 Both modes share one viewer, so everything here applies to the static page and
-to a station tab alike.
+to one served by `gecko` alike.
 
 ## Two panels
 
@@ -44,8 +44,8 @@ no new markup.
 
 !!! note "Your colours, not the session's"
     A theme is **view state, not kernel state**. It never goes through
-    `Session::apply`, it is remembered by your browser, and in station mode two
-    tabs on the same session may legitimately look nothing alike. The kernel
+    `Session::apply`, and it is remembered by your browser rather than by
+    the session — so two tabs may legitimately look nothing alike. The kernel
     says what exists; it has no business knowing what colour you like it.
 
     The flip side: clearing site data forgets them, and they do not follow you
@@ -188,7 +188,7 @@ of the model rather than reaching the point it orbits — an orbit camera that
 arrives at its own centre has nothing left to turn around, and the view flips.
 
 How near and how far are both derived from the model's size, and they follow
-it: build a block from Python and the limits move with it, without the camera
+it: build a block from a script and the limits move with it, without the camera
 being yanked anywhere.
 
 ## Recentring
