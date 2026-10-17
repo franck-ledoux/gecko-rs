@@ -20,12 +20,18 @@
 //! wrong for somebody's model — every mesh node is **named by the cell of
 //! the blocking it lies in**:
 //!
-//! - a corner of a block is [`Site::Node`];
-//! - a point along a block edge is [`Site::Edge`], numbered from the end
-//!   with the lower name;
-//! - a point inside a block face is [`Site::Face`], on that face's own
-//!   lattice rather than on either block's;
-//! - a point inside a block is [`Site::Inside`], and belongs to nobody else.
+//! - a corner of a block is a `Node`;
+//! - a point along a block edge is an `Edge`, numbered from the end with the
+//!   lower node name;
+//! - a point inside a block face is a `Face`, on that face's own lattice
+//!   rather than on either block's;
+//! - a point inside a block is `Inside`, and belongs to nobody else.
+//!
+//! Those are the variants of `Site`, which is the mesher's own key into its
+//! table of nodes and nothing a caller ever holds: what comes out is a
+//! [`Mesh`], whose points are already shared. They are named here because
+//! the naming *is* the mechanism, not because there is anything to reach
+//! for.
 //!
 //! Cells are shared by construction — that is what the combinatorial map is
 //! for — so the sharing of nodes comes out of the naming rather than out of
