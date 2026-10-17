@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Coverage, in two numbers: the kernel and the page.
+#
+# Not one number. A Rust kernel and a TypeScript interface are measured by
+# different machinery and read by different people, and an average of the two
+# would describe neither. So: one figure for the crates, one for the page, a
+# floor under each, and an HTML report for both under `target/coverage`.
+#
+# What is **not** measured, said plainly:
+#
+#   * the kernel as the browser runs it. Neither wasm target instruments
+#     under llvm-cov, so the figure below comes from the native tests. The
+#     same code, built another way.
+#   * the glue between the page and wasm, which only the browser suite
+#     exercises and only as "it passed".
+#
+# `--check` is what CI runs: the floors, and no HTML.
+set -euo pipefail
+cd "$(dirname "$0")"
+export PATH="$HOME/.cargo/bin:$PATH"
+
+# The ratchet. Raised when a batch earns it, never quietly lowered: a floor
+# that moves down to meet the code is not a floor.
+FLOOR_KERNEL=${FLOOR_KERNEL:-80}
+FLOOR_PAGE=${FLOOR_PAGE:-60}
+
+check=no
+[ "${1:-}" = "--check" ] && check=yes
+
+out=target/coverage
+mkdir -p "$out"
+
+command -v cargo-llvm-cov >/dev/null 2>&1 || {
+  echo "── installing cargo-llvm-cov ─────────────────────────────────"
+  rustup component add llvm-tools-preview
+  cargo install cargo-llvm-cov --locked
+}
+
+echo "── the kernel, the session and the Lua API (Rust) ────────────"
+# The two wasm crates are left out: emscripten and wasm32 do not instrument,
+# and a crate that cannot be measured drags an honest number down for a
+# dishonest reason. Everything they contain is a thin wrapper over what is
+# measured here.
+cargo llvm-cov clean --workspace
+cargo llvm-cov --no-report --workspace \
+  --exclude gecko-wasm --exclude gecko-lua-wasm
+cargo llvm-cov report --lcov --output-path "$out/kernel.lcov" \
+  --ignore-filename-regex '(tests?/|gecko-wasm|gecko-lua-wasm)'
+[ "$check" = yes ] || cargo llvm-cov report --html --output-dir "$out/kernel" \
+  --ignore-filename-regex '(tests?/|gecko-wasm|gecko-lua-wasm)'
+
+echo "── the page, headless and in a browser (V8) ──────────────────"
+# Both suites, merged: the unit tests reach the decoding and the scene, the
+# browser tests reach the gestures, and neither alone is the page.
+(cd front && npx vitest run --coverage)
+(cd front && pkill -f "vite preview" >/dev/null 2>&1 || true)
+(cd front && GECKO_COVERAGE=1 npx playwright test)
+
+echo "── the two numbers ───────────────────────────────────────────"
+python3 tools/coverage.py "$out/kernel.lcov" \
+  --label "kernel coverage" --badge "$out/kernel-badge.json" \
+  --floor "$FLOOR_KERNEL" --worst 5
+python3 tools/coverage.py front/coverage/unit/lcov.info front/coverage/e2e/lcov.info \
+  --label "page coverage" --badge "$out/page-badge.json" \
+  --floor "$FLOOR_PAGE" --worst 5
+
+if [ "$check" = no ]; then
+  cp -R front/coverage "$out/page"
+  echo
+  echo "the reports: $out/kernel/html/index.html"
+  echo "             $out/page/e2e/index.html"
+fi

@@ -515,13 +515,19 @@ test("two faces are picked with the mouse and glued", async ({ page }) => {
     await page.mouse.click(box.x + at![0], box.y + at![1]);
   }
 
-  // Both picked, in order, and the panel says which one the other comes to.
+  // Both picked, and the panel says what gluing them would do.
   expect(await page.evaluate(() => (window as any).__gecko.selection())).toHaveLength(2);
-  await expect(page.locator("#status")).toContainText("will be glued onto");
+  await expect(page.locator("#status")).toContainText("will be welded where they meet");
   await expect(page.locator("#glue")).toBeEnabled();
 
   await page.locator("#glue").click();
   await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 12);
+
+  // **Which** two faces a click lands on is a question about the camera:
+  // the faces looking at each other are in the middle of the model, and
+  // whatever is in front of them is what the pointer hits first. So this
+  // test is about the gesture, and where a weld lands is the subject of the
+  // next one, which names its faces outright.
 
   // Four pairs of nodes became four nodes: the blocks are one object now.
   expect(await page.evaluate(() => (window as any).__gecko.counts())).toEqual({
@@ -533,6 +539,49 @@ test("two faces are picked with the mouse and glued", async ({ page }) => {
   // And the selection is gone: those two names mean something else now.
   expect(await page.evaluate(() => (window as any).__gecko.selection())).toEqual([]);
   await expect(page.locator("#glue")).toBeDisabled();
+  expect(errors).toEqual([]);
+});
+
+test("a glue across a gap meets in the middle", async ({ page }) => {
+  // Where the seam lands, through the page and nothing stubbed. The faces
+  // are named rather than clicked: the two that face each other are buried
+  // in the middle of the model, and a click would be aiming at them past
+  // whatever is in front.
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+
+  /**
+   * The distinct x every **node** sits at.
+   *
+   * The nodes, not the quadrangles: faces are drawn shrunk towards their own
+   * centres, so no corner of the drawing is where a node is.
+   */
+  const columns = () =>
+    page.evaluate(() => {
+      const g = (window as any).__gecko;
+      const seen = new Set<number>();
+      for (const name of g.names()) seen.add(Math.round(g.nodePosition(name)[0] * 1e4) / 1e4);
+      return [...seen].sort((a: number, b: number) => a - b);
+    });
+
+  // The button puts each cube 1.5 along, so the two faces about to be glued
+  // are half a unit apart: a glue across a space, not at a touching face.
+  expect(await columns()).toEqual([0, 1, 1.5, 2.5]);
+
+  await page.evaluate(async () => {
+    const g = (window as any).__gecko;
+    const [first, second] = facingPair();
+    g.apply({ op: "glue_faces", first, second });
+    await g.refresh();
+  });
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 12);
+
+  // One column where there were two, half way between them: the faces met
+  // in the middle, and neither block was dragged onto the other.
+  expect(await columns()).toEqual([0, 1.25, 2.5]);
   expect(errors).toEqual([]);
 });
 
