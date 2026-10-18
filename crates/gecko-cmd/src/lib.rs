@@ -173,6 +173,13 @@ pub enum Command {
     RemoveBlock {
         block: u32,
     },
+    /// Take away one face of a patch.
+    ///
+    /// Whatever it was welded to keeps its own cells, as for a block. A
+    /// face of a block is refused: what that means is to take the block.
+    RemoveFace {
+        face: u32,
+    },
     /// Take out the whole sheet of blocks through an edge.
     ///
     /// Whatever was glued to either end of the layer ends up glued to the
@@ -754,6 +761,21 @@ impl Session {
                         self.blocking.nb_edges(),
                         self.blocking.nb_faces(),
                         self.blocking.nb_blocks(),
+                    ),
+                    view_changed: true,
+                })
+            }
+            Command::RemoveFace { face } => {
+                let face = CellId::from_raw(face);
+                self.blocking.remove_face(face)?;
+                Ok(Outcome {
+                    script: None,
+                    message: format!(
+                        "face {face:?} removed — {} nodes, {} edges, {} faces, {} patches",
+                        self.blocking.nb_nodes(),
+                        self.blocking.nb_edges(),
+                        self.blocking.nb_faces(),
+                        self.blocking.nb_patches(),
                     ),
                     view_changed: true,
                 })
@@ -1600,6 +1622,23 @@ impl Session {
             })
             .collect();
         serde_json::Value::Array(blocks).to_string()
+    }
+
+    /// The patches: the blocks that are not blocks.
+    ///
+    /// A list rather than a flag per face, because the page asks once per
+    /// redraw and a patch is named by its component. What it is for:
+    /// knowing whether `Del` on a picked face takes the face or the block,
+    /// without the page having to work it out from the shape of something
+    /// else.
+    pub fn patches_json(&self) -> String {
+        let names: Vec<u32> = self
+            .blocking
+            .patches()
+            .iter()
+            .filter_map(|p| p.get())
+            .collect();
+        serde_json::to_string(&names).unwrap_or_else(|_| "[]".into())
     }
 
     pub fn stats_json(&self) -> String {

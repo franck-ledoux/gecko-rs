@@ -53,6 +53,9 @@ async function boot() {
   viewer.attachTo(canvas);
 
   let message = "";
+  /** The components that are patches, as the last redraw found them. */
+  let patchIds = new Set<number>();
+  const isPatch = (pick: { block: number }) => patchIds.has(pick.block);
   let revision = 0;
   /** The geometry this tab has drawn. Compared with the kernel's, which is
    *  how a load made from the Python console reaches a browser that never
@@ -1060,8 +1063,10 @@ async function boot() {
       picked.length === 0
         ? ""
         : picked.length === 1
-          ? `face ${picked[0].face} (block ${picked[0].block}) selected` +
-            ` — hold ⇧ for its chord`
+          ? isPatch(picked[0])
+            ? `face ${picked[0].face} of a patch — Del takes the face`
+            : `face ${picked[0].face} (block ${picked[0].block}) selected` +
+              ` — hold ⇧ for its chord`
           : picked.length === 2
             ? `faces ${picked[0].face} and ${picked[1].face} will be welded` +
               ` where they meet — or pillow both`
@@ -1193,9 +1198,14 @@ async function boot() {
     const command =
       edge !== null
         ? { op: "remove_sheet", edge }
-        : first !== undefined
-          ? { op: "remove_block", block: first.block }
-          : null;
+        : first === undefined
+          ? null
+          : // A face of an open sheet is a face; a face of a block is the
+            // way you point at the block. One key, and the kernel's own
+            // answer about which it is.
+            isPatch(first)
+            ? { op: "remove_face", face: first.face }
+            : { op: "remove_block", block: first.block };
     if (!command) return;
     const reply = await send(command);
     clearSelection();
@@ -1322,6 +1332,10 @@ async function boot() {
   async function refresh(frame: false | "jump" | "glide" = false) {
     const [bytes, stats] = await Promise.all([kernel.view(), kernel.stats()]);
     viewer.setView(decodeView(bytes));
+    // Which components are open sheets of faces. Asked once a redraw
+    // rather than once a pick: it is a short list, and both the verbs and
+    // the status line want it.
+    patchIds = new Set(stats.patches === 0 ? [] : kernel.patches());
     // Only when it has actually changed. The geometry is the big buffer and
     // the one that never moves; re-sending it because a node was dragged is
     // the whole cost this generation number exists to avoid.

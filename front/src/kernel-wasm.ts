@@ -48,6 +48,8 @@ export class WasmKernel implements Kernel {
             return this.session.entitiesJson();
           case "sheet":
             return this.session.sheetJson(Number(arg));
+          case "patches":
+            return this.session.patchesJson();
           case "chord": {
             // Two numbers, as a JSON array: one argument, and a chord is
             // named by a face and the block it was clicked on.
@@ -103,6 +105,10 @@ export class WasmKernel implements Kernel {
 
   chord(face: number, block: number): Chord {
     return JSON.parse(this.session.chordJson(face, block)) as Chord;
+  }
+
+  patches(): number[] {
+    return JSON.parse(this.session.patchesJson()) as number[];
   }
 
   script(): string {

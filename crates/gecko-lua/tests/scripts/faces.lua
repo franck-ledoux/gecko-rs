@@ -54,3 +54,15 @@ end
 -- And a surface that does not exist stops the script.
 local ok, why = pcall(gecko.face_on_surface, 99)
 assert(not ok and tostring(why):find("no surface"), tostring(why))
+
+-- And a face of a patch comes away on its own, leaving whatever it was
+-- welded to whole.
+local face = gecko.faces()[1]
+gecko.remove_face(face.id)
+assert(gecko.stats().faces == 0, "the quadrangle is gone")
+
+-- A side of a block is not a face to take away: that is the block.
+gecko.create_cube()
+local side = gecko.faces()[1]
+local ok, why = pcall(gecko.remove_face, side.id)
+assert(not ok and tostring(why):find("belongs to a block"), tostring(why))

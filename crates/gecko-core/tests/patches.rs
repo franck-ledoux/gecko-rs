@@ -163,3 +163,63 @@ fn cutting_a_free_quadrangle_leaves_two_faces_in_one_patch() {
         "still one patch, and still no block"
     );
 }
+
+#[test]
+fn a_face_of_a_patch_can_be_taken_away() {
+    // Cut a quadrangle in two and take one half: what is left is whole,
+    // with the edge that was shared back on its own boundary.
+    let mut b = Blocking::new().unwrap();
+    b.add_face(SQUARE).unwrap();
+    let along_x = b
+        .map()
+        .iter_edges()
+        .map(|e| (e, b.edge_endpoints(e)))
+        .find(|(_, (u, v))| {
+            let (p, q) = (b.position(*u).unwrap(), b.position(*v).unwrap());
+            (p[1] - q[1]).abs() < 1e-9 && p[1].abs() < 1e-9
+        })
+        .map(|(e, _)| b.edge_tag(e).id)
+        .expect("the side at y = 0");
+    b.split_sheet(along_x, 0.5).unwrap();
+    assert_eq!((b.nb_faces(), b.nb_nodes(), b.nb_edges()), (2, 6, 7));
+
+    let going = b.block_faces()[0].face;
+    b.remove_face(going).expect("a face of a patch");
+
+    assert_eq!(b.nb_faces(), 1, "one left");
+    assert_eq!(b.nb_patches(), 1);
+    // Four corners and four sides again: the half that stayed came away
+    // with its own copies of what the two of them shared.
+    assert_eq!((b.nb_nodes(), b.nb_edges()), (4, 4));
+}
+
+#[test]
+fn a_side_of_a_block_is_not_a_face_to_take_away() {
+    // It would leave a volume that is neither open nor closed, and what
+    // the caller means is to take the block.
+    let mut b = Blocking::new().unwrap();
+    b.add_block(cube_corners([0.0, 0.0, 0.0], 1.0)).unwrap();
+    let face = b.block_faces()[0].face;
+    assert!(matches!(
+        b.remove_face(face),
+        Err(BlockingError::NotAPatch(_))
+    ));
+    assert_eq!((b.nb_blocks(), b.nb_faces()), (1, 6), "and nothing moved");
+
+    assert!(matches!(
+        b.remove_face(CellId::from_raw(9999)),
+        Err(BlockingError::NoSuchFace(_))
+    ));
+}
+
+#[test]
+fn taking_the_last_face_leaves_nothing_behind() {
+    let mut b = Blocking::new().unwrap();
+    b.add_face(SQUARE).unwrap();
+    let face = b.block_faces()[0].face;
+    b.remove_face(face).expect("the only face");
+    assert_eq!(
+        (b.nb_nodes(), b.nb_edges(), b.nb_faces(), b.nb_patches()),
+        (0, 0, 0, 0)
+    );
+}

@@ -26,38 +26,38 @@ than necessary — see [Pictures](#pictures) below.
 read from: it cannot describe a key that does not exist, or miss one that
 does. Any key dismisses it.
 
-|             |                                               |
-| ----------- | --------------------------------------------- |
-| `C`         | create a cube                                 |
-| `O`         | open a geometry (`.msh`)                      |
-| `M`         | aim at the geometry, or back at the blocks    |
-| `B`         | box the geometry, or the selected surfaces    |
-| `K`         | put the blocking on the geometry              |
-| `A`         | put the selected nodes on the selected entity |
-| `Q`         | lay a quadrangle on the selected surface      |
-| `W`-drag    | catch every node handle inside the band       |
-| `L`         | lock the picked node, or let it go            |
-| `U`         | take the picked node off the geometry         |
-| `G`         | glue the two selected faces                   |
-| `Del` `⌫`   | remove the selection: a block, or a lit sheet |
-| `⇧Del` `⇧⌫` | remove the whole chord through that face      |
-| `P`         | pillow the selected faces                     |
-| `⇧P`        | o-grid all along that chord                   |
-| `⌘Z`        | take back the last change (ctrl `Z` on a PC)  |
-| `Esc`       | clear the selection                           |
-| `F`         | frame everything                              |
-| `X` `Y` `Z` | look down an axis, `⇧` for the negative side  |
-| `V`         | split into four views: 3D, X, Y and Z         |
-| `T`         | the X/Y/Z triad                               |
-| `D`         | dark or light                                 |
-| `1` `2` `3` | faces, blocks, edges                          |
-| `4` `5` `6` | geometric surfaces, curves, corners           |
-| `I`         | internal faces                                |
-| `Tab`       | display: colours, cells, geometry             |
-| `,`         | settings: what the operations do              |
-| `⇧Tab`      | hide everything                               |
-| `S`         | save a picture                                |
-| `H` `?`     | the card                                      |
+|             |                                                    |
+| ----------- | -------------------------------------------------- |
+| `C`         | create a cube                                      |
+| `O`         | open a geometry (`.msh`)                           |
+| `M`         | aim at the geometry, or back at the blocks         |
+| `B`         | box the geometry, or the selected surfaces         |
+| `K`         | put the blocking on the geometry                   |
+| `A`         | put the selected nodes on the selected entity      |
+| `Q`         | lay a quadrangle on the selected surface           |
+| `W`-drag    | catch every node handle inside the band            |
+| `L`         | lock the picked node, or let it go                 |
+| `U`         | take the picked node off the geometry              |
+| `G`         | glue the two selected faces                        |
+| `Del` `⌫`   | remove: a block, a face of a patch, or a lit sheet |
+| `⇧Del` `⇧⌫` | remove the whole chord through that face           |
+| `P`         | pillow the selected faces                          |
+| `⇧P`        | o-grid all along that chord                        |
+| `⌘Z`        | take back the last change (ctrl `Z` on a PC)       |
+| `Esc`       | clear the selection                                |
+| `F`         | frame everything                                   |
+| `X` `Y` `Z` | look down an axis, `⇧` for the negative side       |
+| `V`         | split into four views: 3D, X, Y and Z              |
+| `T`         | the X/Y/Z triad                                    |
+| `D`         | dark or light                                      |
+| `1` `2` `3` | faces, blocks, edges                               |
+| `4` `5` `6` | geometric surfaces, curves, corners                |
+| `I`         | internal faces                                     |
+| `Tab`       | display: colours, cells, geometry                  |
+| `,`         | settings: what the operations do                   |
+| `⇧Tab`      | hide everything                                    |
+| `S`         | save a picture                                     |
+| `H` `?`     | the card                                           |
 
 Clicking the background clears the selection too — with nothing under the
 pointer there is nothing to pick, so the click means *that one*.

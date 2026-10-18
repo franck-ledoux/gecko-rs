@@ -86,6 +86,23 @@ The same machinery takes surfaces rather than curves, for a face of a
 blocking that spans several geometric surfaces. Nothing more is needed when
 that day comes: it is one notion with a dimension on it.
 
+## Taking one away
+
+Pick a face and press `Del`.
+
+One key, two meanings, and the kernel says which: a face of a **patch** is a
+face, and a face of a **block** is how you point at the block. The status
+line says which you are holding before you press anything.
+
+```lua
+gecko.remove_face(id)
+```
+
+Whatever the face was welded to keeps its own cells — they are split off on
+the way out, not deleted with it — so a face taken from the middle of a
+patch leaves the ones around it whole, with the edges that were shared back
+on their own boundary and free to be welded to something else.
+
 ## Cutting a sheet of faces
 
 Exactly as for blocks: drag along an edge, and the whole sheet is cut. In

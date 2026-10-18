@@ -57,6 +57,12 @@ impl WasmSession {
         self.inner.sheet_json(edge)
     }
 
+    /// Which of the blocking's components are patches rather than blocks.
+    #[wasm_bindgen(js_name = patchesJson)]
+    pub fn patches_json(&self) -> String {
+        self.inner.patches_json()
+    }
+
     /// The chord through a face, the same way. The block is which side of
     /// the face was clicked; a chord does not depend on it, and the kernel
     /// still has to be told which block a face belongs to.

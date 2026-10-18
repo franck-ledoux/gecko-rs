@@ -279,3 +279,61 @@ fn an_edge_is_never_handed_a_side_it_was_not_put_on() {
         "no edge of the second face was handed a side"
     );
 }
+
+#[test]
+fn a_face_of_a_patch_is_taken_away_on_its_own() {
+    let mut s = loaded();
+    s.apply(Command::FaceOnSurface { surface: 1 }).unwrap();
+    let faces: Vec<serde_json::Value> = serde_json::from_str(&s.faces_json()).unwrap();
+    let face = faces[0]["id"].as_u64().unwrap();
+
+    // The page asks which components are patches rather than working it
+    // out from the shape of something else.
+    let patches: Vec<u32> = serde_json::from_str(&s.patches_json()).unwrap();
+    assert_eq!(patches.len(), 1);
+    assert_eq!(
+        patches[0] as u64,
+        faces[0]["block"].as_u64().unwrap(),
+        "and it is the component that face belongs to"
+    );
+
+    let raw = s.apply_json(&format!(r#"{{"op":"remove_face","face":{face}}}"#));
+    let reply: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(reply["ok"], true, "{raw}");
+    let stats: serde_json::Value = serde_json::from_str(&s.stats_json()).unwrap();
+    assert_eq!(
+        (stats["faces"].as_u64(), stats["nodes"].as_u64()),
+        (Some(0), Some(0))
+    );
+    assert!(s.script().contains(&format!("gecko.remove_face({face})")));
+}
+
+#[test]
+fn a_side_of_a_block_is_refused_and_nothing_moves() {
+    let mut s = Session::new().unwrap();
+    s.apply(Command::CreateCube {
+        origin: [0.0, 0.0, 0.0],
+        size: 1.0,
+    })
+    .unwrap();
+    let faces: Vec<serde_json::Value> = serde_json::from_str(&s.faces_json()).unwrap();
+    let before = s.view_buffer();
+
+    let raw = s.apply_json(&format!(
+        r#"{{"op":"remove_face","face":{}}}"#,
+        faces[0]["id"].as_u64().unwrap()
+    ));
+    let reply: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(reply["ok"], false, "{raw}");
+    assert!(
+        reply["error"]
+            .as_str()
+            .unwrap()
+            .contains("belongs to a block"),
+        "{raw}"
+    );
+    assert_eq!(s.view_buffer(), before);
+    assert!(serde_json::from_str::<Vec<u32>>(&s.patches_json())
+        .unwrap()
+        .is_empty());
+}

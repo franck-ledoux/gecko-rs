@@ -112,6 +112,10 @@ export interface Kernel {
   /** The chord of blocks through a face, named as a click names it. Also a
    *  question: nothing is removed or pillowed by asking. */
   chord(face: number, block: number): Chord;
+
+  /** Which components are **patches** — open sheets of faces — rather than
+   *  blocks. What `Del` needs to know to take the right thing away. */
+  patches(): number[];
   /** The session as a Lua script: what it would take to arrive here. */
   script(): string;
 }

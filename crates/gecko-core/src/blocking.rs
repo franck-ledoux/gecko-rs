@@ -262,6 +262,8 @@ pub enum BlockingError {
     TangledChord(CellId),
     #[error("{0:?} is a patch — an open sheet of faces — and this needs a block")]
     NotABlock(CellId),
+    #[error("face {0:?} belongs to a block — take the block away, not one of its sides")]
+    NotAPatch(CellId),
     #[error("nothing was selected to pillow")]
     EmptyPatch,
     #[error("face {0:?} is not a face of block {1:?}")]
@@ -1437,6 +1439,48 @@ impl Blocking {
         for &dart in &darts {
             self.map.release_dart(dart)?;
         }
+        Ok(())
+    }
+
+    /// Take away one face of a patch.
+    ///
+    /// The mirror of [`remove_block`][Self::remove_block], a dimension
+    /// down, and it unsews for the same reason: whatever the face was
+    /// welded to keeps its own cells. They are **split off** on the way
+    /// out, not deleted with it, so a face taken out of the middle of a
+    /// patch leaves the ones around it whole, with the edges that were
+    /// shared back on their own boundary and free to be welded to
+    /// something else.
+    ///
+    /// A face of a **block** is refused. Taking one side out of a shell
+    /// would leave a volume that is neither open nor closed, and what the
+    /// caller means is [`remove_block`][Self::remove_block].
+    pub fn remove_face(&mut self, face: CellId) -> Result<(), BlockingError> {
+        let f = self
+            .face_by_id(face)
+            .ok_or(BlockingError::NoSuchFace(face))?;
+        let volume = self.map.volume_id(f as DartIdType);
+        if self.is_block(volume) {
+            return Err(BlockingError::NotAPatch(face));
+        }
+
+        let darts = self.face_darts(f).to_vec();
+        for &dart in &darts {
+            if self.map.beta::<2>(dart) != NULL_DART_ID {
+                // Unsewn rather than unlinked: this is where the neighbour
+                // gets its own copy of the edge and corners back.
+                self.map.unsew::<2>(dart)?;
+            }
+        }
+        for &dart in &darts {
+            if self.map.beta::<1>(dart) != NULL_DART_ID {
+                self.map.unlink::<1>(dart)?;
+            }
+        }
+        for &dart in &darts {
+            self.map.release_dart(dart)?;
+        }
+        self.assign_missing_ids();
         Ok(())
     }
 

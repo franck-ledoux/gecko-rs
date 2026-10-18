@@ -2920,6 +2920,36 @@ test("⇧P wraps that chord in an o-grid", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test("Del takes away a face of a patch, not a block", async ({ page }) => {
+  // One key, two meanings, and the kernel's own answer about which: a face
+  // of an open sheet is a face, and a face of a block is how you point at
+  // the block.
+  const errors = await boot(page);
+  await openSquare(page);
+  await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    g.selectGeom([{ dim: 2, tag: 1 }]);
+    g.showVerbs();
+  });
+  await page.keyboard.press("q");
+  await page.waitForFunction(() => (window as any).__gecko.stats().faces === 1);
+
+  // Picked the way a click picks, and the status line says what it is.
+  await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    const s = g.surface("faces");
+    g.choose({ face: s.faces[0], block: s.blocks[0] });
+  });
+  await expect(page.locator("#status")).toContainText("of a patch");
+
+  await page.keyboard.press("Delete");
+  await page.waitForFunction(() => (window as any).__gecko.stats().faces === 0);
+  const stats = await page.evaluate(() => (window as any).__gecko.stats());
+  expect(stats.nodes).toBe(0);
+  expect(stats.patches).toBe(0);
+  expect(errors).toEqual([]);
+});
+
 test("a quadrangle is laid on the picked surface with Q", async ({ page }) => {
   // The beginning of a surface blocking, through the page: pick a surface
   // of the geometry, press one key, and a face comes back already
