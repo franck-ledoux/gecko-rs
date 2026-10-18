@@ -18,6 +18,13 @@
 //! gecko.export_vtk("mesh.vtk")
 //! ```
 //!
+//! **Those two paths want a word.** A script reaches files only where
+//! there are files to reach: in the terminal, and in a page served by
+//! `gecko` on your own machine — where a relative path is relative to the
+//! folder `gecko` was started in, and an absolute path is taken as given.
+//! A page on a static host has none, so a read says so and a write hands
+//! the browser a download. See [`Kernel::read`].
+//!
 //! **Required things are positional; optional things live in a table at the
 //! end.** A command with nothing required takes the table alone, which is
 //! why `gecko.mesh{ segments = 8 }` has no brackets: that is Lua's own
@@ -54,8 +61,15 @@ pub trait Kernel {
     /// JSON, and the answer is JSON.
     fn query(&self, kind: &str, arg: &str) -> String;
 
-    /// A file, if this host has any. The page has none until the local
-    /// binary serves it, and says so rather than pretending.
+    /// A file, if this host has any.
+    ///
+    /// Where there are files, a **relative path is relative to where the
+    /// host was started** — the terminal's working directory, or the
+    /// folder `gecko` was launched in — and an absolute path is taken as
+    /// given. A page served from anywhere else has no files at all, and
+    /// says so rather than pretending: no path of any shape will reach
+    /// one, which is worth saying because the obvious guess when a read
+    /// fails is that the path was not absolute enough.
     fn read(&self, path: &str) -> Result<String, String>;
     fn write(&self, path: &str, text: &str) -> Result<(), String>;
 }

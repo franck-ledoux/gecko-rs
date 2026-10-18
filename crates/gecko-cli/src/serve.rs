@@ -48,11 +48,9 @@ pub fn start(port: u16, open: bool) -> Result<(), String> {
         if open {
             open_in_browser(&url);
         }
-        let app = Router::new()
-            .route("/file", get(read).put(write))
-            .fallback(get(page))
-            .with_state(files);
-        axum::serve(listener, app).await.map_err(|e| e.to_string())
+        axum::serve(listener, router(files))
+            .await
+            .map_err(|e| e.to_string())
     })
 }
 
@@ -61,17 +59,45 @@ struct At {
     path: String,
 }
 
+/// Everything the local server answers: the two file doors, and the page
+/// itself for anything else.
+///
+/// Separate from [`start`] so it can be driven without a port, a runtime
+/// or a browser. Nothing drives it yet: this file is still the part of the
+/// binary that no test reaches, which the coverage page says out loud.
+pub fn router(files: Arc<Files>) -> Router {
+    Router::new()
+        .route("/file", get(read).put(write))
+        .fallback(get(page))
+        .with_state(files)
+}
+
+/// The header that says this answer came from **here**.
+///
+/// Without it the page cannot tell a file from a static host's idea of an
+/// unknown path: a single-page host answers anything with the page itself
+/// and the status 200, so a script asking for `cylinder.msh` on a static
+/// host was handed the HTML of the application and told the kernel it was
+/// a gmsh mesh. Saying who answered is the only reliable difference, since
+/// a missing file's 404 and a static host's 404 are the same 404.
+pub const FROM_GECKO: &str = "x-gecko-file";
+
 async fn read(State(files): State<Arc<Files>>, Query(at): Query<At>) -> Response {
     match files.read(&at.path) {
-        Some(text) => text.into_response(),
-        None => (StatusCode::NOT_FOUND, "no file of that name").into_response(),
+        Some(text) => ([(FROM_GECKO, "1")], text).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            [(FROM_GECKO, "1")],
+            "no file of that name",
+        )
+            .into_response(),
     }
 }
 
 async fn write(State(files): State<Arc<Files>>, Query(at): Query<At>, body: String) -> Response {
     match files.write(&at.path, &body) {
-        Ok(()) => "written".into_response(),
-        Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
+        Ok(()) => ([(FROM_GECKO, "1")], "written").into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, [(FROM_GECKO, "1")], e).into_response(),
     }
 }
 

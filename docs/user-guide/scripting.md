@@ -112,13 +112,24 @@ checks the bytes it produces agree.
 
 ## Files
 
-In the terminal, a path is a path. In the page it depends on who served it:
+A script reaches files only where there are files to reach.
 
-- served by `gecko` on your machine, the page can read and write files
-  under the folder it was started in, and absolute paths you write out in
-  full;
-- served from anywhere else, there are no files: a read says so, and a
-  write hands the browser a **download** instead.
+| where the page came from                  | what a path means                                            |
+| ----------------------------------------- | ------------------------------------------------------------ |
+| the terminal (`gecko run`)                | the working directory; absolute paths in full                |
+| served by `gecko` on your machine         | the folder `gecko` was started in; absolute paths in full    |
+| a static host, such as the published page | **there are no files**, and no path of any shape reaches one |
 
-So `gecko.export_vtk("mesh.vtk")` writes a file when you launched the app
-yourself and downloads one when you are using it from a static page.
+So `gecko.load_geometry("cylinder.msh")` opens the file beside the one you
+launched `gecko` in, and `gecko.export_vtk("mesh.vtk")` writes next to it.
+From the published page the same two lines find nothing and hand you a
+**download** respectively — the geometry is opened with the toolbar's own
+button there, which reads the file through the browser rather than through
+a path.
+
+!!! note "A read that fails is not a path that was not absolute enough"
+    It is the first thing anyone tries, so the message says which of the
+    two it was: no such file *here*, or no files at all. A browser cannot
+    open `/home/you/cylinder.msh` by name and should not be able to; what
+    `gecko` adds when it serves the page is exactly that door, and only
+    onto the folder you started it in.

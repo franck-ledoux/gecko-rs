@@ -2805,6 +2805,21 @@ test("a mistake in a script is reported, not swallowed", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test("a script asking this page for a file is told why there is none", async ({ page }) => {
+  // The suite serves the page as a static host does, so this is the case a
+  // reader meets on the published page — and the first thing anyone tries
+  // then is a longer path. The message has to say that no path will do.
+  const errors = await boot(page);
+  await openConsole(page);
+
+  await lua(page, 'gecko.load_geometry("cylinder.msh")');
+  const said = page.locator("#console-out .bad").last();
+  await expect(said).toContainText("cylinder.msh");
+  await expect(said).toContainText("static host has no files at all");
+  await expect(said).toContainText("toolbar");
+  expect(errors).toEqual([]);
+});
+
 test("the session is saved as a script", async ({ page }) => {
   const errors = await boot(page);
   await openConsole(page);

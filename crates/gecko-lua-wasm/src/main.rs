@@ -41,11 +41,20 @@ mod page {
         }
 
         fn read(&self, path: &str) -> Result<String, String> {
-            // The host answers with the file, or with nothing at all when it
-            // has no files to give — a page served from anywhere but the local
-            // binary. Saying so beats pretending.
-            unsafe { answer(gecko_read(send(path).as_ptr())) }
-                .ok_or_else(|| format!("{path}: no file of that name, or no files here at all"))
+            // The host answers with the file, or with nothing at all when
+            // it has no files to give — a page served from anywhere but
+            // the local binary. The two are worth telling apart in the
+            // message, because what to do about them is not the same and
+            // the page cannot tell which it is: a static host's 404 and a
+            // missing file's 404 are the same 404.
+            unsafe { answer(gecko_read(send(path).as_ptr())) }.ok_or_else(|| {
+                format!(
+                    "{path}: no such file. A page served by `gecko` reads paths under the \
+                     folder it was started in, and absolute paths in full. A page on a \
+                     static host has no files at all — open a geometry with the toolbar \
+                     instead, or run `gecko` in the folder your files are in."
+                )
+            })
         }
 
         fn write(&self, path: &str, text: &str) -> Result<(), String> {

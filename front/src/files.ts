@@ -16,12 +16,25 @@
 
 import { saveBlob } from "./capture";
 
+/**
+ * The header `gecko` puts on its answers, and the only reliable way to
+ * know one when you see it.
+ *
+ * A static host answers an unknown path with **the application itself**,
+ * status and all — so without this a script asking for `cylinder.msh` on
+ * the published page was handed the page's own HTML and passed it to the
+ * kernel as a gmsh mesh. The status cannot tell them apart either: a
+ * missing file's 404 and a static host's 404 are the same 404.
+ */
+const FROM_GECKO = "x-gecko-file";
+
 /** The file at this path, or null — no such file, or no server to ask. */
 export function read(path: string): string | null {
   try {
     const ask = new XMLHttpRequest();
     ask.open("GET", `file?path=${encodeURIComponent(path)}`, false);
     ask.send();
+    if (ask.getResponseHeader(FROM_GECKO) === null) return null;
     return ask.status === 200 ? ask.responseText : null;
   } catch {
     return null;
@@ -40,8 +53,13 @@ export function write(path: string, text: string): string {
     const ask = new XMLHttpRequest();
     ask.open("PUT", `file?path=${encodeURIComponent(path)}`, false);
     ask.send(text);
-    if (ask.status === 200) return "";
-    if (ask.status !== 404) return ask.responseText || `could not write ${path}`;
+    // Again, only an answer that says it came from `gecko` counts as one:
+    // a host that accepts a PUT it does not understand would otherwise
+    // look like a file written.
+    if (ask.getResponseHeader(FROM_GECKO) !== null) {
+      if (ask.status === 200) return "";
+      if (ask.status !== 404) return ask.responseText || `could not write ${path}`;
+    }
   } catch {
     // No server at all: the page came from a static host.
   }
