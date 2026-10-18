@@ -3,6 +3,21 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
+## 0.1.1
+
+A readable help card, and a window that says which gecko it is.
+
+- The card of shortcuts **fits the window**. It had grown past the bottom of
+  the screen — at 1280×800 it wanted 1087 pixels and had 670 — because one
+  group had reached twenty shortcuts. The keys that act on the geometry and
+  the ones about meshing are groups of their own now, and the card lays them
+  out in columns the browser balances rather than in a grid that aligns its
+  rows. Measured at three ordinary window sizes: nothing to scroll at any of
+  them.
+- The **name and version** are on the card's title and at the left of the
+  readout along the bottom, taken from the kernel itself — the same number a
+  release is tagged with.
+
 ## 0.1.0
 
 The first release. A blocking toolkit that runs in a browser tab, scripted in
