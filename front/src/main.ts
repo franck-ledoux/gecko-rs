@@ -851,7 +851,8 @@ async function boot() {
       now.length === 0
         ? "nothing selected — a box would take the whole geometry"
         : now.length === 1
-          ? `${spotName(now[0])} selected`
+          ? `${spotName(now[0])} selected` +
+            (now[0].dim === 2 ? " — Q lays a quadrangle on it" : "")
           : `${now.length} entities selected`,
     );
   }
@@ -923,6 +924,34 @@ async function boot() {
    * selections are let go afterwards, because the next four corners and
    * the next curve are the next gesture.
    */
+  /**
+   * Lay a quadrangle on the picked surface.
+   *
+   * The beginning of a surface blocking: the kernel chooses the four
+   * corners of the surface the boundary turns a right angle at, and the
+   * face comes back classified — corners on corners, sides on the curves
+   * between them, face on the surface.
+   */
+  async function faceOnSurface() {
+    const picked = viewer.geomSelection;
+    const surface = picked.find((s) => s.dim === 2);
+    if (picked.length !== 1 || surface === undefined) {
+      say(
+        picked.length === 0
+          ? "pick a surface first — press M and click one"
+          : "one surface at a time: a quadrangle is laid on one",
+      );
+      return;
+    }
+    const reply = await send({ op: "face_on_surface", surface: surface.tag });
+    message = reply.message;
+    if (reply.ok) viewer.selectGeom([]);
+    showVerbs();
+    // Not framed: the face is laid on the geometry, which is already in
+    // view — that is how it was picked.
+    await refresh();
+  }
+
   async function attach() {
     const nodes = viewer.selectedNodes;
     const picked = viewer.geomSelection;
@@ -1324,6 +1353,11 @@ async function boot() {
     // matters once, when you are working out which kernel you are talking to.
     $("stats").innerHTML =
       `<span><b data-test="blocks">${stats.blocks}</b> blocks</span>` +
+      // Only once there is one: a counter at nought for something nobody
+      // has made is a question in the corner of the window.
+      (stats.patches === 0
+        ? ""
+        : `<span><b data-test="patches">${stats.patches}</b> patches</span>`) +
       `<span><b data-test="nodes">${stats.nodes}</b> nodes</span>` +
       `<span><b data-test="edges">${stats.edges}</b> edges</span>` +
       `<span><b data-test="faces">${stats.faces}</b> faces</span>` +
@@ -1550,6 +1584,7 @@ async function boot() {
     glue: glueSelection,
     remove: removeSelection,
     pillow: pillowSelection,
+    "face-on-surface": faceOnSurface,
     "remove-chord": removeChord,
     "pillow-chord": pillowChord,
     clear: clearSelection,

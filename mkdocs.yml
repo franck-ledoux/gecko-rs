@@ -57,6 +57,7 @@ nav:
       - Geometry: user-guide/geometry.md
       - Classification: user-guide/classification.md
       - Joining and removing blocks: user-guide/gluing.md
+      - Faces on their own: user-guide/faces.md
       - Sheets: user-guide/sheets.md
       - Chords: user-guide/chords.md
       - Pillowing: user-guide/pillowing.md

@@ -483,6 +483,20 @@ impl Blocking {
         Ok(self.face_tag(self.map.face_id(base)).id)
     }
 
+    /// A face's four corners and four edges, in the order β₁ walks them.
+    ///
+    /// Edge `k` joins corner `k` to corner `k + 1`, which is what lets a
+    /// caller that built the face from a list of points say what each of
+    /// its sides is on without going looking for one by where it is.
+    pub fn face_cells(&self, face: CellId) -> Option<([CellId; 4], [CellId; 4])> {
+        let f = self.face_by_id(face)?;
+        let darts = self.face_darts(f);
+        Some((
+            darts.map(|d| self.node_tag(self.map.vertex_id(d)).id),
+            darts.map(|d| self.edge_tag(self.map.edge_id(d)).id),
+        ))
+    }
+
     /// Whether this volume is a **block** — a shell that closes — rather
     /// than a **patch**: an open sheet of faces.
     ///

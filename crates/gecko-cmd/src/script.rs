@@ -63,6 +63,7 @@ pub fn line(command: &Command) -> String {
             };
             format!("gecko.move_node({node}, {}{tail})", point(to))
         }
+        Command::FaceOnSurface { surface } => format!("gecko.face_on_surface({surface})"),
         Command::AddFace { corners } => {
             format!(
                 "gecko.add_face{{{}}}",

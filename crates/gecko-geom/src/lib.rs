@@ -16,11 +16,15 @@
 //! geometry gets to be testable on its own.
 
 pub mod bounds;
+pub mod composite;
 pub mod model;
 pub mod msh;
+pub mod quad;
 pub mod where_on;
 
 pub use bounds::BoundsError;
+pub use composite::{Composites, Model};
 pub use model::{Corner, Curve, Geometry, Surface};
 pub use msh::{Msh, MshError, PhysicalName, LINE, POINT, TRIANGLE};
+pub use quad::{Quad, QuadError};
 pub use where_on::{CORNER, CURVE, SURFACE};

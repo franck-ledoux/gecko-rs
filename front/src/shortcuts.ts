@@ -31,6 +31,7 @@ export const ACTIONS = [
   "glue",
   "remove",
   "pillow",
+  "face-on-surface",
   "remove-chord",
   "pillow-chord",
   "clear",
@@ -147,6 +148,13 @@ export const SHORTCUTS: readonly Shortcut[] = [
     key: "a",
     action: "attach",
     does: "put the selected nodes on the selected entity",
+    group: "Edit",
+  },
+  {
+    show: "Q",
+    key: "q",
+    action: "face-on-surface",
+    does: "lay a quadrangle on the selected surface",
     group: "Edit",
   },
   {

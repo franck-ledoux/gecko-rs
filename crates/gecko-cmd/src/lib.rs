@@ -19,7 +19,7 @@ use std::sync::Arc;
 use gecko_core::ids::CellId;
 use gecko_core::{cube_corners, Blocking, BlockingError, Mesh, On, SEGMENTS};
 use gecko_geom::model::GeometryError;
-use gecko_geom::{BoundsError, Geometry};
+use gecko_geom::{BoundsError, Composites, Geometry, Model};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -37,6 +37,8 @@ pub enum SessionError {
     Geometry(#[from] GeometryError),
     #[error("{0}")]
     Bounds(#[from] BoundsError),
+    #[error("{0}")]
+    Quad(#[from] gecko_geom::QuadError),
     #[error("no geometry is loaded — open a .msh first")]
     NoGeometry,
 }
@@ -112,6 +114,17 @@ pub enum Command {
     /// corners go anticlockwise seen from the side the face faces.
     AddFace {
         corners: [[f64; 3]; 4],
+    },
+    /// Lay a quadrangle on a geometric surface.
+    ///
+    /// The four corners are the geometric corners of the surface's boundary
+    /// whose interior angle is nearest a right angle, taken in boundary
+    /// order. The corners of the face are classified on those, the face on
+    /// the surface, and each of its four sides on the run of curves between
+    /// two chosen corners — one curve when the side is one curve, and a
+    /// **side**, which is a curve made of curves, when it is not.
+    FaceOnSurface {
+        surface: i32,
     },
     /// An axis-aligned cube, `origin` being its lowest corner.
     CreateCube {
@@ -345,6 +358,15 @@ pub struct Session {
     /// onto a surface it will be the cell that holds the name of the
     /// surface, not the surface that holds a list of cells.
     geometry: Option<Arc<Geometry>>,
+    /// The composites named over that geometry: a side is a run of curves,
+    /// and a cell is classified on one entity, so a side has to be one.
+    ///
+    /// Beside the geometry rather than in it, because the geometry is
+    /// shared — every state the undo stack holds points at the same one —
+    /// and because this table is **monotone**: an undo that takes back the
+    /// operation which made a composite leaves a name nobody uses, where
+    /// removing it would leave a cell classified on nothing at all.
+    composites: Composites,
     /// Bumped whenever the geometry is replaced or dropped.
     ///
     /// This is how a client knows to re-fetch a buffer it would otherwise
@@ -405,6 +427,7 @@ impl Session {
         Ok(Session {
             blocking: Blocking::new()?,
             geometry: None,
+            composites: Composites::default(),
             geometry_generation: 0,
             origin: None,
             past: VecDeque::new(),
@@ -555,6 +578,76 @@ impl Session {
     fn run(&mut self, command: Command) -> Result<Outcome, SessionError> {
         match command {
             Command::AddBlock { corners } => self.add(corners),
+            Command::FaceOnSurface { surface } => {
+                let Session {
+                    blocking,
+                    geometry,
+                    composites,
+                    ..
+                } = self;
+                let geometry = geometry.as_deref().ok_or(SessionError::NoGeometry)?;
+                let quad = geometry.quad_on(surface)?;
+
+                // The corners are already *at* the geometric corners, so
+                // nothing has to be projected: the face is laid where the
+                // model says, and then told what it is lying on.
+                let face = blocking.add_face(quad.points)?;
+                let (corners, edges) = blocking
+                    .face_cells(face)
+                    .expect("the face that was just made");
+                for (node, corner) in corners.iter().zip(quad.corners) {
+                    blocking.set_node_class(
+                        *node,
+                        Some(On {
+                            dim: gecko_geom::CORNER,
+                            tag: corner,
+                        }),
+                    )?;
+                }
+                // Side `k` runs from corner `k` to corner `k + 1`, which is
+                // the order β₁ walks the face in and the order the points
+                // were given in. A run of one curve is that curve; a run of
+                // several is a side, named once and for all.
+                let mut composed = 0;
+                for (edge, side) in edges.iter().zip(&quad.sides) {
+                    let tag = composites.group(gecko_geom::CURVE, side);
+                    composed += usize::from(side.len() > 1);
+                    blocking.set_edge_class(
+                        *edge,
+                        Some(On {
+                            dim: gecko_geom::CURVE,
+                            tag,
+                        }),
+                    )?;
+                }
+                blocking.set_face_class(
+                    face,
+                    Some(On {
+                        dim: gecko_geom::SURFACE,
+                        tag: surface,
+                    }),
+                )?;
+
+                let squareness: Vec<String> = quad
+                    .angles
+                    .iter()
+                    .map(|a| format!("{:.0}°", a.to_degrees()))
+                    .collect();
+                Ok(Outcome {
+                    script: None,
+                    message: format!(
+                        "face {face:?} laid on surface {surface} — corners {:?} at {}{}",
+                        quad.corners,
+                        squareness.join(", "),
+                        match composed {
+                            0 => String::new(),
+                            1 => ", and one side runs along several curves".to_string(),
+                            n => format!(", and {n} sides run along several curves"),
+                        }
+                    ),
+                    view_changed: true,
+                })
+            }
             Command::AddFace { corners } => {
                 let id = self.blocking.add_face(corners)?;
                 Ok(Outcome {
@@ -640,7 +733,10 @@ impl Session {
                         )
                     } else {
                         match self.blocking.node_class(node) {
-                            Some(on) => format!("node {node:?} moved along {}", name_of(on)),
+                            Some(on) => format!(
+                                "node {node:?} moved along {}",
+                                name_in(on, &self.composites)
+                            ),
                             None => format!("node {node:?} moved to {landed:?}"),
                         }
                     },
@@ -855,7 +951,9 @@ impl Session {
                 Ok(Outcome {
                     script: None,
                     message: match on {
-                        Some(on) => format!("{} put on {}", these(&names), name_of(on)),
+                        Some(on) => {
+                            format!("{} put on {}", these(&names), name_in(on, &self.composites))
+                        }
                         None => format!("{} on nothing now", these(&names)),
                     },
                     view_changed: true,
@@ -926,11 +1024,14 @@ impl Session {
                 let segments = segments.clamp(1, MAX_SEGMENTS);
                 let mesh = {
                     let Session {
-                        blocking, geometry, ..
+                        blocking,
+                        geometry,
+                        composites,
+                        ..
                     } = self;
-                    let geometry = geometry.as_deref();
+                    let model = geometry.as_deref().map(|g| Model::new(g, composites));
                     blocking.mesh(segments, |on, at| {
-                        geometry.and_then(|g| g.project(on.dim, on.tag, at))
+                        model.and_then(|m| m.project(on.dim, on.tag, at))
                     })
                 };
                 let message = format!("meshed — {}", vtk::count(&mesh));
@@ -964,19 +1065,22 @@ impl Session {
                 // welded corner has to land on whatever the two of them
                 // leave it classified on, which only the triangles know.
                 let Session {
-                    blocking, geometry, ..
+                    blocking,
+                    geometry,
+                    composites,
+                    ..
                 } = self;
-                let geometry = geometry.as_deref();
+                let model = geometry.as_deref().map(|g| Model::new(g, composites));
                 let unmet = blocking.glue_faces(
                     first,
                     second,
                     |a, b, near| {
-                        geometry.and_then(|g| {
-                            g.meet((a.dim, a.tag), (b.dim, b.tag), near)
+                        model.and_then(|m| {
+                            m.meet((a.dim, a.tag), (b.dim, b.tag), near)
                                 .map(|(dim, tag)| On { dim, tag })
                         })
                     },
-                    |on, at| geometry.and_then(|g| g.project(on.dim, on.tag, at)),
+                    |on, at| model.and_then(|m| m.project(on.dim, on.tag, at)),
                 )?;
                 let dropped = unmet
                     .iter()
@@ -984,8 +1088,8 @@ impl Session {
                         format!(
                             "; node {:?} kept {} and left {}",
                             u.node,
-                            name_of(u.kept),
-                            name_of(u.dropped)
+                            name_in(u.kept, &self.composites),
+                            name_in(u.dropped, &self.composites)
                         )
                     })
                     .collect::<String>();
@@ -1059,17 +1163,19 @@ impl Session {
             // written to while the geometry answers questions about it,
             // and they are two fields rather than one object.
             let Session {
-                blocking, geometry, ..
+                blocking,
+                geometry,
+                composites,
+                ..
             } = self;
             let geometry = geometry.as_deref().ok_or(SessionError::NoGeometry)?;
-            let reach = [tolerance.max(0.0) * geometry.span(); 3];
+            // Everything the geometry is asked goes through the model, so
+            // that a side answers like any other entity.
+            let model = Model::new(geometry, composites);
+            let reach = [tolerance.max(0.0) * model.span(); 3];
             blocking.classify_nodes(
-                |at| {
-                    geometry
-                        .nearest(at, reach)
-                        .map(|(dim, tag)| On { dim, tag })
-                },
-                |on, at| geometry.project(on.dim, on.tag, at),
+                |at| model.nearest(at, reach).map(|(dim, tag)| On { dim, tag }),
+                |on, at| model.project(on.dim, on.tag, at),
             );
         }
         // A fresh start, not a confirmation: the settling keeps a
@@ -1097,20 +1203,20 @@ impl Session {
     /// the boundary when it is projected, and turns the cells inside out.
     fn settle_moved(&mut self, nodes: &[CellId], tolerance: f64) {
         let Session {
-            blocking, geometry, ..
+            blocking,
+            geometry,
+            composites,
+            ..
         } = self;
         let Some(geometry) = geometry.as_deref() else {
             return;
         };
-        let reach = [tolerance.max(0.0) * geometry.span(); 3];
+        let model = Model::new(geometry, composites);
+        let reach = [tolerance.max(0.0) * model.span(); 3];
         blocking.classify_named(
             nodes,
-            |at| {
-                geometry
-                    .nearest(at, reach)
-                    .map(|(dim, tag)| On { dim, tag })
-            },
-            |on, at| geometry.project(on.dim, on.tag, at),
+            |at| model.nearest(at, reach).map(|(dim, tag)| On { dim, tag }),
+            |on, at| model.project(on.dim, on.tag, at),
         );
     }
 
@@ -1127,11 +1233,12 @@ impl Session {
         let Some(geometry) = self.geometry.as_deref() else {
             return Ok(());
         };
+        let model = Model::new(geometry, &self.composites);
         let Some(vertex) = self.blocking.node_by_id(node) else {
             return Ok(());
         };
         let at = self.blocking.position(vertex).unwrap_or([0.0; 3]);
-        if let Some(onto) = geometry.project(on.dim, on.tag, at) {
+        if let Some(onto) = model.project(on.dim, on.tag, at) {
             self.blocking.set_position(node, onto)?;
         }
         Ok(())
@@ -1158,8 +1265,8 @@ impl Session {
         if let Some(on) = self.blocking.node_class(node) {
             let onto = self
                 .geometry
-                .as_ref()
-                .and_then(|g| g.project(on.dim, on.tag, to))
+                .as_deref()
+                .and_then(|g| Model::new(g, &self.composites).project(on.dim, on.tag, to))
                 .unwrap_or(to);
             self.blocking.set_position(node, onto)?;
             return Ok(onto);
@@ -1169,8 +1276,9 @@ impl Session {
         let Some(geometry) = self.geometry.as_deref() else {
             return Ok(to);
         };
-        let reach = [snap.max(0.0) * geometry.span(); 3];
-        if let Some((dim, tag)) = geometry.nearest(to, reach) {
+        let model = Model::new(geometry, &self.composites);
+        let reach = [snap.max(0.0) * model.span(); 3];
+        if let Some((dim, tag)) = model.nearest(to, reach) {
             self.blocking.set_node_class(node, Some(On { dim, tag }))?;
             self.pull_onto_class(node)?;
         }
@@ -1203,15 +1311,24 @@ impl Session {
     ///    which its four edges bound.
     fn settle_classification(&mut self) {
         let Session {
-            blocking, geometry, ..
+            blocking,
+            geometry,
+            composites,
+            ..
         } = self;
         let Some(geometry) = geometry.as_deref() else {
             return;
         };
+        let model = Model::new(geometry, composites);
         blocking.reclassify(|cell| {
             let pairs: Vec<(u8, i32)> = cell.boundary.iter().map(|on| (on.dim, on.tag)).collect();
+            // Two lists, and the difference between them is the whole rule
+            // about composites: `allowed` knows about sides, so a cell
+            // keeps one it was deliberately put on; `shared` does not, so
+            // no cell is ever handed one it never asked for.
             let shared = geometry.shared(&pairs);
-            let open = |on: On| on.dim >= cell.at_least && shared.contains(&(on.dim, on.tag));
+            let allowed = model.shared(&pairs);
+            let open = |on: On| on.dim >= cell.at_least && allowed.contains(&(on.dim, on.tag));
             if let Some(on) = cell.already.filter(|on| open(*on)) {
                 return Some(on);
             }
@@ -1611,6 +1728,35 @@ fn plural(n: usize) -> &'static str {
 
 fn spot_json(on: On) -> serde_json::Value {
     serde_json::json!({ "dim": on.dim, "tag": on.tag })
+}
+
+/// How a classification reads in a message.
+///
+/// A composite is printed by what it is made of: `side -1` tells a reader
+/// nothing, and the tag of a side is an implementation detail of the table
+/// it lives in.
+fn name_in(on: On, composites: &Composites) -> String {
+    match composites.members(on.tag) {
+        None => name_of(on),
+        Some((dim, members)) => {
+            let what = if dim == gecko_geom::CURVE {
+                "curves"
+            } else {
+                "surfaces"
+            };
+            let list: Vec<String> = members.iter().map(|m| m.to_string()).collect();
+            format!(
+                "{} {} ({what} {})",
+                if dim == gecko_geom::CURVE {
+                    "side"
+                } else {
+                    "patch"
+                },
+                -on.tag,
+                list.join(", ")
+            )
+        }
+    }
 }
 
 /// How a classification reads in a message.

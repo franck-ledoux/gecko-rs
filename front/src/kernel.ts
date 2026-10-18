@@ -41,6 +41,9 @@ export interface Stats {
   edges: number;
   faces: number;
   blocks: number;
+  /** Open sheets of faces, each one a connected component — a blocking of a
+   *  surface, on its way to being blocks. Not counted among them. */
+  patches: number;
   geometry: GeometryStats;
   /** How much of the blocking is pinned to the geometry. */
   classified: { nodes: number; edges: number; faces: number; frozen: number };

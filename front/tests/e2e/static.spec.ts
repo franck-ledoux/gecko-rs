@@ -2919,3 +2919,36 @@ test("⇧P wraps that chord in an o-grid", async ({ page }) => {
   await expect(page.locator("#status")).toContainText("o-grid along 2 blocks");
   expect(errors).toEqual([]);
 });
+
+test("a quadrangle is laid on the picked surface with Q", async ({ page }) => {
+  // The beginning of a surface blocking, through the page: pick a surface
+  // of the geometry, press one key, and a face comes back already
+  // classified — corners on corners, sides on curves, face on the surface.
+  const errors = await boot(page);
+  await openSquare(page);
+  await expect(page.locator("[data-test=geom-surfaces]")).toHaveText("1");
+
+  // Selected the way a pick selects, without aiming a mouse at a triangle.
+  await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    g.selectGeom([{ dim: 2, tag: 1 }]);
+    g.showVerbs();
+  });
+
+  await page.keyboard.press("q");
+  await page.waitForFunction(() => (window as any).__gecko.stats().faces === 1);
+
+  const stats = await page.evaluate(() => (window as any).__gecko.stats());
+  expect(stats.nodes).toBe(4);
+  expect(stats.blocks).toBe(0);
+  expect(stats.patches).toBe(1);
+  expect(stats.classified.nodes).toBe(4);
+  expect(stats.classified.edges).toBe(4);
+  expect(stats.classified.faces).toBe(1);
+  await expect(page.locator("#status")).toContainText("laid on surface 1");
+  // And the readout says what there is now: one patch, no blocks.
+  await expect(page.locator("[data-test=patches]")).toHaveText("1");
+  await expect(page.locator("[data-test=blocks]")).toHaveText("0");
+
+  expect(errors).toEqual([]);
+});

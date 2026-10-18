@@ -48,6 +48,8 @@ shorthand for a call with one table.
 |                                                              |                                         |
 | ------------------------------------------------------------ | --------------------------------------- |
 | `gecko.create_cube{ origin = {0,0,0}, size = 1 }`            | and `add_block{ … }` with eight corners |
+| `gecko.face_on_surface(tag)`                                 | a quadrangle on a geometric surface     |
+| `gecko.add_face{ {x,y,z}, … }`                               | one by hand, with four corners          |
 | `gecko.remove_block(id)`, `gecko.glue_faces(a, b)`           |                                         |
 | `gecko.extrude_face(face, block, height)`                    |                                         |
 | `gecko.pillow({ {face, block}, … }, { tolerance = 0.02 })`   |                                         |

@@ -34,6 +34,7 @@ does. Any key dismisses it.
 | `B`         | box the geometry, or the selected surfaces    |
 | `K`         | put the blocking on the geometry              |
 | `A`         | put the selected nodes on the selected entity |
+| `Q`         | lay a quadrangle on the selected surface      |
 | `W`-drag    | catch every node handle inside the band       |
 | `L`         | lock the picked node, or let it go            |
 | `U`         | take the picked node off the geometry         |

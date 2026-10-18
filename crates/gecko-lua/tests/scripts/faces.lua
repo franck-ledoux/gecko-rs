@@ -30,3 +30,27 @@ gecko.split_sheet(along, 0.5)
 s = gecko.stats()
 assert(s.faces == 2, "the quadrangle is two now")
 assert(s.blocks == 0 and s.patches == 1, "one patch, no block")
+
+-- A quadrangle laid on a geometric surface, which is where a surface
+-- blocking really starts: the kernel chooses the four corners of the
+-- surface the boundary turns a right angle at.
+gecko.undo()
+gecko.undo()
+assert(gecko.stats().faces == 0, "back to nothing")
+
+gecko.load_geometry(FIXTURES .. "/cube.msh")
+gecko.face_on_surface(1)
+s = gecko.stats()
+assert(s.faces == 1 and s.patches == 1, "one quadrangle, one patch")
+assert(s.classified.nodes == 4, "its corners are on the geometry's")
+assert(s.classified.edges == 4 and s.classified.faces == 1)
+
+-- A face of a cube is bounded by four curves, so every side is one curve
+-- and no composite is needed to name any of them.
+for _, edge in ipairs(gecko.edges()) do
+  assert(edge.on.dim == 1 and edge.on.tag > 0, "a plain curve, not a side")
+end
+
+-- And a surface that does not exist stops the script.
+local ok, why = pcall(gecko.face_on_surface, 99)
+assert(not ok and tostring(why):find("no surface"), tostring(why))
