@@ -1434,6 +1434,10 @@ async function boot() {
     // One line, out of the way. The counts are what you glance at; the mode
     // matters once, when you are working out which kernel you are talking to.
     $("stats").innerHTML =
+      // Which gecko, before what is in it: the counts change every edit
+      // and this does not, so it reads as a label rather than as a number
+      // you have to keep looking at.
+      `<span id="who">gecko-rs <b data-test="version">${kernel.version()}</b></span>` +
       `<span><b data-test="blocks">${stats.blocks}</b> blocks</span>` +
       // Only once there is one: a counter at nought for something nobody
       // has made is a question in the corner of the window.
@@ -1583,6 +1587,10 @@ async function boot() {
   function drawHelp() {
     const groups = [...new Set(helpRows().map((r) => r.group))];
     $("help-card").innerHTML =
+      // Which gecko this is. The card is where anybody looks for it, and
+      // the number comes from the kernel rather than from a string here,
+      // so it cannot disagree with the release it was built from.
+      `<h1 id="help-who">gecko-rs <span>${kernel.version()}</span></h1>` +
       `<div id="help-groups">` +
       groups
         .map(
@@ -1599,9 +1607,9 @@ async function boot() {
             `</dl></section>`,
         )
         .join("") +
-      // In the grid with the key groups rather than under it: the Edit
-      // column is twice the height of the others, and the legend fits in
-      // the space that leaves.
+      // In the columns with the key groups rather than under them: the
+      // browser balances what it is given, and the legend is one more
+      // thing to balance.
       legend() +
       `</div>` +
       `<p id="help-hint">Click a node, an edge or a face to pick it;` +
@@ -1874,6 +1882,7 @@ async function boot() {
   // on GPU output or on the DOM's current shape.
   (window as unknown as Record<string, unknown>).__gecko = {
     stats: () => kernel.stats(),
+    version: () => kernel.version(),
     message: () => message,
     revision: () => revision,
     counts: () => ({ nodes: viewer.nodeCount, edges: viewer.edgeCount }),

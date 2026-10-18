@@ -57,6 +57,16 @@ impl WasmSession {
         self.inner.sheet_json(edge)
     }
 
+    /// Which version this is, from the crate that was built.
+    ///
+    /// One source: the workspace's own number, which is also what a
+    /// release is tagged with. A string in the page would be a second one,
+    /// and the two would disagree the first time somebody forgot.
+    #[wasm_bindgen(js_name = version)]
+    pub fn version(&self) -> String {
+        env!("CARGO_PKG_VERSION").to_string()
+    }
+
     /// Which of the blocking's components are patches rather than blocks.
     #[wasm_bindgen(js_name = patchesJson)]
     pub fn patches_json(&self) -> String {

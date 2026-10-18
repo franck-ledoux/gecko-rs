@@ -2069,6 +2069,15 @@ describe("four views of one scene", () => {
   });
 });
 
+describe("which gecko this is", () => {
+  it("comes from the crate that was built, not from a string in the page", () => {
+    // One source, so the number in the window cannot disagree with the
+    // release it came from.
+    const kernel = new WasmKernel();
+    expect(kernel.version()).toMatch(/^\d+\.\d+\.\d+/);
+  });
+});
+
 describe("the chord through a face", () => {
   /** Every face the kernel knows, the way a script reads them. */
   interface Face {

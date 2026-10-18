@@ -3116,3 +3116,48 @@ test("a face of a patch is dragged either way, and the block follows", async ({ 
   }
   expect(errors).toEqual([]);
 });
+
+for (const [width, height] of [
+  [1280, 800],
+  [1100, 760],
+  [900, 700],
+] as const) {
+  test(`the help card is read without scrolling at ${width}×${height}`, async ({ page }) => {
+    // The complaint this answers: the card had grown past the bottom of
+    // the window, and half of what it says is the half nobody reads. Three
+    // ordinary window sizes, and the measurement is the plain one — what
+    // the card wants to be is no taller than what it is.
+    await page.setViewportSize({ width, height });
+    const errors = await boot(page);
+    await page.keyboard.press("h");
+    await expect(page.locator("#help-card")).toBeVisible();
+
+    const fits = await page.evaluate(() => {
+      const card = document.querySelector("#help-card") as HTMLElement;
+      return { wants: card.scrollHeight, has: card.clientHeight };
+    });
+    expect(fits.wants, `the card wants ${fits.wants}px and has ${fits.has}`).toBeLessThanOrEqual(
+      fits.has,
+    );
+    expect(errors).toEqual([]);
+  });
+}
+
+test("the window says which gecko it is", async ({ page }) => {
+  const errors = await boot(page);
+
+  // In the readout, where it is always visible.
+  const shown = await page.locator("[data-test=version]").textContent();
+  expect(shown).toMatch(/^\d+\.\d+\.\d+/);
+  await expect(page.locator("#who")).toContainText("gecko-rs");
+
+  // And on the help card, which is where anybody looks for it.
+  await page.keyboard.press("h");
+  await expect(page.locator("#help-who")).toContainText("gecko-rs");
+  await expect(page.locator("#help-who")).toContainText(shown!);
+
+  // One source: the kernel's own, so it cannot disagree with the release
+  // it was built from.
+  expect(await page.evaluate(() => (window as any).__gecko.version())).toBe(shown);
+  expect(errors).toEqual([]);
+});

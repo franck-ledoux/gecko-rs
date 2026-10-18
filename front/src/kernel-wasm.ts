@@ -111,6 +111,10 @@ export class WasmKernel implements Kernel {
     return JSON.parse(this.session.patchesJson()) as number[];
   }
 
+  version(): string {
+    return this.session.version();
+  }
+
   script(): string {
     return this.session.script();
   }

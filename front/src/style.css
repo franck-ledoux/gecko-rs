@@ -272,19 +272,34 @@ body.help-open #help { opacity: 1; visibility: visible; }
      to its contents would never have the room to lay them out in three
      columns — which is what keeps it, and the legend under it, off the
      bottom of the screen. */
-  width: min(780px, calc(100vw - 48px));
-  max-height: 84vh; overflow-y: auto; padding: 22px 26px;
+  width: min(980px, calc(100vw - 48px));
+  /* A fixed margin round the card rather than a share of the window: what
+     has to be left is room to see it is a card, and that does not get
+     smaller as the screen does. */
+  max-height: calc(100vh - 56px); overflow-y: auto; padding: 22px 26px;
   background: var(--glass); border: 1px solid var(--line); border-radius: 14px;
   box-shadow: var(--shadow); backdrop-filter: blur(18px);
 }
-/* Two columns where there is room: the list is long enough that one column
-   runs off the bottom of a laptop screen, and a help card you have to scroll
-   is a help card you read half of. */
-#help-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-               gap: 4px 30px; align-items: start; }
-#help-card h2 { margin: 14px 0 6px; font-size: 10px; color: var(--dim);
+/* Columns rather than a grid, and that is not a detail: a grid aligns its
+   rows, so one tall group leaves a hole beside every short one and the card
+   grows to fit the tallest. Columns pack each group under the last, and the
+   browser balances them — which is what keeps the card off the bottom of a
+   laptop screen. A help card you have to scroll is one you read half of.
+
+   A group is never broken across a column: a heading at the foot of one and
+   its keys at the head of the next reads as two things. */
+/* A column width, not a count: the browser fits as many as the card is
+   wide, so a narrow window gets fewer rather than four thin ones with the
+   keys wrapping away from what they do. */
+/* Which gecko this is, over the keys. Quiet: it answers a question
+   nobody asks twice. */
+#help-who { margin: 0 0 14px; font-size: 13px; font-weight: 600; letter-spacing: .01em; }
+#help-who span { color: var(--dim); font-weight: 500; }
+
+#help-groups { columns: 170px; column-gap: 26px; }
+#help-groups > * { break-inside: avoid; margin: 0 0 12px; }
+#help-card h2 { margin: 0 0 6px; font-size: 10px; color: var(--dim);
                 text-transform: uppercase; letter-spacing: .08em; }
-#help-groups section:nth-child(-n + 3) h2 { margin-top: 0; }
 #help-card dl { margin: 0; display: grid; grid-template-columns: auto 1fr;
                 gap: 5px 14px; align-items: baseline; }
 #help-card dt { display: flex; gap: 4px; justify-content: flex-end; }
@@ -295,7 +310,21 @@ kbd {
   color: var(--fg); background: var(--line);
   border: 1px solid var(--line); border-radius: 5px;
 }
-#help-hint { margin: 18px 0 0; font-size: 11px; color: var(--dim); text-align: center; }
+/* The same, in the always-visible readout: a label, not a count. */
+#who { color: var(--dim); }
+#who b { color: var(--fg); font-weight: 600; }
+
+/* A short window gets its space back from the margins rather than from
+   the keys: there is no point hiding half the card to make the other half
+   fit without scrolling. */
+@media (max-height: 780px) {
+  #help-card { padding: 16px 20px; }
+  #help-who { margin-bottom: 10px; }
+  #help-groups > * { margin-bottom: 10px; }
+  #help-hint { margin-top: 8px; }
+}
+
+#help-hint { margin: 12px 0 0; font-size: 11px; color: var(--dim); text-align: center; }
 
 /* The classification legend: a swatch and what it says. */
 #help-legend { display: grid; gap: 5px; }

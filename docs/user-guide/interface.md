@@ -26,6 +26,18 @@ than necessary — see [Pictures](#pictures) below.
 read from: it cannot describe a key that does not exist, or miss one that
 does. Any key dismisses it.
 
+The card lays its groups out in **columns the browser balances**, rather
+than in a grid: a grid aligns its rows, so one long group leaves a hole
+beside every short one and pushes the rest off the bottom of the screen. It
+fits without scrolling on an ordinary window, which is the only state in
+which anybody reads all of it, and the groups are small enough to be read
+as groups — the keys that act on the geometry are their own, and so are the
+ones about meshing.
+
+Its title says **which gecko this is**, and so does the left end of the
+readout along the bottom. The number comes from the kernel itself, so it
+cannot disagree with the release it was built from.
+
 |             |                                                    |
 | ----------- | -------------------------------------------------- |
 | `C`         | create a cube                                      |

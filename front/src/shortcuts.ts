@@ -67,7 +67,7 @@ export interface Shortcut {
   show: string;
   does: string;
   action: Action;
-  group: "Edit" | "View" | "Display" | "Window";
+  group: "Edit" | "Geometry" | "Mesh" | "View" | "Display" | "Window";
   /** Matched against `event.key`, lower-cased. */
   key?: string;
   /**
@@ -100,14 +100,14 @@ export const SHORTCUTS: readonly Shortcut[] = [
     key: "m",
     action: "picking",
     does: "aim at the geometry, or back at the blocks",
-    group: "Edit",
+    group: "Geometry",
   },
   {
     show: "B",
     key: "b",
     action: "box",
     does: "box the selected surfaces, or the whole geometry",
-    group: "Edit",
+    group: "Geometry",
   },
   { show: "G", key: "g", action: "glue", does: "glue the two selected faces", group: "Edit" },
   {
@@ -141,14 +141,14 @@ export const SHORTCUTS: readonly Shortcut[] = [
     key: "k",
     action: "classify",
     does: "put the whole blocking on the geometry",
-    group: "Edit",
+    group: "Geometry",
   },
   {
     show: "A",
     key: "a",
     action: "attach",
     does: "put the selected nodes on the selected entity",
-    group: "Edit",
+    group: "Geometry",
   },
   {
     show: "Q",
@@ -162,14 +162,14 @@ export const SHORTCUTS: readonly Shortcut[] = [
     key: "l",
     action: "freeze",
     does: "lock the selected node, or let it go",
-    group: "Edit",
+    group: "Geometry",
   },
   {
     show: "U",
     key: "u",
     action: "unclassify",
     does: "take the selected node off the geometry",
-    group: "Edit",
+    group: "Geometry",
   },
   {
     show: "⌘Z",
@@ -184,7 +184,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     key: "e",
     action: "mesh",
     does: "discretise every block",
-    group: "Edit",
+    group: "Mesh",
   },
   {
     show: "⇧E",
@@ -192,16 +192,16 @@ export const SHORTCUTS: readonly Shortcut[] = [
     shift: true,
     action: "export",
     does: "write the mesh out, as VTK",
-    group: "Edit",
+    group: "Mesh",
   },
   {
     show: "=",
     key: "=",
     action: "finer",
     does: "one more segment along the lit sheet",
-    group: "Edit",
+    group: "Mesh",
   },
-  { show: "-", key: "-", action: "coarser", does: "one fewer", group: "Edit" },
+  { show: "-", key: "-", action: "coarser", does: "one fewer", group: "Mesh" },
   { show: "Esc", key: "escape", action: "clear", does: "clear the selection", group: "Edit" },
 
   { show: "F", key: "f", action: "recentre", does: "frame everything", group: "View" },

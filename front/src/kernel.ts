@@ -116,6 +116,10 @@ export interface Kernel {
   /** Which components are **patches** — open sheets of faces — rather than
    *  blocks. What `Del` needs to know to take the right thing away. */
   patches(): number[];
+
+  /** Which version of gecko this is: the kernel's own, so it cannot
+   *  disagree with the release it was built from. */
+  version(): string;
   /** The session as a Lua script: what it would take to arrive here. */
   script(): string;
 }
