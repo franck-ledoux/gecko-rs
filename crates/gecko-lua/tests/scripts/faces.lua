@@ -80,3 +80,41 @@ s = gecko.stats()
 assert(s.blocks == 2, "a block from each face")
 assert(s.patches == 0, "and the sheet is gone")
 assert(s.nodes == 12, "glued to each other: twelve corners, not sixteen")
+
+-- Either way: a sheet has no inside, so neither of its sides is the wrong
+-- one. Said without naming a direction, because which way the quadrangle
+-- is wound came from the triangles under it: the two answers are mirror
+-- images of each other about the sheet.
+local function centroid()
+  local c, n = { 0, 0, 0 }, 0
+  for _, node in ipairs(gecko.nodes()) do
+    for k = 1, 3 do c[k] = c[k] + node.pos[k] end
+    n = n + 1
+  end
+  for k = 1, 3 do c[k] = c[k] / n end
+  return c
+end
+
+gecko.undo()
+assert(gecko.stats().patches == 1, "the sheet is back")
+local flat = centroid()
+face = gecko.faces()[1]
+
+gecko.extrude_patch(face.id, 0.5)
+assert(gecko.stats().blocks == 2, "two blocks, one way")
+local up = centroid()
+
+gecko.undo()
+gecko.extrude_patch(face.id, -0.5)
+assert(gecko.stats().blocks == 2, "two blocks, the other way")
+local down = centroid()
+
+local apart = 0
+for k = 1, 3 do
+  assert(
+    math.abs((up[k] - flat[k]) + (down[k] - flat[k])) < 1e-9,
+    "the two directions are not mirror images about the sheet"
+  )
+  apart = apart + math.abs(up[k] - down[k])
+end
+assert(apart > 0.1, "both extrusions went the same way")

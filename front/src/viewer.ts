@@ -424,7 +424,16 @@ export class Viewer {
   private meshWire?: LinesMesh;
   /** The face being grown, while the pointer is down on it: where it is,
    *  which way is out, and how far the pointer has asked for so far. */
-  private growing?: { pick: Pick; centre: Vector3; normal: Vector3; corners: Vector3[] };
+  private growing?: {
+    pick: Pick;
+    centre: Vector3;
+    normal: Vector3;
+    corners: Vector3[];
+    /** Whether the drag may go **behind** the face. True for a face of an
+     *  open sheet, which has no inside; false for a face of a block,
+     *  whose other side is the block. */
+    bothWays: boolean;
+  };
   private grownWire?: GreasedLineMesh;
   private grownBox?: Mesh;
   private grown: number | null = null;
@@ -923,7 +932,7 @@ export class Viewer {
    * What is grown has to be the face the kernel holds, not the picture of
    * it.
    */
-  beginExtrusion(pick: Pick): boolean {
+  beginExtrusion(pick: Pick, bothWays = false): boolean {
     const quad = this.quadOf(pick);
     if (quad === null || !this.view) return false;
     const corners = [0, 1, 2, 3].map((k) => this.point(this.view!.quads[quad * 4 + k]));
@@ -932,7 +941,7 @@ export class Viewer {
     const centre = corners
       .reduce((at, p) => at.addInPlace(p), new Vector3(0, 0, 0))
       .scale(0.25);
-    this.growing = { pick, centre, normal: normal.normalize(), corners };
+    this.growing = { pick, centre, normal: normal.normalize(), corners, bothWays };
     this.grown = null;
     this.showGrown();
     return true;
@@ -953,8 +962,16 @@ export class Viewer {
     // Looking straight down the extrusion: hold what we had rather than
     // jump to whatever a near-singular division produced.
     if (asked === null) return this.grown;
-    const across = Vector3.Distance(corners[0], corners[2]);
-    this.grown = Math.max(asked, across * THINNEST);
+    // Thinner than this is not a block anybody meant to make — but on an
+    // open sheet of faces *either side* is a direction somebody may have
+    // meant, so the sign is kept and only the thickness is held off zero.
+    // Which way a free face is wound came from the triangles under it, and
+    // nobody looking at the screen can tell.
+    const thinnest = Vector3.Distance(corners[0], corners[2]) * THINNEST;
+    this.grown =
+      this.growing.bothWays && asked < 0
+        ? Math.min(asked, -thinnest)
+        : Math.max(asked, thinnest);
     this.showGrown();
     return this.grown;
   }

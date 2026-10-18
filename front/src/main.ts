@@ -573,7 +573,9 @@ async function boot() {
     if (!surface || !first || first.face !== surface.face || first.block !== surface.block) {
       return;
     }
-    if (!viewer.beginExtrusion(surface)) return;
+    // A face of an open sheet may be dragged either way: it has no
+    // inside, and which way it is wound is not something the screen says.
+    if (!viewer.beginExtrusion(surface, isPatch(surface))) return;
     growing = true;
     canvas.setPointerCapture(e.pointerId);
     viewer.suspendCamera();

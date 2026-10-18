@@ -1226,7 +1226,11 @@ impl Session {
             let model = Model::new(geometry, composites);
             let reach = [tolerance.max(0.0) * model.span(); 3];
             blocking.classify_nodes(
-                |at| model.nearest(at, reach).map(|(dim, tag)| On { dim, tag }),
+                // What a node already claims is ignored here on purpose:
+                // this is the command that decides the whole blocking
+                // again, and a confirmation of what it already said would
+                // be no answer at all.
+                |_, at| model.nearest(at, reach).map(|(dim, tag)| On { dim, tag }),
                 |on, at| model.project(on.dim, on.tag, at),
             );
         }
@@ -1267,7 +1271,36 @@ impl Session {
         let reach = [tolerance.max(0.0) * model.span(); 3];
         blocking.classify_named(
             nodes,
-            |at| model.nearest(at, reach).map(|(dim, tag)| On { dim, tag }),
+            |already, at| {
+                let found = model.nearest(at, reach).map(|(dim, tag)| On { dim, tag });
+                // A node deliberately put on a **side** keeps it as long as
+                // it is still somewhere on that side.
+                //
+                // Proximity cannot say "side": a composite is never a
+                // candidate, so the nearest thing it can name is one of the
+                // curves the side is made of — and being on one of those
+                // *is* being on the side. Taking the curve instead would
+                // quietly narrow a node that has not moved off anything,
+                // which is what a node sliding along the rim of a pillowed
+                // patch does every time.
+                //
+                // Only composites. Between two entities of the model,
+                // proximity's answer is the better one: a corner drawn in
+                // off the rim of a disc really has left the rim, and
+                // keeping what it claimed is exactly the bug this settling
+                // exists to avoid.
+                match (already, found) {
+                    (Some(was), Some(now))
+                        if Composites::is_composite(was.tag)
+                            && model
+                                .containing(now.dim, now.tag)
+                                .contains(&(was.dim, was.tag)) =>
+                    {
+                        Some(was)
+                    }
+                    (_, now) => now,
+                }
+            },
             |on, at| model.project(on.dim, on.tag, at),
         );
     }

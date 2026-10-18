@@ -45,29 +45,29 @@ Required arguments are positional; optional ones live in a table at the
 end. That is why `gecko.mesh{ segments = 8 }` has no brackets — Lua's own
 shorthand for a call with one table.
 
-|                                                              |                                         |
-| ------------------------------------------------------------ | --------------------------------------- |
-| `gecko.create_cube{ origin = {0,0,0}, size = 1 }`            | and `add_block{ … }` with eight corners |
-| `gecko.face_on_surface(tag)`                                 | a quadrangle on a geometric surface     |
-| `gecko.add_face{ {x,y,z}, … }`                               | one by hand, with four corners          |
-| `gecko.remove_face(id)`                                      | one face of a patch                     |
-| `gecko.extrude_patch(face, 0.5)`                             | the whole sheet, into blocks            |
-| `gecko.remove_block(id)`, `gecko.glue_faces(a, b)`           |                                         |
-| `gecko.extrude_face(face, block, height)`                    |                                         |
-| `gecko.pillow({ {face, block}, … }, { tolerance = 0.02 })`   |                                         |
-| `gecko.remove_chord(face, block)`                            | the whole thread through a face         |
-| `gecko.pillow_chord(face, block, { tolerance = 0.02 })`      | an o-grid along it                      |
-| `gecko.split_sheet(edge, 0.5)`, `gecko.remove_sheet(edge)`   |                                         |
-| `gecko.set_segments(edge, 8)`                                | on the whole sheet                      |
-| `gecko.move_node(id, {x,y,z}, { carrying = {…}, snap = 0 })` |                                         |
-| `gecko.classify_node(ids, dim, tag)`, `unclassify_node(ids)` | one id or a list                        |
-| `gecko.freeze_node(ids)`, `gecko.thaw_node(ids)`             |                                         |
-| `gecko.load_geometry(path)`, `gecko.clear_geometry()`        |                                         |
-| `gecko.box_geometry{ surfaces = {…}, margin = 0.1 }`         |                                         |
-| `gecko.classify{ tolerance = 0.02 }`                         |                                         |
-| `gecko.mesh{ segments = 10 }`, `gecko.clear_mesh()`          |                                         |
-| `gecko.export_vtk(path)`                                     | meshes first if it has to               |
-| `gecko.undo()`, `gecko.set_history(n)`                       |                                         |
+|                                                              |                                            |
+| ------------------------------------------------------------ | ------------------------------------------ |
+| `gecko.create_cube{ origin = {0,0,0}, size = 1 }`            | and `add_block{ … }` with eight corners    |
+| `gecko.face_on_surface(tag)`                                 | a quadrangle on a geometric surface        |
+| `gecko.add_face{ {x,y,z}, … }`                               | one by hand, with four corners             |
+| `gecko.remove_face(id)`                                      | one face of a patch                        |
+| `gecko.extrude_patch(face, 0.5)`                             | the whole sheet, into blocks; ± either way |
+| `gecko.remove_block(id)`, `gecko.glue_faces(a, b)`           |                                            |
+| `gecko.extrude_face(face, block, height)`                    |                                            |
+| `gecko.pillow({ {face, block}, … }, { tolerance = 0.02 })`   |                                            |
+| `gecko.remove_chord(face, block)`                            | the whole thread through a face            |
+| `gecko.pillow_chord(face, block, { tolerance = 0.02 })`      | an o-grid along it                         |
+| `gecko.split_sheet(edge, 0.5)`, `gecko.remove_sheet(edge)`   |                                            |
+| `gecko.set_segments(edge, 8)`                                | on the whole sheet                         |
+| `gecko.move_node(id, {x,y,z}, { carrying = {…}, snap = 0 })` |                                            |
+| `gecko.classify_node(ids, dim, tag)`, `unclassify_node(ids)` | one id or a list                           |
+| `gecko.freeze_node(ids)`, `gecko.thaw_node(ids)`             |                                            |
+| `gecko.load_geometry(path)`, `gecko.clear_geometry()`        |                                            |
+| `gecko.box_geometry{ surfaces = {…}, margin = 0.1 }`         |                                            |
+| `gecko.classify{ tolerance = 0.02 }`                         |                                            |
+| `gecko.mesh{ segments = 10 }`, `gecko.clear_mesh()`          |                                            |
+| `gecko.export_vtk(path)`                                     | meshes first if it has to                  |
+| `gecko.undo()`, `gecko.set_history(n)`                       |                                            |
 
 And the reads, each a plain table: `nodes()`, `edges()`, `faces()`,
 `blocks()`, `entities()`, `stats()`, `sheet(edge)`, `chord(face, block)`,

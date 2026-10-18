@@ -142,7 +142,7 @@ fn a_face_inside_the_model_has_nothing_to_grow_into() {
 
 #[test]
 fn a_distance_that_is_not_a_distance_is_refused() {
-    for height in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+    for height in [0.0, f64::NAN, f64::INFINITY] {
         let mut b = cube();
         let (face, block) = face_near(&b, [0.5, 0.5, 1.0]);
         let refused = b
@@ -154,6 +154,28 @@ fn a_distance_that_is_not_a_distance_is_refused() {
         );
         assert_eq!(b.nb_blocks(), 1);
     }
+}
+
+#[test]
+fn a_face_of_a_block_will_not_grow_into_it() {
+    // The other side of a face of a block is the block. Growing that way
+    // would lay a second block inside the first and weld the two along a
+    // face they are both behind — and the refusal says so, rather than
+    // calling a direction a bad distance.
+    //
+    // A face of a **patch** is the other case, and grows either way: see
+    // the patches suite.
+    let mut b = cube();
+    let (face, block) = face_near(&b, [0.5, 0.5, 1.0]);
+    let refused = b
+        .extrude_face(face, block, -1.0)
+        .expect_err("into the block");
+    assert!(matches!(refused, BlockingError::Inwards(_)), "{refused:?}");
+    assert!(
+        refused.to_string().contains("either way"),
+        "and it says where the other case is: {refused}"
+    );
+    assert_eq!(b.nb_blocks(), 1);
 }
 
 #[test]

@@ -264,6 +264,11 @@ pub enum BlockingError {
     NotABlock(CellId),
     #[error("face {0:?} belongs to a block — take the block away, not one of its sides")]
     NotAPatch(CellId),
+    #[error(
+        "a face of a block grows away from it, and {0} goes the other way — \
+         into the block. A face of a patch grows either way."
+    )]
+    Inwards(f64),
     #[error("nothing was selected to pillow")]
     EmptyPatch,
     #[error("face {0:?} is not a face of block {1:?}")]
@@ -833,13 +838,20 @@ impl Blocking {
     /// `set_position` instead is two scans of the whole map per node.
     pub fn classify_nodes(
         &mut self,
-        pick: impl Fn([f64; 3]) -> Option<On>,
+        pick: impl Fn(Option<On>, [f64; 3]) -> Option<On>,
         project: impl Fn(On, [f64; 3]) -> Option<[f64; 3]>,
     ) {
         self.classify_some(|_| true, pick, project);
     }
 
     /// The same, for the nodes a caller names.
+    ///
+    /// `pick` is given **what the node already claims** as well as where it
+    /// is, for the same reason the edge and face settling is: proximity
+    /// answers with entities of the model, and some of what a node can be
+    /// on — a side, which is several curves under one name — is not one of
+    /// them. A caller that wants a fresh start ignores the argument; one
+    /// settling nodes that merely moved can keep a name that still holds.
     ///
     /// What an operation that **moves** nodes needs afterwards: a node
     /// somewhere new is on something new, and the only way to find out
@@ -850,7 +862,7 @@ impl Blocking {
     pub fn classify_named(
         &mut self,
         nodes: &[CellId],
-        pick: impl Fn([f64; 3]) -> Option<On>,
+        pick: impl Fn(Option<On>, [f64; 3]) -> Option<On>,
         project: impl Fn(On, [f64; 3]) -> Option<[f64; 3]>,
     ) {
         let wanted: HashSet<CellId> = nodes.iter().copied().collect();
@@ -860,7 +872,7 @@ impl Blocking {
     fn classify_some(
         &mut self,
         which: impl Fn(&NodeTag) -> bool,
-        pick: impl Fn([f64; 3]) -> Option<On>,
+        pick: impl Fn(Option<On>, [f64; 3]) -> Option<On>,
         project: impl Fn(On, [f64; 3]) -> Option<[f64; 3]>,
     ) {
         let found: Vec<(VertexIdType, Option<On>, Option<[f64; 3]>)> = self
@@ -872,7 +884,7 @@ impl Blocking {
             })
             .map(|v| {
                 let at = self.position(v).unwrap_or([0.0; 3]);
-                let on = pick(at);
+                let on = pick(self.node_tag(v).on, at);
                 (v, on, on.and_then(|on| project(on, at)))
             })
             .collect();
@@ -2061,9 +2073,15 @@ impl Blocking {
         face: CellId,
         height: f64,
     ) -> Result<Vec<CellId>, BlockingError> {
-        if !height.is_finite() || height <= 0.0 {
+        // Either way. A sheet of faces has no inside, so neither side of it
+        // is the wrong one: which way the quadrangles happen to be wound
+        // came from the triangles of the surface they were laid on, and
+        // nobody looking at the screen can tell. Only nowhere is refused.
+        if !height.is_finite() || height == 0.0 {
             return Err(BlockingError::BadHeight(height));
         }
+        let back = height < 0.0;
+        let height = height.abs();
         let start = self
             .face_by_id(face)
             .ok_or(BlockingError::NoSuchFace(face))?;
@@ -2141,7 +2159,7 @@ impl Blocking {
             if length < 1e-12 {
                 return Err(BlockingError::LostFace);
             }
-            let unit = normal.map(|x| x / length);
+            let unit = normal.map(|x| if back { -x / length } else { x / length });
             for tag in &side.nodes {
                 normals.entry(tag.corner_key).or_default().push(unit);
             }
@@ -2154,16 +2172,25 @@ impl Blocking {
         // --- out with the sheet, up with the blocks ----------------------
         self.drop_volume(volume)?;
 
+        // Going the other way, a face is read round the other way: the
+        // first four corners of a block are the face whose own outward
+        // normal points back the way the block was grown from, so reading
+        // them forwards while stepping backwards would build every block
+        // inside out.
+        let corner_at = if back { [0, 3, 2, 1] } else { [0, 1, 2, 3] };
+        let edge_at = |k: usize| if back { 3 - k } else { k };
+
         let mut raised: Vec<(CellId, DartIdType)> = Vec::with_capacity(sides.len());
         for side in &sides {
             let mut corners = [[0.0; 3]; 8];
-            corners[..4].copy_from_slice(&side.points);
             for k in 0..4 {
+                let from = side.points[corner_at[k]];
                 let step = steps
-                    .get(&side.nodes[k].corner_key)
+                    .get(&side.nodes[corner_at[k]].corner_key)
                     .copied()
                     .unwrap_or([0.0; 3]);
-                corners[4 + k] = [0, 1, 2].map(|axis| side.points[k][axis] + step[axis]);
+                corners[k] = from;
+                corners[4 + k] = [0, 1, 2].map(|axis| from[axis] + step[axis]);
             }
             let built = self.build_block(corners)?;
             raised.push(built);
@@ -2179,7 +2206,9 @@ impl Blocking {
             // `HEX_FACES[0]` is read [0, 3, 2, 1], so the bottom face runs
             // backwards round the corners the patch's face ran forwards.
             for (slot, &d) in darts.iter().enumerate() {
-                let was = [0, 3, 2, 1][slot];
+                // Through the block's corner, and then through whichever
+                // of the sheet's corners that was.
+                let was = corner_at[[0, 3, 2, 1][slot]];
                 let vertex = self.map.vertex_id(d);
                 let node = self.node_tag(vertex);
                 self.map.write_attribute(
@@ -2194,7 +2223,7 @@ impl Blocking {
                 // one the patch's face entered it by.
                 let edge = self.map.edge_id(d);
                 let tag = self.edge_tag(edge);
-                let from = side.edges[(was + 3) % 4];
+                let from = side.edges[edge_at(([0, 3, 2, 1][slot] + 3) % 4)];
                 self.map.write_attribute(
                     edge,
                     EdgeTag {
@@ -2208,8 +2237,17 @@ impl Blocking {
 
         // --- and the blocks to each other --------------------------------
         for ((a, a_slot), (b, b_slot)) in seams {
-            let first = self.lateral(raised[a].1, a_slot);
-            let second = self.lateral(raised[b].1, b_slot);
+            // A seam was written down in the sheet's own numbering; the
+            // block's sides are numbered the way its base was read.
+            //
+            // Derived from `corner_at`, and **not pinned by a test**: one
+            // face, two faces evenly and unevenly cut, and three in a row
+            // all come out identical whether this mapping is applied or
+            // not, going either way. Whoever finds the case that tells
+            // them apart should put it in `tests/patches.rs`.
+            let slot_of = |slot: usize| (0..4).find(|k| edge_at(*k) == slot).expect("a slot");
+            let first = self.lateral(raised[a].1, slot_of(a_slot));
+            let second = self.lateral(raised[b].1, slot_of(b_slot));
             self.glue_onto(first, second)?;
         }
 
@@ -2259,8 +2297,16 @@ impl Blocking {
     ) -> Result<CellId, BlockingError> {
         // Finite first, because NaN passes `<= 0.0`: every comparison with
         // it is false.
-        if !height.is_finite() || height <= 0.0 {
+        if !height.is_finite() || height == 0.0 {
             return Err(BlockingError::BadHeight(height));
+        }
+        // And one way only, which is not the same rule as for a patch: the
+        // other side of a face of a block is **the block**. Growing into it
+        // would lay a second block inside the first and weld the two along
+        // a face they are both behind, which is not a structure, it is a
+        // mistake with a name.
+        if height < 0.0 {
+            return Err(BlockingError::Inwards(height));
         }
 
         let sides = self.block_faces();

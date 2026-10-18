@@ -112,6 +112,13 @@ and **the whole patch comes up**, one block per face.
 gecko.extrude_patch(face, 0.5)
 ```
 
+**Either way.** Drag towards yourself and the blocks go that way instead.
+A sheet has no inside, so neither of its sides is the wrong one — and which
+way its quadrangles are wound came from the triangles of the surface they
+were laid on, which is nothing anybody can read off the screen. A face of a
+**block** is the other case, and grows one way only: the other side of it
+is the block.
+
 All of it or none of it, and that is not a convenience. β₂ joins the faces
 of one volume, so a block welded to an open sheet of faces would have to be
 the same volume as the sheet and a different one at once: half a patch

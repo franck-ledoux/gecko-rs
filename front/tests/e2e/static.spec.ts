@@ -3020,3 +3020,56 @@ test("a quadrangle is laid on the picked surface with Q", async ({ page }) => {
 
   expect(errors).toEqual([]);
 });
+
+test("a face of a patch is dragged either way, and the block follows", async ({ page }) => {
+  // Which way a free face is wound came from the triangles under it, and
+  // nobody looking at the screen can tell — so dragging it towards you has
+  // to build a block towards you, rather than a sliver the other way.
+  const errors = await boot(page);
+  await openSquare(page);
+  await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    g.selectGeom([{ dim: 2, tag: 1 }]);
+    g.showVerbs();
+  });
+  await page.keyboard.press("q");
+  await page.waitForFunction(() => (window as any).__gecko.stats().faces === 1);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // Selected by clicking it, which is what arms the drag.
+  const face = (await page.evaluate(() => (window as any).__gecko.surface("faces").faces[0])) as number;
+  const at = (await page.evaluate((f) => (window as any).__gecko.faceScreen(f), face)) as [
+    number,
+    number,
+  ];
+  const box = (await page.locator("#view").boundingBox())!;
+  await page.mouse.click(box.x + at[0], box.y + at[1]);
+  await page.waitForFunction(() => (window as any).__gecko.selection().length === 1);
+
+  // Down the screen, which on this camera is the side the face is *not*
+  // wound towards: the direction the old clamp refused to go.
+  await page.mouse.move(box.x + at[0], box.y + at[1]);
+  await page.mouse.down();
+  for (const step of [20, 60, 110]) {
+    await page.mouse.move(box.x + at[0], box.y + at[1] + step);
+  }
+  const asked = (await page.evaluate(() => (window as any).__gecko.grownBy())) as number;
+  expect(asked).toBeLessThan(-0.2);
+  await page.mouse.up();
+
+  await page.waitForFunction(() => (window as any).__gecko.stats().blocks === 1);
+  const stats = await page.evaluate(() => (window as any).__gecko.stats());
+  expect(stats.nodes).toBe(8);
+  expect(stats.patches).toBe(0);
+
+  // The far corners are where the drag asked for: below the face.
+  const z = (await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    return g.names().map((n: number) => g.nodePosition(n)[2]);
+  })) as number[];
+  expect(z.filter((v) => Math.abs(v) < 1e-6)).toHaveLength(4);
+  for (const low of z.filter((v) => Math.abs(v) > 1e-6)) {
+    expect(low).toBeCloseTo(asked, 6);
+  }
+  expect(errors).toEqual([]);
+});

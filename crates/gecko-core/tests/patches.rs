@@ -406,3 +406,140 @@ fn a_block_is_not_a_patch_to_raise() {
         Err(BlockingError::BadHeight(_))
     ));
 }
+
+/// The sign of a hexahedron's volume, by the only thing that matters here:
+/// whether it agrees with a block everyone agrees is the right way round.
+fn handedness(c: &[[f64; 3]; 8]) -> f64 {
+    let edge = |a: usize, b: usize| [0, 1, 2].map(|k| c[b][k] - c[a][k]);
+    let (u, v, w) = (edge(0, 1), edge(0, 3), edge(0, 4));
+    let cross = [
+        u[1] * v[2] - u[2] * v[1],
+        u[2] * v[0] - u[0] * v[2],
+        u[0] * v[1] - u[1] * v[0],
+    ];
+    (0..3).map(|k| cross[k] * w[k]).sum()
+}
+
+#[test]
+fn a_patch_grows_either_way_and_neither_is_inside_out() {
+    // Which way a quadrangle is wound came from the triangles of the
+    // surface it was laid on, and nobody looking at the screen can tell.
+    // So both directions are the right one — and the block has to come out
+    // the right way round both times, not merely exist.
+    let upright = {
+        let mut b = Blocking::new().unwrap();
+        b.add_block(cube_corners([0.0, 0.0, 0.0], 1.0)).unwrap();
+        handedness(
+            &b.hexes()[0]
+                .corners
+                .map(|n| b.position(n).unwrap_or([0.0; 3])),
+        )
+    };
+    assert!(
+        upright.abs() > 1e-9,
+        "a cube has a handedness to compare to"
+    );
+
+    for height in [1.0, -1.0] {
+        let mut b = Blocking::new().unwrap();
+        b.add_face(SQUARE).unwrap();
+        let face = b.block_faces()[0].face;
+        b.extrude_patch(face, height).expect("either way");
+
+        assert_eq!((b.nb_blocks(), b.nb_patches()), (1, 0));
+        let z: Vec<f64> = b.nodes().map(|(_, p)| p[2]).collect();
+        assert_eq!(
+            z.iter().filter(|v| (**v - height).abs() < 1e-9).count(),
+            4,
+            "four corners {height} away"
+        );
+
+        let hex = b.hexes();
+        assert_eq!(hex.len(), 1);
+        let corners = hex[0].corners.map(|n| b.position(n).unwrap_or([0.0; 3]));
+        assert!(
+            handedness(&corners) * upright > 0.0,
+            "the block grown by {height} is inside out: {corners:?}"
+        );
+    }
+}
+
+#[test]
+fn going_the_other_way_carries_the_classification_too() {
+    // The corners are read round the other way to keep the block the right
+    // way round, so what each of them was on has to follow that same
+    // reading rather than the one it was written in.
+    let mut b = Blocking::new().unwrap();
+    b.add_face(SQUARE).unwrap();
+    let face = b.block_faces()[0].face;
+    let (corners, edges) = b.face_cells(face).unwrap();
+    b.set_node_class(corners[1], Some(On { dim: 0, tag: 21 }))
+        .unwrap();
+    b.set_edge_class(edges[1], Some(On { dim: 1, tag: 11 }))
+        .unwrap();
+    b.set_face_class(face, Some(On { dim: 2, tag: 7 })).unwrap();
+    let pinned = b
+        .node_by_id(corners[1])
+        .and_then(|v| b.position(v))
+        .unwrap();
+
+    b.extrude_patch(face, -1.0).expect("the other way");
+
+    // The corner that was on corner 21 is still the one at that point.
+    let landed = b
+        .nodes()
+        .find(|(_, p)| (0..3).all(|k| (p[k] - pinned[k]).abs() < 1e-9))
+        .map(|(id, _)| id)
+        .expect("the corner is still there");
+    assert_eq!(b.node_class(landed), Some(On { dim: 0, tag: 21 }));
+    assert_eq!(
+        b.block_faces()
+            .iter()
+            .filter(|s| s.on == Some(On { dim: 2, tag: 7 }))
+            .count(),
+        1,
+        "and the face kept its surface"
+    );
+    assert_eq!(
+        b.map()
+            .iter_edges()
+            .filter(|e| b.edge_tag(*e).on == Some(On { dim: 1, tag: 11 }))
+            .count(),
+        1,
+        "and the edge kept its curve"
+    );
+}
+
+#[test]
+fn a_patch_of_two_goes_the_other_way_in_one_piece_too() {
+    // The seams were written down in the sheet's own numbering, and going
+    // the other way the blocks number their sides the other way: welding
+    // by the first numbering would glue two faces that are not against
+    // each other.
+    let mut b = two_faces();
+    let face = b.block_faces()[0].face;
+    b.extrude_patch(face, -1.0).expect("the other way");
+
+    assert_eq!((b.nb_blocks(), b.nb_patches()), (2, 0));
+    assert_eq!(b.nb_nodes(), 12, "glued to each other, not sixteen");
+    assert_eq!(b.nb_faces(), 11);
+
+    // Both blocks below, and neither inside out.
+    let upright = {
+        let mut c = Blocking::new().unwrap();
+        c.add_block(cube_corners([0.0, 0.0, 0.0], 1.0)).unwrap();
+        handedness(
+            &c.hexes()[0]
+                .corners
+                .map(|n| c.position(n).unwrap_or([0.0; 3])),
+        )
+    };
+    for hex in b.hexes() {
+        let corners = hex.corners.map(|n| b.position(n).unwrap_or([0.0; 3]));
+        assert!(
+            handedness(&corners) * upright > 0.0,
+            "inside out: {corners:?}"
+        );
+        assert!(corners.iter().all(|p| p[2] <= 1e-9));
+    }
+}
