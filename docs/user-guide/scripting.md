@@ -51,6 +51,7 @@ shorthand for a call with one table.
 | `gecko.face_on_surface(tag)`                                 | a quadrangle on a geometric surface     |
 | `gecko.add_face{ {x,y,z}, … }`                               | one by hand, with four corners          |
 | `gecko.remove_face(id)`                                      | one face of a patch                     |
+| `gecko.extrude_patch(face, 0.5)`                             | the whole sheet, into blocks            |
 | `gecko.remove_block(id)`, `gecko.glue_faces(a, b)`           |                                         |
 | `gecko.extrude_face(face, block, height)`                    |                                         |
 | `gecko.pillow({ {face, block}, … }, { tolerance = 0.02 })`   |                                         |

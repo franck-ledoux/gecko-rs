@@ -244,6 +244,18 @@ pub enum Command {
         block: u32,
         height: f64,
     },
+    /// Raise a block out of **every** face of a patch.
+    ///
+    /// The whole connected component at once, because half of one cannot be
+    /// raised: a block welded to an open sheet of faces is not a thing a
+    /// 3-map can hold. The blocks come out already glued to each other
+    /// along the faces the shared edges were raised into, and the sheet is
+    /// consumed — its faces are the bottoms of the blocks now, carrying
+    /// what they were classified on.
+    ExtrudePatch {
+        face: u32,
+        height: f64,
+    },
     /// Read a geometry from a gmsh surface mesh, replacing whatever was
     /// loaded before.
     ///
@@ -906,6 +918,24 @@ impl Session {
                     view_changed: true,
                 })
             }
+            Command::ExtrudePatch { face, height } => {
+                let face = CellId::from_raw(face);
+                let raised = self.blocking.extrude_patch(face, height)?;
+                Ok(Outcome {
+                    script: None,
+                    message: format!(
+                        "{} block{} raised from the patch by {height:.3} — \
+                         {} nodes, {} edges, {} faces, {} blocks",
+                        raised.len(),
+                        if raised.len() == 1 { "" } else { "s" },
+                        self.blocking.nb_nodes(),
+                        self.blocking.nb_edges(),
+                        self.blocking.nb_faces(),
+                        self.blocking.nb_blocks(),
+                    ),
+                    view_changed: true,
+                })
+            }
             Command::LoadGeometry { msh, name } => {
                 let geometry = Geometry::read(&msh)?;
                 let what = if name.is_empty() {
@@ -1344,12 +1374,22 @@ impl Session {
         let model = Model::new(geometry, composites);
         blocking.reclassify(|cell| {
             let pairs: Vec<(u8, i32)> = cell.boundary.iter().map(|on| (on.dim, on.tag)).collect();
-            // Two lists, and the difference between them is the whole rule
-            // about composites: `allowed` knows about sides, so a cell
-            // keeps one it was deliberately put on; `shared` does not, so
-            // no cell is ever handed one it never asked for.
-            let shared = geometry.shared(&pairs);
+            // One intersection, read two ways, and the difference is the
+            // whole rule about composites. It has to be the **model's**:
+            // the bare geometry cannot so much as look up a side, so a
+            // cell with one on its boundary would come back with no
+            // candidates at all rather than with the surface it is on.
+            //
+            // What a cell may **keep** includes sides, so one deliberately
+            // put on a side stays there. What it may be **given** does
+            // not: the diagonal of a face has the same two ends as the
+            // side beside it, and nothing should hand it one.
             let allowed = model.shared(&pairs);
+            let shared: Vec<(u8, i32)> = allowed
+                .iter()
+                .copied()
+                .filter(|e| !gecko_geom::Composites::is_composite(e.1))
+                .collect();
             let open = |on: On| on.dim >= cell.at_least && allowed.contains(&(on.dim, on.tag));
             if let Some(on) = cell.already.filter(|on| open(*on)) {
                 return Some(on);

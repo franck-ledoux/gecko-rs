@@ -2950,6 +2950,44 @@ test("Del takes away a face of a patch, not a block", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test("dragging a face of a patch raises the whole sheet", async ({ page }) => {
+  // The same gesture that grows a block out of a block's face. On an open
+  // sheet it takes all of it, because half a patch cannot be raised.
+  const errors = await boot(page);
+  await openSquare(page);
+  await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    g.selectGeom([{ dim: 2, tag: 1 }]);
+    g.showVerbs();
+  });
+  await page.keyboard.press("q");
+  await page.waitForFunction(() => (window as any).__gecko.stats().faces === 1);
+
+  // Cut in two, so there is a component to take all of.
+  await page.evaluate(async () => {
+    const g = (window as any).__gecko;
+    const edges = g.edgeNames();
+    g.apply({ op: "split_sheet", edge: edges[0], at: 0.5 });
+    await g.refresh();
+  });
+  await page.waitForFunction(() => (window as any).__gecko.stats().faces === 2);
+  expect(await page.evaluate(() => (window as any).__gecko.stats().patches)).toBe(1);
+
+  // Raised through the page's own door, as the drag does it.
+  await page.evaluate(async () => {
+    const g = (window as any).__gecko;
+    const s = g.surface("faces");
+    g.apply({ op: "extrude_patch", face: s.faces[0], height: 0.5 });
+    await g.refresh();
+  });
+  await page.waitForFunction(() => (window as any).__gecko.stats().blocks === 2);
+  const stats = await page.evaluate(() => (window as any).__gecko.stats());
+  expect(stats.patches).toBe(0);
+  expect(stats.nodes).toBe(12);
+  await expect(page.locator("[data-test=blocks]")).toHaveText("2");
+  expect(errors).toEqual([]);
+});
+
 test("a quadrangle is laid on the picked surface with Q", async ({ page }) => {
   // The beginning of a surface blocking, through the page: pick a surface
   // of the geometry, press one key, and a face comes back already

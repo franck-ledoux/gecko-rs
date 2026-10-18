@@ -66,3 +66,17 @@ gecko.create_cube()
 local side = gecko.faces()[1]
 local ok, why = pcall(gecko.remove_face, side.id)
 assert(not ok and tostring(why):find("belongs to a block"), tostring(why))
+
+-- And a patch is raised into blocks, all of it at once.
+gecko.undo()           -- the cube
+gecko.face_on_surface(1)
+local face = gecko.faces()[1]
+gecko.split_sheet(gecko.edges()[1].id, 0.5)
+assert(gecko.stats().faces == 2, "two faces in one patch")
+
+face = gecko.faces()[1]
+gecko.extrude_patch(face.id, 0.5)
+s = gecko.stats()
+assert(s.blocks == 2, "a block from each face")
+assert(s.patches == 0, "and the sheet is gone")
+assert(s.nodes == 12, "glued to each other: twelve corners, not sixteen")

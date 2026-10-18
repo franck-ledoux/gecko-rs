@@ -709,12 +709,20 @@ async function boot() {
   }
 
   async function extrude(from: Pick, height: number) {
-    const reply = await send({
-      op: "extrude_face",
-      face: from.face,
-      block: from.block,
-      height,
-    });
+    // A face of an open sheet raises the **whole** sheet: half a patch
+    // cannot be raised, since a block welded to the other half is not
+    // something the map can hold. Same gesture, and the kernel's own
+    // answer about which face this is.
+    const reply = await send(
+      isPatch(from)
+        ? { op: "extrude_patch", face: from.face, height }
+        : {
+            op: "extrude_face",
+            face: from.face,
+            block: from.block,
+            height,
+          },
+    );
     // That face has a block on each side now, so holding it selected would
     // leave the panel offering to grow from something that cannot be.
     clearSelection();
@@ -1064,7 +1072,8 @@ async function boot() {
         ? ""
         : picked.length === 1
           ? isPatch(picked[0])
-            ? `face ${picked[0].face} of a patch — Del takes the face`
+            ? `face ${picked[0].face} of a patch — drag it to raise the whole` +
+              ` sheet, Del takes the face`
             : `face ${picked[0].face} (block ${picked[0].block}) selected` +
               ` — hold ⇧ for its chord`
           : picked.length === 2

@@ -95,6 +95,13 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
             "second": at(lua, &a, 1)?,
         }))
     })?;
+    command(lua, &gecko, &kernel, "extrude_patch", |lua, a| {
+        Ok(json!({
+            "op": "extrude_patch",
+            "face": at(lua, &a, 0)?,
+            "height": at(lua, &a, 1)?,
+        }))
+    })?;
     command(lua, &gecko, &kernel, "extrude_face", |lua, a| {
         Ok(json!({
             "op": "extrude_face",

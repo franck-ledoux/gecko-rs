@@ -337,3 +337,42 @@ fn a_side_of_a_block_is_refused_and_nothing_moves() {
         .unwrap()
         .is_empty());
 }
+
+#[test]
+fn a_patch_is_raised_into_blocks_all_at_once() {
+    let mut s = loaded();
+    s.apply(Command::FaceOnSurface { surface: 1 }).unwrap();
+    let edge = edges(&s)[0]["id"].as_u64().unwrap() as u32;
+    s.apply(Command::SplitSheet { edge, at: 0.5 }).unwrap();
+    let face = serde_json::from_str::<Vec<serde_json::Value>>(&s.faces_json()).unwrap()[0]["id"]
+        .as_u64()
+        .unwrap() as u32;
+
+    let out = s
+        .apply(Command::ExtrudePatch { face, height: 0.5 })
+        .expect("a patch to raise");
+    let stats: serde_json::Value = serde_json::from_str(&s.stats_json()).unwrap();
+    assert_eq!(stats["blocks"], 2);
+    assert_eq!(stats["patches"], 0, "the sheet is consumed");
+    assert_eq!(stats["nodes"], 12, "glued to each other, not sixteen");
+    assert!(out.message.contains("2 blocks raised"), "{}", out.message);
+
+    // What the sheet was classified on is on the bottoms of the blocks,
+    // which is what makes the blocking follow the geometry afterwards.
+    assert_eq!(
+        stats["classified"]["faces"], 2,
+        "both bottoms carry what the two halves of the sheet were on"
+    );
+    assert!(stats["classified"]["edges"].as_u64().unwrap() >= 6);
+    assert!(s
+        .script()
+        .contains(&format!("gecko.extrude_patch({face}, 0.5)")));
+
+    // And it can be taken back whole.
+    s.apply(Command::Undo).unwrap();
+    let stats: serde_json::Value = serde_json::from_str(&s.stats_json()).unwrap();
+    assert_eq!(
+        (stats["blocks"].as_u64(), stats["patches"].as_u64()),
+        (Some(0), Some(1))
+    );
+}

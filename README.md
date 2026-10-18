@@ -125,7 +125,9 @@ passes locally passes there.
 
 ## What it can do today
 
-- **build**: a cube, a box round a geometry, a block grown out of a face;
+- **build**: a cube, a box round a geometry, a block grown out of a face, a
+  quadrangle laid on a geometric surface and a whole sheet of them raised
+  into blocks;
 - **edit**: glue (welding corner to corner at the point between them), remove,
   cut a sheet, remove a sheet and close the gap, pillow a patch, remove a
   whole chord of blocks, lay an o-grid along one — with five steps of undo,

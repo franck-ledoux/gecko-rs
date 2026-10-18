@@ -65,6 +65,9 @@ pub fn line(command: &Command) -> String {
         }
         Command::FaceOnSurface { surface } => format!("gecko.face_on_surface({surface})"),
         Command::RemoveFace { face } => format!("gecko.remove_face({face})"),
+        Command::ExtrudePatch { face, height } => {
+            format!("gecko.extrude_patch({face}, {})", number(*height))
+        }
         Command::AddFace { corners } => {
             format!(
                 "gecko.add_face{{{}}}",

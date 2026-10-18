@@ -103,6 +103,38 @@ the way out, not deleted with it — so a face taken from the middle of a
 patch leaves the ones around it whole, with the edges that were shared back
 on their own boundary and free to be welded to something else.
 
+## Raising it into blocks
+
+Drag a face of a patch, as you would drag a face of a block to grow one —
+and **the whole patch comes up**, one block per face.
+
+```lua
+gecko.extrude_patch(face, 0.5)
+```
+
+All of it or none of it, and that is not a convenience. β₂ joins the faces
+of one volume, so a block welded to an open sheet of faces would have to be
+the same volume as the sheet and a different one at once: half a patch
+cannot be raised.
+
+Three things make the blocks fit together:
+
+- **One step per node**, not per face. A node moves along the mitre of the
+  normals of the faces meeting there, so two blocks raised from two faces
+  that share an edge raise that edge to the *same* two corners instead of to
+  two pairs that happen to be close. Over a fold, the ridge rises straight
+  up the fold's own plane of symmetry.
+- **A glue along every shared edge**, so the blocks end up sharing the face
+  that edge was raised into. What comes out is one object, not a heap of
+  boxes: two faces give two blocks with twelve corners between them, not
+  sixteen.
+- **The patch is consumed.** Its faces are the bottoms of the blocks now,
+  carrying what they were classified on — the surface, the sides, the
+  corners, and any freeze — which is what makes the blocking go on
+  following the geometry once it is a volume.
+
+From there it is an ordinary blocking: cut its sheets, pillow it, mesh it.
+
 ## Cutting a sheet of faces
 
 Exactly as for blocks: drag along an edge, and the whole sheet is cut. In

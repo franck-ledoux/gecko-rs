@@ -16,7 +16,7 @@ use honeycomb_core::cmap::{
 use thiserror::Error;
 
 use crate::attributes::{BlockTag, EdgeTag, FaceTag, NodeTag, On};
-use crate::ids::{CellId, Counter};
+use crate::ids::{CellId, CornerKey, Counter};
 
 /// The six faces of a hexahedron, each listed anticlockwise **seen from
 /// outside**, over corners in the usual VTK/Gmsh order.
@@ -2028,6 +2028,210 @@ impl Blocking {
                 .write_attribute(block, BlockTag { id: CellId::NONE });
         }
         Ok(())
+    }
+
+    /// Grow a block out of **every** face of a patch, all at once.
+    ///
+    /// A patch is extruded whole or not at all. Raising one face of it and
+    /// leaving its neighbours behind would weld a block to an open sheet of
+    /// faces, and in a 3-map that is not a thing: β₂ joins the faces of one
+    /// volume, so the sheet and the block would have to be the same volume
+    /// and a different one at once.
+    ///
+    /// Three things make the blocks fit together:
+    ///
+    /// * **one offset per node**, not per face. Each node moves along the
+    ///   mitre of the normals of the faces meeting there, so two blocks
+    ///   raised from two faces sharing an edge raise that edge to the *same*
+    ///   two corners rather than to two pairs that happen to be close.
+    /// * **a glue along every shared edge**, so the two blocks end up
+    ///   sharing the face that edge was raised into — which is what makes
+    ///   the result one object rather than a heap of boxes.
+    /// * **the patch is consumed.** Its faces are now the bottoms of the
+    ///   blocks, carrying what they were classified on, and the sheet
+    ///   itself is gone.
+    ///
+    /// Built from [`add_block`][Self::add_block] and
+    /// [`glue_onto`][Self::glue_onto], like everything else that makes
+    /// blocks here.
+    ///
+    /// Returns the blocks, in the order their faces were read.
+    pub fn extrude_patch(
+        &mut self,
+        face: CellId,
+        height: f64,
+    ) -> Result<Vec<CellId>, BlockingError> {
+        if !height.is_finite() || height <= 0.0 {
+            return Err(BlockingError::BadHeight(height));
+        }
+        let start = self
+            .face_by_id(face)
+            .ok_or(BlockingError::NoSuchFace(face))?;
+        let volume = self.map.volume_id(start as DartIdType);
+        if self.is_block(volume) {
+            return Err(BlockingError::NotAPatch(face));
+        }
+
+        // --- read the whole patch before anything is built ---------------
+        // One face of it per entry: the darts round it, the corners they
+        // start at, and what every cell of it is classified on.
+        struct Side {
+            darts: [DartIdType; 4],
+            points: [[f64; 3]; 4],
+            nodes: [NodeTag; 4],
+            edges: [EdgeTag; 4],
+            on: Option<On>,
+        }
+        let mut faces: Vec<FaceIdType> = self
+            .map
+            .orbit(OrbitPolicy::Volume, volume as DartIdType)
+            .map(|d| self.map.face_id(d))
+            .collect();
+        faces.sort_unstable();
+        faces.dedup();
+
+        let sides: Vec<Side> = faces
+            .iter()
+            .map(|&f| {
+                let darts = self.face_darts(f);
+                Side {
+                    darts,
+                    points: darts.map(|d| self.position(self.map.vertex_id(d)).unwrap_or([0.0; 3])),
+                    nodes: darts.map(|d| self.node_tag(self.map.vertex_id(d))),
+                    edges: darts.map(|d| self.edge_tag(self.map.edge_id(d))),
+                    on: self.face_tag(f).on,
+                }
+            })
+            .collect();
+
+        // Where each dart's neighbour is, as (face, slot) — the pairs that
+        // have to end up sharing a face once the blocks are up.
+        let mut slot_of: HashMap<DartIdType, (usize, usize)> = HashMap::new();
+        for (k, side) in sides.iter().enumerate() {
+            for (slot, &d) in side.darts.iter().enumerate() {
+                slot_of.insert(d, (k, slot));
+            }
+        }
+        let mut seams: Vec<((usize, usize), (usize, usize))> = Vec::new();
+        for (k, side) in sides.iter().enumerate() {
+            for (slot, &d) in side.darts.iter().enumerate() {
+                let partner = self.map.beta::<2>(d);
+                if partner == NULL_DART_ID {
+                    continue;
+                }
+                let Some(&(other, other_slot)) = slot_of.get(&partner) else {
+                    // Welded to something outside the patch, which cannot
+                    // happen while β₂ stays inside one volume.
+                    return Err(BlockingError::LostFace);
+                };
+                if k < other {
+                    seams.push(((k, slot), (other, other_slot)));
+                }
+            }
+        }
+
+        // --- where every node goes ---------------------------------------
+        // By corner key rather than by position: two faces of a patch share
+        // the node itself, and the map says so without anything being
+        // measured.
+        let mut normals: HashMap<CornerKey, Vec<[f64; 3]>> = HashMap::new();
+        for side in &sides {
+            let normal = quad_normal(side.points);
+            let length = (0..3).map(|k| normal[k] * normal[k]).sum::<f64>().sqrt();
+            if length < 1e-12 {
+                return Err(BlockingError::LostFace);
+            }
+            let unit = normal.map(|x| x / length);
+            for tag in &side.nodes {
+                normals.entry(tag.corner_key).or_default().push(unit);
+            }
+        }
+        let steps: HashMap<CornerKey, [f64; 3]> = normals
+            .iter()
+            .map(|(key, around)| (*key, mitre(around, height)))
+            .collect();
+
+        // --- out with the sheet, up with the blocks ----------------------
+        self.drop_volume(volume)?;
+
+        let mut raised: Vec<(CellId, DartIdType)> = Vec::with_capacity(sides.len());
+        for side in &sides {
+            let mut corners = [[0.0; 3]; 8];
+            corners[..4].copy_from_slice(&side.points);
+            for k in 0..4 {
+                let step = steps
+                    .get(&side.nodes[k].corner_key)
+                    .copied()
+                    .unwrap_or([0.0; 3]);
+                corners[4 + k] = [0, 1, 2].map(|axis| side.points[k][axis] + step[axis]);
+            }
+            let built = self.build_block(corners)?;
+            raised.push(built);
+        }
+
+        // What the sheet was on, handed to the faces that took its place.
+        for (side, &(_, first)) in sides.iter().zip(&raised) {
+            let bottom = self.map.face_id(first);
+            let tag = self.face_tag(bottom);
+            self.map
+                .write_attribute(bottom, FaceTag { on: side.on, ..tag });
+            let darts = self.face_darts(bottom);
+            // `HEX_FACES[0]` is read [0, 3, 2, 1], so the bottom face runs
+            // backwards round the corners the patch's face ran forwards.
+            for (slot, &d) in darts.iter().enumerate() {
+                let was = [0, 3, 2, 1][slot];
+                let vertex = self.map.vertex_id(d);
+                let node = self.node_tag(vertex);
+                self.map.write_attribute(
+                    vertex,
+                    NodeTag {
+                        on: side.nodes[was].on,
+                        frozen: side.nodes[was].frozen,
+                        ..node
+                    },
+                );
+                // The edge of the bottom face leaving this corner is the
+                // one the patch's face entered it by.
+                let edge = self.map.edge_id(d);
+                let tag = self.edge_tag(edge);
+                let from = side.edges[(was + 3) % 4];
+                self.map.write_attribute(
+                    edge,
+                    EdgeTag {
+                        on: from.on,
+                        segments: from.segments,
+                        ..tag
+                    },
+                );
+            }
+        }
+
+        // --- and the blocks to each other --------------------------------
+        for ((a, a_slot), (b, b_slot)) in seams {
+            let first = self.lateral(raised[a].1, a_slot);
+            let second = self.lateral(raised[b].1, b_slot);
+            self.glue_onto(first, second)?;
+        }
+
+        self.assign_missing_ids();
+        Ok(raised.iter().map(|(name, _)| *name).collect())
+    }
+
+    /// The face of a block raised from slot `k` of the face it was built
+    /// on: the one whose corners are `k`, `k + 1` and those two moved up.
+    ///
+    /// Found in [`HEX_FACES`] rather than by looking at where it is, and
+    /// then by arithmetic on the base dart, because `build_block` lays the
+    /// faces out in that order and knowing which is which is the whole
+    /// reason it hands the dart back.
+    fn lateral(&self, first: DartIdType, slot: usize) -> CellId {
+        let want = [slot, (slot + 1) % 4, 4 + (slot + 1) % 4, 4 + slot];
+        let found = HEX_FACES
+            .iter()
+            .position(|face| want.iter().all(|c| face.contains(c)))
+            .expect("every edge of a hexahedron is on two side faces");
+        self.face_tag(self.map.face_id(first + 4 * found as DartIdType))
+            .id
     }
 
     /// Grow a new block out of a face, along the normal at its centre.
