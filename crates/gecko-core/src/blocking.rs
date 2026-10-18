@@ -138,6 +138,10 @@ pub struct Census {
     pub edges: usize,
     pub faces: usize,
     pub blocks: usize,
+    /// Open sheets of faces, each one a connected component. A patch is on
+    /// its way to being blocks — it is extruded — and until then it is not
+    /// counted as one.
+    pub patches: usize,
     pub classified_nodes: usize,
     pub classified_edges: usize,
     pub classified_faces: usize,
@@ -256,6 +260,8 @@ pub enum BlockingError {
     BrokenSheet(CellId),
     #[error("the chord through face {0:?} comes back through a block it has already crossed")]
     TangledChord(CellId),
+    #[error("{0:?} is a patch — an open sheet of faces — and this needs a block")]
+    NotABlock(CellId),
     #[error("nothing was selected to pillow")]
     EmptyPatch,
     #[error("face {0:?} is not a face of block {1:?}")]
@@ -433,6 +439,78 @@ impl Blocking {
     /// it. Joining blocks is a separate operation, and a later step.
     pub fn add_block(&mut self, corners: [[f64; 3]; 8]) -> Result<CellId, BlockingError> {
         Ok(self.build_block(corners)?.0)
+    }
+
+    /// A single quadrangular face, standing on its own.
+    ///
+    /// Not a block: four darts, a β₁ cycle, and β₂ left **null** all the way
+    /// round, which is what an open sheet of faces is made of. β₃ is never
+    /// touched — in a 3-map β₂ joins two faces *of one volume* and β₃ joins
+    /// two volumes, so faces welded edge to edge are welded by β₂ and are
+    /// therefore, in the map's eyes, one volume.
+    ///
+    /// That is not a trick played on the map; it is what the map already
+    /// says. A connected component of faces **is** a volume orbit, which is
+    /// why it has a name of its own without anybody keeping a list, and why
+    /// [`is_block`][Self::is_block] can tell the two apart by asking whether
+    /// the shell closes.
+    ///
+    /// The corners are taken anticlockwise seen from the side the face
+    /// faces; [`quad_normal`] is what that means in arithmetic.
+    pub fn add_face(&mut self, corners: [[f64; 3]; 4]) -> Result<CellId, BlockingError> {
+        let base = self.map.allocate_used_darts(4);
+        for slot in 0..4 {
+            self.map.link::<1>(
+                base + slot as DartIdType,
+                base + ((slot + 1) % 4) as DartIdType,
+            )?;
+        }
+        for (slot, point) in corners.iter().enumerate() {
+            let vertex = self.map.vertex_id(base + slot as DartIdType);
+            self.map
+                .write_vertex(vertex, (point[0], point[1], point[2]));
+            self.map.write_attribute(
+                vertex,
+                NodeTag {
+                    id: CellId::NONE,
+                    corner_key: self.corners.next_corner(),
+                    on: None,
+                    frozen: false,
+                },
+            );
+        }
+        self.assign_missing_ids();
+        Ok(self.face_tag(self.map.face_id(base)).id)
+    }
+
+    /// Whether this volume is a **block** — a shell that closes — rather
+    /// than a **patch**: an open sheet of faces.
+    ///
+    /// Asked of the topology rather than kept in a flag, because a flag can
+    /// come to disagree with the structure it describes and this cannot. A
+    /// block has a β₂ partner for every one of its darts; an open sheet has
+    /// a boundary, and a boundary is exactly where β₂ is null.
+    ///
+    /// Six faces welded into a closed box therefore *are* a block, which is
+    /// the right answer rather than a loophole.
+    pub fn is_block(&self, volume: VolumeIdType) -> bool {
+        self.map
+            .orbit(OrbitPolicy::Volume, volume as DartIdType)
+            .all(|d| self.map.beta::<2>(d) != NULL_DART_ID)
+    }
+
+    /// The same, by name.
+    pub fn named_is_block(&self, block: CellId) -> bool {
+        self.block_by_id(block).is_some_and(|v| self.is_block(v))
+    }
+
+    /// Every patch: the connected components of faces that are not blocks.
+    pub fn patches(&self) -> Vec<CellId> {
+        self.map
+            .iter_volumes()
+            .filter(|v| !self.is_block(*v))
+            .map(|v| self.block_tag(v).id)
+            .collect()
     }
 
     /// The same, and **which dart each face starts at**.
@@ -716,7 +794,13 @@ impl Blocking {
             out.faces += 1;
             out.classified_faces += usize::from(self.face_tag(f).on.is_some());
         }
-        out.blocks = self.map.iter_volumes().count();
+        for v in self.map.iter_volumes() {
+            if self.is_block(v) {
+                out.blocks += 1;
+            } else {
+                out.patches += 1;
+            }
+        }
         out
     }
 
@@ -1446,6 +1530,11 @@ impl Blocking {
         block: CellId,
     ) -> Result<Vec<ChordBlock>, BlockingError> {
         let start = self.side_dart(face, block)?;
+        // A chord steps out of a block through the face opposite, which an
+        // open sheet of faces does not have: it would walk out of the map.
+        if !self.named_is_block(block) {
+            return Err(BlockingError::NotABlock(block));
+        }
 
         // One block of the chord, read from a dart of the face it is entered
         // by: the block, the face in, the face out, and the dart that leaves
@@ -1771,8 +1860,17 @@ impl Blocking {
         for &(u, v) in &cuts {
             rings.entry(self.map.volume_id(u)).or_default().push((u, v));
         }
-        for (_, ring) in rings {
-            self.insert_cut_face(&ring, edge)?;
+        for (volume, ring) in rings {
+            // Blocks only, and this is the one step that is about volumes
+            // at all. A block is cut in two by closing a new face between
+            // its halves, along the ring of four new edges the sheet left
+            // round it. A **patch** has no ring and needs none: cutting its
+            // β₁ cycle in two already made two faces, welded to each other
+            // along the new edge by the β₂ the cut itself set. In two
+            // dimensions the cut is finished when the faces are.
+            if self.is_block(volume) {
+                self.insert_cut_face(&ring, edge)?;
+            }
         }
 
         // What was split is gone: two new cells each, named afresh, and
@@ -1966,6 +2064,16 @@ impl Blocking {
     pub fn pillow(&mut self, patch: &[(CellId, CellId)]) -> Result<Vec<CellId>, BlockingError> {
         if patch.is_empty() {
             return Err(BlockingError::EmptyPatch);
+        }
+        // Drawing a block inwards means there is an inward: a patch of free
+        // faces has no inside to give way.
+        // A name nothing answers to is a different complaint, and the code
+        // below makes it: this one is only about a block that exists and is
+        // an open sheet.
+        for &(_, block) in patch {
+            if self.block_by_id(block).is_some_and(|v| !self.is_block(v)) {
+                return Err(BlockingError::NotABlock(block));
+            }
         }
 
         // --- read everything before a single node moves ----------------
@@ -2564,8 +2672,21 @@ impl Blocking {
         self.map.iter_faces().count()
     }
 
+    /// How many **blocks** — shells that close. A patch is not one.
     pub fn nb_blocks(&self) -> usize {
-        self.map.iter_volumes().count()
+        self.map
+            .iter_volumes()
+            .filter(|v| self.is_block(*v))
+            .count()
+    }
+
+    /// How many patches: open sheets of faces, each one a connected
+    /// component.
+    pub fn nb_patches(&self) -> usize {
+        self.map
+            .iter_volumes()
+            .filter(|v| !self.is_block(*v))
+            .count()
     }
 
     /// Darts of the orbit a cell stands for.

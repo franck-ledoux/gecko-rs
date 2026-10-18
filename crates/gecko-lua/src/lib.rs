@@ -76,6 +76,9 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
             "size": o.get("size").cloned().unwrap_or(json!(1.0)),
         }))
     })?;
+    command(lua, &gecko, &kernel, "add_face", |lua, a| {
+        Ok(json!({ "op": "add_face", "corners": at(lua, &a, 0)? }))
+    })?;
     command(lua, &gecko, &kernel, "remove_block", |lua, a| {
         Ok(json!({ "op": "remove_block", "block": at(lua, &a, 0)? }))
     })?;

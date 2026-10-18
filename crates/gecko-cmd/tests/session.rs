@@ -1238,3 +1238,96 @@ fn first_edge(s: &Session) -> u32 {
     let edges: serde_json::Value = serde_json::from_str(&s.edges_json()).unwrap();
     edges[0]["id"].as_u64().unwrap() as u32
 }
+
+/// Faces that are not part of any block, through the same door.
+mod patches {
+    use super::*;
+
+    const SQUARE: [[f64; 3]; 4] = [
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [1.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],
+    ];
+
+    fn stats(s: &Session) -> serde_json::Value {
+        serde_json::from_str(&s.stats_json()).unwrap()
+    }
+
+    #[test]
+    fn a_face_is_added_and_counted_as_a_patch() {
+        let mut s = Session::new().unwrap();
+        let raw = s.apply_json(r#"{"op":"add_face","corners":[[0,0,0],[1,0,0],[1,1,0],[0,1,0]]}"#);
+        let reply: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(reply["ok"], true, "{raw}");
+
+        let seen = stats(&s);
+        assert_eq!(seen["faces"], 1);
+        assert_eq!(seen["blocks"], 0, "a patch is not a block");
+        assert_eq!(seen["patches"], 1);
+
+        // And the faces a script can name say which they are, so nobody has
+        // to work it out from the shape of the answer.
+        let faces: Vec<serde_json::Value> = serde_json::from_str(&s.faces_json()).unwrap();
+        assert_eq!(faces.len(), 1);
+        assert_eq!(faces[0]["patch"], true);
+    }
+
+    #[test]
+    fn a_block_and_a_face_are_told_apart_everywhere() {
+        let mut s = Session::new().unwrap();
+        s.apply(Command::CreateCube {
+            origin: [0.0, 0.0, 0.0],
+            size: 1.0,
+        })
+        .unwrap();
+        s.apply(Command::AddFace { corners: SQUARE }).unwrap();
+
+        let seen = stats(&s);
+        assert_eq!(
+            (seen["blocks"].as_u64(), seen["patches"].as_u64()),
+            (Some(1), Some(1))
+        );
+
+        let faces: Vec<serde_json::Value> = serde_json::from_str(&s.faces_json()).unwrap();
+        assert_eq!(faces.len(), 7, "six of the block, and the one on its own");
+        assert_eq!(faces.iter().filter(|f| f["patch"] == true).count(), 1);
+    }
+
+    #[test]
+    fn a_face_is_written_into_the_script_and_taken_back() {
+        let mut s = Session::new().unwrap();
+        let before = s.view_buffer();
+        s.apply(Command::AddFace { corners: SQUARE }).unwrap();
+
+        let script = s.script();
+        assert!(
+            script.contains("gecko.add_face{{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}}"),
+            "{script}"
+        );
+
+        s.apply(Command::Undo).unwrap();
+        assert_eq!(stats(&s)["faces"], 0);
+        assert_eq!(s.view_buffer(), before, "byte for byte where it was");
+    }
+
+    #[test]
+    fn what_a_patch_cannot_be_asked_is_said_plainly() {
+        let mut s = Session::new().unwrap();
+        s.apply(Command::AddFace { corners: SQUARE }).unwrap();
+        let faces: Vec<serde_json::Value> = serde_json::from_str(&s.faces_json()).unwrap();
+        let (face, block) = (
+            faces[0]["id"].as_u64().unwrap(),
+            faces[0]["block"].as_u64().unwrap(),
+        );
+        let before = s.view_buffer();
+
+        for op in ["pillow_chord", "remove_chord"] {
+            let raw = s.apply_json(&format!(r#"{{"op":"{op}","face":{face},"block":{block}}}"#));
+            let reply: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            assert_eq!(reply["ok"], false, "{raw}");
+            assert!(reply["error"].as_str().unwrap().contains("patch"), "{raw}");
+            assert_eq!(s.view_buffer(), before, "and nothing moved");
+        }
+    }
+}

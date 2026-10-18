@@ -163,6 +163,13 @@ impl Blocking {
         let map = self.map();
         let mut out = Vec::new();
         for volume in map.iter_volumes() {
+            // Blocks only. A patch — an open sheet of faces on its way to
+            // being extruded — has no inside to fill, and the walk below
+            // would step off the end of it: finding the corner above one of
+            // its own means crossing β₂, which is null at a boundary.
+            if !self.is_block(volume) {
+                continue;
+            }
             // A face of this block, and the four darts round it. Every face
             // of a block is wound anticlockwise **seen from outside**, so
             // this cycle plays the part of `HEX_FACES[0]`, which is the

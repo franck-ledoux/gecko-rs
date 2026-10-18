@@ -105,6 +105,14 @@ pub enum Command {
     AddBlock {
         corners: [[f64; 3]; 8],
     },
+    /// One quadrangular face, standing on its own.
+    ///
+    /// Not a block: the beginning of a **surface** blocking, which is laid
+    /// on the geometry, cut into a grid, and then extruded into blocks. The
+    /// corners go anticlockwise seen from the side the face faces.
+    AddFace {
+        corners: [[f64; 3]; 4],
+    },
     /// An axis-aligned cube, `origin` being its lowest corner.
     CreateCube {
         origin: [f64; 3],
@@ -547,6 +555,21 @@ impl Session {
     fn run(&mut self, command: Command) -> Result<Outcome, SessionError> {
         match command {
             Command::AddBlock { corners } => self.add(corners),
+            Command::AddFace { corners } => {
+                let id = self.blocking.add_face(corners)?;
+                Ok(Outcome {
+                    script: None,
+                    message: format!(
+                        "face {:?} added — {} nodes, {} edges, {} faces, {} patches",
+                        id,
+                        self.blocking.nb_nodes(),
+                        self.blocking.nb_edges(),
+                        self.blocking.nb_faces(),
+                        self.blocking.nb_patches(),
+                    ),
+                    view_changed: true,
+                })
+            }
             Command::CreateCube { origin, size } => {
                 // `size <= 0.0` alone would let NaN through, since every
                 // comparison with it is false.
@@ -1316,6 +1339,11 @@ impl Session {
                 serde_json::json!({
                     "id": side.face.get(),
                     "block": side.block.get(),
+                    // Whether that "block" is one: a face of a patch is a
+                    // face on its own, and what can be done with it is not
+                    // the same. The caller should not have to work it out
+                    // from the shape of the answer.
+                    "patch": !self.blocking.named_is_block(side.block),
                     "centre": centre,
                     "on": side.on.map(spot_json),
                 })
@@ -1466,6 +1494,7 @@ impl Session {
             "edges": seen.edges,
             "faces": seen.faces,
             "blocks": seen.blocks,
+            "patches": seen.patches,
             "geometry": self.geometry_json(),
             "history": { "steps": self.steps, "back": self.past.len() },
             "mesh": self.mesh_json(),

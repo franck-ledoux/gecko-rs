@@ -63,6 +63,12 @@ pub fn line(command: &Command) -> String {
             };
             format!("gecko.move_node({node}, {}{tail})", point(to))
         }
+        Command::AddFace { corners } => {
+            format!(
+                "gecko.add_face{{{}}}",
+                corners.iter().map(point).collect::<Vec<_>>().join(", ")
+            )
+        }
         Command::GlueFaces { first, second } => format!("gecko.glue_faces({first}, {second})"),
         Command::RemoveChord { face, block } => {
             format!("gecko.remove_chord({face}, {block})")
