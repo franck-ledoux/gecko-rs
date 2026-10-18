@@ -142,6 +142,24 @@ Three things make the blocks fit together:
 
 From there it is an ordinary blocking: cut its sheets, pillow it, mesh it.
 
+## Pillowing, and what a node keeps
+
+Pillowing draws the blocks behind a patch of faces inwards and lays a layer
+into the space. The nodes that move **let go of the geometry**: a node
+inside the material pinned to a curve it is no longer near drags the mesh
+out through the boundary. The copy the layer leaves on the surface takes
+what it was following, freeze included.
+
+A node on the **rim** of the pillowed patch is the exception that matters
+here: it has often only slid *along* what it was on, and it is still on it.
+So the operation hands back what each node was following, and the settling
+keeps a **side** that still holds — proximity cannot answer "side", since a
+composite is never a candidate, and narrowing a node to whichever of the
+side's curves it now happens to be over would lose what somebody
+deliberately put there. Between two entities of the model, proximity's
+answer is the better one and is taken: a corner drawn in off the rim of a
+disc really has left the rim.
+
 ## Cutting a sheet of faces
 
 Exactly as for blocks: drag along an edge, and the whole sheet is cut. In

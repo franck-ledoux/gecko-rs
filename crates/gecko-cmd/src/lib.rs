@@ -1257,7 +1257,7 @@ impl Session {
     /// made by hand, and leaving them as they were pins a node to a curve
     /// it is no longer anywhere near — which drags the mesh out through
     /// the boundary when it is projected, and turns the cells inside out.
-    fn settle_moved(&mut self, nodes: &[CellId], tolerance: f64) {
+    fn settle_moved(&mut self, nodes: &[(CellId, Option<On>)], tolerance: f64) {
         let Session {
             blocking,
             geometry,
@@ -1265,12 +1265,24 @@ impl Session {
             ..
         } = self;
         let Some(geometry) = geometry.as_deref() else {
+            // Nothing is written back either: with no triangles there is
+            // nobody to decide, and a hint nobody reads is a stale
+            // classification.
             return;
         };
+        // What each of them was following, put back as a **hint** before
+        // anything is decided. The operation let go of it on the way in —
+        // rightly, since the node is inside the material — but a node that
+        // only slid along what it was on has not left it, and the rule
+        // below is the one that can tell.
+        for (node, was) in nodes {
+            let _ = blocking.set_node_class(*node, *was);
+        }
+        let names: Vec<CellId> = nodes.iter().map(|(name, _)| *name).collect();
         let model = Model::new(geometry, composites);
         let reach = [tolerance.max(0.0) * model.span(); 3];
         blocking.classify_named(
-            nodes,
+            &names,
             |already, at| {
                 let found = model.nearest(at, reach).map(|(dim, tag)| On { dim, tag });
                 // A node deliberately put on a **side** keeps it as long as

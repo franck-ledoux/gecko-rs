@@ -278,13 +278,22 @@ fn the_node_left_on_the_surface_keeps_what_the_node_that_moved_was_on() {
     assert!(outer.3, "the freeze did not come with it");
 
     // And every node that was drawn in is on nothing and free to move:
-    // where it is now is the caller's business to decide again.
-    for node in &drawn {
+    // where it is now is the caller's business to decide again. What it
+    // *was* following comes back beside it, for that caller to weigh —
+    // the node itself is holding nothing.
+    for (node, was) in &drawn {
         let (_, _, on, frozen) = b
             .nodes_in_full()
             .find(|(id, _, _, _)| id == node)
             .expect("a node that moved");
         assert_eq!(on, None, "a node drawn in kept what it was on");
         assert!(!frozen, "a node drawn in stayed frozen");
+        if *node == corner {
+            assert_eq!(
+                *was,
+                Some(On { dim: 1, tag: 7 }),
+                "and the caller is told what it let go of"
+            );
+        }
     }
 }

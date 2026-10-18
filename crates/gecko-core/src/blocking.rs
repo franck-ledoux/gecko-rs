@@ -1731,7 +1731,7 @@ impl Blocking {
         &mut self,
         face: CellId,
         block: CellId,
-    ) -> Result<Vec<CellId>, BlockingError> {
+    ) -> Result<Vec<(CellId, Option<On>)>, BlockingError> {
         let chord = self.chord_through(face, block)?;
         let sides = self.block_faces();
         let patch: Vec<(CellId, CellId)> = chord
@@ -2369,7 +2369,18 @@ impl Blocking {
     /// and moving it takes them with it. The mesh stays conforming and those
     /// blocks are deformed a little; that is the honest consequence of a
     /// shared node being shared.
-    pub fn pillow(&mut self, patch: &[(CellId, CellId)]) -> Result<Vec<CellId>, BlockingError> {
+    ///
+    /// Returns the nodes that were drawn in, each with **what it was
+    /// following** before it let go. The node itself is on nothing now and
+    /// free to move: it is inside the material, and a node pinned to a
+    /// curve it is no longer near drags the mesh out through the boundary.
+    /// But a rim node has often only slid *along* what it was on, and the
+    /// caller — which holds the triangles — cannot notice that without
+    /// being told what to look for.
+    pub fn pillow(
+        &mut self,
+        patch: &[(CellId, CellId)],
+    ) -> Result<Vec<(CellId, Option<On>)>, BlockingError> {
         if patch.is_empty() {
             return Err(BlockingError::EmptyPatch);
         }
@@ -2480,6 +2491,16 @@ impl Blocking {
                 let tag = self.node_tag(*node);
                 (self.position(*node).unwrap_or([0.0; 3]), tag.on, tag.frozen)
             })
+            .collect();
+
+        // What each of them was following, kept to hand back. The node
+        // itself lets go below — it is inside the material now — but the
+        // caller holds the triangles and may well decide it is still on
+        // the same thing, which it cannot do without being told what that
+        // was. A node sliding along the rim of the patch is the case.
+        let followed: HashMap<VertexIdType, Option<On>> = facing
+            .keys()
+            .map(|node| (*node, self.node_tag(*node).on))
             .collect();
 
         let mut moved: HashMap<VertexIdType, [f64; 3]> = HashMap::new();
@@ -2608,15 +2629,21 @@ impl Blocking {
         // somewhere new and so may be **on** something new: the corner of
         // a box drawn in off the rim of a disc is still on that disc, and
         // only the caller holds the triangles that say so.
-        let mut drawn: Vec<CellId> = Vec::new();
+        let mut drawn: Vec<(CellId, Option<On>)> = Vec::new();
         for v in self.map.iter_vertices() {
             let at = self.position(v).unwrap_or([0.0; 3]);
-            if moved.values().any(|to| same_point(*to, at)) {
-                drawn.push(self.node_tag(v).id);
-            }
+            let Some((from, _)) = moved.iter().find(|(_, to)| same_point(**to, at)) else {
+                continue;
+            };
+            drawn.push((
+                self.node_tag(v).id,
+                followed.get(from).copied().unwrap_or(None),
+            ));
         }
-        drawn.sort();
-        drawn.dedup();
+        // By name, which is all that orders them: two entries for one node
+        // cannot disagree about what it was following.
+        drawn.sort_by_key(|(name, _)| *name);
+        drawn.dedup_by_key(|(name, _)| *name);
         Ok(drawn)
     }
 

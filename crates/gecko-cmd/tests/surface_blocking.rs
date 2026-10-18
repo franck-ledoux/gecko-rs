@@ -376,3 +376,81 @@ fn a_patch_is_raised_into_blocks_all_at_once() {
         (Some(0), Some(1))
     );
 }
+
+#[test]
+fn a_node_pillowed_along_its_side_keeps_the_side() {
+    // Settling after a pillow decides again where the nodes that moved
+    // are, and proximity cannot answer "side": a composite is never a
+    // candidate, so the nearest thing it can name is one of the curves the
+    // side is made of. A node that has slid **along** its side has not
+    // moved off anything, and narrowing it to one curve would lose what
+    // somebody deliberately put there.
+    let mut s = loaded();
+    s.apply(Command::FaceOnSurface { surface: 1 }).unwrap();
+    let side = edges(&s)
+        .into_iter()
+        .find(|e| e["on"]["tag"].as_i64().unwrap() < 0)
+        .expect("the side");
+    s.apply(Command::SplitSheet {
+        edge: side["id"].as_u64().unwrap() as u32,
+        at: 0.5,
+    })
+    .unwrap();
+    let face = serde_json::from_str::<Vec<serde_json::Value>>(&s.faces_json()).unwrap()[0]["id"]
+        .as_u64()
+        .unwrap() as u32;
+    s.apply(Command::ExtrudePatch { face, height: 0.5 })
+        .unwrap();
+
+    // The node half way along the bottom, on the side rather than on
+    // either of the curves it is made of.
+    let on_the_side = nodes(&s)
+        .into_iter()
+        .find(|n| {
+            let p = n["pos"].as_array().unwrap();
+            (p[0].as_f64().unwrap() - 0.5).abs() < 1e-9
+                && p[1].as_f64().unwrap().abs() < 1e-9
+                && p[2].as_f64().unwrap().abs() < 1e-9
+        })
+        .expect("the node at the join");
+    assert!(
+        on_the_side["on"]["tag"].as_i64().unwrap() < 0,
+        "it starts on the side: {on_the_side}"
+    );
+
+    // The face between the two blocks, pillowed: that draws one block's
+    // nodes away from it, and this one slides along the bottom as it goes.
+    let faces: Vec<serde_json::Value> = serde_json::from_str(&s.faces_json()).unwrap();
+    let inside = faces
+        .iter()
+        .find(|f| faces.iter().filter(|g| g["id"] == f["id"]).count() == 2)
+        .expect("a face with a block on each side");
+    s.apply(Command::Pillow {
+        faces: vec![gecko_cmd::PickedFace {
+            face: inside["id"].as_u64().unwrap() as u32,
+            block: inside["block"].as_u64().unwrap() as u32,
+        }],
+        tolerance: gecko_cmd::SNAP_SHARE,
+    })
+    .expect("a layer");
+
+    // Still on the bottom of the model, and still on the side — not
+    // narrowed to whichever of its curves it now happens to be over.
+    let slid: Vec<serde_json::Value> = nodes(&s)
+        .into_iter()
+        .filter(|n| {
+            let p = n["pos"].as_array().unwrap();
+            p[1].as_f64().unwrap().abs() < 1e-9
+                && p[2].as_f64().unwrap().abs() < 1e-9
+                && (p[0].as_f64().unwrap() - 0.5).abs() > 1e-9
+                && p[0].as_f64().unwrap() > 0.0
+                && p[0].as_f64().unwrap() < 1.0
+        })
+        .collect();
+    assert_eq!(slid.len(), 1, "one node slid along the bottom: {slid:?}");
+    assert!(
+        slid[0]["on"]["tag"].as_i64().unwrap() < 0,
+        "it kept its side: {}",
+        slid[0]
+    );
+}
