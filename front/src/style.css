@@ -314,13 +314,21 @@ kbd {
 #who { color: var(--dim); }
 #who b { color: var(--fg); font-weight: 600; }
 
-/* A short window gets its space back from the margins rather than from
-   the keys: there is no point hiding half the card to make the other half
-   fit without scrolling. */
+/* A short window gets its space back from the margins and a notch of type
+   size, rather than from the keys: there is no point hiding half the card
+   to make the other half fit without scrolling.
+   
+   With room to spare, deliberately. The first version of this was tuned to
+   the pixel on one machine and wanted twenty-five more on another, because
+   a different font engine sets the same words to a different height. What
+   has to fit is not a number measured here. */
 @media (max-height: 780px) {
   #help-card { padding: 16px 20px; }
-  #help-who { margin-bottom: 10px; }
-  #help-groups > * { margin-bottom: 10px; }
+  #help-who { margin-bottom: 8px; }
+  #help-groups > * { margin-bottom: 8px; }
+  #help-card dl { gap: 3px 12px; }
+  #help-card dd { font-size: 11px; }
+  #help-card h2 { margin-bottom: 4px; }
   #help-hint { margin-top: 8px; }
 }
 

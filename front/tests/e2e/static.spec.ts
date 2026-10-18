@@ -3134,11 +3134,25 @@ for (const [width, height] of [
 
     const fits = await page.evaluate(() => {
       const card = document.querySelector("#help-card") as HTMLElement;
-      return { wants: card.scrollHeight, has: card.clientHeight };
+      return { wants: card.scrollHeight, has: card.clientHeight, window: window.innerHeight };
     });
-    expect(fits.wants, `the card wants ${fits.wants}px and has ${fits.has}`).toBeLessThanOrEqual(
-      fits.has,
-    );
+    // Not scrolling, first — the plain reading of the complaint.
+    expect(
+      fits.wants,
+      `the card wants ${fits.wants}px and has ${fits.has}`,
+    ).toBeLessThanOrEqual(fits.has);
+
+    // And with room to spare, which the card's own height cannot show
+    // because it shrinks to its contents: the measure has to be against
+    // the window. The same words come out taller on another machine's
+    // font engine — the first cut of this fitted here and wanted
+    // twenty-five pixels more on the runner — so the margin is the thing
+    // to assert. `56` is the breathing room the card leaves round itself;
+    // the rest is for whatever sets the type differently.
+    expect(
+      fits.wants,
+      `the card's ${fits.wants}px in a ${fits.window}px window`,
+    ).toBeLessThanOrEqual(fits.window - 56 - 24);
     expect(errors).toEqual([]);
   });
 }
