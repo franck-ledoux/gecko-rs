@@ -32,6 +32,8 @@ export interface Files {
   read(path: string): string | null;
   /** Somewhere to put one. Returns an error, or nothing. */
   write(path: string, text: string): string;
+  /** What can be opened by name: the files this page was handed. */
+  kept(): string[];
 }
 
 export class Interpreter {
@@ -54,6 +56,7 @@ export class Interpreter {
         apply: (command: string) => kernel.apply(command),
         query: (kind: string, arg: string) => kernel.query(kind, arg),
         read: (path: string) => files.read(path),
+        files: () => files.kept(),
         write: (path: string, text: string) => files.write(path, text),
       },
     });

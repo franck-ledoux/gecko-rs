@@ -24,6 +24,12 @@ mergeInto(LibraryManager.library, {
   gecko_read: function (path) {
     return geckoGive(Module.host.read(UTF8ToString(path)));
   },
+  gecko_files__deps: ["$geckoGive"],
+  gecko_files: function () {
+    // One per line: the bridge carries strings, and a file name with a
+    // newline in it is a problem nobody has.
+    return geckoGive(Module.host.files().join("\n"));
+  },
   gecko_write__deps: ["$geckoGive"],
   gecko_write: function (path, text) {
     return geckoGive(Module.host.write(UTF8ToString(path), UTF8ToString(text)));

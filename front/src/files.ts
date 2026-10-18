@@ -28,8 +28,45 @@ import { saveBlob } from "./capture";
  */
 const FROM_GECKO = "x-gecko-file";
 
+/**
+ * The files the reader has handed this page, by name.
+ *
+ * A browser cannot open `/home/you/cylinder.msh`, and should not be able
+ * to: that is a boundary, not a gap. What it *can* have is a file someone
+ * gave it — chosen with the button, or dropped on the window — and from
+ * then on a script can open that file **by its name**, exactly as it would
+ * in a terminal.
+ *
+ * Which is why they are kept rather than read and thrown away. The modern
+ * picker would be the other answer and cannot be: it is asynchronous, and
+ * Lua asks for a file in the middle of a loop, with no way to hand the
+ * event loop back.
+ */
+const given = new Map<string, string>();
+
+/** Keep what the reader handed over, under the name it came with. */
+export function keep(name: string, text: string): void {
+  given.set(name, text);
+}
+
+/** The names this page is holding, in the order they arrived. */
+export function kept(): string[] {
+  return [...given.keys()];
+}
+
+/** The last part of a path, whichever kind of slash it uses. */
+function basename(path: string): string {
+  return path.split(/[\\/]/).pop() ?? path;
+}
+
 /** The file at this path, or null — no such file, or no server to ask. */
 export function read(path: string): string | null {
+  // What the reader gave the page comes first, by its name and then by the
+  // last part of whatever path the script wrote: a script that says
+  // `data/cylinder.msh` means the cylinder, and on a page there is no
+  // `data/` for it to be wrong about.
+  const here = given.get(path) ?? given.get(basename(path));
+  if (here !== undefined) return here;
   try {
     const ask = new XMLHttpRequest();
     ask.open("GET", `file?path=${encodeURIComponent(path)}`, false);

@@ -1254,10 +1254,67 @@ async function boot() {
     input.value = "";
     if (!file) return;
     try {
-      await loadGeometry(file.name, await file.text());
+      const text = await file.text();
+      // Kept as well as loaded: from now on a script can open it by name,
+      // which is the only way a page on a static host has of opening a
+      // file at all.
+      files.keep(file.name, text);
+      await loadGeometry(file.name, text);
     } catch (problem) {
       say(`could not read ${file.name}: ${problem}`);
     }
+  });
+
+  /**
+   * Files dropped on the window are kept, by name.
+   *
+   * The answer to "how do I open a file from a script here": hand it to
+   * the page first. A browser cannot be given a path, and the picker that
+   * could ask for one is asynchronous — Lua asks for a file in the middle
+   * of a loop and cannot wait. A file that is already here needs no
+   * waiting.
+   *
+   * A single `.msh` is also opened as the geometry, because that is
+   * plainly what dropping one means.
+   */
+  async function takeFiles(dropped: File[]) {
+    if (dropped.length === 0) return;
+    const names: string[] = [];
+    for (const file of dropped) {
+      try {
+        files.keep(file.name, await file.text());
+        names.push(file.name);
+      } catch (problem) {
+        say(`could not read ${file.name}: ${problem}`);
+        return;
+      }
+    }
+    const only = dropped.length === 1 ? dropped[0] : undefined;
+    if (only && only.name.toLowerCase().endsWith(".msh")) {
+      files.keep(only.name, await only.text());
+      await loadGeometry(only.name, await only.text());
+      return;
+    }
+    message =
+      `${names.join(", ")} ready — a script can open ` +
+      `${names.length === 1 ? "it" : "them"} by name`;
+    $("status").textContent = message;
+  }
+
+  for (const kind of ["dragenter", "dragover"]) {
+    window.addEventListener(kind, (e) => {
+      e.preventDefault();
+      document.body.dataset.dropping = "1";
+    });
+  }
+  for (const kind of ["dragleave", "drop"]) {
+    window.addEventListener(kind, () => delete document.body.dataset.dropping);
+  }
+  window.addEventListener("drop", (e) => {
+    const dropped = [...((e as DragEvent).dataTransfer?.files ?? [])];
+    if (dropped.length === 0) return;
+    e.preventDefault();
+    void takeFiles(dropped);
   });
 
   /** Put everything back in view. Camera state, so it never goes near the

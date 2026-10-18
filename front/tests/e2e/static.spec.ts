@@ -2805,6 +2805,33 @@ test("a mistake in a script is reported, not swallowed", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test("a file handed to the page can then be opened by a script", async ({ page }) => {
+  // The answer to "how do I open a file from Lua on the published page":
+  // give the page the file first, and open it by name afterwards. There
+  // is no path to give a browser, and the picker that could ask for one
+  // is asynchronous — Lua asks in the middle of a loop and cannot wait.
+  const errors = await boot(page);
+  await openConsole(page);
+
+  // Chosen with the toolbar's own button, which is what a reader does.
+  await openSquare(page);
+  await expect(page.locator("[data-test=geom-surfaces]")).toHaveText("1");
+
+  // And from now on a script can ask for it by name, and can find out
+  // what the page is holding.
+  await lua(page, 'print(table.concat(gecko.files(), " "))');
+  await expect(page.locator("#console-out").last()).toContainText("square.msh");
+
+  await lua(page, 'gecko.clear_geometry() gecko.load_geometry("square.msh")');
+  expect(await page.evaluate(() => (window as any).__gecko.stats().geometry.surfaces)).toBe(1);
+
+  // Even written with a folder in front of it: there is no folder here for
+  // it to be wrong about.
+  await lua(page, 'gecko.clear_geometry() gecko.load_geometry("data/square.msh")');
+  expect(await page.evaluate(() => (window as any).__gecko.stats().geometry.surfaces)).toBe(1);
+  expect(errors).toEqual([]);
+});
+
 test("a script asking this page for a file is told why there is none", async ({ page }) => {
   // The suite serves the page as a static host does, so this is the case a
   // reader meets on the published page — and the first thing anyone tries
@@ -2815,8 +2842,9 @@ test("a script asking this page for a file is told why there is none", async ({ 
   await lua(page, 'gecko.load_geometry("cylinder.msh")');
   const said = page.locator("#console-out .bad").last();
   await expect(said).toContainText("cylinder.msh");
-  await expect(said).toContainText("static host has no files at all");
-  await expect(said).toContainText("toolbar");
+  await expect(said).toContainText("A page has no paths");
+  await expect(said).toContainText("drop the file on the window");
+  await expect(said).toContainText("gecko.files()");
   expect(errors).toEqual([]);
 });
 

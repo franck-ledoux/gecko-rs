@@ -6,7 +6,8 @@ alongside the blocks so you can see what you are meshing.
 
 ## Opening one
 
-The folder button, or `O`, opens a `.msh` file. From a script:
+The folder button, or `O`, opens a `.msh` file — and so does **dropping one
+on the window**. From a script:
 
 ```lua
 gecko.load_geometry("sphere.msh")
@@ -14,8 +15,11 @@ gecko.load_geometry("sphere.msh")
 --  18220 elements of other kinds ignored'
 ```
 
-The browser has no filesystem to name, so what travels is the **contents** of
-the file, not a path. `load_geometry` reads the file and builds the same
+On the published page that name is one you handed over first: dropping a
+file on the window, or opening it with the button, keeps it under its own
+name so a script can open it afterwards — see
+[Files](scripting.md#files). A browser cannot be given a path, so what
+travels is the **contents** of the file, never a path. `load_geometry` reads the file and builds the same
 command the folder button does — which is why a geometry opened in either
 place turns up in the other, the console and the mouse being one session.
 

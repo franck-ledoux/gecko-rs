@@ -306,3 +306,11 @@ kbd {
 #help-card .aside { margin: 10px 0 0; font-size: 11px; color: var(--dim); }
 #help-card .aside b { color: var(--fg); font-weight: 600; }
 
+/* A file is over the window and will be kept if it is let go.
+ *
+ * A rim rather than a banner: the model stays visible, and what changes is
+ * only the thing a drop would change — the window's own edge. */
+body[data-dropping] #view {
+  outline: 2px dashed var(--accent, #6aa9ff);
+  outline-offset: -8px;
+}

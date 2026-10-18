@@ -67,6 +67,26 @@ impl Kernel for Local {
         std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))
     }
 
+    /// The working directory, sorted — the files a path-less name reaches
+    /// from here. Directories are left out: a script opens files.
+    fn files(&self) -> Vec<String> {
+        let Ok(here) = std::fs::read_dir(".") else {
+            return Vec::new();
+        };
+        let mut names: Vec<String> = here
+            .filter_map(|entry| {
+                let entry = entry.ok()?;
+                entry
+                    .file_type()
+                    .ok()?
+                    .is_file()
+                    .then(|| entry.file_name().to_string_lossy().into_owned())
+            })
+            .collect();
+        names.sort();
+        names
+    }
+
     fn write(&self, path: &str, text: &str) -> Result<(), String> {
         std::fs::write(path, text).map_err(|e| format!("{path}: {e}"))
     }

@@ -71,6 +71,15 @@ pub trait Kernel {
     /// one, which is worth saying because the obvious guess when a read
     /// fails is that the path was not absolute enough.
     fn read(&self, path: &str) -> Result<String, String>;
+
+    /// The files that can be opened **by name**, without a path.
+    ///
+    /// In a terminal that is the working directory; in a page it is what
+    /// the reader handed over — chosen with the button, or dropped on the
+    /// window. A page cannot be given a path, so this is the whole of what
+    /// a script there can open, and a script that wants to know has to be
+    /// able to ask.
+    fn files(&self) -> Vec<String>;
     fn write(&self, path: &str, text: &str) -> Result<(), String>;
 }
 
@@ -264,6 +273,14 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
             lua.create_function(move |lua, (face, block): (u32, u32)| {
                 answer(lua, &host.query("chord", &json!([face, block]).to_string()))
             })?,
+        )?;
+    }
+
+    {
+        let host = Rc::clone(&kernel);
+        gecko.set(
+            "files",
+            lua.create_function(move |lua, ()| lua.to_value(&host.files()))?,
         )?;
     }
 

@@ -63,6 +63,7 @@ shorthand for a call with one table.
 | `gecko.classify_node(ids, dim, tag)`, `unclassify_node(ids)` | one id or a list                           |
 | `gecko.freeze_node(ids)`, `gecko.thaw_node(ids)`             |                                            |
 | `gecko.load_geometry(path)`, `gecko.clear_geometry()`        |                                            |
+| `gecko.files()`                                              | what can be opened by name here            |
 | `gecko.box_geometry{ surfaces = {…}, margin = 0.1 }`         |                                            |
 | `gecko.classify{ tolerance = 0.02 }`                         |                                            |
 | `gecko.mesh{ segments = 10 }`, `gecko.clear_mesh()`          |                                            |
@@ -112,24 +113,44 @@ checks the bytes it produces agree.
 
 ## Files
 
-A script reaches files only where there are files to reach.
+A script opens a file **by name**. What a name reaches depends on where the
+page came from:
 
-| where the page came from                  | what a path means                                            |
-| ----------------------------------------- | ------------------------------------------------------------ |
-| the terminal (`gecko run`)                | the working directory; absolute paths in full                |
-| served by `gecko` on your machine         | the folder `gecko` was started in; absolute paths in full    |
-| a static host, such as the published page | **there are no files**, and no path of any shape reaches one |
+| where it came from                        | what a name reaches                                       |
+| ----------------------------------------- | --------------------------------------------------------- |
+| the terminal (`gecko run`)                | the working directory; absolute paths in full             |
+| served by `gecko` on your machine         | the folder `gecko` was started in; absolute paths in full |
+| a static host, such as the published page | the files you handed the page                             |
 
-So `gecko.load_geometry("cylinder.msh")` opens the file beside the one you
-launched `gecko` in, and `gecko.export_vtk("mesh.vtk")` writes next to it.
-From the published page the same two lines find nothing and hand you a
-**download** respectively — the geometry is opened with the toolbar's own
-button there, which reads the file through the browser rather than through
-a path.
+`gecko.files()` lists them, wherever you are.
+
+### On the published page: hand it the file first
+
+**Drop a file on the window**, or open it with the toolbar's button, and
+from then on a script opens it by name:
+
+```lua
+gecko.load_geometry("cylinder.msh")   -- dropped a moment ago
+gecko.box_geometry{ margin = 0.05 }
+gecko.classify()
+```
+
+A folder written in front of the name is ignored — `data/cylinder.msh`
+finds the same file — because on a page there is no folder for it to be
+wrong about.
+
+!!! note "Why it has to be handed over, rather than asked for"
+    A browser cannot open `/home/you/cylinder.msh` by name, and should not
+    be able to: that is a boundary, not a gap. The picker that *could* ask
+    the reader for one cannot be used here — it is **asynchronous**, and
+    Lua asks for a file in the middle of a loop with no way to hand the
+    event loop back. A file already in the page needs no waiting, which is
+    why what you hand over is kept rather than read and thrown away.
+
+Writing is the mirror of it: `gecko.export_vtk("mesh.vtk")` writes a file
+when you launched the app yourself, and hands the browser a **download**
+when you are using the published page.
 
 !!! note "A read that fails is not a path that was not absolute enough"
-    It is the first thing anyone tries, so the message says which of the
-    two it was: no such file *here*, or no files at all. A browser cannot
-    open `/home/you/cylinder.msh` by name and should not be able to; what
-    `gecko` adds when it serves the page is exactly that door, and only
-    onto the folder you started it in.
+    It is the first thing anyone tries, so the message says what to do
+    instead, and `gecko.files()` says what the page is holding.

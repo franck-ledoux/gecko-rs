@@ -23,6 +23,7 @@ mod page {
         fn gecko_apply(command: *const c_char) -> *mut c_char;
         fn gecko_query(kind: *const c_char, arg: *const c_char) -> *mut c_char;
         fn gecko_read(path: *const c_char) -> *mut c_char;
+        fn gecko_files() -> *mut c_char;
         fn gecko_write(path: *const c_char, text: *const c_char) -> *mut c_char;
     }
 
@@ -49,12 +50,22 @@ mod page {
             // missing file's 404 are the same 404.
             unsafe { answer(gecko_read(send(path).as_ptr())) }.ok_or_else(|| {
                 format!(
-                    "{path}: no such file. A page served by `gecko` reads paths under the \
-                     folder it was started in, and absolute paths in full. A page on a \
-                     static host has no files at all — open a geometry with the toolbar \
-                     instead, or run `gecko` in the folder your files are in."
+                    "{path}: no such file. A page has no paths: drop the file on the \
+                     window — or open it with the toolbar — and a script can open it by \
+                     name from then on. `gecko.files()` lists the ones it is holding. A \
+                     page served by `gecko` reads the folder it was started in as well."
                 )
             })
+        }
+
+        /// What the page is holding, one name per line.
+        fn files(&self) -> Vec<String> {
+            unsafe { answer(gecko_files()) }
+                .unwrap_or_default()
+                .lines()
+                .filter(|name| !name.is_empty())
+                .map(str::to_owned)
+                .collect()
         }
 
         fn write(&self, path: &str, text: &str) -> Result<(), String> {
