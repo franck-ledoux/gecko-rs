@@ -22,9 +22,20 @@ Smoothing, by hand and while you drag.
   so.
 - **Dragging a node ripples**: the ring of nodes around it is smoothed one
   pass, then the ring beyond, and so on until a ring barely moves — where
-  barely is a fraction of how far you dragged. The node you put somewhere
-  stays where you put it, it is one step of undo, and a script placing a
-  node still gets the plain move.
+  barely is a fraction of how far you dragged. Each ring goes a shorter way
+  than the one inside it: a fifth of the way for the ring next to the node
+  you dragged, a tenth for the next, a fifteenth for the one after. The node
+  you put somewhere stays where you put it, it is one step of undo, and a
+  script placing a node still gets the plain move.
+- A **frozen** node is drawn as a **cube** rather than a ball, in whatever
+  colour the colouring gives it. It was grey of its own until now, which hid
+  the two things the colouring is for — which node it is, and what it
+  follows. Being out of play is a thing about the cell, so it is said with
+  the shape. The colour panel has one fewer swatch for it.
+- **Fixed**: `gecko.move_node` dropped its `smooth` option without a word,
+  so a script — and the session's own replayed history — got the plain move
+  where a drag had rippled. The reference had documented the option all
+  along.
 - **Fixed**: a table returned to the console printed only eight of its
   fields, in hash order, so `gecko.stats()` hid `blocks` behind an ellipsis
   as soon as `patches` joined the table. Twenty-four fields print now, list

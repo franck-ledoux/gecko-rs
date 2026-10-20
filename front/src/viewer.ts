@@ -27,6 +27,7 @@ import { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { VertexData } from "@babylonjs/core/Meshes/mesh.vertexData";
 import { VertexBuffer } from "@babylonjs/core/Buffers/buffer";
 import type { LinesMesh } from "@babylonjs/core/Meshes/linesMesh";
+import { CreateBox } from "@babylonjs/core/Meshes/Builders/boxBuilder";
 import { CreateSphere } from "@babylonjs/core/Meshes/Builders/sphereBuilder";
 import { CreateLineSystem } from "@babylonjs/core/Meshes/Builders/linesBuilder";
 import { CreateGreasedLine } from "@babylonjs/core/Meshes/Builders/greasedLineBuilder";
@@ -95,6 +96,18 @@ export type Drop = (
 
 /** How many pixels across a node handle should be, whatever the zoom. */
 export const HANDLE_PIXELS = 11;
+
+/**
+ * The side of the cube a **frozen** node is drawn as, against the diameter
+ * of the ball every other node gets.
+ *
+ * Four fifths rather than one: a cube as wide as a ball's diameter reads
+ * bigger than the ball, because the ball's silhouette is its widest circle
+ * while the cube shows a corner. Four fifths puts the two at about the same
+ * weight on screen, which is what makes the *shape* the thing you notice
+ * rather than the size.
+ */
+export const FROZEN_SIDE = 0.8;
 
 /**
  * And a geometric corner, which is bigger on purpose.
@@ -1288,14 +1301,17 @@ export class Viewer {
   }
 
   /**
-   * The colour of one node handle: picked, frozen, then whatever the
-   * colouring says — in that order, each being more urgent than the next.
+   * The colour of one node handle: picked, then whatever the colouring
+   * says.
+   *
+   * Being frozen is **not** in this list. It is drawn as a cube instead,
+   * so that a frozen node can still be read for its id or for what it
+   * follows — the two things the colouring is there to show.
    */
   private nodeColour(index: number): Color3 {
     const plain = this.prefs.theme.nodes;
     if (!this.view) return Color3.FromHexString(plain);
     if (this.pickedNodes.includes(this.view.names[index])) return Color3.FromHexString(ANCHOR);
-    if (this.view.nodeFrozen[index]) return Color3.FromHexString(this.prefs.theme.frozen);
     switch (this.prefs.nodes.colouring) {
       case "class":
         return this.classColour(this.view.nodeClassDim[index], 0, plain);
@@ -1561,9 +1577,18 @@ export class Viewer {
     this.rebuildSurface("blocks");
 
     for (let n = 0; n < view.positions.length / 3; n++) {
-      // Unit diameter; the per-frame pass below scales it to a fixed number
+      // A cube for a node that is frozen, a ball for one that can move.
+      // The *shape* says whether it is out of play, which leaves its
+      // colour free to say whatever the colouring is set to — a frozen
+      // node still shows its id or what it follows, which it could not
+      // when being frozen was a colour of its own.
+      //
+      // Unit size; the per-frame pass below scales it to a fixed number
       // of pixels.
-      const s = CreateSphere(`node${n}`, { diameter: 1, segments: 8 }, this.scene);
+      const s =
+        view.nodeFrozen[n] === 1
+          ? CreateBox(`node${n}`, { size: FROZEN_SIDE }, this.scene)
+          : CreateSphere(`node${n}`, { diameter: 1, segments: 8 }, this.scene);
       s.position = this.point(n);
       // The kernel's name, not this index: the index is only good until the
       // next edit reorders the view.
@@ -1764,6 +1789,27 @@ export class Viewer {
       on: dim < 0 ? null : { dim, tag: this.view.nodeClassTag[at] },
       frozen: this.view.nodeFrozen[at] === 1,
     };
+  }
+
+  /**
+   * How a node's handle is **drawn**, read off the mesh that is on screen
+   * rather than off the flag it was built from — a cube has eight corners
+   * and so twenty-four vertices, three to a corner, where the ball has one
+   * per point of its lattice. Asking the mesh is what makes this worth
+   * asking: the flag is already known, the shape is the thing that might
+   * not have followed it.
+   */
+  nodeShape(name: number): "cube" | "ball" | null {
+    const mesh = this.nodes.find((m) => m.metadata.name === name);
+    if (!mesh) return null;
+    return mesh.getTotalVertices() === 24 ? "cube" : "ball";
+  }
+
+  /** The colour a node's handle is wearing, as `#rrggbb`. */
+  nodeTint(name: number): string | null {
+    const mesh = this.nodes.find((m) => m.metadata.name === name);
+    const material = mesh?.material as StandardMaterial | undefined;
+    return material ? material.emissiveColor.toHexString().toLowerCase() : null;
   }
 
   /** Screen coordinates -> the kernel's name for the node under them. */

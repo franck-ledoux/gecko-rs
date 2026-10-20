@@ -1893,16 +1893,31 @@ describe("wearing what it follows", () => {
     expect(handle(viewer, 0)).not.toBe(handle(viewer, 1));
   });
 
-  it("gives a frozen node a colour of its own, whatever it is on", async () => {
-    // A frozen node is not a kind of classification: it is a cell out of
-    // play, and that is the more urgent thing to see.
+  it("draws a frozen node as a cube, and leaves its colour to the colouring", async () => {
+    // A frozen node is a cell out of play, which is a thing about the cell
+    // and not about what it follows — so it is said with the *shape* of
+    // the handle. Said with its colour, as it once was, it hid the two
+    // things the colouring is for: the node's id and its classification.
     const { kernel, viewer } = await pinned();
     const names = viewer.names();
     kernel.apply({ op: "classify_node", nodes: [names[0]], on: { dim: 2, tag: 1 } });
     kernel.apply({ op: "freeze_node", nodes: [names[0]], frozen: true });
     await redraw(kernel, viewer);
-    expect(handle(viewer, 0)).toBe(DEFAULTS.theme.frozen.toLowerCase());
+
+    // The shape says frozen, read off the mesh on screen.
+    expect(viewer.nodeShape(names[0])).toBe("cube");
+    expect(viewer.nodeShape(names[1])).toBe("ball");
     expect(viewer.nodeState(names[0])).toEqual({ on: { dim: 2, tag: 1 }, frozen: true });
+
+    // And the colour still says what it follows, which is a surface.
+    viewer.applyPrefs({ ...DEFAULTS, nodes: { colouring: "class" } });
+    expect(handle(viewer, 0)).toBe(DEFAULTS.theme.onSurface.toLowerCase());
+    // Or its id, or nothing at all, as the setting says — the frozen node
+    // is treated like any other in each case.
+    viewer.applyPrefs({ ...DEFAULTS, nodes: { colouring: "id" } });
+    expect(handle(viewer, 0)).toBe(colourForId(names[0], FAMILY.nodes).toLowerCase());
+    viewer.applyPrefs(DEFAULTS);
+    expect(handle(viewer, 0)).toBe(DEFAULTS.theme.nodes.toLowerCase());
   });
 
   it("will not let a frozen node be dragged at all", async () => {
@@ -1933,7 +1948,7 @@ describe("wearing what it follows", () => {
     expect(viewer.selectedNodes).toEqual([names[0]]);
     expect(handle(viewer, 0)).toBe("#ffcc33");
     viewer.selectNodes([]);
-    expect(handle(viewer, 0)).toBe(DEFAULTS.theme.frozen.toLowerCase());
+    expect(handle(viewer, 0)).toBe(DEFAULTS.theme.nodes.toLowerCase());
 
     // Several at once, which is what the fast way onto a geometry needs:
     // pick the four corners, pick the curve, say so once.

@@ -30,9 +30,6 @@ export interface Theme {
   /** The mesh's skin. A family of its own: it is not the blocking and not
    *  the geometry, it is what the two of them were for. */
   mesh: string;
-  /** A node nothing may move. Grey, and nothing else is: a frozen node is
-   *  not a kind of classification, it is a cell that is out of play. */
-  frozen: string;
   /** What a cell of the **blocking** wears to say what it follows, in
    *  `class` colouring. A family of its own rather than the colour of the
    *  entity itself: a block face painted the same as the surface it
@@ -54,7 +51,6 @@ export const SWATCHES: ReadonlyArray<{ key: keyof Theme; label: string }> = [
   { key: "curves", label: "curves" },
   { key: "surfaces", label: "surfaces" },
   { key: "mesh", label: "mesh" },
-  { key: "frozen", label: "frozen" },
   { key: "onCorner", label: "on a corner" },
   { key: "onCurve", label: "on a curve" },
   { key: "onSurface", label: "on a surface" },
@@ -71,7 +67,6 @@ export const PRESETS: Record<"dark" | "light", Theme> = {
     curves: "#2fbf71",
     surfaces: "#3f7d5e",
     mesh: "#4f8f7a",
-    frozen: "#9aa0a8",
     onCorner: "#d58cff",
     onCurve: "#a66ff0",
     onSurface: "#6b4fa8",
@@ -86,7 +81,6 @@ export const PRESETS: Record<"dark" | "light", Theme> = {
     curves: "#157f4a",
     surfaces: "#a8d5bd",
     mesh: "#8fc7b4",
-    frozen: "#6b7280",
     onCorner: "#8e3fd4",
     onCurve: "#6f3fd4",
     onSurface: "#b9a8e0",

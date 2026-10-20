@@ -79,7 +79,6 @@ per entity:
 | on a curve   | another                   |
 | on a surface | a third                   |
 | on nothing   | the group's own colour    |
-| frozen       | grey, whatever it follows |
 
 `H` shows them, read off the theme so the card cannot come to disagree with
 the screen.
@@ -94,9 +93,13 @@ the screen.
     What you read off this colouring is whether the blocking has taken
     hold of the geometry, and that is a question with four answers.
 
-A **frozen** node is grey whatever it is classified on: it is not a kind of
-classification, it is a cell out of play, and that is the more urgent thing
-to see. It cannot be dragged at all — letting it be dragged and having the
+A **frozen** node is drawn as a **cube** rather than a ball, in whatever
+colour the colouring gives it. Being out of play is not a kind of
+classification — it is a thing about the cell — so it is said with the
+shape of the handle, which leaves the colour free to go on saying what the
+node follows or which node it is. It was a grey of its own until 0.1.2, and
+grey hid the two things the colouring is there for. It cannot be dragged at
+all — letting it be dragged and having the
 kernel refuse would show it moving and snapping back, which reads as a bug
 rather than as a locked node.
 

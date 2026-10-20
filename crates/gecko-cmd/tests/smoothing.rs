@@ -231,3 +231,97 @@ fn a_script_placing_a_node_gets_the_plain_move() {
     .unwrap();
     assert!(s.script().contains("smooth = true"), "{}", s.script());
 }
+
+#[test]
+fn the_first_ring_goes_a_fifth_of_the_way_and_the_rings_beyond_it_less() {
+    // What the ripple's strength actually is, said in positions rather
+    // than in a constant: the ring next to the node that was dragged goes
+    // a fifth of the way to the middle of *its* neighbours, the ring
+    // beyond it a tenth, and so on.
+    //
+    // (2, 1, 1) is picked because the arithmetic is closed: its six
+    // neighbours are the node that was dragged — held where it was put —
+    // and five nodes on the outside of the blocking, which are classified
+    // on nothing and so may not move at all. Nothing else in the ring
+    // touches it either, so Gauss-Seidel has no say and the expected
+    // position is a sum of known numbers.
+    let mut s = grid(3);
+    let (middle, _) = node_at(&s, [1.0, 1.0, 1.0]);
+    let (neighbour, was) = node_at(&s, [2.0, 1.0, 1.0]);
+    // Read before the drag: `node_at` answers with where a node is *now*,
+    // and after the smoothing that is the answer, not the question.
+    let (further, stood) = node_at(&s, [2.0, 2.0, 1.0]);
+    let to = [1.5, 1.4, 1.3];
+
+    s.apply(Command::MoveNode {
+        node: middle,
+        to,
+        carrying: vec![],
+        snap: 0.0,
+        smooth: true,
+    })
+    .expect("a drag");
+
+    // Its neighbours after the drag: the dragged node where it was put,
+    // and the five on the outside where they have always been.
+    let ring: [[f64; 3]; 6] = [
+        to,
+        [3.0, 1.0, 1.0],
+        [2.0, 0.0, 1.0],
+        [2.0, 2.0, 1.0],
+        [2.0, 1.0, 0.0],
+        [2.0, 1.0, 2.0],
+    ];
+    let centroid = [0, 1, 2].map(|k| ring.iter().map(|p| p[k]).sum::<f64>() / 6.0);
+    let fifth = [0, 1, 2].map(|k| was[k] + gecko_cmd::RIPPLE_SHARE * (centroid[k] - was[k]));
+
+    let now = at(&s, neighbour);
+    for k in 0..3 {
+        assert!(
+            (now[k] - fifth[k]).abs() < 1e-9,
+            "the first ring went {now:?}, a fifth of the way is {fifth:?}"
+        );
+    }
+
+    // And the ring beyond it went a **tenth** of the way, which is the
+    // other half of the rule. (2, 2, 1) is at two edges' distance and its
+    // neighbourhood is closed in the same way: two nodes of the first ring,
+    // which have already moved by the time this one is looked at, three on
+    // the outside, and (2, 2, 2), which is a ring further out and so has
+    // not moved yet. Nothing in its own ring touches it either.
+    assert_ne!(further, neighbour);
+    // (1, 2, 1) is the first-ring node that this one leans on; the drag
+    // leaves it a fifth of the way to its own middle, by the same
+    // arithmetic as above.
+    let inner = [
+        to,
+        [0.0, 2.0, 1.0],
+        [2.0, 2.0, 1.0],
+        [1.0, 3.0, 1.0],
+        [1.0, 2.0, 0.0],
+        [1.0, 2.0, 2.0],
+    ];
+    let leaning = [0, 1, 2].map(|k| {
+        let middle = inner.iter().map(|p| p[k]).sum::<f64>() / 6.0;
+        [1.0, 2.0, 1.0][k] + gecko_cmd::RIPPLE_SHARE * (middle - [1.0, 2.0, 1.0][k])
+    });
+    let round_it = [
+        leaning,
+        fifth,
+        [3.0, 2.0, 1.0],
+        [2.0, 3.0, 1.0],
+        [2.0, 2.0, 0.0],
+        [2.0, 2.0, 2.0],
+    ];
+    let tenth = [0, 1, 2].map(|k| {
+        let middle = round_it.iter().map(|p| p[k]).sum::<f64>() / 6.0;
+        stood[k] + (gecko_cmd::RIPPLE_SHARE / 2.0) * (middle - stood[k])
+    });
+    let went = at(&s, further);
+    for k in 0..3 {
+        assert!(
+            (went[k] - tenth[k]).abs() < 1e-9,
+            "the second ring went {went:?}, a tenth of the way is {tenth:?}"
+        );
+    }
+}

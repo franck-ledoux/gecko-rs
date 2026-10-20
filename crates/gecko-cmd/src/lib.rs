@@ -85,6 +85,17 @@ pub const SMOOTH_ROUNDS: u32 = 5;
 /// watch what is happening to their model.
 pub const SMOOTH_SHARE: f64 = 0.5;
 
+/// How far a ring goes along the way to the middle of its neighbours under
+/// a drag's ripple — **divided by how far out the ring is**. The first ring
+/// goes a fifth of the way, the second a tenth, the third a fifteenth.
+///
+/// A fifth rather than the half an asked-for smoothing takes, and falling
+/// off with distance, because this smoothing is not asked for: it comes
+/// with every drag, and a gesture that rearranged its whole neighbourhood
+/// by half would be a gesture nobody could aim. What the reader sees is the
+/// model giving way where they pulled it and settling down a few edges out.
+pub const RIPPLE_SHARE: f64 = 0.2;
+
 /// The furthest a ring may move and still count as settled, as a share of
 /// how far the node that started it all was dragged.
 ///
@@ -1431,9 +1442,11 @@ impl Session {
 
     /// Smooth outwards from what has just been moved, ring by ring.
     ///
-    /// One pass per ring, nearest first, stopping as soon as a ring barely
-    /// moves — where **barely** is a share of how far the gesture itself
-    /// went, because that is the scale the reader is working at. A drag of
+    /// One pass per ring, nearest first, each ring going a shorter way than
+    /// the one inside it — [`RIPPLE_SHARE`] over how far out it is — and
+    /// stopping as soon as a ring barely moves, where **barely** is a share
+    /// of how far the gesture itself went, because that is the scale the
+    /// reader is working at. A drag of
     /// a millimetre has no business rearranging a model a metre across, and
     /// a drag across the whole model should be allowed to tell its
     /// neighbours about it.
@@ -1447,7 +1460,7 @@ impl Session {
         let start = *held.last().expect("the node that was moved");
         let rings = self.blocking.rings_around(start, SMOOTH_RINGS);
         let mut touched = 0;
-        for ring in rings {
+        for (out, ring) in rings.into_iter().enumerate() {
             let Session {
                 blocking,
                 geometry,
@@ -1458,7 +1471,11 @@ impl Session {
             let furthest = blocking.smooth(
                 Smoothing {
                     rounds: 1,
-                    share: SMOOTH_SHARE,
+                    // A fifth of the way for the ring next to the node
+                    // that was dragged, a tenth for the one beyond it, and
+                    // so on: the ripple fades with distance rather than
+                    // carrying the drag's full weight outwards.
+                    share: RIPPLE_SHARE / (out + 1) as f64,
                     held,
                     only: Some(&ring),
                 },

@@ -220,9 +220,10 @@ test("colours can be changed, and are remembered", async ({ page }) => {
 
   // The panel is generated from the theme's keys, so there is one input per
   // colour and no markup to keep in step: background, nodes, edges, faces,
-  // blocks, the geometry's corners, curves and surfaces, frozen, and the
-  // three that say what a cell follows.
-  await expect(page.locator("#swatches input[type=color]")).toHaveCount(13);
+  // blocks, the geometry's corners, curves and surfaces, the mesh, and the
+  // three that say what a cell follows. Being frozen is not among them —
+  // that is a shape, not a colour.
+  await expect(page.locator("#swatches input[type=color]")).toHaveCount(12);
   expect(await page.evaluate(() => (window as any).__gecko.theme())).toMatchObject({
     background: "#15171b",
   });
@@ -1876,6 +1877,49 @@ test("the blocking is put on the geometry and wears what it follows", async ({ p
   expect(errors).toEqual([]);
 });
 
+test("a frozen node is a cube, and still wears what the colouring says", async ({ page }) => {
+  // Freezing used to paint the handle grey, which hid the very thing the
+  // colouring is for. Now it changes the handle's shape, and the colour is
+  // left to say what the node is on.
+  const errors = await boot(page);
+  await boxedAndPinned(page);
+  await page.keyboard.press("k");
+  await expect(page.locator("[data-test=pinned]")).toHaveText("8");
+
+  const name = (await page.evaluate(() => (window as any).__gecko.names()[0])) as number;
+  const other = (await page.evaluate(() => (window as any).__gecko.names()[1])) as number;
+  const shape = (n: number) =>
+    page.evaluate((who) => (window as any).__gecko.nodeShape(who), n);
+  const tint = (n: number) => page.evaluate((who) => (window as any).__gecko.nodeTint(who), n);
+
+  // Every corner of the block is on a corner of the model, so under the
+  // `follows` colouring every handle wears the corner colour — set from
+  // the drawer, the way somebody would.
+  await openDrawer(page);
+  await openGroup(page, "nodes");
+  await page.locator('[data-test="nodes-class"]').check();
+  const theme = (await page.evaluate(() => (window as any).__gecko.theme())) as {
+    onCorner: string;
+  };
+  expect(await shape(name)).toBe("ball");
+  expect(await tint(name)).toBe(theme.onCorner.toLowerCase());
+
+  // Frozen through the kernel, since what is under test is the drawing.
+  await page.evaluate(async (who) => {
+    const g = (window as any).__gecko;
+    g.apply({ op: "freeze_node", nodes: [who], frozen: true });
+    await g.refresh();
+  }, name);
+  await page.waitForFunction((n) => (window as any).__gecko.nodeState(n).frozen, name);
+
+  // A cube where it was a ball, and the colour unchanged — while the node
+  // beside it is still a ball.
+  expect(await shape(name)).toBe("cube");
+  expect(await shape(other)).toBe("ball");
+  expect(await tint(name)).toBe(theme.onCorner.toLowerCase());
+  expect(errors).toEqual([]);
+});
+
 test("a node is picked, locked, and taken off the model", async ({ page }) => {
   const errors = await boot(page);
   await boxedAndPinned(page);
@@ -2050,11 +2094,14 @@ test("the help card says what the classification colours mean", async ({ page })
   // table they are matched against.
   const errors = await boot(page);
   await page.keyboard.press("h");
-  await expect(page.locator("#help-legend .key")).toHaveCount(5);
+  await expect(page.locator("#help-legend .key")).toHaveCount(4);
   await expect(page.locator("#help-legend")).toContainText("on a corner");
   await expect(page.locator("#help-legend")).toContainText("on a curve");
   await expect(page.locator("#help-legend")).toContainText("on a surface");
-  await expect(page.locator("#help-legend")).toContainText("frozen");
+  // And the one thing about a node that is **not** a colour is said in
+  // words, beside them.
+  await expect(page.locator("[data-test=legend-note]")).toContainText("frozen");
+  await expect(page.locator("[data-test=legend-note]")).toContainText("cube");
 
   // The swatch really is the colour the scene uses.
   const first = await page

@@ -1677,10 +1677,12 @@ async function boot() {
       swatch(prefs.theme.onCurve, "on a curve") +
       swatch(prefs.theme.onSurface, "on a surface") +
       swatch(prefs.theme.nodes, "on nothing") +
-      swatch(prefs.theme.frozen, "frozen: it does not move") +
       `</div>` +
-      `<p class="aside">Nodes, edges and faces take these when their box` +
-      ` in the display panel is set to <b>follows</b>.</p></section>`
+      `<p class="aside" data-test="legend-note">Nodes, edges and faces take these when their box` +
+      ` in the display panel is set to <b>follows</b>. A <b>frozen</b> node` +
+      ` is drawn as a cube rather than a ball, in whatever colour the` +
+      ` colouring gives it — being out of play is a shape, so it can still` +
+      ` be read for its id or for what it follows.</p></section>`
     );
   }
   drawHelp();
@@ -2003,6 +2005,10 @@ async function boot() {
      *  the toolbar. The gestures call it themselves. */
     showVerbs: () => showVerbs(),
     nodeState: (name: number) => viewer.nodeState(name),
+    /** What is actually on screen for a node: the shape of its handle
+     *  and the colour that handle is wearing. */
+    nodeShape: (name: number) => viewer.nodeShape(name),
+    nodeTint: (name: number) => viewer.nodeTint(name),
     sheet: () => viewer.highlighted,
     selectedEdge: () => viewer.selectedEdge,
     pickEdge: (x: number, y: number) => viewer.pickEdge(x, y),

@@ -63,6 +63,16 @@ joins to it are smoothed one pass, then the ring beyond those, then the next
 how far you dragged. A nudge stays local; a long drag is allowed to tell its
 neighbours about it.
 
+Each ring goes a **shorter way** than the one inside it: a fifth of the way
+to the middle of its neighbours for the ring next to the node you dragged, a
+tenth for the one beyond it, a fifteenth for the next — a fifth over how far
+out the ring is. A fifth rather than the half an asked-for smoothing takes,
+and falling off with distance, because this smoothing is not something you
+asked for: it comes with every drag, and a gesture that rearranged its whole
+neighbourhood by half would be a gesture nobody could aim. With the stopping
+rule on top of it, what you see is the model giving way where you pulled it
+and settling down a few edges out.
+
 The node you dragged is **held**: smoothing it would undo the gesture that
 asked for it. So are the others, when you have several picked and drag them
 together.
