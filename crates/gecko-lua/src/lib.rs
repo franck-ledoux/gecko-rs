@@ -171,6 +171,11 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
         ))
     })?;
 
+    command(lua, &gecko, &kernel, "smooth", |lua, a| {
+        let o = options(lua, &a, 0)?;
+        Ok(with(json!({ "op": "smooth" }), &o, &["rounds", "share"]))
+    })?;
+
     // --- sheets ----------------------------------------------------------
     command(lua, &gecko, &kernel, "split_sheet", |lua, a| {
         Ok(json!({

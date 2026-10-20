@@ -61,6 +61,7 @@ nav:
       - Sheets: user-guide/sheets.md
       - Chords: user-guide/chords.md
       - Pillowing: user-guide/pillowing.md
+      - Smoothing: user-guide/smoothing.md
       - Meshing: user-guide/meshing.md
       - Scripting: user-guide/scripting.md
   - Developer Guide:

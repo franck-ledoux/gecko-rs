@@ -18,6 +18,7 @@ import {
   MAX_BOX_MARGIN,
   MAX_HISTORY,
   MAX_SEGMENTS,
+  MAX_SMOOTH_ROUNDS,
   MAX_SNAP,
   PRESETS,
   SHOT_SCALES,
@@ -444,6 +445,30 @@ async function boot() {
   };
   share("box-margin", "margin", MAX_BOX_MARGIN);
   share("snap", "snap", MAX_SNAP);
+
+  // Two of them, because smoothing is "how many times" and "how far each
+  // time" and neither alone says anything useful.
+  const rounds = $<HTMLInputElement>("smooth-rounds");
+  rounds.max = String(MAX_SMOOTH_ROUNDS);
+  rounds.value = String(prefs.smooth.rounds);
+  $("smooth-rounds-n").textContent = String(prefs.smooth.rounds);
+  rounds.addEventListener("input", () => {
+    prefs.smooth.rounds = Number(rounds.value);
+    $("smooth-rounds-n").textContent = String(prefs.smooth.rounds);
+    savePrefs(prefs);
+  });
+
+  const howFar = $<HTMLInputElement>("smooth-share");
+  howFar.value = String(prefs.smooth.share);
+  const showShare = () => {
+    $("smooth-share-n").textContent = `${Math.round(prefs.smooth.share * 100)}%`;
+  };
+  showShare();
+  howFar.addEventListener("input", () => {
+    prefs.smooth.share = Number(howFar.value);
+    showShare();
+    savePrefs(prefs);
+  });
 
   const segments = $<HTMLInputElement>("segments");
   segments.max = String(MAX_SEGMENTS);
@@ -962,6 +987,24 @@ async function boot() {
     showVerbs();
     // Not framed: the face is laid on the geometry, which is already in
     // view — that is how it was picked.
+    await refresh();
+  }
+
+  /**
+   * Smooth the blocking: the nodes towards the middle of their neighbours,
+   * as far as what they follow allows.
+   *
+   * How many passes and how far each one goes are the two sliders in the
+   * settings panel, sent with the command rather than kept by the kernel.
+   */
+  async function smooth() {
+    const reply = await send({
+      op: "smooth",
+      rounds: prefs.smooth.rounds,
+      share: prefs.smooth.share,
+    });
+    message = reply.message;
+    // Not framed: the model is where it was, only tidier.
     await refresh();
   }
 
@@ -1674,6 +1717,7 @@ async function boot() {
     glue: glueSelection,
     remove: removeSelection,
     pillow: pillowSelection,
+    smooth,
     "face-on-surface": faceOnSurface,
     "remove-chord": removeChord,
     "pillow-chord": pillowChord,
@@ -1859,6 +1903,10 @@ async function boot() {
       // command, so one step of undo for one gesture.
       carrying,
       snap: prefs.box.snap,
+      // And the neighbours give way: this is a gesture, and a gesture is
+      // where the ripple belongs. A script placing a node says nothing of
+      // the kind and gets the plain move.
+      smooth: true,
     });
     message = reply.message;
     await refresh();

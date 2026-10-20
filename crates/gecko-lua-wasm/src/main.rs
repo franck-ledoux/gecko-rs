@@ -181,30 +181,53 @@ mod page {
         })
     }
 
+    /// How many entries of a table are printed before the rest is elided.
+    /// A stats table has nine fields and is worth printing whole; a list of
+    /// ten thousand nodes is not.
+    const SHOWN: usize = 24;
+
     /// A value, as a console prints one: tables opened out one level deep,
     /// because a table is what most of the reads answer with and `table:
     /// 0x…` tells nobody anything.
+    ///
+    /// List entries come out in index order, named fields after them in
+    /// **name** order. `pairs` hands the named ones over in hash order, so
+    /// without that a table prints differently from one run to the next and
+    /// a field seems to move when an unrelated one is added — which is how
+    /// `blocks` fell off the end of `gecko.stats()`.
     fn show(lua: &Lua, value: &mlua::Value, depth: usize) -> String {
         match value {
             mlua::Value::Table(t) if depth < 2 => {
-                let mut parts: Vec<String> = Vec::new();
+                let mut items: Vec<String> = Vec::new();
+                let mut named: Vec<(String, String)> = Vec::new();
+                let mut rest = false;
                 for pair in t.clone().pairs::<mlua::Value, mlua::Value>().flatten() {
+                    if items.len() + named.len() == SHOWN {
+                        rest = true;
+                        break;
+                    }
                     let (key, item) = pair;
                     let shown = show(lua, &item, depth + 1);
                     match key {
-                        mlua::Value::Integer(_) => parts.push(shown),
-                        other => parts.push(format!(
-                            "{} = {shown}",
+                        mlua::Value::Integer(_) => items.push(shown),
+                        other => named.push((
                             lua.coerce_string(other)
                                 .ok()
                                 .flatten()
-                                .map_or_else(|| "?".to_string(), |s| s.to_string_lossy())
+                                .map_or_else(|| "?".to_string(), |s| s.to_string_lossy()),
+                            shown,
                         )),
                     }
-                    if parts.len() == 8 {
-                        parts.push("…".to_string());
-                        break;
-                    }
+                }
+                named.sort_by(|a, b| a.0.cmp(&b.0));
+                let mut parts = items;
+                parts.extend(
+                    named
+                        .into_iter()
+                        .map(|(key, shown)| format!("{key} = {shown}")),
+                );
+                if rest {
+                    parts.push("…".to_string());
                 }
                 format!("{{{}}}", parts.join(", "))
             }

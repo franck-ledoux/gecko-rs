@@ -279,6 +279,7 @@ fn a_node_on_a_surface_slides_on_it_and_does_not_come_off() {
         to: [0.4, 0.6, 5.0],
         carrying: vec![],
         snap: SNAP_SHARE,
+        smooth: false,
     })
     .expect("moved");
     let at = nodes(&s)
@@ -302,6 +303,7 @@ fn a_node_on_a_surface_slides_on_it_and_does_not_come_off() {
         to: [50.0, 50.0, 50.0],
         carrying: vec![],
         snap: SNAP_SHARE,
+        smooth: false,
     })
     .unwrap();
     assert_eq!(
@@ -325,6 +327,7 @@ fn a_node_on_a_corner_cannot_move_at_all() {
         to: [9.0, 9.0, 9.0],
         carrying: vec![],
         snap: SNAP_SHARE,
+        smooth: false,
     })
     .unwrap();
     let at = nodes(&s)
@@ -362,6 +365,7 @@ fn an_unclassified_node_dropped_near_the_model_takes_hold_of_it() {
         to: [0.5, 0.5, 0.001],
         carrying: vec![],
         snap: SNAP_SHARE,
+        smooth: false,
     })
     .unwrap();
     let found = nodes(&s).into_iter().find(|n| n["id"] == node).unwrap();
@@ -376,6 +380,7 @@ fn an_unclassified_node_dropped_near_the_model_takes_hold_of_it() {
         to: [40.0, 40.0, 40.0],
         carrying: vec![],
         snap: SNAP_SHARE,
+        smooth: false,
     })
     .unwrap();
     let found = nodes(&s).into_iter().find(|n| n["id"] == other).unwrap();
@@ -402,6 +407,7 @@ fn a_frozen_node_is_left_out_of_everything() {
             to: [5.0, 5.0, 5.0],
             carrying: vec![],
             snap: SNAP_SHARE,
+            smooth: false,
         })
         .expect_err("frozen");
     assert!(refused.to_string().contains("frozen"), "{refused}");
@@ -842,6 +848,7 @@ fn how_near_a_dropped_node_has_to_come_is_the_gesture_s_own() {
         to: [0.01, 0.01, 0.01],
         carrying: vec![],
         snap: 0.0,
+        smooth: false,
     })
     .unwrap();
     assert!(
@@ -855,6 +862,7 @@ fn how_near_a_dropped_node_has_to_come_is_the_gesture_s_own() {
         to: [0.01, 0.01, 0.01],
         carrying: vec![],
         snap: SNAP_SHARE,
+        smooth: false,
     })
     .unwrap();
     let landed = nodes(&s).into_iter().find(|n| n["id"] == node).unwrap();
@@ -952,6 +960,7 @@ fn a_drag_carries_the_other_picked_nodes_with_it() {
             to: [before[0][0], before[0][1], before[0][2] + 1.0],
             carrying: bottom.clone(),
             snap: 0.0,
+            smooth: false,
         })
         .unwrap();
     assert_eq!(out.message, "4 nodes moved", "{}", out.message);
@@ -988,6 +997,7 @@ fn a_frozen_node_stays_where_it_is_while_the_others_go() {
             to: [before[0][0] + 1.0, before[0][1], before[0][2]],
             carrying: all.clone(),
             snap: 0.0,
+            smooth: false,
         })
         .unwrap();
     assert_eq!(
@@ -1024,6 +1034,7 @@ fn what_each_carried_node_does_with_the_offset_is_its_own_business() {
         to: [before[0][0] + 0.5, before[0][1], before[0][2] + 1.0],
         carrying: bottom.clone(),
         snap: 0.0,
+        smooth: false,
     })
     .unwrap();
 

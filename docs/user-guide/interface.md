@@ -54,6 +54,7 @@ cannot disagree with the release it was built from.
 | `Del` `⌫`   | remove: a block, a face of a patch, or a lit sheet |
 | `⇧Del` `⇧⌫` | remove the whole chord through that face           |
 | `P`         | pillow the selected faces                          |
+| `R`         | smooth the blocking, as far as the geometry allows |
 | `⇧P`        | o-grid all along that chord                        |
 | `⌘Z`        | take back the last change (ctrl `Z` on a PC)       |
 | `Esc`       | clear the selection                                |

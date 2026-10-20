@@ -48,6 +48,7 @@ pub fn line(command: &Command) -> String {
             to,
             carrying,
             snap,
+            smooth,
         } => {
             let mut options = Vec::new();
             if !carrying.is_empty() {
@@ -55,6 +56,12 @@ pub fn line(command: &Command) -> String {
             }
             if (*snap - crate::SNAP_SHARE).abs() > f64::EPSILON {
                 options.push(format!("snap = {}", number(*snap)));
+            }
+            // Said when it was asked for, because the ripple moved other
+            // nodes: a script that replayed the drag without it would
+            // describe a different model.
+            if *smooth {
+                options.push("smooth = true".to_string());
             }
             let tail = if options.is_empty() {
                 String::new()
@@ -65,6 +72,10 @@ pub fn line(command: &Command) -> String {
         }
         Command::FaceOnSurface { surface } => format!("gecko.face_on_surface({surface})"),
         Command::RemoveFace { face } => format!("gecko.remove_face({face})"),
+        Command::Smooth { rounds, share } => format!(
+            "gecko.smooth{{ rounds = {rounds}, share = {} }}",
+            number(*share)
+        ),
         Command::ExtrudePatch { face, height } => {
             format!("gecko.extrude_patch({face}, {})", number(*height))
         }

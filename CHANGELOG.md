@@ -3,6 +3,34 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
+## 0.1.2
+
+Smoothing, by hand and while you drag.
+
+- **`R` smooths the blocking**: every node towards the middle of its
+  neighbours, as far as what it follows allows. A node on a curve slides
+  along the curve, one on a surface over the surface, one on a geometric
+  corner stays, and so does one on the outside of the blocking that is
+  classified on nothing — it has no surface to be kept on, and moving it
+  would pull the blocking off the model. How many passes and how far each
+  one goes are two sliders under *Operations*.
+- **Smart**, in the sense the word has in the literature as well as in the
+  slider: a move is taken only if it does not make the worst corner of the
+  cells round that node any worse, measured by the scaled Jacobian. A plain
+  Laplacian on a concave boundary turns cells inside out; this does not. On
+  a blocking that is already as good as it gets it does nothing, and says
+  so.
+- **Dragging a node ripples**: the ring of nodes around it is smoothed one
+  pass, then the ring beyond, and so on until a ring barely moves — where
+  barely is a fraction of how far you dragged. The node you put somewhere
+  stays where you put it, it is one step of undo, and a script placing a
+  node still gets the plain move.
+- **Fixed**: a table returned to the console printed only eight of its
+  fields, in hash order, so `gecko.stats()` hid `blocks` behind an ellipsis
+  as soon as `patches` joined the table. Twenty-four fields print now, list
+  entries in index order and named ones in name order, so adding a field no
+  longer moves the others.
+
 ## 0.1.1
 
 A readable help card, and a window that says which gecko it is.

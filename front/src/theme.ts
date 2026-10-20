@@ -156,6 +156,15 @@ export const MAX_SNAP = 0.1;
 export const SEGMENTS = 10;
 export const MAX_SEGMENTS = 60;
 
+/** What a smoothing pass does, and the most the drawer offers: how many
+ *  passes, and how far along the way to the middle of its neighbours a
+ *  node goes in each. Half, not all: all of it is what makes a Laplacian
+ *  swing from one side of a crease to the other and never settle. The
+ *  kernel's own defaults are the same two numbers. */
+export const SMOOTH_ROUNDS = 5;
+export const MAX_SMOOTH_ROUNDS = 30;
+export const SMOOTH_SHARE = 0.5;
+
 export interface ViewPrefs {
   theme: Theme;
   axes: boolean;
@@ -185,6 +194,9 @@ export interface ViewPrefs {
   box: { margin: number; snap: number };
   /** How many segments a sheet nobody has set is meshed into. */
   segments: number;
+  /** What a smoothing pass does: how many times over, and how far along
+   *  the way to the middle of its neighbours a node goes each time. */
+  smooth: { rounds: number; share: number };
   /** Nodes are always drawn — they are what you grab — so all they carry
    *  is how they are coloured. */
   nodes: { colouring: Colouring };
@@ -224,6 +236,7 @@ export const DEFAULTS: ViewPrefs = {
   history: HISTORY_STEPS,
   box: { margin: BOX_MARGIN, snap: SNAP_SHARE },
   segments: SEGMENTS,
+  smooth: { rounds: SMOOTH_ROUNDS, share: SMOOTH_SHARE },
   // Both plain to begin with. Colouring by what a cell follows is a
   // question you ask once the blocking is on the model, not while you are
   // still putting it there.
@@ -332,6 +345,13 @@ export function loadPrefs(): ViewPrefs {
         typeof stored.segments === "number" && Number.isFinite(stored.segments)
           ? Math.min(MAX_SEGMENTS, Math.max(1, Math.round(stored.segments)))
           : DEFAULTS.segments,
+      smooth: {
+        rounds:
+          typeof stored.smooth?.rounds === "number" && Number.isFinite(stored.smooth.rounds)
+            ? Math.min(MAX_SMOOTH_ROUNDS, Math.max(1, Math.round(stored.smooth.rounds)))
+            : DEFAULTS.smooth.rounds,
+        share: within(stored.smooth?.share, 1, DEFAULTS.smooth.share),
+      },
       nodes: { colouring: colouring(stored.nodes?.colouring, DEFAULTS.nodes.colouring) },
       edges: {
         visible:

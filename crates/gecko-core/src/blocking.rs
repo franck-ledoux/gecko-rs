@@ -178,6 +178,77 @@ pub struct SheetEdge {
     pub to: VertexIdType,
 }
 
+/// What a smoothing pass is asked to do.
+#[derive(Clone, Copy, Debug)]
+pub struct Smoothing<'a> {
+    /// How many passes. Each one moves every node once.
+    pub rounds: u32,
+    /// How far along the way to the middle of its neighbours a node goes,
+    /// from 0 (nowhere) to 1 (all the way).
+    pub share: f64,
+    /// Nodes that must not move whatever their classification allows —
+    /// the one somebody has just put somewhere, above all.
+    pub held: &'a [CellId],
+    /// The only nodes to consider, or everything when `None`. What makes
+    /// one ring of a drag smoothable without the rest of the model
+    /// drifting.
+    pub only: Option<&'a [CellId]>,
+}
+
+/// For each corner of a hexahedron, the three corners an edge joins it to,
+/// in the order [`HEX_FACES`] implies.
+pub const HEX_CORNER_EDGES: [[usize; 3]; 8] = [
+    [1, 3, 4],
+    [2, 0, 5],
+    [3, 1, 6],
+    [0, 2, 7],
+    [7, 5, 0],
+    [4, 6, 1],
+    [5, 7, 2],
+    [6, 4, 3],
+];
+
+/// How square a corner is: the volume the three edges leaving it span, over
+/// the product of their lengths. One at a right angle, nought where they
+/// fall into a plane, negative where the cell is inside out.
+pub fn scaled_jacobian(at: [f64; 3], sides: [[f64; 3]; 3]) -> f64 {
+    let e = sides.map(|p| [0, 1, 2].map(|k| p[k] - at[k]));
+    let len = e.map(|v| (0..3).map(|k| v[k] * v[k]).sum::<f64>().sqrt());
+    if len.iter().any(|l| *l < 1e-12) {
+        return 0.0;
+    }
+    let cross = [
+        e[1][1] * e[2][2] - e[1][2] * e[2][1],
+        e[1][2] * e[2][0] - e[1][0] * e[2][2],
+        e[1][0] * e[2][1] - e[1][1] * e[2][0],
+    ];
+    let volume: f64 = (0..3).map(|k| e[0][k] * cross[k]).sum();
+    volume / (len[0] * len[1] * len[2])
+}
+
+/// The same for a corner of a quadrangle: the sine of the angle between the
+/// two edges leaving it, which is one at a right angle and nought where the
+/// corner has folded flat.
+pub fn flatness(at: [f64; 3], before: [f64; 3], after: [f64; 3]) -> f64 {
+    let (u, v) = (
+        [0, 1, 2].map(|k| before[k] - at[k]),
+        [0, 1, 2].map(|k| after[k] - at[k]),
+    );
+    let (nu, nv) = (
+        (0..3).map(|k| u[k] * u[k]).sum::<f64>().sqrt(),
+        (0..3).map(|k| v[k] * v[k]).sum::<f64>().sqrt(),
+    );
+    if nu < 1e-12 || nv < 1e-12 {
+        return 0.0;
+    }
+    let cross = [
+        u[1] * v[2] - u[2] * v[1],
+        u[2] * v[0] - u[0] * v[2],
+        u[0] * v[1] - u[1] * v[0],
+    ];
+    (0..3).map(|k| cross[k] * cross[k]).sum::<f64>().sqrt() / (nu * nv)
+}
+
 /// One block of a chord, and the two faces the chord crosses it by.
 ///
 /// The pair is unordered: walking a chord the other way round swaps them,
@@ -502,6 +573,275 @@ impl Blocking {
             darts.map(|d| self.node_tag(self.map.vertex_id(d)).id),
             darts.map(|d| self.edge_tag(self.map.edge_id(d)).id),
         ))
+    }
+
+    /// The nodes at each topological distance from this one, nearest first.
+    ///
+    /// Distance counted in **edges of the blocking**, not in metres: the
+    /// ring at 1 is what an edge joins to the node, the ring at 2 is what
+    /// an edge joins to those, and so on. The node itself is in none of
+    /// them.
+    ///
+    /// What a drag smooths outwards along: one ring, one pass, and stop
+    /// when a ring barely moves.
+    pub fn rings_around(&self, node: CellId, how_far: u32) -> Vec<Vec<CellId>> {
+        let Some(start) = self.node_by_id(node) else {
+            return Vec::new();
+        };
+        let mut seen: HashSet<VertexIdType> = HashSet::from([start]);
+        let mut edge: Vec<VertexIdType> = vec![start];
+        let mut out: Vec<Vec<CellId>> = Vec::new();
+        for _ in 0..how_far {
+            let mut next: Vec<VertexIdType> = Vec::new();
+            for v in &edge {
+                for other in self.neighbours(*v) {
+                    if seen.insert(other) {
+                        next.push(other);
+                    }
+                }
+            }
+            if next.is_empty() {
+                break;
+            }
+            // By name, so a ring is the same list in both façades.
+            let mut names: Vec<CellId> = next.iter().map(|v| self.node_tag(*v).id).collect();
+            names.sort();
+            out.push(names);
+            edge = next;
+        }
+        out
+    }
+
+    /// Move the nodes towards the middle of their neighbours, as far as
+    /// what they are classified on allows.
+    ///
+    /// A **smart Laplacian**, and both halves of that name earn their keep:
+    ///
+    /// * each node goes a **share** of the way to the average of its
+    ///   one-ring, rather than all of it. All of it is what makes a
+    ///   Laplacian oscillate between the two sides of a crease.
+    /// * a move is **taken only if it does not make the worst corner of the
+    ///   cells round that node any worse**. Laplacian smoothing on a
+    ///   concave boundary happily turns cells inside out; this is what
+    ///   stops it, and it is why the operation can be handed to somebody
+    ///   who has not studied it.
+    ///
+    /// Who may move at all, and how far, is the **classification**:
+    ///
+    /// | the node | what it does |
+    /// | --- | --- |
+    /// | frozen | stays |
+    /// | on a geometric corner | stays, its entity being a point |
+    /// | on a curve, or a side | moves, then is projected onto it |
+    /// | on a surface | moves, then is projected onto it |
+    /// | on the blocking's boundary, classified on nothing | stays |
+    /// | inside, classified on nothing | moves freely |
+    ///
+    /// The last two are the pair that matters. An interior node has blocks
+    /// all round it and nothing to fall off; a boundary node with no
+    /// classification has no surface to be kept on, and moving it would
+    /// pull the blocking away from the model it is meant to follow.
+    ///
+    /// Nodes are visited **by name**, and each move is applied before the
+    /// next is worked out — Gauss-Seidel, which settles faster than
+    /// averaging everything first and, because the order is the naming
+    /// order, gives the same answer in both façades.
+    ///
+    /// Returns the furthest any one node moved, which is what tells a
+    /// caller whether another round is worth it.
+    pub fn smooth(
+        &mut self,
+        how: Smoothing<'_>,
+        project: impl Fn(On, [f64; 3]) -> Option<[f64; 3]>,
+    ) -> f64 {
+        let share = how.share.clamp(0.0, 1.0);
+        if share == 0.0 || how.rounds == 0 {
+            return 0.0;
+        }
+        let held: HashSet<CellId> = how.held.iter().copied().collect();
+        let only: Option<HashSet<CellId>> = how.only.map(|list| list.iter().copied().collect());
+
+        // By name, so the order does not depend on how the map happened to
+        // lay its darts out.
+        let mut movable: Vec<(CellId, VertexIdType)> = self
+            .map
+            .iter_vertices()
+            .map(|v| (self.node_tag(v).id, v))
+            .filter(|(name, v)| {
+                let tag = self.node_tag(*v);
+                !tag.frozen
+                    && !held.contains(name)
+                    && only.as_ref().is_none_or(|list| list.contains(name))
+                    // A point is a point: a node on a geometric corner has
+                    // one place to be.
+                    && tag.on.is_none_or(|on| on.dim > 0)
+                    // And the pair above: free inside, held on the boundary.
+                    && (tag.on.is_some() || !self.on_the_surface(*v))
+            })
+            .collect();
+        movable.sort_by_key(|(name, _)| *name);
+
+        let mut furthest = 0.0f64;
+        for _ in 0..how.rounds {
+            for &(_, v) in &movable {
+                let ring = self.neighbours(v);
+                if ring.is_empty() {
+                    continue;
+                }
+                let from = self.position(v).unwrap_or([0.0; 3]);
+                let mut middle = [0.0; 3];
+                for other in &ring {
+                    let p = self.position(*other).unwrap_or([0.0; 3]);
+                    for k in 0..3 {
+                        middle[k] += p[k] / ring.len() as f64;
+                    }
+                }
+                let mut to = [0, 1, 2].map(|k| from[k] + (middle[k] - from[k]) * share);
+                // Back onto whatever it follows, before anybody judges it:
+                // the point to weigh is the one the node would end up at.
+                if let Some(on) = self.node_tag(v).on {
+                    if let Some(onto) = project(on, to) {
+                        to = onto;
+                    }
+                }
+                let step = apart(from, to);
+                if step == 0.0 {
+                    continue;
+                }
+
+                let before = self.worst_corner_at(v);
+                self.map.write_vertex(v, (to[0], to[1], to[2]));
+                if self.worst_corner_at(v) < before {
+                    // Not an improvement. A Laplacian on a concave
+                    // boundary would have taken it and turned a cell
+                    // inside out.
+                    self.map.write_vertex(v, (from[0], from[1], from[2]));
+                    continue;
+                }
+                furthest = furthest.max(step);
+            }
+        }
+        furthest
+    }
+
+    /// The worst corner of everything this node is a corner of.
+    ///
+    /// For a block, the **scaled Jacobian** at each of its eight corners:
+    /// the volume of the three edges leaving a corner over the product of
+    /// their lengths, which is 1 at a right-angled corner, 0 where three
+    /// edges fall into a plane, and negative where the cell is inside out.
+    /// For a face of a patch, the same thing a dimension down.
+    ///
+    /// All eight corners of each block, not just this node's: moving one
+    /// corner changes the shape at every other.
+    fn worst_corner_at(&self, node: VertexIdType) -> f64 {
+        let mut worst = f64::INFINITY;
+        let mut blocks: Vec<VolumeIdType> = self
+            .map
+            .orbit(OrbitPolicy::Vertex, node as DartIdType)
+            .map(|d| self.map.volume_id(d))
+            .collect();
+        blocks.sort_unstable();
+        blocks.dedup();
+        for volume in blocks {
+            if let Some(corners) = self.hex_corners(volume) {
+                let at = corners.map(|c| self.position(c).unwrap_or([0.0; 3]));
+                for (corner, sides) in HEX_CORNER_EDGES.iter().enumerate() {
+                    worst = worst.min(scaled_jacobian(at[corner], sides.map(|s| at[s])));
+                }
+            }
+        }
+        // The faces of a patch, which can fold without any block being
+        // involved at all.
+        let mut faces: Vec<FaceIdType> = self
+            .map
+            .orbit(OrbitPolicy::Vertex, node as DartIdType)
+            .map(|d| self.map.face_id(d))
+            .collect();
+        faces.sort_unstable();
+        faces.dedup();
+        for face in faces {
+            if self.is_block(self.map.volume_id(face as DartIdType)) {
+                continue;
+            }
+            let corners = self.face_corners(face);
+            let at = corners.map(|c| self.position(c).unwrap_or([0.0; 3]));
+            for k in 0..4 {
+                worst = worst.min(flatness(at[k], at[(k + 3) % 4], at[(k + 1) % 4]));
+            }
+        }
+        if worst.is_finite() {
+            worst
+        } else {
+            // A node that is a corner of nothing cannot be made worse.
+            0.0
+        }
+    }
+
+    /// The eight corners of a block, in [`HEX_FACES`] order.
+    ///
+    /// The walk the mesher does to read a hexahedron, which smoothing needs
+    /// as well: it has to look at what a move would do to the blocks round
+    /// a node, and it cannot ask for every block in the model to find four
+    /// of them.
+    ///
+    /// Nothing for a patch: the walk crosses β₂ to find the corner above
+    /// one of its own, and an open sheet has none.
+    pub fn hex_corners(&self, volume: VolumeIdType) -> Option<[VertexIdType; 8]> {
+        if !self.is_block(volume) {
+            return None;
+        }
+        let mut ring = [volume as DartIdType; 4];
+        for k in 1..4 {
+            ring[k] = self.map.beta::<1>(ring[k - 1]);
+        }
+        let up = ring.map(|d| self.map.beta::<1>(self.map.beta::<2>(d)));
+        let at = |d| self.map.vertex_id(d);
+        let end = |d| self.map.vertex_id(self.map.beta::<1>(d));
+        Some([
+            at(ring[0]),
+            at(ring[3]),
+            at(ring[2]),
+            at(ring[1]),
+            end(up[0]),
+            end(up[3]),
+            end(up[2]),
+            end(up[1]),
+        ])
+    }
+
+    /// The nodes an edge of the blocking joins to this one — its one-ring.
+    ///
+    /// What a Laplacian averages. Read off the vertex's own orbit, so a
+    /// node shared by several blocks has each of its neighbours once
+    /// however many blocks it is shared by.
+    pub fn neighbours(&self, node: VertexIdType) -> Vec<VertexIdType> {
+        let mut out: Vec<VertexIdType> = self
+            .map
+            .orbit(OrbitPolicy::Vertex, node as DartIdType)
+            .map(|d| self.map.vertex_id(self.map.beta::<1>(d)))
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        out.retain(|v| *v != node);
+        out
+    }
+
+    /// Whether this node is on the **blocking's** own boundary: some face
+    /// at it has nothing glued behind.
+    ///
+    /// Read off the map, not off the geometry. It is what tells a node that
+    /// may be smoothed freely from one that may not: an interior node has
+    /// blocks all round it and nowhere to go wrong, while one on the
+    /// boundary and classified on nothing has no surface to be kept on, so
+    /// moving it would pull the blocking off the model.
+    ///
+    /// Every node of a patch is one, which is the right answer: an open
+    /// sheet of faces is all boundary.
+    pub fn on_the_surface(&self, node: VertexIdType) -> bool {
+        self.map
+            .orbit(OrbitPolicy::Vertex, node as DartIdType)
+            .any(|d| self.map.beta::<3>(d) == NULL_DART_ID)
     }
 
     /// Whether this volume is a **block** — a shell that closes — rather

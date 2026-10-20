@@ -284,6 +284,7 @@ fn moving_a_node_moves_what_the_view_said_it_would() {
             to: [9.0, 8.0, 7.0],
             carrying: vec![],
             snap: SNAP_SHARE,
+            smooth: false,
         })
         .unwrap();
     assert!(out.view_changed);
@@ -365,6 +366,7 @@ fn the_view_stays_put_when_a_node_moves() {
         to: [0.3, -0.4, 0.2],
         carrying: vec![],
         snap: SNAP_SHARE,
+        smooth: false,
     })
     .unwrap();
 

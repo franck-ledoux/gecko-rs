@@ -31,6 +31,7 @@ export const ACTIONS = [
   "glue",
   "remove",
   "pillow",
+  "smooth",
   "face-on-surface",
   "remove-chord",
   "pillow-chord",
@@ -119,6 +120,13 @@ export const SHORTCUTS: readonly Shortcut[] = [
   },
   { show: "⌫", key: "backspace", action: "remove", does: "", group: "Edit" },
   { show: "P", key: "p", action: "pillow", does: "pillow the selected faces", group: "Edit" },
+  {
+    show: "R",
+    key: "r",
+    action: "smooth",
+    does: "smooth the blocking, as far as the geometry allows",
+    group: "Edit",
+  },
   {
     show: "⇧Del",
     key: "delete",

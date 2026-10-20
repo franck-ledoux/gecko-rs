@@ -2749,6 +2749,12 @@ test("the console runs Lua, and the scene catches up", async ({ page }) => {
   // an address.
   await lua(page, "return gecko.stats()");
   await expect(page.locator("[data-test=console-out]")).toContainText("blocks = 3");
+  // Whole, and in name order: the table has nine fields, and a console
+  // that printed them in hash order would hide one of them behind an
+  // ellipsis as soon as a tenth was added.
+  await expect(page.locator("[data-test=console-out]")).toContainText(
+    /blocks = 3,.*\bedges = .*\bfaces = .*\bnodes = .*\bpatches = /s,
+  );
 
   // `print` goes to the scrollback.
   await lua(page, 'print("nodes:", #gecko.nodes())');
@@ -2885,7 +2891,10 @@ test("the page's Lua and the terminal's agree, byte for byte", async ({ page }) 
   // them fired.
   await expect(page.locator("[data-test=console-out]")).toContainText("digest");
   expect(await page.locator("#console-out .bad").count(), "the hosts disagree").toBe(0);
-  await expect(page.locator("[data-test=mesh-hexes]")).toHaveText("36");
+  // Both digests were printed, and the model the script leaves behind is
+  // the smoothed grid of its second half.
+  await expect(page.locator("[data-test=console-out]")).toContainText("smoothed:");
+  await expect(page.locator("[data-test=mesh-hexes]")).toHaveText("216");
   expect(errors).toEqual([]);
 });
 
@@ -3173,5 +3182,60 @@ test("the window says which gecko it is", async ({ page }) => {
   // One source: the kernel's own, so it cannot disagree with the release
   // it was built from.
   expect(await page.evaluate(() => (window as any).__gecko.version())).toBe(shown);
+  expect(errors).toEqual([]);
+});
+
+test("R smooths the blocking, by what the sliders say", async ({ page }) => {
+  // The kernel's own smoothing is proven byte for byte by the agreement
+  // script; what this covers is the key and the two sliders, which are
+  // what a reader actually touches.
+  const errors = await boot(page);
+  await openConsole(page);
+
+  // Eight cubes glued into a grid, which has one node inside it — the only
+  // kind of node a smoother is allowed to move when nothing is classified.
+  await lua(
+    page,
+    `for i = 0, 1 do for j = 0, 1 do for k = 0, 1 do
+       gecko.create_cube{ origin = {i, j, k} }
+     end end end
+     local seen, both = {}, {}
+     for _, f in ipairs(gecko.faces()) do
+       local key = string.format("%.3f/%.3f/%.3f", f.centre[1], f.centre[2], f.centre[3])
+       if seen[key] then both[#both + 1] = { seen[key], f.id } else seen[key] = f.id end
+     end
+     for _, pair in ipairs(both) do gecko.glue_faces(pair[1], pair[2]) end
+     for _, n in ipairs(gecko.nodes()) do
+       if math.abs(n.pos[1] - 1) < 1e-9 and math.abs(n.pos[2] - 1) < 1e-9
+         and math.abs(n.pos[3] - 1) < 1e-9 then
+         gecko.move_node(n.id, {1.4, 1.3, 1.2})
+       end
+     end`,
+  );
+  await page.waitForFunction(() => (window as any).__gecko.stats().blocks === 8);
+
+  // All the way to the middle, once, so where the node lands says that the
+  // slider was the number sent.
+  await openParams(page);
+  await page.locator("[data-test=smooth-rounds]").fill("1");
+  await page.locator("[data-test=smooth-share]").fill("1");
+  await expect(page.locator("[data-test=smooth-share-value]")).toHaveText("100%");
+
+  // Out of the slider first: anything typed into a field is typing, which
+  // is exactly the rule the keyboard is supposed to follow.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press("r");
+  await expect(page.locator("#status")).toContainText("smoothed 1 time by 100%");
+
+  // And the node went back to the middle of its ring, which for this grid
+  // is where it started.
+  const back = (await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    return g
+      .names()
+      .map((n: number) => g.nodePosition(n))
+      .find((p: number[]) => p.every((x) => Math.abs(x - 1) < 1e-6));
+  })) as number[] | undefined;
+  expect(back, "the node should be back at (1, 1, 1)").toBeDefined();
   expect(errors).toEqual([]);
 });

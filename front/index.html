@@ -225,6 +225,17 @@
       </label>
 
       <label class="slider"
+        ><span>smoothing</span>
+        <input id="smooth-rounds" type="range" min="1" max="30" step="1" data-test="smooth-rounds" />
+        <b id="smooth-rounds-n" data-test="smooth-rounds-value">5</b>
+      </label>
+      <label class="slider"
+        ><span>…by</span>
+        <input id="smooth-share" type="range" min="0.05" max="1" step="0.05" data-test="smooth-share" />
+        <b id="smooth-share-n" data-test="smooth-share-value">50%</b>
+      </label>
+
+      <label class="slider"
         ><span>segments</span>
         <input id="segments" type="range" min="1" max="60" step="1" data-test="segments" />
         <b id="segments-n" data-test="segments-value">10</b>
