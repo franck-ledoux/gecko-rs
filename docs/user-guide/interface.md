@@ -107,15 +107,19 @@ to drop something that was not the last.
 
 ## The settings panel
 
-The cog, or `,`. Three numbers, and each one is an **argument to the command
-it belongs to** rather than something the kernel is holding: the kernel's own
-constant is what you get when nobody says, and these are somebody saying.
+The cog, or `,`. The ones under *Operations* are each an **argument to the
+command they belong to** rather than something the kernel is holding: the
+kernel's own constant is what you get when nobody says, and these are
+somebody saying. The ones under *Drawing* never go near the kernel at all —
+they are about the picture.
 
 | Setting        | What it changes                                                                                                                                                                                       |
 | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **box margin** | how much room a bounding box leaves round the geometry, as a share of each half-side. 0 rests it exactly on the model, 2% is the default — a box that hugs the model, since pulling its faces onto the surfaces nearby is the first thing done to one |
 | **snap**       | how near a node has to come to a geometric entity to be taken by it, as a share of the geometry's own size. Used by `K` and by a node you drop by hand; 0 means a dropped node stays where you put it |
 | **segments**   | how many segments a sheet nobody has set is meshed into — see [Meshing](meshing.md)                                                                                                                   |
+| **handles**    | how many pixels across a node of the blocking is drawn, 1 to 24. A target you can hit with a pointer, against a model you can still see                                                               |
+| **edges**      | how many pixels wide an edge of the blocking is drawn, 1 to 8. The wireframe is a ribbon rather than a GL line, which is one pixel wide whatever anybody asks                                          |
 | **steps**      | how far back `⌘Z` can go — see below                                                                                                                                                                  |
 
 Both shares are of the model rather than lengths, because a tolerance in

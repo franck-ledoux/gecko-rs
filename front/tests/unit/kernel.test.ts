@@ -1080,7 +1080,7 @@ describe("changing a setting without rebuilding the scene", () => {
   it("keeps the edges when only their shrink moves", async () => {
     const viewer = await shown();
     const before = idOf(viewer, "edges");
-    viewer.applyPrefs({ ...DEFAULTS, edges: { visible: true, shrink: 0.5, colouring: "uniform" } });
+    viewer.applyPrefs({ ...DEFAULTS, edges: { visible: true, shrink: 0.5, colouring: "uniform", width: DEFAULTS.edges.width } });
     expect(idOf(viewer, "edges")).toBe(before);
     expect(viewer.edgeCount).toBe(12);
   });
@@ -1090,11 +1090,11 @@ describe("changing a setting without rebuilding the scene", () => {
     // for one: a wireframe pulled to a tenth is still a wireframe, just a
     // dotted one, and there was no way to ask for none at all.
     const viewer = await shown();
-    viewer.applyPrefs({ ...DEFAULTS, edges: { visible: false, shrink: 1, colouring: "uniform" } });
+    viewer.applyPrefs({ ...DEFAULTS, edges: { visible: false, shrink: 1, colouring: "uniform", width: DEFAULTS.edges.width } });
     expect(viewer.edgeCount).toBe(0);
     expect(viewer.scene.getMeshByName("edges")).toBeNull();
 
-    viewer.applyPrefs({ ...DEFAULTS, edges: { visible: true, shrink: 1, colouring: "uniform" } });
+    viewer.applyPrefs({ ...DEFAULTS, edges: { visible: true, shrink: 1, colouring: "uniform", width: DEFAULTS.edges.width } });
     expect(viewer.edgeCount).toBe(12);
   });
 
@@ -1476,7 +1476,7 @@ describe("lighting up a sheet", () => {
     expect(viewer.highlighted).toEqual(names);
     expect(viewer.scene.getMeshByName("sheet")).not.toBeNull();
 
-    viewer.applyPrefs({ ...DEFAULTS, edges: { visible: true, shrink: 0.4, colouring: "uniform" } });
+    viewer.applyPrefs({ ...DEFAULTS, edges: { visible: true, shrink: 0.4, colouring: "uniform", width: DEFAULTS.edges.width } });
     expect(viewer.scene.getMeshByName("sheet")).not.toBeNull();
   });
 
@@ -1916,13 +1916,13 @@ describe("wearing its classification", () => {
     expect(viewer.nodeState(names[0])).toEqual({ on: { dim: 2, tag: 1 }, frozen: true });
 
     // And the colour still says its classification, which is a surface.
-    viewer.applyPrefs({ ...DEFAULTS, nodes: { colouring: "class" } });
+    viewer.applyPrefs({ ...DEFAULTS, nodes: { colouring: "class", size: DEFAULTS.nodes.size } });
     expect(handle(viewer, 0)).toBe(DEFAULTS.theme.onSurface.toLowerCase());
     // Or its id, or nothing at all, as the setting says — the frozen node
     // is treated like any other in each case.
-    viewer.applyPrefs({ ...DEFAULTS, nodes: { colouring: "id" } });
+    viewer.applyPrefs({ ...DEFAULTS, nodes: { colouring: "id", size: DEFAULTS.nodes.size } });
     expect(handle(viewer, 0)).toBe(colourForId(names[0], FAMILY.nodes).toLowerCase());
-    viewer.applyPrefs({ ...DEFAULTS, nodes: { colouring: "uniform" } });
+    viewer.applyPrefs({ ...DEFAULTS, nodes: { colouring: "uniform", size: DEFAULTS.nodes.size } });
     expect(handle(viewer, 0)).toBe(DEFAULTS.theme.nodes.toLowerCase());
   });
 
@@ -1965,17 +1965,21 @@ describe("wearing its classification", () => {
   });
 
   it("colours the wireframe edge by edge", async () => {
-    // One mesh for the lot, so this is a colour per vertex rather than a
-    // colour per mesh — and both ends of an edge the same, an edge being
-    // on one entity or none.
+    // One mesh for the lot, so this is a colour per **segment** of the
+    // ribbon rather than a colour per mesh — one segment being one edge,
+    // which is on one entity or on none.
     const { kernel, viewer } = await pinned();
     const names = viewer.names();
     const prefs = structuredClone(DEFAULTS);
     prefs.edges.colouring = "class";
     viewer.applyPrefs(prefs);
-    const colours = () =>
-      Array.from(viewer.scene.getMeshByName("edges")!.getVerticesData("color") ?? []);
+    const colours = () => {
+      const material = viewer.scene.getMeshByName("edges")!
+        .material as unknown as { colors: { r: number; g: number; b: number }[] | null };
+      return (material.colors ?? []).map((c) => [c.r, c.g, c.b]);
+    };
     const plain = colours();
+    expect(plain).toHaveLength(12);
 
     // Two corners of the cube on one curve puts every edge between them
     // on that curve — and both of them in one command, which is how the
@@ -2175,4 +2179,58 @@ describe("the chord through a face", () => {
     });
     expect(answers).toEqual([3, 3]);
   });
+});
+
+describe("the classification colours are told apart", () => {
+  // The complaint this answers: the three were violets of one hue, and a
+  // corner, a curve and a surface looked the same. Measured rather than
+  // judged, so that "harmonising" them back into one violet fails here
+  // instead of on somebody's screen.
+  //
+  // The distance is Euclidean in **OKLab**, which is built so that a step
+  // of the same size looks the same size wherever it is taken — unlike
+  // hex arithmetic, where two colours can be far apart in numbers and
+  // identical to look at. Scaled by 100, so the numbers read like ΔE.
+  const oklab = (hex: string): [number, number, number] => {
+    const channel = (at: number) => {
+      const c = parseInt(hex.slice(at, at + 2), 16) / 255;
+      return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    };
+    const [r, g, b] = [1, 3, 5].map(channel);
+    const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+    const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+    const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+    return [
+      0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+      1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+      0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
+    ];
+  };
+  const apart = (a: string, b: string) => {
+    const [x, y] = [oklab(a), oklab(b)];
+    return 100 * Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]);
+  };
+
+  for (const which of ["dark", "light"] as const) {
+    it(`keeps a corner, a curve and a surface apart in the ${which} theme`, () => {
+      const t = PRESETS[which];
+      const three = [t.onCorner, t.onCurve, t.onSurface];
+      for (const [a, b] of [
+        [three[0], three[1]],
+        [three[1], three[2]],
+        [three[0], three[2]],
+      ]) {
+        expect(apart(a, b), `${a} and ${b}`).toBeGreaterThan(18);
+      }
+
+      // And from what a cell wears when it is classified on **nothing**,
+      // which is the fourth answer the same legend gives, and from the
+      // yellow of a picked cell, which has to beat all four.
+      for (const mine of three) {
+        for (const other of [t.nodes, t.edges, t.faces, "#ffcc33"]) {
+          expect(apart(mine, other), `${mine} and ${other}`).toBeGreaterThan(15);
+        }
+      }
+    });
+  }
 });

@@ -34,7 +34,16 @@ export interface Theme {
    *  on, in `class` colouring. A family of its own rather than the colour
    *  of the entity itself: a block face painted the same as the surface it
    *  is attached to, and drawn on top of that surface, is two things
-   *  nobody can tell apart. */
+   *  nobody can tell apart.
+   *
+   *  A **ramp**, not three colours that happen to sit together: the
+   *  lightness falls and the hue turns the same way all along it, so it
+   *  reads as one family while the three ends stay apart. The three were
+   *  violets of one hue until 0.1.2 and nobody could tell a corner from a
+   *  curve: measured in OKLab, the nearest pair of them was 11 units in
+   *  the dark theme and 6 in the light, against 22 and 20 now, and each is
+   *  at least 18 from the colour an unclassified cell wears — which the
+   *  old deep violet was 7 from. */
   onCorner: string;
   onCurve: string;
   onSurface: string;
@@ -67,9 +76,9 @@ export const PRESETS: Record<"dark" | "light", Theme> = {
     curves: "#2fbf71",
     surfaces: "#3f7d5e",
     mesh: "#4f8f7a",
-    onCorner: "#d58cff",
-    onCurve: "#a66ff0",
-    onSurface: "#6b4fa8",
+    onCorner: "#fe8dc5",
+    onCurve: "#bb208a",
+    onSurface: "#6527d7",
   },
   light: {
     background: "#f4f5f7",
@@ -81,9 +90,9 @@ export const PRESETS: Record<"dark" | "light", Theme> = {
     curves: "#157f4a",
     surfaces: "#a8d5bd",
     mesh: "#8fc7b4",
-    onCorner: "#8e3fd4",
-    onCurve: "#6f3fd4",
-    onSurface: "#b9a8e0",
+    onCorner: "#781367",
+    onCurve: "#d32383",
+    onSurface: "#996df0",
   },
 };
 
@@ -137,6 +146,19 @@ export const MAX_HISTORY = 20;
  *  is the same 2% — a box that hugs the model, since the first thing done
  *  to one is usually to pull its faces onto the surfaces nearby. */
 export const BOX_MARGIN = 0.02;
+
+/** How many CSS pixels across a node handle is drawn, whatever the zoom,
+ *  and the most the panel offers. Eleven is a target you can hit with a
+ *  mouse without covering the model it sits on. */
+export const NODE_SIZE = 11;
+export const MAX_NODE_SIZE = 24;
+
+/** How many CSS pixels wide an edge of the blocking is drawn, and the most
+ *  the panel offers. Two rather than one: a hairline is what a GL line gave
+ *  and it disappears against a busy model — and now that the wireframe is a
+ *  ribbon, the width is a number somebody can choose. */
+export const EDGE_WIDTH = 2;
+export const MAX_EDGE_WIDTH = 8;
 export const MAX_BOX_MARGIN = 0.5;
 
 /** How near a node has to come to a geometric entity to be taken by it, as
@@ -194,10 +216,10 @@ export interface ViewPrefs {
   smooth: { rounds: number; share: number };
   /** Nodes are always drawn — they are what you grab — so all they carry
    *  is how they are coloured. */
-  nodes: { colouring: Colouring };
+  nodes: { colouring: Colouring; size: number };
   /** Edges carry that, whether they are drawn at all, and how far they
    *  are pulled off the surfaces they would otherwise lie exactly on. */
-  edges: { visible: boolean; shrink: number; colouring: Colouring };
+  edges: { visible: boolean; shrink: number; colouring: Colouring; width: number };
   faces: Layer & { internal: boolean };
   blocks: Layer;
   /** The geometry, which is not edited and so has no notion of a selection
@@ -235,8 +257,8 @@ export const DEFAULTS: ViewPrefs = {
   // By their classification to begin with: putting the blocking onto the
   // model is what the whole session is for, so what each cell is attached
   // to is the thing worth seeing before anything else.
-  nodes: { colouring: "class" },
-  edges: { visible: true, shrink: 1, colouring: "class" },
+  nodes: { colouring: "class", size: NODE_SIZE },
+  edges: { visible: true, shrink: 1, colouring: "class", width: EDGE_WIDTH },
   // Faces on but well short of opaque, so the wireframe and the handles still
   // read through them. Blocks off: they draw the same surfaces, and two
   // colourings of one shape at once is a choice rather than a default.
@@ -347,7 +369,12 @@ export function loadPrefs(): ViewPrefs {
             : DEFAULTS.smooth.rounds,
         share: within(stored.smooth?.share, 1, DEFAULTS.smooth.share),
       },
-      nodes: { colouring: colouring(stored.nodes?.colouring, DEFAULTS.nodes.colouring) },
+      nodes: {
+        colouring: colouring(stored.nodes?.colouring, DEFAULTS.nodes.colouring),
+        // A size of nought would be a handle nobody could find again, so
+        // the floor is one pixel rather than none.
+        size: Math.max(1, within(stored.nodes?.size, MAX_NODE_SIZE, DEFAULTS.nodes.size)),
+      },
       edges: {
         visible:
           typeof stored.edges?.visible === "boolean"
@@ -355,6 +382,7 @@ export function loadPrefs(): ViewPrefs {
             : DEFAULTS.edges.visible,
         shrink: clamp(stored.edges?.shrink, DEFAULTS.edges.shrink),
         colouring: colouring(stored.edges?.colouring, DEFAULTS.edges.colouring),
+        width: Math.max(1, within(stored.edges?.width, MAX_EDGE_WIDTH, DEFAULTS.edges.width)),
       },
       faces: {
         ...layer(stored.faces, DEFAULTS.faces),

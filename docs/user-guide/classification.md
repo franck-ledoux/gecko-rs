@@ -73,15 +73,23 @@ box in the drawer:
 The third is the classification one, and it is four colours rather than one
 per entity:
 
-|              |                           |
-| ------------ | ------------------------- |
-| on a corner  | one violet                |
-| on a curve   | another                   |
-| on a surface | a third                   |
-| on nothing   | the group's own colour    |
+|              |                        |
+| ------------ | ---------------------- |
+| on a corner  | pink                   |
+| on a curve   | magenta                |
+| on a surface | violet                 |
+| on nothing   | the group's own colour |
 
 `H` shows them, read off the theme so the card cannot come to disagree with
 the screen.
+
+The three are a **ramp**: the lightness falls and the hue turns the same
+way all along it, so they read as one family while staying far enough apart
+to be told at a glance. They were three violets of one hue until 0.1.2, and
+nobody could tell a corner from a curve — measured in OKLab, the nearest
+pair of them was 11 units in the dark theme and 6 in the light, against 22
+and 20 now. Each is also kept clear of the colour an unclassified cell
+wears, which the old deep violet was 7 units from.
 
 !!! note "Why not the colour of the entity itself"
     It was, and it was a mistake. A block face painted the colour of the

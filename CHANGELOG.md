@@ -47,6 +47,20 @@ Smoothing, a session you can replay, and a handful of things from using it.
   selection that took a while to build. It knows which of the selections
   your last click went to, so mixing nodes, faces, edges and geometric
   entities does not confuse it.
+- **The classification colours are told apart.** They were three violets of
+  one hue and a corner looked like a curve: measured in OKLab, the nearest
+  pair was 11 units in the dark theme and 6 in the light. They are a ramp
+  now — pink, magenta, violet, the lightness falling and the hue turning the
+  same way — at 22 and 20, and each stays clear of the colour an
+  unclassified cell wears, which the old deep violet was 7 from. The
+  measurement is a test, so they cannot be quietly harmonised back together.
+- **How big the blocking is drawn is a setting**: *handles* and *edges*
+  under *Drawing*, in pixels on the screen. The wireframe is a ribbon rather
+  than a GL line to make the second of those possible at all — a GL line is
+  one pixel wide whatever anybody asks for. Measured on a blocking of 1500
+  edges, the ribbon costs about 2% more to rebuild and 1.5% more per frame
+  than the line it replaces at the default width, and 10% more per frame at
+  the widest setting the panel offers.
 - **Nodes, edges and faces start coloured by their classification.** Putting
   the blocking onto the model is what a session is for, so what each cell is
   attached to is the thing worth seeing first. Blocks keep their own

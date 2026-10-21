@@ -2474,6 +2474,62 @@ test("a fresh window starts on the classification, with a box that hugs", async 
   expect(errors).toEqual([]);
 });
 
+test("how big the handles and the edges are drawn is a setting", async ({ page }) => {
+  // Both in pixels on the screen rather than in model units: what they are
+  // for is being easy to see and easy to hit, and that is a question about
+  // the screen. A blocking with a lot in it wants thin, a projector wants
+  // thick.
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await openParams(page);
+
+  // What a handle measures on screen, in CSS pixels: the sizing pass puts
+  // every one of them at the asked-for size whatever the zoom, so two
+  // corners of one at a known size are that many pixels apart.
+  // Waited for rather than read straight away: the handles are resized in
+  // the pass before a camera renders, so the answer is right one frame
+  // after the setting changes, not in the same breath as it.
+  const drawnAt = (px: number) =>
+    page.waitForFunction(
+      (want) => {
+        const g = (window as any).__gecko;
+        return Math.abs(g.handleAcross(g.names()[0]) - want) < 0.5;
+      },
+      px,
+      { timeout: 5000 },
+    );
+  await expect(page.locator("[data-test=node-size-value]")).toHaveText("11px");
+  await drawnAt(11);
+
+  await page.locator("[data-test=node-size]").fill("20");
+  await page.locator("[data-test=node-size]").dispatchEvent("input");
+  await expect(page.locator("[data-test=node-size-value]")).toHaveText("20px");
+  await drawnAt(20);
+
+  // The edges are a ribbon, so their width is a number they can be given —
+  // a GL line is one pixel whatever anybody asks for, which is why they
+  // are no longer GL lines.
+  await expect(page.locator("[data-test=edge-width-value]")).toHaveText("2px");
+  const narrow = (await page.evaluate(() => (window as any).__gecko.edgeRibbonWidth())) as number;
+  await page.locator("[data-test=edge-width]").fill("6");
+  await page.locator("[data-test=edge-width]").dispatchEvent("input");
+  await expect(page.locator("[data-test=edge-width-value]")).toHaveText("6px");
+  expect(await page.evaluate(() => (window as any).__gecko.prefs().edges.width)).toBe(6);
+  const wide = (await page.evaluate(() => (window as any).__gecko.edgeRibbonWidth())) as number;
+  // Drawn at it, not merely remembered. Measured as a ratio rather than in
+  // pixels, so the assertion does not depend on how many device pixels the
+  // runner's screen puts in one of the pointer's.
+  expect(wide / narrow).toBeCloseTo(3, 1);
+
+  // And both are remembered, like every other thing about how it looks.
+  await page.reload();
+  await page.waitForSelector("body[data-ready='1']");
+  expect(await page.evaluate(() => (window as any).__gecko.prefs().nodes.size)).toBe(20);
+  expect(await page.evaluate(() => (window as any).__gecko.prefs().edges.width)).toBe(6);
+  expect(errors).toEqual([]);
+});
+
 test("the box margin in the settings panel is the one the box is built to", async ({ page }) => {
   // The kernel's constant is what you get when nobody says; this is
   // somebody saying, and it has to reach the command.

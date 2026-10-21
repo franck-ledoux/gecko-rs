@@ -16,7 +16,9 @@ import {
   loadPrefs,
   savePrefs,
   MAX_BOX_MARGIN,
+  MAX_EDGE_WIDTH,
   MAX_HISTORY,
+  MAX_NODE_SIZE,
   MAX_SEGMENTS,
   MAX_SMOOTH_ROUNDS,
   MAX_SNAP,
@@ -489,6 +491,28 @@ async function boot() {
     $("segments-n").textContent = String(prefs.segments);
     savePrefs(prefs);
   });
+
+  // --- how big the blocking is drawn --------------------------------------
+  //
+  // Pixels, not model units: both of these are about how easy a thing is to
+  // see and to hit with a pointer, and that is a question about the screen.
+  // Neither goes anywhere near the kernel.
+  const drawnIn = (id: string, set: (px: number) => void, now: () => number, most: number) => {
+    const input = $<HTMLInputElement>(id);
+    input.max = String(most);
+    input.value = String(now());
+    const show = () => {
+      $(`${id}-n`).textContent = `${now()}px`;
+    };
+    show();
+    input.addEventListener("input", () => {
+      set(Number(input.value));
+      show();
+      redraw();
+    });
+  };
+  drawnIn("node-size", (px) => (prefs.nodes.size = px), () => prefs.nodes.size, MAX_NODE_SIZE);
+  drawnIn("edge-width", (px) => (prefs.edges.width = px), () => prefs.edges.width, MAX_EDGE_WIDTH);
 
   // --- how far back it can go ---------------------------------------------
   const history = $<HTMLInputElement>("history");
@@ -2164,6 +2188,9 @@ async function boot() {
     /** What is actually on screen for a node: the shape of its handle
      *  and the colour that handle is wearing. */
     nodeShape: (name: number) => viewer.nodeShape(name),
+    /** How big the drawing settings actually made things. */
+    handleAcross: (name: number) => viewer.handleAcross(name),
+    edgeRibbonWidth: () => viewer.edgeRibbonWidth,
     nodeTint: (name: number) => viewer.nodeTint(name),
     sheet: () => viewer.highlighted,
     selectedEdge: () => viewer.selectedEdge,

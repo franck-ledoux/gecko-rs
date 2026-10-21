@@ -31,6 +31,11 @@ import { CreateBox } from "@babylonjs/core/Meshes/Builders/boxBuilder";
 import { CreateSphere } from "@babylonjs/core/Meshes/Builders/sphereBuilder";
 import { CreateLineSystem } from "@babylonjs/core/Meshes/Builders/linesBuilder";
 import { CreateGreasedLine } from "@babylonjs/core/Meshes/Builders/greasedLineBuilder";
+import {
+  GreasedLineMeshColorDistributionType,
+  GreasedLineMeshMaterialType,
+} from "@babylonjs/core/Materials/GreasedLine/greasedLineMaterialInterfaces";
+import type { GreasedLineSimpleMaterial } from "@babylonjs/core/Materials/GreasedLine/greasedLineSimpleMaterial";
 import type { GreasedLineMesh } from "@babylonjs/core/Meshes/GreasedLine/greasedLineMesh";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { PointerDragBehavior } from "@babylonjs/core/Behaviors/Meshes/pointerDragBehavior";
@@ -59,7 +64,7 @@ import {
   worldSizeForPixelsOrtho,
   type Pane,
 } from "./panes";
-import { DEFAULTS, type GeomLayer, type Layer, type ViewPrefs } from "./theme";
+import { DEFAULTS, NODE_SIZE, type GeomLayer, type Layer, type ViewPrefs } from "./theme";
 import { ANCHOR, FAMILY, MATE, colourForId } from "./palette";
 import type { SheetEdge } from "./kernel";
 import {
@@ -94,8 +99,10 @@ export type Drop = (
   carrying: number[],
 ) => void;
 
-/** How many pixels across a node handle should be, whatever the zoom. */
-export const HANDLE_PIXELS = 11;
+/** How many pixels across a node handle is by default; the settings panel
+ *  can ask for another size. Kept here as well as in the preferences
+ *  because the tests measure against it. */
+export const HANDLE_PIXELS = NODE_SIZE;
 
 /**
  * The side of the cube a **frozen** node is drawn as, against the diameter
@@ -389,7 +396,12 @@ export class Viewer {
   centre: [number, number, number] = [0, 0, 0];
 
   private nodes: Mesh[] = [];
-  private wire?: LinesMesh;
+  /** The blocking's wireframe: ribbons rather than GL lines, because a GL
+   *  line is one pixel wide whatever anybody asks for. */
+  private wire?: GreasedLineMesh;
+  /** How many segments it holds, which is the edge count and what says
+   *  whether the mesh can be reused rather than rebuilt. */
+  private wireSegments = 0;
   /** The sheet the viewer has been asked to light up: the edge names, and
    *  where a cut would run from and to on each. */
   private lit: SheetEdge[] = [];
@@ -761,7 +773,9 @@ export class Viewer {
     const theme = this.prefs.theme;
     this.scene.clearColor = Color3.FromHexString(theme.background).toColor4(1);
     this.paintNodes();
-    if (this.wire) this.wire.color = Color3.FromHexString(theme.edges);
+    // The wireframe's colours and width both come out of the rebuild: a
+    // ribbon carries its colours in its material, not in a `color` on the
+    // mesh.
     this.rebuildEdges();
     this.rebuildHighlight();
     this.rebuildSurface("faces");
@@ -1450,28 +1464,55 @@ export class Viewer {
       this.wire = undefined;
       return;
     }
-    const lines = this.segments();
-    const colors = this.edgeColours();
-    const reusable =
-      this.wire && (this.wire.getIndices()?.length ?? 0) === lines.length * 2
-        ? this.wire
-        : undefined;
-    if (this.wire && !reusable) this.wire.dispose();
-    this.wire = CreateLineSystem(
+    const lines = this.segments().map(([a, b]) => [a.x, a.y, a.z, b.x, b.y, b.z]);
+    const colours = this.edgeColours().map(([c]) => new Color3(c.r, c.g, c.b));
+    // Reused while the shape of the thing has not changed: a drag rebuilds
+    // this on every frame, and rewriting the points of a ribbon that is
+    // already there costs a fraction of building one.
+    if (this.wire && this.wireSegments === lines.length) {
+      this.wire.setPoints(lines);
+      this.dressEdges(colours);
+      return;
+    }
+    this.wire?.dispose(false, true);
+    this.wire = CreateGreasedLine(
       "edges",
-      { lines, colors, updatable: true, instance: reusable },
+      { points: lines, updatable: true },
+      {
+        colors: colours,
+        useColors: true,
+        // One colour per segment: an edge wears what it is classified on,
+        // and each segment of this ribbon **is** an edge.
+        colorDistributionType: GreasedLineMeshColorDistributionType.COLOR_DISTRIBUTION_TYPE_SEGMENT,
+        // The unlit material rather than the lit one the builder reaches
+        // for by default: a wireframe takes no light, and this is the one
+        // that can be handed new colours without being rebuilt.
+        materialType: GreasedLineMeshMaterialType.MATERIAL_TYPE_SIMPLE,
+        ...this.ribbon(this.prefs.edges.width / SHEET_PIXELS),
+      },
       this.scene,
-    );
-    // A colour per vertex, because an edge wears what it is classified on
-    // and the wireframe is one mesh. Reusing the instance only rewrites
-    // the positions, so the colours are written here either way.
-    this.wire.updateVerticesData(VertexBuffer.ColorKind, colors.flat().flatMap((c) => c.asArray()));
+    ) as GreasedLineMesh;
+    this.wireSegments = lines.length;
     // Pickable, because an edge is what a sheet is named by. The handles
     // still win: the scene's pointer predicates only ever see those, and
     // this is reached by `pickEdge` on a click that missed one.
     this.wire.isPickable = true;
     this.wire.layerMask = MAIN_LAYER;
     this.wire.renderingGroupId = PASS.blocking;
+  }
+
+  /**
+   * Write the colours **and the width** onto a ribbon that is being kept.
+   *
+   * Both, because both are settings and a kept ribbon hears about a
+   * setting only here: writing one and not the other is how a width that
+   * was asked for went nowhere until the model's shape happened to change.
+   */
+  private dressEdges(colours: Color3[]) {
+    const material = this.wire?.material as GreasedLineSimpleMaterial | undefined;
+    if (!material) return;
+    material.setColors(colours, false, true);
+    material.width = this.ribbon(this.prefs.edges.width / SHEET_PIXELS).width;
   }
 
   /**
@@ -1865,8 +1906,37 @@ export class Viewer {
   pickEdge(x: number, y: number): number | null {
     if (!this.wire || !this.view) return null;
     const hit = this.scene.pick(x, y, (m) => m === this.wire, false, this.cameraFor(x, y));
-    if (!hit?.hit || hit.faceId < 0) return null;
-    return hit.faceId < this.view.edgeNames.length ? this.view.edgeNames[hit.faceId] : null;
+    // A ribbon answers with **where** it was hit and not with which of its
+    // triangles: its `intersects` is its own, written for lines, and it
+    // fills in the point rather than a face. So the segment is the one
+    // that point is nearest — which is the same question asked in the
+    // same space, and exact to the width of the ribbon.
+    if (!hit?.hit || !hit.pickedPoint) return null;
+    return this.edgeNearest(hit.pickedPoint);
+  }
+
+  /** The name of the edge whose drawn segment passes nearest a point. */
+  private edgeNearest(point: Vector3): number | null {
+    if (!this.view) return null;
+    const flat = edgeSegments(this.view, this.prefs.edges.shrink);
+    let best: number | null = null;
+    let nearest = Infinity;
+    for (let e = 0; e < this.view.edgeNames.length; e++) {
+      const at = e * 6;
+      const from = new Vector3(flat[at], flat[at + 1], flat[at + 2]);
+      const to = new Vector3(flat[at + 3], flat[at + 4], flat[at + 5]);
+      const along = to.subtract(from);
+      const length = along.lengthSquared();
+      // A degenerate edge is a point, and the distance to it is the
+      // distance to that point.
+      const t = length === 0 ? 0 : Math.min(1, Math.max(0, Vector3.Dot(point.subtract(from), along) / length));
+      const far = point.subtract(from.add(along.scale(t))).lengthSquared();
+      if (far < nearest) {
+        nearest = far;
+        best = this.view.edgeNames[e];
+      }
+    }
+    return best;
   }
 
   /**
@@ -1968,6 +2038,30 @@ export class Viewer {
     this.litWire.isPickable = false;
     this.litWire.layerMask = MAIN_LAYER;
     this.litWire.renderingGroupId = PASS.sheet;
+  }
+
+  /**
+   * How many pixels across a node's handle actually covers.
+   *
+   * Worked out rather than measured off the screen: the sizing pass puts
+   * the handle at a world size that comes to the asked-for number of
+   * pixels at its distance, and this undoes that arithmetic. What it is
+   * for is saying that the setting reached the picture.
+   */
+  handleAcross(name: number): number | null {
+    const mesh = this.nodes.find((m) => m.metadata.name === name);
+    if (!mesh) return null;
+    const camera = this.camera;
+    const height = this.scene.getEngine().getRenderHeight();
+    const distance = Vector3.Distance(mesh.position, camera.position);
+    return (mesh.scaling.x * height) / (2 * Math.tan(camera.fov / 2) * distance);
+  }
+
+  /** How wide the wireframe's ribbon is drawn, in the render pixels its
+   *  material speaks in. */
+  get edgeRibbonWidth(): number {
+    const material = this.wire?.material as GreasedLineSimpleMaterial | undefined;
+    return material?.width ?? 0;
   }
 
   /** The midpoint of an edge, in **CSS pixels** — the inverse of `pickEdge`,
@@ -2204,7 +2298,7 @@ export class Viewer {
     const height = engine.getRenderHeight() * camera.viewport.height;
     const ortho = PANE_AXIS[pane] ? this.half[pane] : null;
     for (const [meshes, pixels] of [
-      [this.nodes, HANDLE_PIXELS],
+      [this.nodes, this.prefs.nodes.size],
       [this.geomMeshes.corners, CORNER_PIXELS],
     ] as const) {
       for (const mesh of meshes) {
@@ -2301,7 +2395,7 @@ export class Viewer {
   }
 
   get edgeCount() {
-    return this.wire ? (this.wire.getIndices()?.length ?? 0) / 2 : 0;
+    return this.wire ? this.wireSegments : 0;
   }
 
   render() {
