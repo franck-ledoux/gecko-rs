@@ -323,13 +323,18 @@ kbd {
    a different font engine sets the same words to a different height. What
    has to fit is not a number measured here. */
 @media (max-height: 780px) {
-  #help-card { padding: 16px 20px; }
-  #help-who { margin-bottom: 8px; }
-  #help-groups > * { margin-bottom: 8px; }
-  #help-card dl { gap: 3px 12px; }
+  #help-card { padding: 14px 20px; }
+  #help-who { margin-bottom: 6px; }
+  #help-groups > * { margin-bottom: 7px; }
+  /* The row gap, which is the lever with the most rows behind it: the
+     tallest column has twenty of them, so a pixel here is twenty off the
+     card. */
+  #help-card dl { gap: 2px 12px; }
   #help-card dd { font-size: 11px; }
-  #help-card h2 { margin-bottom: 4px; }
-  #help-hint { margin-top: 8px; }
+  #help-card h2 { margin-bottom: 3px; }
+  #help-hint { margin-top: 6px; }
+  #help-legend { gap: 4px; }
+  #help-card .aside { margin-top: 8px; }
 }
 
 #help-hint { margin: 12px 0 0; font-size: 11px; color: var(--dim); text-align: center; }

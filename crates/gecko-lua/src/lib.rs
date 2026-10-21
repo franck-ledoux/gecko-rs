@@ -243,6 +243,9 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
         let o = options(lua, &a, 0)?;
         Ok(with(json!({ "op": "mesh" }), &o, &["segments"]))
     })?;
+    command(lua, &gecko, &kernel, "reset", |_, _| {
+        Ok(json!({ "op": "reset" }))
+    })?;
     command(lua, &gecko, &kernel, "clear_mesh", |_, _| {
         Ok(json!({ "op": "clear_mesh" }))
     })?;

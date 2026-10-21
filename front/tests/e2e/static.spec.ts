@@ -2824,6 +2824,129 @@ test("a blocking is discretised and the skin of it is drawn", async ({ page }) =
   expect(errors).toEqual([]);
 });
 
+test("a script is opened like a geometry, and replayed from nothing", async ({ page }) => {
+  // The same button: "open" is the same question whether the file is a
+  // model to work on or a session to play back. And a script describes a
+  // session from an empty one, so what is there goes first.
+  const errors = await boot(page);
+
+  // Something to throw away, so the reset is doing work.
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await openSquare(page);
+  await expect(page.locator("[data-test=geom-surfaces]")).toHaveText("1");
+  await expect(page.locator("[data-test=blocks]")).toHaveText("1");
+
+  await page.locator("#msh").setInputFiles({
+    name: "two.lua",
+    mimeType: "text/plain",
+    buffer: Buffer.from(
+      "gecko.create_cube{ origin = {0, 0, 0} }\n" +
+        "gecko.create_cube{ origin = {2, 0, 0} }\n" +
+        "print('replayed')\n",
+    ),
+  });
+
+  // Two blocks, not three: the cube that was there went with the reset,
+  // and so did the geometry.
+  await expect(page.locator("[data-test=blocks]")).toHaveText("2");
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+  await expect(page.locator("[data-test=geom-surfaces]")).toHaveCount(0);
+
+  // The console is where a script talks, so it is open and it said so.
+  await expect(page.locator("#console")).toBeVisible();
+  await expect(page.locator("[data-test=console-out]")).toContainText("emptied first");
+  await expect(page.locator("[data-test=console-out]")).toContainText("replayed");
+  await expect(page.locator("#status")).toContainText("2 blocks");
+
+  // One step of undo takes the whole replay back — the reset included, so
+  // what was there before it comes back.
+  await page.locator("#undo").click();
+  await page.locator("#undo").click();
+  await page.locator("#undo").click();
+  await expect(page.locator("[data-test=blocks]")).toHaveText("1");
+  await expect(page.locator("[data-test=geom-surfaces]")).toHaveText("1");
+  expect(errors).toEqual([]);
+});
+
+test("⇧Esc drops the last thing picked, Esc the lot", async ({ page }) => {
+  // One wrong click in a selection that took a while to build should cost
+  // that click, not the selection.
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+
+  // Three nodes, picked through the same door a click goes through.
+  const names = (await page.evaluate(() => (window as any).__gecko.names())) as number[];
+  for (const n of names.slice(0, 3)) {
+    await page.evaluate((who) => (window as any).__gecko.pickNodeByName(who), n);
+  }
+  expect(await page.evaluate(() => (window as any).__gecko.selectedNodes())).toEqual(
+    names.slice(0, 3),
+  );
+
+  // Then a face, which is a different selection — so "the last one" is a
+  // question nothing but the order of the clicks can answer.
+  const face = (await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    const s = g.surface("faces");
+    g.choose({ face: s.faces[0], block: s.blocks[0] });
+    return s.faces[0];
+  })) as number;
+  expect(await page.evaluate(() => (window as any).__gecko.selection())).toHaveLength(1);
+
+  // ⇧Esc takes back the face, and leaves the three nodes alone.
+  await page.keyboard.press("Shift+Escape");
+  expect(await page.evaluate(() => (window as any).__gecko.selection())).toEqual([]);
+  expect(await page.evaluate(() => (window as any).__gecko.selectedNodes())).toEqual(
+    names.slice(0, 3),
+  );
+  void face;
+
+  // Again, and it is the last node that goes — one at a time, newest first.
+  await page.keyboard.press("Shift+Escape");
+  expect(await page.evaluate(() => (window as any).__gecko.selectedNodes())).toEqual(
+    names.slice(0, 2),
+  );
+
+  // Esc still lets go of everything.
+  await page.keyboard.press("Escape");
+  expect(await page.evaluate(() => (window as any).__gecko.selectedNodes())).toEqual([]);
+
+  // And with nothing picked it says so rather than doing something.
+  await page.keyboard.press("Shift+Escape");
+  await expect(page.locator("#status")).toContainText("nothing picked");
+  expect(errors).toEqual([]);
+});
+
+test("the mesh button takes the mesh away again", async ({ page }) => {
+  // It used to be a one-way door: once meshed, the only thing that got rid
+  // of the mesh was editing the blocking, which is not what you press when
+  // all you want is to see the blocks again.
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await expect(page.locator("#mesh")).toHaveAttribute("aria-pressed", "false");
+
+  await page.locator("#mesh").click();
+  await expect(page.locator("[data-test=mesh-hexes]")).toHaveText("1000");
+  await expect(page.locator("#mesh")).toHaveAttribute("aria-pressed", "true");
+  await page.waitForFunction(() => (window as any).__gecko.skinCount() > 0);
+
+  // Again, and it is gone — out of the kernel, not merely hidden, which is
+  // what the box in the display panel is for.
+  await page.locator("#mesh").click();
+  await expect(page.locator("#status")).toContainText("mesh cleared");
+  await expect(page.locator("#mesh")).toHaveAttribute("aria-pressed", "false");
+  await page.waitForFunction(() => (window as any).__gecko.skinCount() === 0);
+  expect(await page.evaluate(() => (window as any).__gecko.stats().mesh.hexes)).toBeUndefined();
+
+  // And once more, to say the door swings both ways rather than once.
+  await page.locator("#mesh").click();
+  await expect(page.locator("[data-test=mesh-hexes]")).toHaveText("1000");
+  expect(errors).toEqual([]);
+});
+
 test("the lit sheet is made finer and coarser", async ({ page }) => {
   const errors = await boot(page);
   await page.evaluate(EDGE_NEAR);

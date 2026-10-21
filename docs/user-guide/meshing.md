@@ -7,7 +7,7 @@ classified on.
 
 |                         |                                                    |
 | ----------------------- | -------------------------------------------------- |
-| `E`, or the grid button | discretise every block                             |
+| `E`, or the grid button | discretise every block — and again to take the mesh away |
 | `⇧E`                    | write the mesh out, as VTK                         |
 | `=` `-`                 | one more segment along the lit sheet, or one fewer |
 
@@ -75,6 +75,12 @@ discretisation actually did.
 
 A mesh is **dropped the moment the blocking changes**. A mesh of a model you
 have since edited is a lie, and a lie that looks right; press `E` again.
+
+`E` on a model that already has one **takes the mesh away**. Two ways of
+getting rid of it, and they are not the same: this one throws it out, and
+the **show** box in the display panel hides it and keeps it. Before, editing
+the blocking was the only thing that got rid of a mesh, which made it
+something you could put on screen and not take off.
 
 ## Writing it out
 

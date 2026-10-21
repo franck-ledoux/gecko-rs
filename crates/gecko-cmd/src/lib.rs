@@ -307,6 +307,20 @@ pub enum Command {
     },
     /// Forget the geometry.
     ClearGeometry,
+    /// Back to an empty session: no blocks, no geometry, no composites, no
+    /// mesh.
+    ///
+    /// What replaying a script needs in front of it — a script describes a
+    /// session from nothing, and run on top of a model it would describe
+    /// something else. One command, so **one step of undo**: a replay
+    /// started by mistake is taken back like any other change.
+    ///
+    /// The journal is not cleared. It is the record of what was done, and
+    /// this was done too; a script written out afterwards therefore carries
+    /// what came before the reset, and replaying *that* arrives at the same
+    /// place, because the reset in the middle of it wipes exactly what the
+    /// lines above it built.
+    Reset,
     /// Put every node of the blocking on the geometric entity nearest it,
     /// and every edge on what its two ends agree about.
     ///
@@ -471,6 +485,11 @@ pub struct Session {
 struct State {
     blocking: Blocking,
     geometry: Option<Arc<Geometry>>,
+    /// Kept beside the geometry rather than inside it, and so saved here
+    /// too: `Reset` empties them, and an undo of a reset that gave the
+    /// blocking back but not the sides it was classified on would leave a
+    /// model classified on entities nothing could resolve.
+    composites: Composites,
     origin: Option<[f64; 3]>,
     /// How long the journal was. An undo cuts it back to here, so the
     /// script always describes the session as it now stands rather than
@@ -560,6 +579,7 @@ impl Session {
         Ok(State {
             blocking: self.blocking.snapshot()?,
             geometry: self.geometry.clone(),
+            composites: self.composites.clone(),
             origin: self.origin,
             journal: self.journal.len(),
         })
@@ -590,6 +610,7 @@ impl Session {
         self.drop_mesh();
         self.blocking = state.blocking;
         self.geometry = state.geometry;
+        self.composites = state.composites;
         self.origin = state.origin;
         self.journal.truncate(state.journal);
         // Forwards even when the geometry goes backwards: the number says
@@ -1114,6 +1135,24 @@ impl Session {
                         self.blocking.nb_faces(),
                         self.blocking.nb_blocks(),
                     ),
+                    view_changed: true,
+                })
+            }
+            Command::Reset => {
+                self.blocking = Blocking::new()?;
+                // The composites go with the geometry they name: their tags
+                // are indices into their own list, and a list kept across a
+                // new geometry would hand out the old model's entities
+                // under the new one's names.
+                let had = self.geometry.take().is_some();
+                self.composites = Composites::new();
+                self.drop_mesh();
+                if had {
+                    self.geometry_generation += 1;
+                }
+                Ok(Outcome {
+                    script: None,
+                    message: "the session is empty".to_string(),
                     view_changed: true,
                 })
             }

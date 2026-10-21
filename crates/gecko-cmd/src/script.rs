@@ -120,6 +120,7 @@ pub fn line(command: &Command) -> String {
             }
         ),
         Command::ClearGeometry => "gecko.clear_geometry()".to_string(),
+        Command::Reset => "gecko.reset()".to_string(),
         Command::Classify { tolerance } => format!(
             "gecko.classify({})",
             braces(option("tolerance", *tolerance, crate::SNAP_SHARE))

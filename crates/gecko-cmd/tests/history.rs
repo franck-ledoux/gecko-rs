@@ -294,3 +294,50 @@ fn first_edge(s: &Session) -> u32 {
     let edges: serde_json::Value = serde_json::from_str(&s.edges_json()).unwrap();
     edges[0]["id"].as_u64().unwrap() as u32
 }
+
+/// The session's own census, as JSON.
+fn stats(s: &Session) -> serde_json::Value {
+    serde_json::from_str(&s.stats_json()).expect("the stats")
+}
+
+#[test]
+fn a_reset_empties_the_session_and_can_be_taken_back() {
+    // What a replayed script needs in front of it: a script describes a
+    // session from nothing, so run on top of a model it would describe
+    // something else.
+    let mut s = Session::new().unwrap();
+    s.apply(Command::LoadGeometry {
+        msh: TETRA.to_string(),
+        name: "tetra".to_string(),
+    })
+    .unwrap();
+    s.apply(cube(0.0)).unwrap();
+    s.apply(cube(2.0)).unwrap();
+    let generation = stats(&s)["geometry"]["generation"].as_u64().unwrap();
+    assert_eq!(stats(&s)["blocks"], 2);
+
+    let out = s.apply(Command::Reset).expect("a reset");
+    assert!(out.message.contains("empty"), "{}", out.message);
+    assert_eq!(stats(&s)["blocks"], 0);
+    assert_eq!(stats(&s)["nodes"], 0);
+    assert!(
+        stats(&s)["geometry"]["surfaces"].is_null(),
+        "the geometry went too: {}",
+        stats(&s)
+    );
+    // The number went up, so a client holding a picture of the old
+    // geometry fetches again rather than going on drawing it.
+    assert!(stats(&s)["geometry"]["generation"].as_u64().unwrap() > generation);
+
+    // One step of undo, like any other change.
+    s.apply(Command::Undo).expect("an undo");
+    assert_eq!(stats(&s)["blocks"], 2);
+    assert_eq!(stats(&s)["geometry"]["surfaces"], 4);
+
+    // And the journal keeps it, because it happened. Replaying the script
+    // arrives in the same place: the reset in the middle of it wipes
+    // exactly what the lines above it built.
+    s.apply(Command::Reset).unwrap();
+    assert!(s.script().contains("gecko.reset()"), "{}", s.script());
+    assert!(s.script().contains("gecko.add_block"), "{}", s.script());
+}

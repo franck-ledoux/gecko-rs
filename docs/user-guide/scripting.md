@@ -33,6 +33,25 @@ An undo takes its line **off** rather than writing `gecko.undo()`: what
 comes out is a recipe for where the session now is, not a diary of
 everything anybody tried.
 
+## Running one again
+
+**Open** takes a `.lua` as well as a `.msh` — the same button, since "open"
+is the same question whether the file is a model to work on or a session to
+play back. Dropping a script on the window does the same.
+
+The session is **emptied first**. A script describes a session from nothing
+— it starts by making a cube or opening a geometry — so run on top of a
+model it would describe something else. Blocks, geometry and mesh all go,
+and the console says so before the script's own output.
+
+It is **one step of undo**: the reset and the whole replay come back off
+together if it was the wrong file.
+
+A script that opens a geometry by name needs that file within reach. In the
+terminal that is the folder you ran `gecko` in; in the page, **drop the
+`.msh` and the `.lua` together** — a dropped file is kept by name, and the
+script finds it there.
+
 !!! note "A geometry is named, not carried"
     `gecko.load_geometry("cylinder.msh")` sends the *contents* of the file
     to the kernel, because a browser has no path to give. The script keeps
@@ -70,6 +89,7 @@ shorthand for a call with one table.
 | `gecko.mesh{ segments = 10 }`, `gecko.clear_mesh()`                         |                                            |
 | `gecko.export_vtk(path)`                                                    | meshes first if it has to                  |
 | `gecko.undo()`, `gecko.set_history(n)`                                      |                                            |
+| `gecko.reset()`                                                             | an empty session: no blocks, no geometry, no mesh — one step of undo |
 
 And the reads, each a plain table: `nodes()`, `edges()`, `faces()`,
 `blocks()`, `entities()`, `stats()`, `sheet(edge)`, `chord(face, block)`,

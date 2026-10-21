@@ -41,7 +41,7 @@ cannot disagree with the release it was built from.
 |             |                                                    |
 | ----------- | -------------------------------------------------- |
 | `C`         | create a cube                                      |
-| `O`         | open a geometry (`.msh`)                           |
+| `O`         | open a geometry (`.msh`) or replay a script (`.lua`) |
 | `M`         | aim at the geometry, or back at the blocks         |
 | `B`         | box the geometry, or the selected surfaces         |
 | `K`         | put the blocking on the geometry                   |
@@ -58,6 +58,7 @@ cannot disagree with the release it was built from.
 | `⇧P`        | o-grid all along that chord                        |
 | `⌘Z`        | take back the last change (ctrl `Z` on a PC)       |
 | `Esc`       | clear the selection                                |
+| `⇧Esc`      | drop the last thing picked, and keep the rest      |
 | `F`         | frame everything                                   |
 | `X` `Y` `Z` | look down an axis, `⇧` for the negative side       |
 | `V`         | split into four views: 3D, X, Y and Z              |
@@ -92,6 +93,17 @@ everybody already knows. Bare `Z` is a view down the Z axis and stays one.
     French keyboard the digit row is shifted, and the key printed `1`
     produces `&`. Those three are matched by physical position instead, so
     the card stays true.
+
+### Letting go of one thing
+
+`Esc` clears the whole selection, which is a lot to pay for one wrong click
+in a selection that took a while to build. **`⇧Esc` drops the last thing you
+picked** and leaves the rest — a node, a face, an edge or a geometric
+entity, whichever of them your last click went to. Press it again for the
+one before that.
+
+Clicking something a second time still puts that one out, which is the way
+to drop something that was not the last.
 
 ## The settings panel
 

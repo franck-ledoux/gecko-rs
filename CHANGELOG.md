@@ -5,10 +5,10 @@ the day a tag was cut.
 
 ## 0.1.2
 
-Smoothing, by hand and while you drag.
+Smoothing, a session you can replay, and a handful of things from using it.
 
 - **`R` smooths the blocking**: every node towards the middle of its
-  neighbours, as far as what it follows allows. A node on a curve slides
+  neighbours, as far as its classification allows. A node on a curve slides
   along the curve, one on a surface over the surface, one on a geometric
   corner stays, and so does one on the outside of the blocking that is
   classified on nothing — it has no surface to be kept on, and moving it
@@ -30,6 +30,34 @@ Smoothing, by hand and while you drag.
   the two things the colouring is for — which node it is, and what it
   follows. Being out of play is a thing about the cell, so it is said with
   the shape. The colour panel has one fewer swatch for it.
+- **Open takes a `.lua`**, and replays it from an empty session: blocks,
+  geometry and mesh go first, because a script describes a session from
+  nothing and run on top of a model it would describe something else. The
+  console opens, since that is where a script talks. One step of undo takes
+  the reset and the whole replay back together. `gecko.reset()` is the same
+  thing from a script. Dropping a `.lua` on the window works too — and
+  dropping the `.msh` beside it is how a script that opens a geometry by
+  name finds it.
+- **`E` takes the mesh away again.** Before, the only thing that got rid of
+  a mesh was editing the blocking, so a mesh was something you could put on
+  screen and not take off. The **show** box in the display panel is still
+  the other thing: that one hides it and keeps it.
+- **`⇧Esc` drops the last thing you picked** and leaves the rest. `Esc`
+  clears the whole selection, which is a lot to pay for one wrong click in a
+  selection that took a while to build. It knows which of the selections
+  your last click went to, so mixing nodes, faces, edges and geometric
+  entities does not confuse it.
+- **Nodes, edges and faces start coloured by their classification.** Putting
+  the blocking onto the model is what a session is for, so what each cell is
+  attached to is the thing worth seeing first. Blocks keep their own
+  colouring, being classified on nothing.
+- **A bounding box hugs the model**: 2% of each half-side rather than 10%,
+  in the kernel's default as well as in the drawer, because pulling its
+  faces onto the surfaces nearby is the first thing anybody does with a box.
+- **"follows" is gone** — this codebase's word for a cell's classification,
+  which meant nothing to anybody else. The drawer says `class`, the fold
+  line says `classification`, and the help card and the guide say "what a
+  cell is classified on".
 - **Fixed**: the blocking was drawn an origin-shift away from the model
   after an edit that took a lot of it out — a removed sheet, say. Everything
   in the scene is sent rebased on one origin so that f32 coordinates stay

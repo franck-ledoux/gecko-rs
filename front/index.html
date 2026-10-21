@@ -24,7 +24,7 @@
           <path d="M3 7.3 12 12l9-4.7M12 12v9.4" />
         </svg>
       </button>
-      <button id="open" title="Open a geometry (.msh) — O" aria-label="Open a geometry">
+      <button id="open" title="Open a geometry (.msh) or replay a script (.lua) — O" aria-label="Open a geometry or a script">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M3 19V5.5h6l2 2.5h10V19Z" />
           <path d="M3 9.5h18" />
@@ -85,7 +85,7 @@
         </svg>
       </button>
       <!-- A block cut into a grid: what discretising does to one. -->
-      <button id="mesh" title="Discretise every block — E, ⇧E writes it out" aria-label="Mesh">
+      <button id="mesh" title="Discretise every block, or take the mesh away — E, ⇧E writes it out" aria-label="Mesh">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M3.5 6.5h17v13h-17Z" />
           <path d="M9.2 6.5v13M14.8 6.5v13M3.5 10.8h17M3.5 15.2h17" />
@@ -275,7 +275,7 @@
 
     <!-- The file picker a browser insists on: a page cannot read a file the
          user has not handed it, so "open" is this, clicked for them. -->
-    <input id="msh" type="file" accept=".msh" hidden />
+    <input id="msh" type="file" accept=".msh,.lua" hidden />
 
     <footer id="readout">
       <span id="stats"></span>

@@ -36,6 +36,7 @@ export const ACTIONS = [
   "remove-chord",
   "pillow-chord",
   "clear",
+  "unpick",
   "recentre",
   "screenshot",
   "axis-x",
@@ -68,7 +69,7 @@ export interface Shortcut {
   show: string;
   does: string;
   action: Action;
-  group: "Edit" | "Geometry" | "Mesh" | "View" | "Display" | "Window";
+  group: "Edit" | "Select" | "Geometry" | "Mesh" | "View" | "Display" | "Window";
   /** Matched against `event.key`, lower-cased. */
   key?: string;
   /**
@@ -95,7 +96,13 @@ export interface Shortcut {
 
 export const SHORTCUTS: readonly Shortcut[] = [
   { show: "C", key: "c", action: "cube", does: "create a cube", group: "Edit" },
-  { show: "O", key: "o", action: "open", does: "open a geometry (.msh)", group: "Edit" },
+  {
+    show: "O",
+    key: "o",
+    action: "open",
+    does: "open a geometry (.msh), or replay a script (.lua)",
+    group: "Edit",
+  },
   {
     show: "M",
     key: "m",
@@ -191,7 +198,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     show: "E",
     key: "e",
     action: "mesh",
-    does: "discretise every block",
+    does: "discretise every block, or take the mesh away again",
     group: "Mesh",
   },
   {
@@ -210,7 +217,24 @@ export const SHORTCUTS: readonly Shortcut[] = [
     group: "Mesh",
   },
   { show: "-", key: "-", action: "coarser", does: "one fewer", group: "Mesh" },
-  { show: "Esc", key: "escape", action: "clear", does: "clear the selection", group: "Edit" },
+  // A group of their own, small as it is: letting go is not editing, and
+  // Edit had grown to thirteen rows, which is what sets the height of the
+  // help card's tallest column.
+  {
+    show: "Esc",
+    key: "escape",
+    action: "clear",
+    does: "clear the selection",
+    group: "Select",
+  },
+  {
+    show: "⇧Esc",
+    key: "escape",
+    shift: true,
+    action: "unpick",
+    does: "drop the last thing picked",
+    group: "Select",
+  },
 
   { show: "F", key: "f", action: "recentre", does: "frame everything", group: "View" },
   { show: "X", key: "x", action: "axis-x", does: "look down X", group: "View" },

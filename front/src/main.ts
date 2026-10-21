@@ -805,6 +805,8 @@ async function boot() {
       return;
     }
     viewer.selectedEdge = edge;
+    order = order.filter((kind) => kind !== "edge");
+    noted("edge", true);
     viewer.showSheet(sheet.edges);
     lit = sheet.segments;
     $<HTMLButtonElement>("remove").disabled = false;
@@ -837,8 +839,77 @@ async function boot() {
     viewer.showSheet([]);
     viewer.selectGeom([]);
     viewer.selectNodes([]);
+    order = [];
     showVerbs();
     choose(null);
+  }
+
+  /**
+   * Which selection each click added to, oldest first.
+   *
+   * Every selection is already in the order it was clicked; what this adds
+   * is **which** of them the last click went to, so that one wrong click
+   * can be taken back rather than the whole selection. Without it, picking
+   * three nodes, then a face, then another node leaves nothing that knows
+   * what "the last one" was.
+   */
+  let order: Picked[] = [];
+
+  /** The kinds of thing a click can add to a selection. */
+  type Picked = "node" | "face" | "entity" | "edge";
+
+  /** Note that a click added one, or took one back. */
+  function noted(kind: Picked, added: boolean) {
+    if (added) order.push(kind);
+    // The last entry of that kind, not the last entry: unpicking the
+    // middle node of three leaves two, and which two does not matter —
+    // what matters is that the tally stays right.
+    else {
+      const at = order.lastIndexOf(kind);
+      if (at >= 0) order.splice(at, 1);
+    }
+  }
+
+  /**
+   * Drop the last thing picked, and leave the rest alone.
+   *
+   * `Esc` lets go of everything, which is a lot to pay for one wrong
+   * click in a selection it took a while to build. Each kind of selection
+   * already has a toggle — clicking a thing twice puts it out — so this is
+   * that toggle, aimed at whatever was picked last.
+   */
+  function unpick() {
+    // From the top, past any kind whose selection has since been emptied
+    // from elsewhere: a cut can consume a node, and the order is a record
+    // of clicks rather than the selection itself.
+    while (order.length) {
+      const kind = order[order.length - 1];
+      const nodes = viewer.selectedNodes;
+      const faces = viewer.selection;
+      const entities = viewer.geomSelection;
+      if (kind === "node" && nodes.length) {
+        pickNode(nodes[nodes.length - 1]);
+        return;
+      }
+      if (kind === "face" && faces.length) {
+        choose(faces[faces.length - 1]);
+        return;
+      }
+      if (kind === "entity" && entities.length) {
+        toggleEntity(entities[entities.length - 1]);
+        return;
+      }
+      if (kind === "edge" && viewer.selectedEdge !== null) {
+        viewer.selectedEdge = null;
+        viewer.showSheet([]);
+        order.pop();
+        showVerbs();
+        say("the edge is let go");
+        return;
+      }
+      order.pop();
+    }
+    say("nothing picked to let go of");
   }
 
   /**
@@ -850,8 +921,10 @@ async function boot() {
    */
   function pickNode(name: number) {
     const picked = viewer.selectedNodes;
-    const now = picked.includes(name) ? picked.filter((n) => n !== name) : [...picked, name];
+    const out = picked.includes(name);
+    const now = out ? picked.filter((n) => n !== name) : [...picked, name];
     viewer.selectNodes(now);
+    noted("node", !out);
     sayNodes(now);
   }
 
@@ -890,10 +963,10 @@ async function boot() {
   function toggleEntity(spot: Spot) {
     const same = (a: Spot, b: Spot) => a.dim === b.dim && a.tag === b.tag;
     const picked = viewer.geomSelection;
-    const now = picked.some((s) => same(s, spot))
-      ? picked.filter((s) => !same(s, spot))
-      : [...picked, spot];
+    const out = picked.some((s) => same(s, spot));
+    const now = out ? picked.filter((s) => !same(s, spot)) : [...picked, spot];
     viewer.selectGeom(now);
+    noted("entity", !out);
     showVerbs();
     say(
       now.length === 0
@@ -1107,10 +1180,16 @@ async function boot() {
    */
   function choose(pick: Pick | null) {
     let picked = viewer.selection;
-    if (pick === null) picked = [];
-    else if (picked.some((p) => p.face === pick.face))
+    if (pick === null) {
+      picked = [];
+      order = order.filter((kind) => kind !== "face");
+    } else if (picked.some((p) => p.face === pick.face)) {
       picked = picked.filter((p) => p.face !== pick.face);
-    else picked = [...picked, pick];
+      noted("face", false);
+    } else {
+      picked = [...picked, pick];
+      noted("face", true);
+    }
 
     viewer.select(picked);
     // No cap: a glue wants two and a pillow wants as many as you like, so
@@ -1290,6 +1369,37 @@ async function boot() {
     $<HTMLInputElement>("msh").click();
   }
 
+  /**
+   * Run a script, from nothing.
+   *
+   * The session is **reset** first: a script describes a session from an
+   * empty one — it starts by making a cube or opening a geometry — and run
+   * on top of a model it would describe something else entirely. One
+   * command, so one step of undo takes the whole replay back if it was the
+   * wrong file.
+   *
+   * The console is opened because that is where a script talks: its prints
+   * go there, and so does the line it stopped on if it stopped.
+   */
+  async function replay(name: string, source: string) {
+    await showConsole(true);
+    if (!lua) return;
+    say(`replaying ${name}…`);
+    const reply = await send({ op: "reset" });
+    message = reply.message;
+    clearSelection();
+    echo("did", `${name} — the session was emptied first`);
+    await runLua(source);
+    // `runLua` says what went wrong in the console; the readout says
+    // whether there is anything to look at.
+    const stats = kernel.stats();
+    say(
+      `${name}: ${stats.blocks} block${stats.blocks === 1 ? "" : "s"}` +
+        `${stats.geometry.surfaces === undefined ? "" : " and a geometry"}`,
+    );
+    await refresh("glide");
+  }
+
   async function loadGeometry(name: string, msh: string) {
     say(`reading ${name}…`);
     const reply = await send({ op: "load_geometry", msh, name });
@@ -1308,11 +1418,15 @@ async function boot() {
     if (!file) return;
     try {
       const text = await file.text();
-      // Kept as well as loaded: from now on a script can open it by name,
-      // which is the only way a page on a static host has of opening a
-      // file at all.
+      // Kept as well as loaded or run: from now on a script can open it by
+      // name, which is the only way a page on a static host has of opening
+      // a file at all.
       files.keep(file.name, text);
-      await loadGeometry(file.name, text);
+      // The extension decides. A `.msh` is a model to work on, a `.lua` is
+      // a session to replay — the same button, because "open" is the same
+      // question either way.
+      if (file.name.toLowerCase().endsWith(".lua")) await replay(file.name, text);
+      else await loadGeometry(file.name, text);
     } catch (problem) {
       say(`could not read ${file.name}: ${problem}`);
     }
@@ -1344,8 +1458,14 @@ async function boot() {
     }
     const only = dropped.length === 1 ? dropped[0] : undefined;
     if (only && only.name.toLowerCase().endsWith(".msh")) {
-      files.keep(only.name, await only.text());
       await loadGeometry(only.name, await only.text());
+      return;
+    }
+    // A script among them is run, and the rest are already kept — which is
+    // how a script that opens a `.msh` by name finds it: drop both.
+    const script = dropped.find((file) => file.name.toLowerCase().endsWith(".lua"));
+    if (script) {
+      await replay(script.name, await script.text());
       return;
     }
     message =
@@ -1487,6 +1607,8 @@ async function boot() {
     // After the geometry, not before: framing has to see everything there
     // is to frame.
     if (frame) viewer.frameAll(frame === "jump");
+    // Whether there is a mesh, so the button says which way it will go.
+    $("mesh").setAttribute("aria-pressed", String(stats.mesh.nodes !== undefined));
     // Nothing to aim at, box or classify onto without one.
     const loaded = stats.geometry.surfaces !== undefined;
     for (const id of ["picking", "box", "classify"]) {
@@ -1578,13 +1700,25 @@ async function boot() {
   }
 
   /**
-   * Discretise every block, and draw the skin of what comes out.
+   * Discretise every block, or take the mesh away again.
    *
    * The mesh is the kernel's, not the viewer's: it is built there, kept
    * there until the next edit throws it away, and sent here as its skin —
    * the inside of a mesh being most of it and never seen.
+   *
+   * A **toggle**, because a mesh that only went away when you happened to
+   * edit the blocking was something you could not get rid of: pressing the
+   * same key again is the obvious way to ask, and there was nothing else
+   * asking for it. The box in the display panel is the other half of the
+   * question — that one hides the mesh and keeps it.
    */
   async function mesh() {
+    if (kernel.stats().mesh.nodes !== undefined) {
+      const reply = await send({ op: "clear_mesh" });
+      message = reply.message;
+      await refresh();
+      return;
+    }
     say("meshing…");
     const reply = await send({ op: "mesh", segments: prefs.segments });
     message = reply.message;
@@ -1701,12 +1835,10 @@ async function boot() {
       swatch(prefs.theme.onSurface, "on a surface") +
       swatch(prefs.theme.nodes, "on nothing") +
       `</div>` +
-      `<p class="aside" data-test="legend-note">Nodes, edges and faces take these when their box` +
-      ` in the display panel is set to <b>class</b>, which is where they` +
-      ` start. A <b>frozen</b> node is drawn as a cube rather than a ball,` +
-      ` in whatever colour the colouring gives it — being out of play is a` +
-      ` shape, so it can still be read for its id or for its` +
-      ` classification.</p></section>`
+      `<p class="aside" data-test="legend-note">Nodes, edges and faces start` +
+      ` here; the <b>class</b> box in the display panel turns it off. A` +
+      ` <b>frozen</b> node is a cube, in whatever colour the colouring` +
+      ` gives it.</p></section>`
     );
   }
   drawHelp();
@@ -1748,6 +1880,7 @@ async function boot() {
     "remove-chord": removeChord,
     "pillow-chord": pillowChord,
     clear: clearSelection,
+    unpick,
     recentre,
     screenshot,
     "axis-x": () => lookDown("+x"),
@@ -2036,6 +2169,9 @@ async function boot() {
     selectedEdge: () => viewer.selectedEdge,
     pickEdge: (x: number, y: number) => viewer.pickEdge(x, y),
     pickEdgeByName: (edge: number) => chooseEdge(edge),
+    /** Pick a node the way a click on it does — through the same
+     *  function, so the order of the clicks is recorded too. */
+    pickNodeByName: (name: number) => pickNode(name),
     aimedAt: () => viewer.aimedAt,
     edgeEndsOnScreen: (edge: number) => viewer.edgeEndsOnScreen(edge),
     edgeNames: () => viewer.edgeNames(),
