@@ -101,7 +101,7 @@ constant is what you get when nobody says, and these are somebody saying.
 
 | Setting        | What it changes                                                                                                                                                                                       |
 | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **box margin** | how much room a bounding box leaves round the geometry, as a share of each half-side. 0 rests it exactly on the model, 10% is the default and the C++'s                                               |
+| **box margin** | how much room a bounding box leaves round the geometry, as a share of each half-side. 0 rests it exactly on the model, 2% is the default — a box that hugs the model, since pulling its faces onto the surfaces nearby is the first thing done to one |
 | **snap**       | how near a node has to come to a geometric entity to be taken by it, as a share of the geometry's own size. Used by `K` and by a node you drop by hand; 0 means a dropped node stays where you put it |
 | **segments**   | how many segments a sheet nobody has set is meshed into — see [Meshing](meshing.md)                                                                                                                   |
 | **steps**      | how far back `⌘Z` can go — see below                                                                                                                                                                  |

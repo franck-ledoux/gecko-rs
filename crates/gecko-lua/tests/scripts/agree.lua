@@ -87,16 +87,9 @@ assert(middle, "the node in the middle")
 gecko.move_node(middle, {1.6, 1.4, 0.7})
 gecko.smooth{ rounds = 2, share = 0.6 }
 
--- And once more as the interface does it: a drag that ripples outwards,
--- ring by ring, each ring going a shorter way than the one inside it,
--- until a ring barely moves.
---
--- The message is read rather than thrown away: an option the binding
--- quietly dropped would leave the digests below agreeing on a model that
--- was never smoothed, which is the one way this file could pass while
--- saying nothing.
-local rippled = gecko.move_node(middle, {1.3, 1.2, 1.1}, { smooth = true })
-assert(rippled:find("ring"), "the drag rippled: " .. rippled)
+-- And a plain move on top of it, which is all a move is: the node goes
+-- where it is put and nothing around it stirs.
+gecko.move_node(middle, {1.3, 1.2, 1.1})
 
 gecko.mesh{ segments = 2 }
 local after = gecko.vtk()
@@ -109,4 +102,4 @@ end
 local grid = gecko.stats().mesh
 print(string.format("smoothed: %d nodes, %d hexes, digest %d", grid.nodes, grid.hexes, digest))
 assert(grid.hexes == 216, "two segments each way over twenty-seven blocks: " .. grid.hexes)
-assert(digest == 197086, "the two hosts do not agree on the smoothed bytes: " .. digest)
+assert(digest == 464002, "the two hosts do not agree on the smoothed bytes: " .. digest)

@@ -109,7 +109,6 @@ fn an_inside_node_pulled_off_centre_comes_back() {
             rounds: 1,
             share: 1.0,
             held: &[],
-            only: None,
         },
         nowhere,
     );
@@ -136,7 +135,6 @@ fn the_share_is_how_far_along_the_way_it_goes() {
             rounds: 1,
             share: 0.5,
             held: &[],
-            only: None,
         },
         nowhere,
     );
@@ -152,7 +150,6 @@ fn the_share_is_how_far_along_the_way_it_goes() {
             rounds: 1,
             share: 0.5,
             held: &[],
-            only: None,
         },
         nowhere,
     );
@@ -165,13 +162,11 @@ fn the_share_is_how_far_along_the_way_it_goes() {
             rounds: 4,
             share: 0.0,
             held: &[],
-            only: None,
         },
         Smoothing {
             rounds: 0,
             share: 1.0,
             held: &[],
-            only: None,
         },
     ] {
         assert_eq!(b.smooth(how, nowhere), 0.0);
@@ -195,7 +190,6 @@ fn the_boundary_stays_where_it_is_when_it_follows_nothing() {
             rounds: 20,
             share: 1.0,
             held: &[],
-            only: None,
         },
         nowhere,
     );
@@ -221,8 +215,7 @@ fn frozen_and_on_a_corner_are_both_still() {
             Smoothing {
                 rounds: 5,
                 share: 1.0,
-                held: &[],
-                only: None
+                held: &[]
             },
             nowhere
         ),
@@ -241,8 +234,7 @@ fn frozen_and_on_a_corner_are_both_still() {
             Smoothing {
                 rounds: 5,
                 share: 1.0,
-                held: &[],
-                only: None
+                held: &[]
             },
             nowhere
         ),
@@ -270,7 +262,6 @@ fn a_node_on_a_curve_lands_back_on_that_curve() {
             rounds: 3,
             share: 1.0,
             held: &[],
-            only: None,
         },
         onto,
     );
@@ -298,7 +289,6 @@ fn a_node_on_a_curve_lands_back_on_that_curve() {
             rounds: 3,
             share: 1.0,
             held: &[],
-            only: None,
         },
         |on: On, p: [f64; 3]| (on.dim == 1).then_some([p[0], 9.0, 9.0]),
     );
@@ -319,32 +309,13 @@ fn a_held_node_is_held_and_only_names_the_ones_to_consider() {
             Smoothing {
                 rounds: 5,
                 share: 1.0,
-                held: &[middle],
-                only: None
+                held: &[middle]
             },
             nowhere
         ),
         0.0
     );
     assert_eq!(at(&b, middle), was);
-
-    // And `only` is the other half of that: a ring at a time, with the rest
-    // of the model left alone.
-    let elsewhere = node_at(&b, [0.0, 0.0, 0.0]);
-    assert_eq!(
-        b.smooth(
-            Smoothing {
-                rounds: 5,
-                share: 1.0,
-                held: &[],
-                only: Some(&[elsewhere])
-            },
-            nowhere
-        ),
-        0.0,
-        "the only node named is on the boundary and follows nothing"
-    );
-    assert_eq!(at(&b, middle), was, "and the one not named stayed");
 }
 
 #[test]
@@ -375,7 +346,6 @@ fn a_move_that_would_spoil_a_corner_is_not_taken() {
             rounds: 10,
             share: 1.0,
             held: &[],
-            only: None,
         },
         |_, p| Some(p),
     );
@@ -401,7 +371,6 @@ fn smoothing_never_leaves_the_worst_corner_worse_than_it_found_it() {
                 rounds: 1,
                 share: 1.0,
                 held: &[],
-                only: None,
             },
             nowhere,
         );
@@ -428,7 +397,6 @@ fn the_same_blocking_smooths_the_same_way_every_time() {
                 rounds: 3,
                 share: 0.7,
                 held: &[],
-                only: None,
             },
             nowhere,
         );

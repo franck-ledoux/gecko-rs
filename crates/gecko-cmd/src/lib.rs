@@ -44,8 +44,13 @@ pub enum SessionError {
 }
 
 /// How much room a bounding box leaves round the geometry, as a share of
-/// each half-side. The C++'s own default.
-pub const BOX_MARGIN: f64 = 0.1;
+/// each half-side.
+///
+/// Two percent: a box that hugs the model. The C++ left ten, which puts
+/// every face of the box well clear of every surface it is going to be
+/// pulled onto — and pulling them on is the first thing anybody does with
+/// a box.
+pub const BOX_MARGIN: f64 = 0.02;
 
 /// How many steps back the session can go, out of the box.
 ///
@@ -84,30 +89,6 @@ pub const SMOOTH_ROUNDS: u32 = 5;
 /// of a crease to the other and never settle, and half of it lets somebody
 /// watch what is happening to their model.
 pub const SMOOTH_SHARE: f64 = 0.5;
-
-/// How far a ring goes along the way to the middle of its neighbours under
-/// a drag's ripple — **divided by how far out the ring is**. The first ring
-/// goes a fifth of the way, the second a tenth, the third a fifteenth.
-///
-/// A fifth rather than the half an asked-for smoothing takes, and falling
-/// off with distance, because this smoothing is not asked for: it comes
-/// with every drag, and a gesture that rearranged its whole neighbourhood
-/// by half would be a gesture nobody could aim. What the reader sees is the
-/// model giving way where they pulled it and settling down a few edges out.
-pub const RIPPLE_SHARE: f64 = 0.2;
-
-/// The furthest a ring may move and still count as settled, as a share of
-/// how far the node that started it all was dragged.
-///
-/// What stops the ripple of a drag: the rings are smoothed outwards until
-/// one of them barely moves, and this is what barely means. Relative to
-/// the gesture rather than to the model, because that is the scale the
-/// reader is working at.
-pub const SMOOTH_SETTLE: f64 = 0.01;
-
-/// How many rings out a drag may ripple, however much they are still
-/// moving. A drag is a local gesture.
-pub const SMOOTH_RINGS: u32 = 8;
 
 fn default_snap() -> f64 {
     SNAP_SHARE
@@ -198,17 +179,6 @@ pub enum Command {
         /// which it was. Left out, the default stands.
         #[serde(default = "default_snap")]
         snap: f64,
-        /// Let the move **ripple**: the nodes an edge joins to this one are
-        /// smoothed one pass, then the ring beyond those, and so on until a
-        /// ring barely moves.
-        ///
-        /// What dragging a node by hand does, and what a script asking for
-        /// a node to be at a point does not: off unless asked for, so a
-        /// script that places nodes one by one is not quietly rearranging
-        /// the ones around them. One command either way, so one gesture is
-        /// still one step of undo.
-        #[serde(default)]
-        smooth: bool,
     },
     /// Weld two blocks along a face, each pair of corners meeting at the
     /// point between them.
@@ -762,7 +732,6 @@ impl Session {
                 to,
                 carrying,
                 snap,
-                smooth,
             } => {
                 let node = CellId::from_raw(node);
                 // The offset is read before anything moves, and from where
@@ -807,31 +776,9 @@ impl Session {
                     moved += 1;
                 }
 
-                // And then outwards, if this was a gesture rather than a
-                // placement. The nodes somebody just put somewhere are
-                // held: smoothing them would undo the move that asked for
-                // this in the first place.
-                let rippled = if smooth {
-                    let mut pinned: Vec<CellId> = others.clone();
-                    pinned.push(node);
-                    let gesture = (0..3)
-                        .map(|k| (landed[k] - was[k]).powi(2))
-                        .sum::<f64>()
-                        .sqrt();
-                    self.ripple(&pinned, gesture)
-                } else {
-                    0
-                };
-
                 Ok(Outcome {
                     script: None,
-                    message: if rippled > 0 {
-                        format!(
-                            "{moved} node{} moved, and {rippled} ring{} smoothed round {node:?}",
-                            plural(moved),
-                            plural(rippled as usize),
-                        )
-                    } else if moved + held > 1 {
+                    message: if moved + held > 1 {
                         format!(
                             "{moved} node{} moved{}",
                             plural(moved),
@@ -1039,7 +986,6 @@ impl Session {
                         rounds,
                         share,
                         held: &[],
-                        only: None,
                     },
                     |on, at| model.and_then(|m| m.project(on.dim, on.tag, at)),
                 );
@@ -1438,55 +1384,6 @@ impl Session {
             },
             |on, at| model.project(on.dim, on.tag, at),
         );
-    }
-
-    /// Smooth outwards from what has just been moved, ring by ring.
-    ///
-    /// One pass per ring, nearest first, each ring going a shorter way than
-    /// the one inside it — [`RIPPLE_SHARE`] over how far out it is — and
-    /// stopping as soon as a ring barely moves, where **barely** is a share
-    /// of how far the gesture itself went, because that is the scale the
-    /// reader is working at. A drag of
-    /// a millimetre has no business rearranging a model a metre across, and
-    /// a drag across the whole model should be allowed to tell its
-    /// neighbours about it.
-    ///
-    /// Returns how many rings were touched, which is what the message says.
-    fn ripple(&mut self, held: &[CellId], gesture: f64) -> u32 {
-        if gesture <= 0.0 {
-            return 0;
-        }
-        let settle = gesture * SMOOTH_SETTLE;
-        let start = *held.last().expect("the node that was moved");
-        let rings = self.blocking.rings_around(start, SMOOTH_RINGS);
-        let mut touched = 0;
-        for (out, ring) in rings.into_iter().enumerate() {
-            let Session {
-                blocking,
-                geometry,
-                composites,
-                ..
-            } = self;
-            let model = geometry.as_deref().map(|g| Model::new(g, composites));
-            let furthest = blocking.smooth(
-                Smoothing {
-                    rounds: 1,
-                    // A fifth of the way for the ring next to the node
-                    // that was dragged, a tenth for the one beyond it, and
-                    // so on: the ripple fades with distance rather than
-                    // carrying the drag's full weight outwards.
-                    share: RIPPLE_SHARE / (out + 1) as f64,
-                    held,
-                    only: Some(&ring),
-                },
-                |on, at| model.and_then(|m| m.project(on.dim, on.tag, at)),
-            );
-            touched += 1;
-            if furthest < settle {
-                break;
-            }
-        }
-        touched
     }
 
     /// Put a node where its classification says it is.

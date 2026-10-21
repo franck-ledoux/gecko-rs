@@ -1313,7 +1313,7 @@ export class Viewer {
    * Three colours and a legend, not a hue per entity. What you read off a
    * `class` colouring is whether the blocking has taken hold of the
    * geometry, which is a question with four answers — and painting a
-   * block face the colour of the very surface it follows, on top of that
+   * block face the colour of the very surface it is classified on, on top of that
    * surface, made two things nobody could tell apart.
    */
   private classColour(dim: number, tag: number, free: string): Color3 {
@@ -1328,7 +1328,7 @@ export class Viewer {
    *
    * Being frozen is **not** in this list. It is drawn as a cube instead,
    * so that a frozen node can still be read for its id or for what it
-   * follows — the two things the colouring is there to show.
+   * classified on — the two things the colouring is there to show.
    */
   private nodeColour(index: number): Color3 {
     const plain = this.prefs.theme.nodes;
@@ -1602,7 +1602,7 @@ export class Viewer {
       // A cube for a node that is frozen, a ball for one that can move.
       // The *shape* says whether it is out of play, which leaves its
       // colour free to say whatever the colouring is set to — a frozen
-      // node still shows its id or what it follows, which it could not
+      // node still shows its id or its classification, which it could not
       // when being frozen was a colour of its own.
       //
       // Unit size; the per-frame pass below scales it to a fixed number
@@ -1721,7 +1721,7 @@ export class Viewer {
    * A colour per end of every edge.
    *
    * Classified, an edge wears the colour of the curve or surface it
-   * follows; unclassified, the wireframe's own. Both ends the same: an
+   * classified on; unclassified, the wireframe's own. Both ends the same: an
    * edge is on one entity or none, and a gradient would suggest otherwise.
    */
   private edgeColours(): Color4[][] {

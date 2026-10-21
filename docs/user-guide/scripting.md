@@ -60,12 +60,12 @@ shorthand for a call with one table.
 | `gecko.pillow_chord(face, block, { tolerance = 0.02 })`                     | an o-grid along it                         |
 | `gecko.split_sheet(edge, 0.5)`, `gecko.remove_sheet(edge)`                  |                                            |
 | `gecko.set_segments(edge, 8)`                                               | on the whole sheet                         |
-| `gecko.move_node(id, {x,y,z}, { carrying = {…}, snap = 0, smooth = true })` | `smooth` ripples outwards                  |
+| `gecko.move_node(id, {x,y,z}, { carrying = {…}, snap = 0 })`                | moves those nodes and nothing else         |
 | `gecko.classify_node(ids, dim, tag)`, `unclassify_node(ids)`                | one id or a list                           |
 | `gecko.freeze_node(ids)`, `gecko.thaw_node(ids)`                            |                                            |
 | `gecko.load_geometry(path)`, `gecko.clear_geometry()`                       |                                            |
 | `gecko.files()`                                                             | what can be opened by name here            |
-| `gecko.box_geometry{ surfaces = {…}, margin = 0.1 }`                        |                                            |
+| `gecko.box_geometry{ surfaces = {…}, margin = 0.02 }`                       | 2% round each half-side by default         |
 | `gecko.classify{ tolerance = 0.02 }`                                        |                                            |
 | `gecko.mesh{ segments = 10 }`, `gecko.clear_mesh()`                         |                                            |
 | `gecko.export_vtk(path)`                                                    | meshes first if it has to                  |

@@ -201,10 +201,7 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
         Ok(with(
             json!({ "op": "move_node", "node": at(lua, &a, 0)?, "to": at(lua, &a, 1)? }),
             &o,
-            // `smooth` among them: the session's own history writes this
-            // line with it when a drag rippled, and a history that cannot
-            // be replayed into the same model is not a history.
-            &["carrying", "snap", "smooth"],
+            &["carrying", "snap"],
         ))
     })?;
     command(lua, &gecko, &kernel, "classify_node", |lua, a| {

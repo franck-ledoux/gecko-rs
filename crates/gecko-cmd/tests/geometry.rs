@@ -331,12 +331,13 @@ fn the_default_margin_is_the_one_the_kernel_knows() {
     load(&mut s, CUBE_MSH);
     let reply = s.apply_json(r#"{"op":"box_geometry"}"#);
     assert!(reply.contains(r#""ok":true"#), "{reply}");
+    // Two percent of each half-side, and this geometry's x half-side is 1.
     let (lo, hi) = span(&s, 0);
     assert!(
-        (lo - -0.1).abs() < 1e-9 && (hi - 2.1).abs() < 1e-9,
+        (lo - -0.02).abs() < 1e-9 && (hi - 2.02).abs() < 1e-9,
         "{lo}..{hi}"
     );
-    assert!((gecko_cmd::BOX_MARGIN - 0.1).abs() < 1e-12);
+    assert!((gecko_cmd::BOX_MARGIN - 0.02).abs() < 1e-12);
 }
 
 #[test]

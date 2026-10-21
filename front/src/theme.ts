@@ -30,11 +30,11 @@ export interface Theme {
   /** The mesh's skin. A family of its own: it is not the blocking and not
    *  the geometry, it is what the two of them were for. */
   mesh: string;
-  /** What a cell of the **blocking** wears to say what it follows, in
-   *  `class` colouring. A family of its own rather than the colour of the
-   *  entity itself: a block face painted the same as the surface it
-   *  follows, and drawn on top of that surface, is two things nobody can
-   *  tell apart. */
+  /** What a cell of the **blocking** wears to say what it is classified
+   *  on, in `class` colouring. A family of its own rather than the colour
+   *  of the entity itself: a block face painted the same as the surface it
+   *  is attached to, and drawn on top of that surface, is two things
+   *  nobody can tell apart. */
   onCorner: string;
   onCurve: string;
   onSurface: string;
@@ -134,8 +134,9 @@ export const MAX_HISTORY = 20;
 
 /** How much room a bounding box leaves round the geometry, as a share of
  *  each half-side, and the most the drawer offers. The kernel's own default
- *  is the same 10%. */
-export const BOX_MARGIN = 0.1;
+ *  is the same 2% — a box that hugs the model, since the first thing done
+ *  to one is usually to pull its faces onto the surfaces nearby. */
+export const BOX_MARGIN = 0.02;
 export const MAX_BOX_MARGIN = 0.5;
 
 /** How near a node has to come to a geometric entity to be taken by it, as
@@ -231,15 +232,15 @@ export const DEFAULTS: ViewPrefs = {
   box: { margin: BOX_MARGIN, snap: SNAP_SHARE },
   segments: SEGMENTS,
   smooth: { rounds: SMOOTH_ROUNDS, share: SMOOTH_SHARE },
-  // Both plain to begin with. Colouring by what a cell follows is a
-  // question you ask once the blocking is on the model, not while you are
-  // still putting it there.
-  nodes: { colouring: "uniform" },
-  edges: { visible: true, shrink: 1, colouring: "uniform" },
+  // By their classification to begin with: putting the blocking onto the
+  // model is what the whole session is for, so what each cell is attached
+  // to is the thing worth seeing before anything else.
+  nodes: { colouring: "class" },
+  edges: { visible: true, shrink: 1, colouring: "class" },
   // Faces on but well short of opaque, so the wireframe and the handles still
   // read through them. Blocks off: they draw the same surfaces, and two
   // colourings of one shape at once is a choice rather than a default.
-  faces: { visible: true, colouring: "uniform", alpha: 0.35, shrink: 1, internal: true },
+  faces: { visible: true, colouring: "class", alpha: 0.35, shrink: 1, internal: true },
   blocks: { visible: false, colouring: "id", alpha: 0.55, shrink: 0.85 },
   // All three on, because a geometry you have just loaded is a geometry you
   // want to see. Surfaces by id: telling one CAD patch from the next is the

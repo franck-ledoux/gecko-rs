@@ -2392,7 +2392,14 @@ test("the drawer folds, and what is open is remembered", async ({ page }) => {
   expect(fits, "the folded drawer still scrolls").toBe(true);
 
   // A folded group still says what it is: what you opened it to find out.
-  await expect(page.locator("#grp-faces .digest")).toHaveText("uniform · 35%");
+  // Faces start on their classification, so that is what it says.
+  await expect(page.locator("#grp-faces .digest")).toHaveText("classification · 35%");
+  // And the longest of those words still fits on the line: the drawer is
+  // 246 pixels wide and the word is the longest thing that goes there.
+  const spills = await page
+    .locator("#grp-faces")
+    .evaluate((row) => row.scrollWidth > row.clientWidth + 1);
+  expect(spills, "the folded line spills over the drawer's width").toBe(false);
   await expect(page.locator("#grp-blocks .digest")).toHaveText("hidden");
 
   // Its show box is on that line, and toggling it does not unfold anything.
@@ -2440,6 +2447,30 @@ test("the two panels are one at a time, and the cog has its own key", async ({ p
   await page.keyboard.press(",");
   await expect(page.locator("#params")).toBeVisible();
   await expect(page.locator("#drawer")).toBeHidden();
+  expect(errors).toEqual([]);
+});
+
+test("a fresh window starts on the classification, with a box that hugs", async ({ page }) => {
+  // What somebody sees the first time: putting the blocking onto the model
+  // is what the session is for, so nodes, edges and faces say what they
+  // are classified on before they say anything else. Blocks keep their own
+  // colouring — a block is classified on nothing.
+  const errors = await boot(page);
+  const prefs = (await page.evaluate(() => (window as any).__gecko.prefs())) as {
+    nodes: { colouring: string };
+    edges: { colouring: string };
+    faces: { colouring: string };
+    blocks: { colouring: string };
+    box: { margin: number };
+  };
+  expect(prefs.nodes.colouring).toBe("class");
+  expect(prefs.edges.colouring).toBe("class");
+  expect(prefs.faces.colouring).toBe("class");
+  expect(prefs.blocks.colouring).toBe("id");
+  // And a bounding box that hugs the model: two percent of each half-side.
+  expect(prefs.box.margin).toBeCloseTo(0.02, 12);
+  await openParams(page);
+  await expect(page.locator("[data-test=box-margin-value]")).toHaveText("2%");
   expect(errors).toEqual([]);
 });
 

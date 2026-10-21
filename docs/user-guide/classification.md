@@ -1,7 +1,7 @@
 # Classification
 
 A block structure is meant to follow a geometry. **Classification** is the
-statement of which part of the geometry each part of the blocking follows: a
+statement of which part of the geometry each part of the blocking is attached to: a
 corner of a block on a corner of the model, an edge along a curve, a node
 free to slide over a surface.
 
@@ -68,7 +68,7 @@ box in the drawer:
 | ----------- | ------------------------------------------------ |
 | **uniform** | one colour for the group, from its swatch        |
 | **id**      | a colour per cell, from its stable name          |
-| **follows** | a colour per *kind* of thing it is classified on |
+| **class** | a colour per *kind* of thing it is classified on |
 
 The third is the classification one, and it is four colours rather than one
 per entity:
@@ -85,9 +85,9 @@ the screen.
 
 !!! note "Why not the colour of the entity itself"
     It was, and it was a mistake. A block face painted the colour of the
-    very surface it follows, and then drawn on top of that surface, is two
+    very surface it is classified on, and then drawn on top of that surface, is two
     things nobody can tell apart — and on a cylinder, where every face of
-    the bounding box follows some surface, the whole blocking disappeared
+    the bounding box is classified on some surface, the whole blocking disappeared
     into the geometry.
 
     What you read off this colouring is whether the blocking has taken
@@ -97,7 +97,7 @@ A **frozen** node is drawn as a **cube** rather than a ball, in whatever
 colour the colouring gives it. Being out of play is not a kind of
 classification — it is a thing about the cell — so it is said with the
 shape of the handle, which leaves the colour free to go on saying what the
-node follows or which node it is. It was a grey of its own until 0.1.2, and
+node is classified on or which node it is. It was a grey of its own until 0.1.2, and
 grey hid the two things the colouring is there for. It cannot be dragged at
 all — letting it be dragged and having the
 kernel refuse would show it moving and snapping back, which reads as a bug

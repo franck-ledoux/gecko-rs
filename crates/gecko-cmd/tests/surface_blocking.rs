@@ -179,7 +179,6 @@ fn a_node_on_a_side_slides_along_every_curve_of_it() {
         to: [0.8, 0.4, 0.0],
         carrying: vec![],
         snap: 0.0,
-        smooth: false,
     })
     .expect("a slide");
     let landed = nodes(&s)

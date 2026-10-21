@@ -48,7 +48,6 @@ pub fn line(command: &Command) -> String {
             to,
             carrying,
             snap,
-            smooth,
         } => {
             let mut options = Vec::new();
             if !carrying.is_empty() {
@@ -56,12 +55,6 @@ pub fn line(command: &Command) -> String {
             }
             if (*snap - crate::SNAP_SHARE).abs() > f64::EPSILON {
                 options.push(format!("snap = {}", number(*snap)));
-            }
-            // Said when it was asked for, because the ripple moved other
-            // nodes: a script that replayed the drag without it would
-            // describe a different model.
-            if *smooth {
-                options.push("smooth = true".to_string());
             }
             let tail = if options.is_empty() {
                 String::new()

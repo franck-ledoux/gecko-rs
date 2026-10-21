@@ -20,13 +20,11 @@ Smoothing, by hand and while you drag.
   Laplacian on a concave boundary turns cells inside out; this does not. On
   a blocking that is already as good as it gets it does nothing, and says
   so.
-- **Dragging a node ripples**: the ring of nodes around it is smoothed one
-  pass, then the ring beyond, and so on until a ring barely moves — where
-  barely is a fraction of how far you dragged. Each ring goes a shorter way
-  than the one inside it: a fifth of the way for the ring next to the node
-  you dragged, a tenth for the next, a fifteenth for the one after. The node
-  you put somewhere stays where you put it, it is one step of undo, and a
-  script placing a node still gets the plain move.
+- **Dragging a node still moves only that node** (and whatever was picked
+  with it). Smoothing outwards from a drag, ring by ring, was built for this
+  release and taken out again before it: what you want of a drag is the node
+  under the pointer, and a neighbourhood rearranging itself around it is a
+  surprise rather than a help.
 - A **frozen** node is drawn as a **cube** rather than a ball, in whatever
   colour the colouring gives it. It was grey of its own until now, which hid
   the two things the colouring is for — which node it is, and what it

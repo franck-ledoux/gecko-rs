@@ -21,7 +21,7 @@ Only one is open at a time: they are drawn in the same place.
 Every section of the display panel folds, and so does every group inside
 **Cells**, **Geometry** and **Mesh**. A folded group is one line carrying what you
 reach for without thinking — its **show** box, its name, and a digest of how
-it is drawn right now (`uniform · 35%`, or `hidden`). Open it for the rest.
+it is drawn right now (`classification · 35%`, or `hidden`). Open it for the rest.
 
 Within a band only one group is open at a time, so the panel stays the height
 of one group however many there are. **Cells** and **Geometry** start
@@ -61,7 +61,7 @@ or neither.
 | **show**    | draw this group at all                                                                                    |
 | **uniform** | one colour for the whole group, taken from its swatch                                                     |
 | **id**      | a colour per cell, from its stable name                                                                   |
-| **follows** | a colour per kind of geometric entity — see [Classification](classification.md#reading-it-off-the-screen) |
+| **class** | a colour per kind of geometric entity, by what the cell is classified on — see [Classification](classification.md#reading-it-off-the-screen) |
 | **opacity** | transparency, per group                                                                                   |
 | **shrink**  | pull each cell towards its own centre                                                                     |
 

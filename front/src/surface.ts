@@ -21,7 +21,7 @@ import { colourForId, FAMILY, hexToRgb } from "./palette";
 
 /**
  * One colour for everything, one per cell name, or one per **kind of thing
- * the cell follows**.
+ * the cell is classified on**.
  *
  * The third is the one worth explaining. `class` says nothing about which
  * cell this is and everything about where it belongs: one colour for a
@@ -185,14 +185,14 @@ function buildFrom(view: View, options: SurfaceOptions, kept: number[]): Surface
     blocks[i] = view.quadBlocks[q];
     const c = middle.get(name) ?? [0, 0, 0];
     const picked = options.highlight?.get(view.quadFaces[q]);
-    const follows =
+    const classified =
       options.colouring === "class" && options.by === "face"
         ? options.classified?.get(view.quadFaces[q])
         : undefined;
     const rgb = picked
       ? hexToRgb(picked)
-      : follows
-        ? hexToRgb(follows)
+      : classified
+        ? hexToRgb(classified)
         : options.colouring === "id"
           ? hexToRgb(colourForId(name, dimension))
           : uniform;

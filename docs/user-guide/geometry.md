@@ -135,7 +135,7 @@ containing just the surfaces selected.
 
 It is almost always the first block of a session: something that contains the
 shape, to be cut and fitted onto it afterwards. The C++ GECKO has the same
-button, and the same margin — each half-side is grown by **10%**, so the box
+button, and the same margin — each half-side is grown by **2%**, so the box
 stands clear of the geometry rather than resting on it. From a script,
 `gecko.box_geometry{ margin = 0 }` for one that rests on it exactly.
 

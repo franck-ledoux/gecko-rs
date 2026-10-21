@@ -189,10 +189,6 @@ pub struct Smoothing<'a> {
     /// Nodes that must not move whatever their classification allows —
     /// the one somebody has just put somewhere, above all.
     pub held: &'a [CellId],
-    /// The only nodes to consider, or everything when `None`. What makes
-    /// one ring of a drag smoothable without the rest of the model
-    /// drifting.
-    pub only: Option<&'a [CellId]>,
 }
 
 /// For each corner of a hexahedron, the three corners an edge joins it to,
@@ -575,43 +571,6 @@ impl Blocking {
         ))
     }
 
-    /// The nodes at each topological distance from this one, nearest first.
-    ///
-    /// Distance counted in **edges of the blocking**, not in metres: the
-    /// ring at 1 is what an edge joins to the node, the ring at 2 is what
-    /// an edge joins to those, and so on. The node itself is in none of
-    /// them.
-    ///
-    /// What a drag smooths outwards along: one ring, one pass, and stop
-    /// when a ring barely moves.
-    pub fn rings_around(&self, node: CellId, how_far: u32) -> Vec<Vec<CellId>> {
-        let Some(start) = self.node_by_id(node) else {
-            return Vec::new();
-        };
-        let mut seen: HashSet<VertexIdType> = HashSet::from([start]);
-        let mut edge: Vec<VertexIdType> = vec![start];
-        let mut out: Vec<Vec<CellId>> = Vec::new();
-        for _ in 0..how_far {
-            let mut next: Vec<VertexIdType> = Vec::new();
-            for v in &edge {
-                for other in self.neighbours(*v) {
-                    if seen.insert(other) {
-                        next.push(other);
-                    }
-                }
-            }
-            if next.is_empty() {
-                break;
-            }
-            // By name, so a ring is the same list in both façades.
-            let mut names: Vec<CellId> = next.iter().map(|v| self.node_tag(*v).id).collect();
-            names.sort();
-            out.push(names);
-            edge = next;
-        }
-        out
-    }
-
     /// Move the nodes towards the middle of their neighbours, as far as
     /// what they are classified on allows.
     ///
@@ -659,7 +618,6 @@ impl Blocking {
             return 0.0;
         }
         let held: HashSet<CellId> = how.held.iter().copied().collect();
-        let only: Option<HashSet<CellId>> = how.only.map(|list| list.iter().copied().collect());
 
         // By name, so the order does not depend on how the map happened to
         // lay its darts out.
@@ -671,7 +629,6 @@ impl Blocking {
                 let tag = self.node_tag(*v);
                 !tag.frozen
                     && !held.contains(name)
-                    && only.as_ref().is_none_or(|list| list.contains(name))
                     // A point is a point: a node on a geometric corner has
                     // one place to be.
                     && tag.on.is_none_or(|on| on.dim > 0)

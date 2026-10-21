@@ -1,9 +1,9 @@
 # Smoothing
 
-A blocking that follows a model is rarely a *tidy* blocking: edges end up
+A blocking attached to a model is rarely a *tidy* blocking: edges end up
 long in one place and short in another, and corners end up less square than
 they could be. Press `R` and every node moves towards the middle of its
-neighbours — as far as what it follows allows.
+neighbours — as far as its classification allows.
 
 ```lua
 gecko.smooth{ rounds = 5, share = 0.5 }
@@ -49,47 +49,25 @@ blocking that is classified on nothing has **no surface to be kept on** — so
 moving it would pull the blocking away from the model it is meant to follow.
 Classify it, and it joins in.
 
-A node is projected onto what it follows *before* the move is weighed, so
+A node is projected onto what it is classified on *before* the move is weighed, so
 what gets judged is the point the node would actually end up at. And a
 classification the node cannot satisfy without spoiling the cells round it
 leaves it where it is: the smoother will not tear a blocking to satisfy a
 curve.
 
-## Dragging a node: the ripple
+## Dragging a node does not smooth
 
-Drag a node by hand and the smoothing follows it outwards. The nodes an edge
-joins to it are smoothed one pass, then the ring beyond those, then the next
-— and it **stops when a ring barely moves**, where barely is a fraction of
-how far you dragged. A nudge stays local; a long drag is allowed to tell its
-neighbours about it.
+A drag moves **the node you have hold of**, and the ones you had picked with
+it, and nothing else. For a while it also smoothed outwards from it, ring by
+ring; that came out again. What you want of a drag is the node under the
+pointer, and a neighbourhood rearranging itself around it is a surprise
+rather than a help.
 
-Each ring goes a **shorter way** than the one inside it: a fifth of the way
-to the middle of its neighbours for the ring next to the node you dragged, a
-tenth for the one beyond it, a fifteenth for the next — a fifth over how far
-out the ring is. A fifth rather than the half an asked-for smoothing takes,
-and falling off with distance, because this smoothing is not something you
-asked for: it comes with every drag, and a gesture that rearranged its whole
-neighbourhood by half would be a gesture nobody could aim. With the stopping
-rule on top of it, what you see is the model giving way where you pulled it
-and settling down a few edges out.
+Smoothing is something you ask for: `R`, or `gecko.smooth`, when the
+blocking is where you want it and you want it tidied.
 
-The node you dragged is **held**: smoothing it would undo the gesture that
-asked for it. So are the others, when you have several picked and drag them
-together.
-
-It is one command, so one gesture is still one step of undo. And it is a
-property of the **gesture**, not of the command: a script that puts a node
-at a point gets the plain move, because a script placing nodes one by one is
-not asking for the ones around them to be rearranged.
-
-```lua
-gecko.move_node(id, { x, y, z }, { smooth = true })   -- what a drag sends
-```
-
-!!! note "Why it is the same code as the button"
-    The ripple is the same smoothing, asked for one ring at a time with one
-    pass each and the dragged node held. Nodes are visited **by name**, and
-    each move is applied before the next is worked out, so the answer does
-    not depend on how the map happened to lay its darts out — which is
-    checked by running the same script in both the terminal and the page and
-    comparing the bytes.
+!!! note "Determinism, and how it is checked"
+    Nodes are visited **by name** and each move is applied before the next
+    is worked out, so the answer does not depend on how the map happened to
+    lay its darts out. The same script is run in the terminal and in the
+    page and the bytes it produces are compared.

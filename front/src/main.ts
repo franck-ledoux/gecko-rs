@@ -145,9 +145,9 @@ async function boot() {
    * nothing — a surface mesh has no volumes to classify one on — so it
    * keeps the two colourings it always had.
    */
-  const LAYERS: ReadonlyArray<{ group: Group; label: string; follows: boolean }> = [
-    { group: "blocks", label: "Blocks", follows: false },
-    { group: "faces", label: "Faces", follows: true },
+  const LAYERS: ReadonlyArray<{ group: Group; label: string; classified: boolean }> = [
+    { group: "blocks", label: "Blocks", classified: false },
+    { group: "faces", label: "Faces", classified: true },
   ];
 
   const slider = (test: string, label: string, min: number, value: number) =>
@@ -155,18 +155,19 @@ async function boot() {
     `<input type="range" min="${min}" max="1" step="0.01" value="${value}"` +
     ` data-test="${test}" /></label>`;
 
-  /** The uniform / id / follows radios for one group, on one line.
+  /** The uniform / id / class radios for one group, on one line.
    *
    *  Short words on purpose: three of them have to fit across a drawer
-   *  246 pixels wide, and "by what it follows" took a line of its own. The
-   *  help card carries the long form, and so does the legend under it. */
-  const modes = (group: string, now: Colouring, follows: boolean) => {
+   *  246 pixels wide, and "by its classification" took a line of its own.
+   *  The help card carries the long form, and so does the legend under
+   *  it. */
+  const modes = (group: string, now: Colouring, classified: boolean) => {
     const one = (value: Colouring, text: string) =>
       `<label class="mode"><input type="radio" name="${group}-mode" value="${value}"` +
       ` data-test="${group}-${value}"${now === value ? " checked" : ""} />${text}</label>`;
     return (
       `<div class="row modes">${one("uniform", "uniform")}${one("id", "id")}` +
-      (follows ? one("class", "follows") : "") +
+      (classified ? one("class", "class") : "") +
       `</div>`
     );
   };
@@ -176,7 +177,7 @@ async function boot() {
    *  has to answer the question you opened it to ask. */
   const digest = (colouring: Colouring, alpha?: number, visible = true) => {
     if (!visible) return `<span class="digest">hidden</span>`;
-    const how = colouring === "class" ? "follows" : colouring;
+    const how = colouring === "class" ? "classification" : colouring;
     const seen = alpha === undefined ? "" : ` · ${Math.round(alpha * 100)}%`;
     return `<span class="digest">${how}${seen}</span>`;
   };
@@ -213,7 +214,7 @@ async function boot() {
 
   function drawLayers() {
     $("layers").innerHTML =
-      LAYERS.map(({ group, label, follows }) => {
+      LAYERS.map(({ group, label, classified }) => {
         const layer = prefs[group];
         return (
           summary(
@@ -223,7 +224,7 @@ async function boot() {
             digest(layer.colouring, layer.alpha, layer.visible),
             layer.visible,
           ) +
-          modes(group, layer.colouring, follows) +
+          modes(group, layer.colouring, classified) +
           slider(`${group}-alpha`, "opacity", 0, layer.alpha) +
           slider(`${group}-shrink`, "shrink", 0.1, layer.shrink) +
           (group === "faces"
@@ -1693,7 +1694,7 @@ async function boot() {
     const swatch = (colour: string, says: string) =>
       `<span class="key"><i style="background:${colour}"></i>${says}</span>`;
     return (
-      `<section><h2>What a cell follows</h2>` +
+      `<section><h2>What a cell is classified on</h2>` +
       `<div id="help-legend">` +
       swatch(prefs.theme.onCorner, "on a corner") +
       swatch(prefs.theme.onCurve, "on a curve") +
@@ -1701,10 +1702,11 @@ async function boot() {
       swatch(prefs.theme.nodes, "on nothing") +
       `</div>` +
       `<p class="aside" data-test="legend-note">Nodes, edges and faces take these when their box` +
-      ` in the display panel is set to <b>follows</b>. A <b>frozen</b> node` +
-      ` is drawn as a cube rather than a ball, in whatever colour the` +
-      ` colouring gives it — being out of play is a shape, so it can still` +
-      ` be read for its id or for what it follows.</p></section>`
+      ` in the display panel is set to <b>class</b>, which is where they` +
+      ` start. A <b>frozen</b> node is drawn as a cube rather than a ball,` +
+      ` in whatever colour the colouring gives it — being out of play is a` +
+      ` shape, so it can still be read for its id or for its` +
+      ` classification.</p></section>`
     );
   }
   drawHelp();
@@ -1927,10 +1929,6 @@ async function boot() {
       // command, so one step of undo for one gesture.
       carrying,
       snap: prefs.box.snap,
-      // And the neighbours give way: this is a gesture, and a gesture is
-      // where the ripple belongs. A script placing a node says nothing of
-      // the kind and gets the plain move.
-      smooth: true,
     });
     message = reply.message;
     await refresh();

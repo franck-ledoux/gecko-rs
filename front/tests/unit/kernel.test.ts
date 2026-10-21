@@ -1834,7 +1834,7 @@ describe("growing a block out of a face", () => {
   });
 });
 
-describe("wearing what it follows", () => {
+describe("wearing its classification", () => {
   async function pinned() {
     const kernel = new WasmKernel();
     kernel.apply({ op: "load_geometry", msh: SQUARE_MSH, name: "square.msh" });
@@ -1854,21 +1854,27 @@ describe("wearing what it follows", () => {
     viewer.setView(decodeView(kernel.view()));
   }
 
-  it("says what a node follows only when asked to", async () => {
-    // Classification colouring is a mode, not an override. It used to be
-    // on always, which painted a block face the colour of the very
-    // surface it follows and then drew it on top of that surface.
+  it("says a node's classification in the colouring that asks for it", async () => {
+    // Classification colouring is a mode, not an override — it is where
+    // nodes, edges and faces start, and `uniform` turns it off. Before it
+    // was a mode it was on always, which painted a block face the colour
+    // of the very surface it is attached to and drew it on top of that
+    // surface.
     const { kernel, viewer } = await pinned();
     const names = viewer.names();
     kernel.apply({ op: "classify_node", nodes: [names[0]], on: { dim: 1, tag: 11 } });
     await redraw(kernel, viewer);
+
+    const plain = structuredClone(DEFAULTS);
+    plain.nodes.colouring = "uniform";
+    viewer.applyPrefs(plain);
     expect(handle(viewer, 0)).toBe(DEFAULTS.theme.nodes.toLowerCase());
 
     const prefs = structuredClone(DEFAULTS);
     prefs.nodes.colouring = "class";
     viewer.applyPrefs(prefs);
     expect(handle(viewer, 0)).toBe(DEFAULTS.theme.onCurve.toLowerCase());
-    // One colour per *kind* of thing followed, not per entity: a second
+    // One colour per *kind* of entity, not per entity: a second
     // node on another curve reads the same.
     kernel.apply({ op: "classify_node", nodes: [names[1]], on: { dim: 1, tag: 12 } });
     await redraw(kernel, viewer);
@@ -1895,7 +1901,7 @@ describe("wearing what it follows", () => {
 
   it("draws a frozen node as a cube, and leaves its colour to the colouring", async () => {
     // A frozen node is a cell out of play, which is a thing about the cell
-    // and not about what it follows — so it is said with the *shape* of
+    // and not about its classification — so it is said with the *shape* of
     // the handle. Said with its colour, as it once was, it hid the two
     // things the colouring is for: the node's id and its classification.
     const { kernel, viewer } = await pinned();
@@ -1909,14 +1915,14 @@ describe("wearing what it follows", () => {
     expect(viewer.nodeShape(names[1])).toBe("ball");
     expect(viewer.nodeState(names[0])).toEqual({ on: { dim: 2, tag: 1 }, frozen: true });
 
-    // And the colour still says what it follows, which is a surface.
+    // And the colour still says its classification, which is a surface.
     viewer.applyPrefs({ ...DEFAULTS, nodes: { colouring: "class" } });
     expect(handle(viewer, 0)).toBe(DEFAULTS.theme.onSurface.toLowerCase());
     // Or its id, or nothing at all, as the setting says — the frozen node
     // is treated like any other in each case.
     viewer.applyPrefs({ ...DEFAULTS, nodes: { colouring: "id" } });
     expect(handle(viewer, 0)).toBe(colourForId(names[0], FAMILY.nodes).toLowerCase());
-    viewer.applyPrefs(DEFAULTS);
+    viewer.applyPrefs({ ...DEFAULTS, nodes: { colouring: "uniform" } });
     expect(handle(viewer, 0)).toBe(DEFAULTS.theme.nodes.toLowerCase());
   });
 
