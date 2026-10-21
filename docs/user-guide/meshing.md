@@ -5,11 +5,11 @@ thing a solver reads: every block cut into a structured grid of hexahedra,
 by transfinite interpolation, following whatever geometry the blocking was
 classified on.
 
-|                         |                                                    |
-| ----------------------- | -------------------------------------------------- |
+|                         |                                                          |
+| ----------------------- | -------------------------------------------------------- |
 | `E`, or the grid button | discretise every block — and again to take the mesh away |
-| `⇧E`                    | write the mesh out, as VTK                         |
-| `=` `-`                 | one more segment along the lit sheet, or one fewer |
+| `⇧E`                    | write the mesh out, as VTK                               |
+| `=` `-`                 | one more segment along the lit sheet, or one fewer       |
 
 ## How many segments
 

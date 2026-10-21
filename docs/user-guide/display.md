@@ -56,14 +56,14 @@ no new markup.
 Each has its own box in the panel, and the two are independent: either, both,
 or neither.
 
-| Control     | What it does                                                                                              |
-| ----------- | --------------------------------------------------------------------------------------------------------- |
-| **show**    | draw this group at all                                                                                    |
-| **uniform** | one colour for the whole group, taken from its swatch                                                     |
-| **id**      | a colour per cell, from its stable name                                                                   |
-| **class** | a colour per kind of geometric entity, by what the cell is classified on — see [Classification](classification.md#reading-it-off-the-screen) |
-| **opacity** | transparency, per group                                                                                   |
-| **shrink**  | pull each cell towards its own centre                                                                     |
+| Control     | What it does                                                                                                                                 |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| **show**    | draw this group at all                                                                                                                       |
+| **uniform** | one colour for the whole group, taken from its swatch                                                                                        |
+| **id**      | a colour per cell, from its stable name                                                                                                      |
+| **class**   | a colour per kind of geometric entity, by what the cell is classified on — see [Classification](classification.md#reading-it-off-the-screen) |
+| **opacity** | transparency, per group                                                                                                                      |
+| **shrink**  | pull each cell towards its own centre                                                                                                        |
 
 Nodes and edges take the three colourings too; nodes are always drawn, so
 that is all their box carries. **Blocks** take only the first two: a block

@@ -4,7 +4,12 @@
 # both are built before the bundle is, and the bundle is baked into the
 # binary, so it is built before `cargo test` reaches `gecko-cli`.
 #
-# CI runs this very script, so what passes here is what passes there.
+# CI runs this very script, so what passes here is what passes there — with
+# one exception that bit once: the site is built by a job of its own, which
+# also checks the **formatting of the documentation**. That check is below,
+# when `uv` is here to run it; building the site is not, because it wants
+# mkdocs and a full `cargo doc`. Run `./docs.sh` when a link or the
+# navigation changes.
 set -euo pipefail
 cd "$(dirname "$0")"
 export PATH="$HOME/.cargo/bin:$PATH"
@@ -29,6 +34,18 @@ echo "── the page itself ─────────────────
 (cd front && npm run build)
 
 echo "── format and lint ───────────────────────────────────────────"
+# The documentation's own formatting, which the site's job checks: a table
+# left ragged there fails a run that everything else has passed, and it
+# fails it after a quarter of an hour of browser tests.
+if command -v uv >/dev/null; then
+  [ -x .venv/bin/mdformat ] || {
+    uv venv --quiet
+    uv pip install --quiet -r requirements-docs.txt
+  }
+  ./.venv/bin/mdformat --check docs README.md
+else
+  echo "!! uv is missing, so the documentation's formatting is NOT checked here" >&2
+fi
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 

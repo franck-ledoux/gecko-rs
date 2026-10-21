@@ -38,40 +38,40 @@ Its title says **which gecko this is**, and so does the left end of the
 readout along the bottom. The number comes from the kernel itself, so it
 cannot disagree with the release it was built from.
 
-|             |                                                    |
-| ----------- | -------------------------------------------------- |
-| `C`         | create a cube                                      |
+|             |                                                      |
+| ----------- | ---------------------------------------------------- |
+| `C`         | create a cube                                        |
 | `O`         | open a geometry (`.msh`) or replay a script (`.lua`) |
-| `M`         | aim at the geometry, or back at the blocks         |
-| `B`         | box the geometry, or the selected surfaces         |
-| `K`         | put the blocking on the geometry                   |
-| `A`         | put the selected nodes on the selected entity      |
-| `Q`         | lay a quadrangle on the selected surface           |
-| `W`-drag    | catch every node handle inside the band            |
-| `L`         | lock the picked node, or let it go                 |
-| `U`         | take the picked node off the geometry              |
-| `G`         | glue the two selected faces                        |
-| `Del` `⌫`   | remove: a block, a face of a patch, or a lit sheet |
-| `⇧Del` `⇧⌫` | remove the whole chord through that face           |
-| `P`         | pillow the selected faces                          |
-| `R`         | smooth the blocking, as far as the geometry allows |
-| `⇧P`        | o-grid all along that chord                        |
-| `⌘Z`        | take back the last change (ctrl `Z` on a PC)       |
-| `Esc`       | clear the selection                                |
-| `⇧Esc`      | drop the last thing picked, and keep the rest      |
-| `F`         | frame everything                                   |
-| `X` `Y` `Z` | look down an axis, `⇧` for the negative side       |
-| `V`         | split into four views: 3D, X, Y and Z              |
-| `T`         | the X/Y/Z triad                                    |
-| `D`         | dark or light                                      |
-| `1` `2` `3` | faces, blocks, edges                               |
-| `4` `5` `6` | geometric surfaces, curves, corners                |
-| `I`         | internal faces                                     |
-| `Tab`       | display: colours, cells, geometry                  |
-| `,`         | settings: what the operations do                   |
-| `⇧Tab`      | hide everything                                    |
-| `S`         | save a picture                                     |
-| `H` `?`     | the card                                           |
+| `M`         | aim at the geometry, or back at the blocks           |
+| `B`         | box the geometry, or the selected surfaces           |
+| `K`         | put the blocking on the geometry                     |
+| `A`         | put the selected nodes on the selected entity        |
+| `Q`         | lay a quadrangle on the selected surface             |
+| `W`-drag    | catch every node handle inside the band              |
+| `L`         | lock the picked node, or let it go                   |
+| `U`         | take the picked node off the geometry                |
+| `G`         | glue the two selected faces                          |
+| `Del` `⌫`   | remove: a block, a face of a patch, or a lit sheet   |
+| `⇧Del` `⇧⌫` | remove the whole chord through that face             |
+| `P`         | pillow the selected faces                            |
+| `R`         | smooth the blocking, as far as the geometry allows   |
+| `⇧P`        | o-grid all along that chord                          |
+| `⌘Z`        | take back the last change (ctrl `Z` on a PC)         |
+| `Esc`       | clear the selection                                  |
+| `⇧Esc`      | drop the last thing picked, and keep the rest        |
+| `F`         | frame everything                                     |
+| `X` `Y` `Z` | look down an axis, `⇧` for the negative side         |
+| `V`         | split into four views: 3D, X, Y and Z                |
+| `T`         | the X/Y/Z triad                                      |
+| `D`         | dark or light                                        |
+| `1` `2` `3` | faces, blocks, edges                                 |
+| `4` `5` `6` | geometric surfaces, curves, corners                  |
+| `I`         | internal faces                                       |
+| `Tab`       | display: colours, cells, geometry                    |
+| `,`         | settings: what the operations do                     |
+| `⇧Tab`      | hide everything                                      |
+| `S`         | save a picture                                       |
+| `H` `?`     | the card                                             |
 
 Clicking the background clears the selection too — with nothing under the
 pointer there is nothing to pick, so the click means *that one*.
@@ -113,14 +113,14 @@ kernel's own constant is what you get when nobody says, and these are
 somebody saying. The ones under *Drawing* never go near the kernel at all —
 they are about the picture.
 
-| Setting        | What it changes                                                                                                                                                                                       |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Setting        | What it changes                                                                                                                                                                                                                                       |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **box margin** | how much room a bounding box leaves round the geometry, as a share of each half-side. 0 rests it exactly on the model, 2% is the default — a box that hugs the model, since pulling its faces onto the surfaces nearby is the first thing done to one |
-| **snap**       | how near a node has to come to a geometric entity to be taken by it, as a share of the geometry's own size. Used by `K` and by a node you drop by hand; 0 means a dropped node stays where you put it |
-| **segments**   | how many segments a sheet nobody has set is meshed into — see [Meshing](meshing.md)                                                                                                                   |
-| **handles**    | how many pixels across a node of the blocking is drawn, 1 to 24. A target you can hit with a pointer, against a model you can still see                                                               |
-| **edges**      | how many pixels wide an edge of the blocking is drawn, 1 to 8. The wireframe is a ribbon rather than a GL line, which is one pixel wide whatever anybody asks                                          |
-| **steps**      | how far back `⌘Z` can go — see below                                                                                                                                                                  |
+| **snap**       | how near a node has to come to a geometric entity to be taken by it, as a share of the geometry's own size. Used by `K` and by a node you drop by hand; 0 means a dropped node stays where you put it                                                 |
+| **segments**   | how many segments a sheet nobody has set is meshed into — see [Meshing](meshing.md)                                                                                                                                                                   |
+| **handles**    | how many pixels across a node of the blocking is drawn, 1 to 24. A target you can hit with a pointer, against a model you can still see                                                                                                               |
+| **edges**      | how many pixels wide an edge of the blocking is drawn, 1 to 8. The wireframe is a ribbon rather than a GL line, which is one pixel wide whatever anybody asks                                                                                         |
+| **steps**      | how far back `⌘Z` can go — see below                                                                                                                                                                                                                  |
 
 Both shares are of the model rather than lengths, because a tolerance in
 millimetres is right for exactly one geometry.

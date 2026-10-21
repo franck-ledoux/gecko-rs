@@ -68,7 +68,7 @@ box in the drawer:
 | ----------- | ------------------------------------------------ |
 | **uniform** | one colour for the group, from its swatch        |
 | **id**      | a colour per cell, from its stable name          |
-| **class** | a colour per *kind* of thing it is classified on |
+| **class**   | a colour per *kind* of thing it is classified on |
 
 The third is the classification one, and it is four colours rather than one
 per entity:
