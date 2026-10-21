@@ -1392,6 +1392,66 @@ async function openSquare(page: import("@playwright/test").Page, msh = SQUARE_MS
   });
 }
 
+test("everything on screen is drawn against one origin, even when it moves", async ({ page }) => {
+  // The scene is sent rebased on a single origin so that f32 coordinates
+  // stay small, and that origin **moves** when the model walks away from
+  // it. Everything then has to be re-sent against the new one: the
+  // geometry's own buffer has not changed, so nothing but this makes the
+  // page fetch it again, and a geometry still rebased on where the middle
+  // of the scene used to be is drawn an origin-shift away from the blocks.
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+
+  // A geometry a thousand kilometres away from that block: only its node
+  // coordinates move, so it is the same square and still one surface.
+  const far = SQUARE_MSH.split("$EndNodes")
+    .map((part, at) =>
+      at === 0
+        ? part.replace(/^([1-4]) (\S+)/gm, (_, id: string, x: string) => `${id} ${Number(x) + 1e6}`)
+        : part,
+    )
+    .join("$EndNodes");
+  await openSquare(page, far);
+  await expect(page.locator("[data-test=geom-surfaces]")).toHaveText("1");
+
+  // Both on the session's origin, wherever its hysteresis has left it.
+  const between = (await page.evaluate(() => (window as any).__gecko.origins())) as {
+    view: number[];
+    geometry: number[] | null;
+  };
+  expect(between.geometry).toEqual(between.view);
+
+  // Something picked on the geometry, to be looked for again afterwards: a
+  // re-centring fetches the geometry again, and a selection dropped over a
+  // change of coordinates is a click lost for no reason anybody can see.
+  await page.evaluate(() => (window as any).__gecko.selectGeom([{ dim: 2, tag: 1 }]));
+
+  // The block goes, and now the model *is* the geometry: the origin has to
+  // follow it out there, which is the moment the two could part company.
+  await page.evaluate(async () => {
+    const g = (window as any).__gecko;
+    // Off the faces the viewer is drawing: blocks are not drawn by
+    // default, and the block a face belongs to is listed beside it.
+    const block = g.surface("faces").blocks[0];
+    g.apply({ op: "remove_block", block });
+    await g.refresh();
+  });
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 0);
+
+  const after = (await page.evaluate(() => (window as any).__gecko.origins())) as {
+    view: number[];
+    geometry: number[] | null;
+  };
+  expect(after.view[0]).toBeGreaterThan(999_999);
+  expect(after.geometry, "the geometry is drawn against a stale origin").toEqual(after.view);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.geomSelection()),
+    "the selection survived the re-centring",
+  ).toEqual([{ dim: 2, tag: 1 }]);
+  expect(errors).toEqual([]);
+});
+
 test("a geometry is opened from a file and drawn in its three groups", async ({ page }) => {
   const errors = await boot(page);
   await openSquare(page);
@@ -1682,10 +1742,45 @@ test("aiming at the geometry picks surfaces, and the blocks stay out of it", asy
   await page.evaluate(() => (window as any).__gecko.settled());
 
   const box = (await page.locator("#view").boundingBox())!;
-  const middle: [number, number] = [box.x + box.width / 2, box.y + box.height / 2];
+  // Over a face of the block, which sits **inside** the geometry: the ray
+  // there meets a face of the cube and a surface of the model both, which
+  // is what lets one point mean two things in the two modes. Not the middle
+  // of the view — this geometry is three units deep and the block sits in a
+  // corner of it, so the middle of the view is thin air.
+  //
+  // And not the face's own centre either: a click asks for a node, then an
+  // edge, then a face, and the far edges of a cube project into the middle
+  // of the faces in front of them. So the point is chosen by asking the
+  // page what is there — somewhere on the face that no handle and no line
+  // has a claim on.
+  const at = (await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    const face = g.surface("faces").faces[0];
+    const middle = g.faceScreen(face) as [number, number];
+    for (const away of [0, 6, 10, 14, 18]) {
+      for (const [dx, dy] of [
+        [0, 0],
+        [1, 0],
+        [0, 1],
+        [-1, 0],
+        [0, -1],
+        [1, 1],
+        [-1, -1],
+        [1, -1],
+        [-1, 1],
+      ]) {
+        const p: [number, number] = [middle[0] + dx * away, middle[1] + dy * away];
+        const free = g.pickNode(p[0], p[1]) === null && g.pickEdge(p[0], p[1]) === null;
+        if (free && g.pickSurface(p[0], p[1])?.face === face) return p;
+      }
+    }
+    return null;
+  })) as [number, number] | null;
+  expect(at, "somewhere on a face of the block that a click would take").not.toBeNull();
+  const middle: [number, number] = [box.x + at![0], box.y + at![1]];
 
-  // Blocks first: a click in the middle takes a face of the cube, not the
-  // geometry in front of it.
+  // Blocks first: the click takes a face of the cube, not the geometry
+  // around it.
   await page.mouse.click(...middle);
   await page.waitForFunction(() => (window as any).__gecko.selection().length === 1);
   expect(await page.evaluate(() => (window as any).__gecko.surfaceSelection())).toEqual([]);

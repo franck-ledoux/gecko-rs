@@ -374,27 +374,152 @@ fn the_view_stays_put_when_a_node_moves() {
     assert_eq!(after, before, "the whole scene would have shifted");
 }
 
+/// A tetrahedron ten units across: a geometry big enough to hold the
+/// session's origin still while the blocking shrinks away from it.
+const BIG_TETRA: &str = "\
+$MeshFormat
+2.2 0 8
+$EndMeshFormat
+$Nodes
+4
+1 0 0 0
+2 10 0 0
+3 0 10 0
+4 0 0 10
+$EndNodes
+$Elements
+8
+1 15 2 0 21 1
+2 1 2 0 11 1 2
+3 1 2 0 12 2 3
+4 1 2 0 13 3 1
+5 2 2 0 1 1 3 2
+6 2 2 0 2 1 2 4
+7 2 2 0 3 2 3 4
+8 2 2 0 4 3 1 4
+$EndElements
+";
+
+/// The centre a buffer was rebased on, read out of its header: magic,
+/// version, then three f64. What the page reads, so what a test should.
+fn rebased_on(bytes: &[u8]) -> [f64; 3] {
+    [0, 1, 2].map(|k| {
+        f64::from_le_bytes(
+            bytes[8 + k * 8..16 + k * 8]
+                .try_into()
+                .expect("eight bytes"),
+        )
+    })
+}
+
 #[test]
 fn the_origin_follows_a_model_that_walks_away() {
     // It is kept still for convenience, not forever: the point of rebasing is
     // that f32 coordinates stay small, so an origin the model has left behind
-    // has to be abandoned.
+    // has to be abandoned. Asked of the **session**, which is what decides
+    // it: the view takes the origin it is given, so that the blocking, the
+    // geometry and the mesh are all rebased on one.
     let mut s = Session::new().unwrap();
     s.apply(Command::CreateCube {
         origin: [0.0; 3],
         size: 1.0,
     })
     .unwrap();
-    let near = ViewBuffer::of(s.blocking(), None).centre;
+    assert_eq!(rebased_on(&s.view_buffer()), [0.5, 0.5, 0.5]);
 
-    // A nudge keeps it.
-    assert_eq!(
-        ViewBuffer::of(s.blocking(), Some([0.6, 0.5, 0.5])).centre,
-        [0.6, 0.5, 0.5]
+    // A nudge keeps it: the model has not gone anywhere worth re-centring
+    // for, and re-centring is a jump of everything on screen.
+    let name = ViewBuffer::of(s.blocking(), None).names[0];
+    s.apply(Command::MoveNode {
+        node: name,
+        to: [0.3, -0.4, 0.2],
+        carrying: vec![],
+        snap: SNAP_SHARE,
+        smooth: false,
+    })
+    .unwrap();
+    assert_eq!(rebased_on(&s.view_buffer()), [0.5, 0.5, 0.5]);
+
+    // A different continent does not. The cube that was here is taken out,
+    // so the model really is over there rather than spread across both.
+    s.apply(Command::CreateCube {
+        origin: [1.0e6, 0.0, 0.0],
+        size: 1.0,
+    })
+    .unwrap();
+    let blocks: Vec<serde_json::Value> = serde_json::from_str(&s.blocks_json()).unwrap();
+    let here = blocks
+        .iter()
+        .find(|b| b["centre"][0].as_f64().unwrap() < 1.0)
+        .expect("the cube that was here");
+    s.apply(Command::RemoveBlock {
+        block: here["id"].as_u64().unwrap() as u32,
+    })
+    .unwrap();
+
+    let moved = rebased_on(&s.view_buffer());
+    assert!(
+        moved[0] > 1.0e6 - 1.0,
+        "the origin stayed behind at {moved:?}"
     );
-    // A different continent does not.
-    let far = ViewBuffer::of(s.blocking(), Some([1.0e6, 0.0, 0.0])).centre;
-    assert_eq!(far, near);
+}
+
+#[test]
+fn the_blocking_the_geometry_and_the_mesh_are_rebased_on_one_origin() {
+    // They are drawn on top of each other, so they have to agree on where
+    // the middle of the scene is. The view used to settle an origin of its
+    // own, over the blocking **alone** — a smaller world than the one the
+    // session settles over, and so one that walks past its own threshold
+    // first. Take enough blocks out and the view adopted a new centre that
+    // the geometry and the mesh never heard about: the mesh stayed where it
+    // was and the whole block structure jumped.
+    let mut s = Session::new().unwrap();
+    for i in 0..10 {
+        s.apply(Command::CreateCube {
+            origin: [i as f64, 0.0, 0.0],
+            size: 1.0,
+        })
+        .unwrap();
+    }
+    // A geometry over the lot, which is what pins the session's origin
+    // while the blocking shrinks away from it: the session settles over
+    // both worlds, the blocking alone is the smaller one.
+    s.apply(Command::LoadGeometry {
+        msh: BIG_TETRA.to_string(),
+        name: "tetra".to_string(),
+    })
+    .unwrap();
+    s.apply(Command::Mesh { segments: 1 }).unwrap();
+
+    let was = rebased_on(&s.view_buffer());
+    assert_eq!(was, rebased_on(&s.geometry_buffer()));
+    assert_eq!(was, rebased_on(&s.mesh_buffer()));
+
+    // Half the model goes, which moves the blocking's own middle five units
+    // — further than half of what is left of it.
+    let blocks: Vec<serde_json::Value> = serde_json::from_str(&s.blocks_json()).unwrap();
+    let doomed: Vec<u32> = blocks
+        .iter()
+        .filter(|b| b["centre"][0].as_f64().unwrap() < 5.0)
+        .map(|b| b["id"].as_u64().unwrap() as u32)
+        .collect();
+    assert_eq!(doomed.len(), 5, "half of them");
+    for block in doomed {
+        s.apply(Command::RemoveBlock { block }).unwrap();
+    }
+    s.apply(Command::Mesh { segments: 1 }).unwrap();
+
+    let now = rebased_on(&s.view_buffer());
+    assert_eq!(
+        now,
+        rebased_on(&s.geometry_buffer()),
+        "the blocking is drawn an origin-shift away from the geometry"
+    );
+    assert_eq!(
+        now,
+        rebased_on(&s.mesh_buffer()),
+        "the blocking is drawn an origin-shift away from its own mesh"
+    );
 }
 
 #[test]

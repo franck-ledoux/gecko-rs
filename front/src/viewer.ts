@@ -1151,9 +1151,12 @@ export class Viewer {
   /**
    * Show a geometry, replacing whatever was there.
    *
-   * Asked for only when the kernel's generation number says it has changed,
+   * Asked for when the kernel's generation number says it has changed —
    * which is why this does the whole thing rather than patching: a new
-   * geometry shares nothing with the old one, not even its node numbering.
+   * geometry shares nothing with the old one, not even its node numbering —
+   * and also when the scene's rebasing origin has moved, since the numbers
+   * in the buffer are relative to it. In that second case it is the same
+   * geometry, and the caller puts the selection back.
    */
   setGeometry(view: GeometryView) {
     this.geometry = view;
@@ -1162,6 +1165,25 @@ export class Viewer {
     // The geometry counts towards the model's extent, so how close the
     // camera may come has to be worked out again.
     this.fitLimits();
+  }
+
+  /**
+   * The origin each of the three things on screen was drawn relative to.
+   *
+   * They have to be the same number. Everything is sent rebased on one
+   * origin so that f32 coordinates stay small, and anything drawn against
+   * a stale one sits an origin-shift away from the rest of the scene.
+   */
+  origins(): {
+    view: readonly [number, number, number];
+    geometry: readonly [number, number, number] | null;
+    mesh: readonly [number, number, number] | null;
+  } {
+    return {
+      view: this.centre,
+      geometry: this.geometry?.centre ?? null,
+      mesh: this.meshView?.centre ?? null,
+    };
   }
 
   /** What the geometry's three groups currently hold, for a test to read. */

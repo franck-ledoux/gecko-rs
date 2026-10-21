@@ -32,6 +32,17 @@ Smoothing, by hand and while you drag.
   the two things the colouring is for — which node it is, and what it
   follows. Being out of play is a thing about the cell, so it is said with
   the shape. The colour panel has one fewer swatch for it.
+- **Fixed**: the blocking was drawn an origin-shift away from the model
+  after an edit that took a lot of it out — a removed sheet, say. Everything
+  in the scene is sent rebased on one origin so that f32 coordinates stay
+  small, and the blocking's own view was choosing an origin of its own, over
+  the blocking alone: a smaller world than the one the session settles over,
+  and so one that walks past its own threshold first. The mesh and the
+  geometry never heard about the new centre, so they stayed where they were
+  and the block structure jumped. The view now takes the origin it is given.
+  The page also fetches the geometry and the mesh again when the origin does
+  move, which it had no reason to do before: neither buffer had changed, only
+  the middle of the scene they are drawn around.
 - **Fixed**: `gecko.move_node` dropped its `smooth` option without a word,
   so a script — and the session's own replayed history — got the plain move
   where a drag had rippled. The reference had documented the option all

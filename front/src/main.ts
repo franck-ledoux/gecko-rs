@@ -64,6 +64,15 @@ async function boot() {
   let geometryDrawn = -1;
   /** And the mesh this tab has drawn, on the same terms. */
   let meshDrawn = -1;
+  /** The rebasing origin those two were drawn relative to.
+   *
+   *  Everything in the scene is sent rebased on one origin, and that origin
+   *  can move: a model that has walked away from it has to be re-centred,
+   *  or f32 coordinates lose their precision. When it moves, the geometry
+   *  and the mesh have to be fetched again even though **neither has
+   *  changed** — the numbers in the buffers this tab is holding are
+   *  relative to where the middle of the scene used to be. */
+  let originDrawn: readonly [number, number, number] | null = null;
 
   // --- how it looks: viewer state, never the kernel's ---------------------
   const prefs = loadPrefs();
@@ -1442,7 +1451,13 @@ async function boot() {
    *  stale — they always are by the time this is called. */
   async function refresh(frame: false | "jump" | "glide" = false) {
     const [bytes, stats] = await Promise.all([kernel.view(), kernel.stats()]);
-    viewer.setView(decodeView(bytes));
+    const view = decodeView(bytes);
+    // Whether the scene has been re-centred under us, decided before the
+    // view is handed over: what is drawn after it has to agree with it.
+    const recentred =
+      originDrawn === null || view.centre.some((c, k) => c !== originDrawn![k]);
+    originDrawn = view.centre;
+    viewer.setView(view);
     // Which components are open sheets of faces. Asked once a redraw
     // rather than once a pick: it is a short list, and both the verbs and
     // the status line want it.
@@ -1450,14 +1465,21 @@ async function boot() {
     // Only when it has actually changed. The geometry is the big buffer and
     // the one that never moves; re-sending it because a node was dragged is
     // the whole cost this generation number exists to avoid.
-    if (stats.geometry.generation !== geometryDrawn) {
+    if (recentred || stats.geometry.generation !== geometryDrawn) {
+      // A new geometry shares nothing with the old one, so `setGeometry`
+      // lets go of whatever was picked on it. When the only reason for
+      // fetching it again is that the scene has been re-centred, it *is*
+      // the same geometry, and dropping a selection over a change of
+      // coordinates would lose a click for no reason the reader can see.
+      const picked = stats.geometry.generation === geometryDrawn ? viewer.geomSelection : [];
       geometryDrawn = stats.geometry.generation;
       viewer.setGeometry(decodeGeometry(kernel.geometry()));
+      if (picked.length) viewer.selectGeom(picked);
     }
     // The mesh on the same terms, and for the same reason: it is the big
     // buffer, and the number counts the edits that threw one away as well
     // as the builds, so this is also how a stale picture goes.
-    if (stats.mesh.generation !== meshDrawn) {
+    if (recentred || stats.mesh.generation !== meshDrawn) {
       meshDrawn = stats.mesh.generation;
       viewer.setMesh(stats.mesh.nodes === undefined ? null : decodeMesh(kernel.mesh()));
     }
@@ -2005,6 +2027,9 @@ async function boot() {
      *  the toolbar. The gestures call it themselves. */
     showVerbs: () => showVerbs(),
     nodeState: (name: number) => viewer.nodeState(name),
+    /** The rebasing origin each thing on screen was drawn against;
+     *  they have to agree or the scene is in pieces. */
+    origins: () => viewer.origins(),
     /** What is actually on screen for a node: the shape of its handle
      *  and the colour that handle is wearing. */
     nodeShape: (name: number) => viewer.nodeShape(name),

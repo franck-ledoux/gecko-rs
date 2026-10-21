@@ -73,9 +73,21 @@ pub struct ViewBuffer {
 }
 
 impl ViewBuffer {
-    /// Build the view, reusing `previous` as the rebasing origin when it is
-    /// still close enough to serve.
-    pub fn of(blocking: &Blocking, previous: Option<[f64; 3]>) -> ViewBuffer {
+    /// Build the view, rebased on the origin it is **given**.
+    ///
+    /// Not settled here, on purpose. The session settles one origin over the
+    /// blocking *and* the geometry, and rebases the geometry and the mesh on
+    /// it too, because the three are drawn on top of each other. A view that
+    /// chose an origin of its own — over the blocking alone, which is a
+    /// smaller world and so walks past its own threshold sooner — would draw
+    /// the blocking an origin-shift away from the model it is meant to
+    /// follow, with the mesh and the geometry still where they were. That is
+    /// what used to happen when a whole sheet of blocks came out.
+    ///
+    /// `None` means a session that has never settled one, which is a session
+    /// with nothing in it; then there is nothing to disagree with and the
+    /// centre is chosen here.
+    pub fn of(blocking: &Blocking, origin: Option<[f64; 3]>) -> ViewBuffer {
         let nodes: Vec<_> = blocking.map().iter_vertices().collect();
         let mut at: HashMap<u32, u32> = HashMap::with_capacity(nodes.len());
         let mut world = Vec::with_capacity(nodes.len() * 3);
@@ -93,7 +105,7 @@ impl ViewBuffer {
             node_frozen.push(u32::from(tag.frozen));
         }
 
-        let centre = stable_centre(&world, previous);
+        let centre = origin.unwrap_or_else(|| stable_centre(&world, None));
         // `as_chunks` rather than `chunks_exact`: it yields `&[f64; 3]`, so the
         // three coordinates are a type rather than a convention.
         let positions = world

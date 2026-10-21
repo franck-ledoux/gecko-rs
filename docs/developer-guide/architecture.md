@@ -452,6 +452,23 @@ block moved — the origin the blocks are drawn against may just have moved, and
 a client that redrew only the geometry would leave them rebased on an origin
 nobody uses any more.
 
+Two consequences, and both were learned the hard way:
+
+**The session decides, the buffers obey.** `ViewBuffer::of` takes the origin
+it is handed and never settles one of its own. It used to, over the
+blocking's nodes alone — a smaller world than the session's, so it crossed
+its own drift threshold first. Take a sheet of blocks out of a model that has
+a geometry round it and the view adopted a new centre while the geometry and
+the mesh kept the old one: the mesh stayed where it was and the whole block
+structure appeared to jump.
+
+**A client has to notice the origin moving.** The geometry and the mesh are
+fetched again only when their generation changes, which is what keeps a drag
+from re-sending megabytes. The origin is the other reason to re-fetch them:
+nothing in either buffer has changed, but the numbers in it are relative to a
+middle of the scene that has moved. The page compares the centre in the view
+buffer with the one it last drew them against.
+
 ## Reading a gmsh file
 
 `gecko-geom` is a crate of its own, in two halves.
