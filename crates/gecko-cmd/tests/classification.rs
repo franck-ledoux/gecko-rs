@@ -146,16 +146,38 @@ fn a_face_goes_where_its_four_edges_agree_and_nowhere_else() {
     s.apply(Command::Classify { tolerance: 0.02 }).unwrap();
     assert_eq!(classified(&s)["faces"], 6);
 
-    // Take one node off the model and the three faces that touch it lose
-    // the edges they were inferring from, and so lose their own footing.
+    // Take one node off the model and everything **stays**: the three
+    // edges at that corner each still have an end on the model that
+    // agrees with them, and the three faces still have edges that do.
+    // What a cell was told stands until something contradicts it.
     let node = nodes(&s)[0]["id"].as_u64().unwrap() as u32;
     s.apply(Command::ClassifyNode {
         nodes: vec![node],
         on: None,
     })
     .unwrap();
-    assert_eq!(classified(&s)["edges"], 9, "the three edges at that corner");
-    assert_eq!(classified(&s)["faces"], 3, "and the three faces at it");
+    assert_eq!(classified(&s)["edges"], 12, "the edges at that corner stay");
+    assert_eq!(classified(&s)["faces"], 6, "and so do the faces");
+
+    // Take the whole bottom off the model and the face under it goes: no
+    // edge of it says anything any more, so there is nothing left holding
+    // it to the surface.
+    let bottom: Vec<u32> = nodes(&s)
+        .into_iter()
+        .filter(|n| n["pos"][2].as_f64().unwrap().abs() < 1e-9)
+        .map(|n| n["id"].as_u64().unwrap() as u32)
+        .collect();
+    assert_eq!(bottom.len(), 4, "the four nodes of the bottom");
+    s.apply(Command::ClassifyNode {
+        nodes: bottom,
+        on: None,
+    })
+    .unwrap();
+    assert_eq!(
+        classified(&s)["faces"],
+        5,
+        "the bottom face lost its footing"
+    );
 }
 
 #[test]
@@ -250,17 +272,46 @@ fn an_edge_goes_where_its_two_ends_agree_and_nowhere_else() {
         .expect("the edge");
     assert_eq!(found["on"], serde_json::json!({ "dim": 2, "tag": 1 }));
 
-    // Take one end off the model and the edge has nothing to stand on.
+    // Take one end off the model and the edge **keeps** the face: the end
+    // that is still classified is on that face, so nothing has
+    // contradicted what the edge was told. It used to be cleared here,
+    // and a session bled classification because of it — a pillow lets go
+    // of four nodes and every edge that touches one is wiped though none
+    // of them moved.
     s.apply(Command::ClassifyNode {
         nodes: vec![ends[0]],
         on: None,
     })
     .unwrap();
-    let found = edges(&s)
-        .into_iter()
-        .find(|e| e["id"] == edge["id"])
-        .expect("the edge");
-    assert!(found["on"].is_null(), "{found}");
+    let found = |s: &Session| {
+        edges(s)
+            .into_iter()
+            .find(|e| e["id"] == edge["id"])
+            .expect("the edge")
+    };
+    assert_eq!(found(&s)["on"], serde_json::json!({ "dim": 2, "tag": 1 }));
+
+    // Both ends off, and it goes: an edge with nothing classified at
+    // either end is the inside of the model — drawn in by a pillow or
+    // raised by an extrusion — and keeping what it used to follow is what
+    // tears a mesh out through the surface.
+    s.apply(Command::ClassifyNode {
+        nodes: vec![ends[1]],
+        on: None,
+    })
+    .unwrap();
+    assert!(found(&s)["on"].is_null(), "{}", found(&s));
+
+    // And nothing is **handed** to an edge from one end alone. Put that
+    // one end back on its corner: the edge had nothing before, and a
+    // single end is not enough to give it something — the diagonal of a
+    // face has one end on a curve too.
+    s.apply(Command::ClassifyNode {
+        nodes: vec![ends[1]],
+        on: Some(Spot { dim: 0, tag: 103 }),
+    })
+    .unwrap();
+    assert!(found(&s)["on"].is_null(), "{}", found(&s));
 }
 
 #[test]
@@ -618,27 +669,39 @@ fn cutting_an_edge_leaves_a_node_on_what_the_edge_was_on() {
 }
 
 #[test]
-fn the_other_nodes_a_cut_makes_are_left_where_it_put_them() {
+fn the_other_nodes_a_cut_makes_are_taken_only_where_the_model_is() {
     // The sheet through that edge crosses three other edges, none of them
-    // classified. Nothing about the cut says where those belong, and
-    // moving them would be an invention.
+    // classified. Two of those crossings are at the top of the cube, a
+    // whole edge away from anything: nothing about the cut says where
+    // they belong, and they are left where it put them.
+    //
+    // The third is on the bottom, which is **lying on** the surface. That
+    // one is taken by it — a node made among classified neighbours is
+    // judged by where it is, which is the rule that stops a session
+    // bleeding classification. Nothing moves: it was already there.
     let (mut s, edge) = on_the_bend();
     s.apply(Command::SplitSheet { edge, at: 0.5 }).unwrap();
 
-    let loose: Vec<_> = nodes(&s)
+    let made: Vec<_> = nodes(&s)
         .into_iter()
-        .filter(|n| n["on"].is_null())
-        .filter(|n| {
-            let p = n["pos"].as_array().unwrap();
-            (p[0].as_f64().unwrap() - 0.5).abs() < 1e-9
-        })
+        .filter(|n| (n["pos"][0].as_f64().unwrap() - 0.5).abs() < 1e-9)
         .collect();
-    assert_eq!(loose.len(), 3, "three unclassified nodes, at the half way");
-    for n in loose {
-        let p = n["pos"].as_array().unwrap();
-        let y = p[1].as_f64().unwrap();
-        assert!(y.abs() < 1e-9 || (y - 1.0).abs() < 1e-9, "{p:?}");
+    assert_eq!(made.len(), 3, "three crossings, besides the cut edge's own");
+
+    let loose: Vec<_> = made.iter().filter(|n| n["on"].is_null()).collect();
+    assert_eq!(loose.len(), 2, "the two at the top are on nothing");
+    for n in &loose {
+        assert_eq!(n["pos"][2].as_f64().unwrap(), 1.0, "{}", n["pos"]);
     }
+
+    let taken: Vec<_> = made.iter().filter(|n| !n["on"].is_null()).collect();
+    assert_eq!(taken.len(), 1);
+    assert_eq!(taken[0]["on"], serde_json::json!({ "dim": 2, "tag": 1 }));
+    assert_eq!(
+        taken[0]["pos"][2].as_f64().unwrap(),
+        0.0,
+        "on the surface, unmoved"
+    );
 }
 
 #[test]
@@ -1198,5 +1261,122 @@ fn a_weld_between_two_strangers_says_which_classification_it_dropped() {
         message.matches("; node").count(),
         4,
         "once per corner: {message}"
+    );
+}
+
+#[test]
+fn a_block_somebody_just_made_is_not_pinned_behind_their_back() {
+    // The limit of the rule above. A node an operation makes **among
+    // nodes that are on the model** is judged by where it is; a block
+    // somebody has just created is not, however exactly it sits on the
+    // geometry. Dropping a cube on a model is not a statement that the
+    // cube follows it — that is what `classify` is for, and it is one
+    // keystroke.
+    let mut s = Session::new().unwrap();
+    s.apply(Command::LoadGeometry {
+        msh: BOX.to_string(),
+        name: "box.msh".to_string(),
+    })
+    .unwrap();
+    // Exactly the model's own unit cube: every corner on a corner, every
+    // edge on a curve, every face on a surface. Nothing is nearer than
+    // this, and still nothing is claimed.
+    s.apply(Command::CreateCube {
+        origin: [0.0, 0.0, 0.0],
+        size: 1.0,
+    })
+    .unwrap();
+    assert_eq!(classified(&s)["nodes"], 0, "nothing is claimed");
+    assert_eq!(classified(&s)["edges"], 0);
+
+    // And the box round a geometry is the same: a block, made whole.
+    let mut s = on_the_box();
+    assert_eq!(classified(&s)["nodes"], 0, "nor by boxing it");
+    // One word, and it is all on the model.
+    s.apply(Command::Classify { tolerance: 0.02 }).unwrap();
+    assert_eq!(classified(&s)["nodes"], 8);
+}
+
+#[test]
+fn the_reach_a_new_node_is_judged_by_is_the_one_classify_was_given() {
+    // Somebody working at a tenth means a tenth. The session keeps the
+    // tolerance of the last `classify` it was given and judges the nodes
+    // an operation makes by that, rather than by a number in the kernel
+    // that nobody chose.
+    //
+    // Both runs below are the same model, the same block and the same
+    // cut. One corner is taken off the geometry by hand and pulled a
+    // tenth of the way out, so the node the cut leaves half way along
+    // that edge stands a twentieth clear of the surface — outside the
+    // kernel's own two percent and inside a tenth. The only difference
+    // between the two is the number given to `classify` at the start.
+    let caught = |tolerance: f64| {
+        let mut s = on_the_box();
+        s.apply(Command::Classify { tolerance }).unwrap();
+        assert_eq!(classified(&s)["nodes"], 8, "the box is on the model");
+
+        // **Both** ends of one edge off the model and moved out, so that
+        // the edge itself is on nothing and the node the cut leaves in it
+        // has nothing to inherit — proximity is the only thing that can
+        // speak for it. `snap: 0` so that the moves claim nothing either.
+        let corner = |want: [f64; 3], s: &Session| -> u32 {
+            nodes(s)
+                .into_iter()
+                .find(|n| {
+                    let p = n["pos"].as_array().unwrap();
+                    (0..3).all(|k| (p[k].as_f64().unwrap() - want[k]).abs() < 1e-9)
+                })
+                .expect("a corner of the box")["id"]
+                .as_u64()
+                .unwrap() as u32
+        };
+        let (a, b) = (corner([0.0; 3], &s), corner([0.0, 0.0, 1.0], &s));
+        s.apply(Command::ClassifyNode {
+            nodes: vec![a, b],
+            on: None,
+        })
+        .unwrap();
+        for (name, z) in [(a, 0.0), (b, 1.0)] {
+            s.apply(Command::MoveNode {
+                node: name,
+                to: [-0.1, 0.0, z],
+                carrying: vec![],
+                snap: 0.0,
+            })
+            .unwrap();
+        }
+
+        // The edge between those two, cut in the middle: the node it
+        // leaves there stands a tenth clear of the model.
+        let edge = edges(&s)
+            .into_iter()
+            .find(|e| {
+                let ends: Vec<u32> = e["nodes"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|n| n.as_u64().unwrap() as u32)
+                    .collect();
+                ends.contains(&a) && ends.contains(&b)
+            })
+            .expect("the edge between them");
+        let before = classified(&s)["nodes"].as_u64().unwrap();
+        s.apply(Command::SplitSheet {
+            edge: edge["id"].as_u64().unwrap() as u32,
+            at: 0.5,
+        })
+        .unwrap();
+        classified(&s)["nodes"].as_u64().unwrap() - before
+    };
+
+    // Two percent: the node half way along that edge is out of reach, and
+    // the only new nodes claimed are the ones the cut's own edges handed
+    // their classification to.
+    let tight = caught(0.02);
+    // A tenth: that one is within reach as well.
+    let loose = caught(0.1);
+    assert!(
+        loose > tight,
+        "a tenth caught {loose} and two percent {tight}"
     );
 }

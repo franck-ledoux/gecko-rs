@@ -83,6 +83,31 @@ per entity:
 `H` shows them, read off the theme so the card cannot come to disagree with
 the screen.
 
+## What keeps itself up to date
+
+Three rules, and between them they are why a long session does not quietly
+come off the model.
+
+**A cell keeps what nothing contradicts.** An edge is classified from its
+two ends and a face from its four edges, but neither is *cleared* because
+one of them went quiet: the ones still speaking have to disagree first. An
+edge with nothing classified at either end is a different matter — that is
+the inside of the model, where a pillow draws nodes in and an extrusion
+raises them — and it does give up what it had.
+
+**Nothing is handed out on partial evidence.** A cell that was on nothing
+stays on nothing until its whole boundary agrees: the diagonal of a face
+has one end on a curve too, and it is not on that curve.
+
+**A node made among nodes that are on the model is judged by where it is.**
+A cut inherits what the edge it cut was on, which costs nothing and is
+exact — but a node made where there was nothing to inherit used to land on
+the geometry claiming nothing, and everything through it was cleared. Such
+a node is now offered to the nearest entity within the reach the last
+[`classify`](#putting-the-blocking-on-the-model) was given. A block you have just
+**made** is left alone, however exactly it sits on the model: dropping a
+cube on a geometry is not a statement that the cube follows it.
+
 The three are a **ramp**: the lightness falls and the hue turns the same
 way all along it, so they read as one family while staying far enough apart
 to be told at a glance. They were three violets of one hue until 0.1.2, and
@@ -151,15 +176,24 @@ corner and leaving it a millimetre away would be a label rather than a fact.
 Never by proximity. An edge goes on the **lowest-dimensional entity
 containing both its ends' classifications**:
 
-| Its two ends            | The edge   |
-| ----------------------- | ---------- |
-| on one curve            | that curve |
-| on two curves of a face | that face  |
-| sharing nothing         | nothing    |
-| either one unclassified | nothing    |
+| Its two ends                   | The edge                                                                    |
+| ------------------------------ | --------------------------------------------------------------------------- |
+| on one curve                   | that curve                                                                  |
+| on two curves of a face        | that face                                                                   |
+| sharing nothing                | nothing                                                                     |
+| one unclassified, one speaking | **what it already had**, if that end agrees — and nothing if it had nothing |
+| neither classified             | nothing                                                                     |
 
-This is what keeps an edge coherent with its own corners, which proximity
-cannot. Sampling one point of an edge can land it on a curve neither of its
+The fourth row is what keeps a long session on the model: an operation that
+rightly lets go of a node — a pillow draws four of them into the material —
+used to wipe every edge that touched one, though none of those edges had
+moved. What a cell was told stands until something contradicts it. The last
+row is the other side of that: an edge with nothing at either end is inside
+the model, and keeping what it used to follow is what tears a mesh out
+through the surface.
+
+The rest is what keeps an edge coherent with its own corners, which
+proximity cannot. Sampling one point of an edge can land it on a curve neither of its
 endpoints touches — a diagonal across a face passes nowhere near any curve,
 and a search from its midpoint would say "surface" for the right reason by
 luck and "curve" for the wrong reason just as often.

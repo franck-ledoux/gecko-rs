@@ -571,6 +571,54 @@ impl Blocking {
         ))
     }
 
+    /// A mark for "every node that exists now".
+    ///
+    /// Read before a command and handed back to [`nodes_since`] after it,
+    /// which is how the session tells a node an operation **made** from one
+    /// it merely renamed. The name is no good for that: taking a block out
+    /// splits the vertex orbits around it, and every copy comes out
+    /// unnamed and is given a fresh name afterwards, though nothing new
+    /// was created. The corner key is the identity that survives exactly
+    /// that, which is what it was written for.
+    ///
+    /// [`nodes_since`]: Self::nodes_since
+    pub fn corner_mark(&self) -> u32 {
+        self.corners.handed_out()
+    }
+
+    /// The nodes whose corner was made at or after `mark`.
+    pub fn nodes_since(&self, mark: u32) -> Vec<CellId> {
+        let mut out: Vec<CellId> = self
+            .map
+            .iter_vertices()
+            .filter(|v| {
+                self.node_tag(*v)
+                    .corner_key
+                    .get()
+                    .is_some_and(|key| key >= mark)
+            })
+            .map(|v| self.node_tag(v).id)
+            .filter(|id| id.is_some())
+            .collect();
+        // By name, so that two hosts walking the same model reach the same
+        // answers in the same order.
+        out.sort();
+        out
+    }
+
+    /// Is this node joined by an edge to one that is on the geometry?
+    ///
+    /// What tells a node made **into** a classified model from one that
+    /// arrived with a block of its own.
+    pub fn beside_the_classified(&self, node: CellId) -> bool {
+        let Some(vertex) = self.node_by_id(node) else {
+            return false;
+        };
+        self.neighbours(vertex)
+            .into_iter()
+            .any(|other| self.node_tag(other).on.is_some())
+    }
+
     /// Move the nodes towards the middle of their neighbours, as far as
     /// what they are classified on allows.
     ///
@@ -1214,16 +1262,44 @@ impl Blocking {
             .iter_edges()
             .map(|e| {
                 let (a, b) = self.edge_endpoints(e);
+                let already = self.edge_tag(e).on;
                 let on = match (self.node_tag(a).on, self.node_tag(b).on) {
                     // An edge is never pinned to a point, which would
                     // over-constrain it.
                     (Some(x), Some(y)) => settle(Settling {
                         boundary: &[x, y],
                         at_least: 1,
-                        already: self.edge_tag(e).on,
+                        already,
                         middle: self.middle(&[a, b]),
                     }),
-                    _ => None,
+                    // One end left to go on. Nothing is **handed out** from
+                    // a single end — the diagonal of a face has one end on
+                    // a curve too, and it is not on that curve — but what
+                    // the edge already had stays while the end that is
+                    // still classified allows it.
+                    //
+                    // Without this a session bleeds: a pillow draws four
+                    // nodes into the material, rightly letting go of the
+                    // geometry on the way in, and every edge that touches
+                    // one of them is cleared though it has not moved. Then
+                    // a cut of one of *those* inherits nothing, and so on.
+                    // Measured on one session: a fifth of the edges had
+                    // lost a classification nothing had contradicted.
+                    (Some(x), None) | (None, Some(x)) => {
+                        let kept = settle(Settling {
+                            boundary: &[x],
+                            at_least: 1,
+                            already,
+                            middle: self.middle(&[a, b]),
+                        });
+                        already.filter(|on| kept == Some(*on))
+                    }
+                    // Neither end on anything is the inside of the model:
+                    // an edge drawn in by a pillow or raised by an
+                    // extrusion is not on the boundary any more, and
+                    // keeping what it used to follow is what tears a mesh
+                    // out through the surface.
+                    (None, None) => None,
                 };
                 (e, on)
             })
@@ -1238,20 +1314,37 @@ impl Blocking {
             .iter_faces()
             .map(|f| {
                 let darts = self.face_darts(f);
-                let boundary: Option<Vec<On>> = darts
+                let edges: Vec<Option<On>> = darts
                     .iter()
                     .map(|d| self.edge_tag(self.map.edge_id(*d)).on)
                     .collect();
                 let corners = darts.map(|d| self.map.vertex_id(d));
-                let on = boundary.and_then(|b| {
+                let already = self.face_tag(f).on;
+                let middle = self.middle(&corners);
+                let known: Vec<On> = edges.iter().flatten().copied().collect();
+                let on = if known.len() == edges.len() {
                     settle(Settling {
-                        boundary: &b,
+                        boundary: &known,
                         // Nor a face to a curve.
                         at_least: 2,
-                        already: self.face_tag(f).on,
-                        middle: self.middle(&corners),
+                        already,
+                        middle,
                     })
-                });
+                } else if known.is_empty() {
+                    None
+                } else {
+                    // The same rule as an edge's, one dimension up: what
+                    // the face already had stays while the edges that are
+                    // still classified allow it, and nothing is handed to
+                    // a face whose boundary is only partly known.
+                    let kept = settle(Settling {
+                        boundary: &known,
+                        at_least: 2,
+                        already,
+                        middle,
+                    });
+                    already.filter(|on| kept == Some(*on))
+                };
                 (f, on)
             })
             .collect();

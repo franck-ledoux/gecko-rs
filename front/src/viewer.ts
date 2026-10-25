@@ -1111,8 +1111,8 @@ export class Viewer {
    */
   setPicking(picking: Picking) {
     this.picking = picking;
-    const handles = (m: { metadata?: { name?: number } }) =>
-      picking === "blocks" && (m.metadata?.name ?? -1) >= 0;
+    const handles = (m: { metadata?: { name?: number }; isVisible?: boolean }) =>
+      picking === "blocks" && (m.metadata?.name ?? -1) >= 0 && m.isVisible !== false;
     this.scene.pointerDownPredicate = handles;
     this.scene.pointerUpPredicate = handles;
     this.scene.pointerMovePredicate = handles;
@@ -1653,6 +1653,9 @@ export class Viewer {
           ? CreateBox(`node${n}`, { size: FROZEN_SIDE }, this.scene)
           : CreateSphere(`node${n}`, { diameter: 1, segments: 8 }, this.scene);
       s.position = this.point(n);
+      // The setting holds across a refresh: new handles arrive hidden when
+      // the handles are hidden.
+      s.isVisible = this.prefs.nodes.visible;
       // The kernel's name, not this index: the index is only good until the
       // next edit reorders the view.
       s.metadata = { index: n, name: view.names[n] };
@@ -1793,10 +1796,15 @@ export class Viewer {
     return out;
   }
 
-  /** Give every handle the colour its node has earned. */
+  /** Give every handle the colour its node has earned, and show or hide
+   *  the lot of them. */
   private paintNodes() {
     this.nodes.forEach((mesh, n) => {
       (mesh.material as StandardMaterial).emissiveColor = this.nodeColour(n);
+      // Hidden means hidden from the pointer too. A handle you cannot see
+      // but can still grab is worse than one you can see: the model moves
+      // and nothing on screen says what you took hold of.
+      mesh.isVisible = this.prefs.nodes.visible;
     });
   }
 
@@ -1832,6 +1840,9 @@ export class Viewer {
     const pane = this.paneFor(x0, y0);
     const out: number[] = [];
     for (const mesh of this.nodes) {
+      // Hidden handles are not caught by a band either: what the band is
+      // for is picking what you can see.
+      if (!mesh.isVisible) continue;
       const at = this.toScreen(mesh.position, pane);
       if (!at) continue;
       if (at[0] >= left && at[0] <= right && at[1] >= top && at[1] <= bottom) {
@@ -1882,7 +1893,7 @@ export class Viewer {
     const hit = this.scene.pick(
       x,
       y,
-      (m) => (m.metadata?.name ?? -1) >= 0,
+      (m) => (m.metadata?.name ?? -1) >= 0 && m.isVisible,
       false,
       this.cameraFor(x, y),
     );

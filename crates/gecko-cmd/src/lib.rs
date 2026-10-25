@@ -468,6 +468,16 @@ pub struct Session {
     /// bargain as `geometry_generation`.
     mesh: Option<Mesh>,
     mesh_generation: u32,
+    /// How near a node has to be to the geometry to be taken by it, as a
+    /// share of the model's size — the last one [`Command::Classify`] was
+    /// given, or the kernel's own until somebody says.
+    ///
+    /// Remembered because the nodes an operation makes are judged by it,
+    /// and the right yardstick for that is the one whoever is working said
+    /// to use: somebody classifying at five percent means five percent.
+    /// A setting rather than state, so an undo does not put an old one
+    /// back — like how many steps of history there are.
+    tolerance: f64,
     /// Everything that was done, in order, as the commands that did it.
     ///
     /// This is the session's history, and it is kept here rather than in
@@ -509,6 +519,7 @@ impl Session {
             steps: HISTORY_STEPS,
             mesh: None,
             mesh_generation: 0,
+            tolerance: SNAP_SHARE,
             journal: Vec::new(),
         })
     }
@@ -543,6 +554,9 @@ impl Session {
         // about what one refresh of the view costs, which is the right price
         // for being able to take a thing back.
         let before = (self.steps > 0).then(|| self.capture()).transpose()?;
+        // Where the nodes end, so that the ones the command is about to
+        // make can be told from the ones it renames.
+        let mark = self.blocking.corner_mark();
         // Kept before the command is consumed, and trimmed: a geometry
         // command carries the whole file, and the journal wants the name.
         let written = trim(command.clone());
@@ -554,6 +568,9 @@ impl Session {
                 self.push(state);
             }
             self.settle_origin();
+            // The nodes this command made, onto the model if they are on
+            // it. Before the settling below, which reads what they say.
+            self.settle_fresh(mark);
             // Every edge, after anything that touched the model. An edge's
             // classification is a statement about its two ends, so it is
             // out of date the moment either of them is — and a cut makes
@@ -1059,6 +1076,7 @@ impl Session {
                 })
             }
             Command::Classify { tolerance } => {
+                self.tolerance = tolerance;
                 let (nodes, edges, faces) = self.classify(tolerance)?;
                 Ok(Outcome {
                     script: None,
@@ -1356,6 +1374,68 @@ impl Session {
             seen.classified_edges,
             seen.classified_faces,
         ))
+    }
+
+    /// Put the nodes this command **made** onto the geometry, when they
+    /// are near enough to it.
+    ///
+    /// Only the ones it made. A node that was there before keeps whatever
+    /// it had, including nothing: somebody who took a node off the model
+    /// is not overruled by the next cut. New-ness is read off the corner
+    /// key rather than off the name, because an operation that takes a
+    /// block out renames nodes it did not create.
+    ///
+    /// Why this exists: a cut inherits what the edge it cut was
+    /// classified on, which is exact and costs nothing — but a node made
+    /// where there was nothing to inherit lands on the model classified on
+    /// nothing, and every edge through it is then cleared. Over a session
+    /// that bleeds: measured on one, twenty of seventy-two nodes sat on
+    /// the geometry claiming nothing, and a fifth of the edges had been
+    /// cleared because of them.
+    ///
+    /// The tolerance is the session's — the one the last `classify` was
+    /// given, or the kernel's own until there has been one. Somebody
+    /// working at five percent means five percent, and a node this pass
+    /// leaves behind is one that comes back as an edge with nothing on
+    /// it.
+    fn settle_fresh(&mut self, mark: u32) {
+        let Session {
+            blocking,
+            geometry,
+            composites,
+            tolerance,
+            ..
+        } = self;
+        let tolerance = *tolerance;
+        let Some(geometry) = geometry.as_deref() else {
+            return;
+        };
+        let fresh: Vec<CellId> = blocking
+            .nodes_since(mark)
+            .into_iter()
+            .filter(|n| blocking.node_class(*n).is_none() && !blocking.is_frozen(*n))
+            // Born among nodes that are on the model. A block somebody
+            // has just made — a cube, the box round a geometry — is not a
+            // claim that it follows anything, and pinning its corners
+            // because they happen to be near would be the interface
+            // deciding something nobody said. A node cut into material
+            // that *is* on the model is a different matter: everything
+            // around it is pinned, and it was only ever unpinned because
+            // there was nothing to inherit.
+            .filter(|n| blocking.beside_the_classified(*n))
+            .collect();
+        if fresh.is_empty() {
+            return;
+        }
+        let model = Model::new(geometry, composites);
+        let reach = [tolerance.max(0.0) * model.span(); 3];
+        blocking.classify_named(
+            &fresh,
+            // What it claims is nothing — that is why it is here — so
+            // proximity is the whole answer.
+            |_, at| model.nearest(at, reach).map(|(dim, tag)| On { dim, tag }),
+            |on, at| model.project(on.dim, on.tag, at),
+        );
     }
 
     /// Decide again what these nodes are on, by where they are now.

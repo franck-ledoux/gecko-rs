@@ -65,9 +65,14 @@ or neither.
 | **opacity** | transparency, per group                                                                                                                      |
 | **shrink**  | pull each cell towards its own centre                                                                                                        |
 
-Nodes and edges take the three colourings too; nodes are always drawn, so
-that is all their box carries. **Blocks** take only the first two: a block
-is classified on nothing, a surface mesh having no volumes to put it on.
+Nodes and edges take the three colourings too, and both can be **hidden**:
+a hundred blocks is a thousand handles over the model, and looking at the
+shape of a blocking is a thing you do as much as working on it. Hidden
+handles are out of the pointer's way as well — they cannot be clicked,
+dragged, or caught in a band — because a handle you cannot see but can
+still grab moves the model with nothing on screen to say what you took hold
+of. **Blocks** take only the first two colourings: a block is classified on
+nothing, a surface mesh having no volumes to put it on.
 
 **They are the same surfaces.** A block is bounded by its faces, so with both
 on at full size you are looking at one shape coloured two ways. Shrinking is
@@ -152,10 +157,15 @@ Nothing is internal until two blocks are [glued](gluing.md).
 
 ## The mesh
 
-**Mesh** holds one group, the skin of the last mesh built — shown or not,
-one colour or one per block, and how far through it you can see. The element
-grid is drawn over it in the edge colour, which is the half of the picture
-that says what the discretisation did. See [Meshing](meshing.md).
+**Mesh** carries the last mesh built — shown or not, one colour or one per
+block, and how far through it you can see. The element grid is drawn over it
+in the edge colour, which is the half of the picture that says what the
+discretisation did. See [Meshing](meshing.md).
+
+Its three controls sit directly in the band, with no fold of their own: a
+mesh has no groups to tell apart, so the fold was a step to open before
+reaching them and a heading saying "skin" over the only thing a mesh can be
+drawn as.
 
 ## The geometry
 

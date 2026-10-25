@@ -112,7 +112,7 @@ async function boot() {
       say(group, digest(prefs[group].colouring, prefs[group].alpha, prefs[group].visible));
     }
     say("edges", digest(prefs.edges.colouring, undefined, prefs.edges.visible));
-    say("nodes", digest(prefs.nodes.colouring));
+    say("nodes", digest(prefs.nodes.colouring, undefined, prefs.nodes.visible));
     for (const group of GEOM_GROUPS) {
       say(group, digest(prefs[group].colouring, prefs[group].alpha, prefs[group].visible));
     }
@@ -248,9 +248,13 @@ async function boot() {
       modes("edges", prefs.edges.colouring, true) +
       slider("edges-shrink", "shrink", 0.1, prefs.edges.shrink) +
       `</details>` +
-      // Nodes are always drawn — they are what you grab — so all they
-      // carry is how they are coloured.
-      summary("cells", "nodes", "Nodes", digest(prefs.nodes.colouring)) +
+      summary(
+        "cells",
+        "nodes",
+        "Nodes",
+        digest(prefs.nodes.colouring, undefined, prefs.nodes.visible),
+        prefs.nodes.visible,
+      ) +
       modes("nodes", prefs.nodes.colouring, true) +
       `</details>`;
 
@@ -292,6 +296,11 @@ async function boot() {
     const wire = $("layers").querySelector<HTMLInputElement>('[data-test="edges-visible"]')!;
     wire.addEventListener("change", (e) => {
       prefs.edges.visible = (e.target as HTMLInputElement).checked;
+      redraw();
+    });
+    const handles = $("layers").querySelector<HTMLInputElement>('[data-test="nodes-visible"]')!;
+    handles.addEventListener("change", (e) => {
+      prefs.nodes.visible = (e.target as HTMLInputElement).checked;
       redraw();
     });
     keepFolds("layers");
@@ -350,20 +359,19 @@ async function boot() {
    * A band of its own rather than one more cell group: a mesh is not part
    * of the blocking, it is what the blocking was for, and it comes and
    * goes on a clock of its own.
+   *
+   * Flat inside that band, with no fold of its own. There is exactly one
+   * thing in it — a mesh has no groups to tell apart — so the fold was a
+   * step to open before reaching three controls, and a heading saying
+   * "skin" over the only thing a mesh can be drawn as.
    */
   function drawMeshLayer() {
     const layer = prefs.mesh;
     $("mesh-layer").innerHTML =
-      summary(
-        "mesh",
-        "mesh",
-        "skin",
-        digest(layer.colouring, layer.alpha, layer.visible),
-        layer.visible,
-      ) +
+      `<label class="check"><input type="checkbox" data-test="mesh-visible"` +
+      `${layer.visible ? " checked" : ""} /> show</label>` +
       modes("mesh", layer.colouring, false) +
-      slider("mesh-alpha", "opacity", 0, layer.alpha) +
-      `</details>`;
+      slider("mesh-alpha", "opacity", 0, layer.alpha);
 
     const find = (test: string) =>
       $("mesh-layer").querySelector<HTMLInputElement>(`[data-test="${test}"]`)!;
@@ -381,7 +389,6 @@ async function boot() {
       prefs.mesh.alpha = Number((e.target as HTMLInputElement).value);
       redraw();
     });
-    keepFolds("mesh-layer");
   }
   drawMeshLayer();
 

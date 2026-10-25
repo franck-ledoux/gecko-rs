@@ -214,9 +214,11 @@ export interface ViewPrefs {
   /** What a smoothing pass does: how many times over, and how far along
    *  the way to the middle of its neighbours a node goes each time. */
   smooth: { rounds: number; share: number };
-  /** Nodes are always drawn — they are what you grab — so all they carry
-   *  is how they are coloured. */
-  nodes: { colouring: Colouring; size: number };
+  /** Nodes carry how they are coloured, how big they are drawn, and
+   *  whether they are drawn at all. Hiding them is for looking at the
+   *  shape of a blocking rather than working on it: a handle on every
+   *  corner of a hundred blocks is a thousand dots over the model. */
+  nodes: { visible: boolean; colouring: Colouring; size: number };
   /** Edges carry that, whether they are drawn at all, and how far they
    *  are pulled off the surfaces they would otherwise lie exactly on. */
   edges: { visible: boolean; shrink: number; colouring: Colouring; width: number };
@@ -257,7 +259,7 @@ export const DEFAULTS: ViewPrefs = {
   // By their classification to begin with: putting the blocking onto the
   // model is what the whole session is for, so what each cell is attached
   // to is the thing worth seeing before anything else.
-  nodes: { colouring: "class", size: NODE_SIZE },
+  nodes: { visible: true, colouring: "class", size: NODE_SIZE },
   edges: { visible: true, shrink: 1, colouring: "class", width: EDGE_WIDTH },
   // Faces on but well short of opaque, so the wireframe and the handles still
   // read through them. Blocks off: they draw the same surfaces, and two
@@ -370,6 +372,10 @@ export function loadPrefs(): ViewPrefs {
         share: within(stored.smooth?.share, 1, DEFAULTS.smooth.share),
       },
       nodes: {
+        visible:
+          typeof stored.nodes?.visible === "boolean"
+            ? stored.nodes.visible
+            : DEFAULTS.nodes.visible,
         colouring: colouring(stored.nodes?.colouring, DEFAULTS.nodes.colouring),
         // A size of nought would be a handle nobody could find again, so
         // the floor is one pixel rather than none.

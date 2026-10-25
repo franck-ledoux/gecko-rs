@@ -3,6 +3,41 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
+## Unreleased
+
+- **A session no longer bleeds classification.** A node an operation makes
+  among nodes that are on the model is now put on the model too, when it is
+  near enough — the same question `classify` asks, asked at the moment the
+  node appears. Before, a node made where there was nothing to inherit
+  landed on the geometry claiming nothing, every edge through it was
+  cleared, and anything cut out of *those* inherited nothing in turn.
+  Measured on one session: twenty of seventy-two nodes sat on the model
+  claiming nothing and a fifth of the edges had been cleared because of
+  them; the same session now ends with none and with thirty more edges
+  classified.
+- The reach it is judged by is the one the **last `classify` was given**,
+  not a number in the kernel: somebody working at five percent means five
+  percent.
+- And the limit, which is the other half of it: a block somebody has just
+  **made** is never pinned behind their back, however exactly it sits on
+  the geometry. Dropping a cube on a model is not a statement that the cube
+  follows it.
+- **An edge keeps what nothing contradicts.** It used to be cleared the
+  moment either end stopped being classified — so a pillow, which rightly
+  lets go of the four nodes it draws into the material, wiped every edge
+  that touched one of them though none had moved. Now the end that is still
+  classified has to disagree before the edge gives anything up, and an edge
+  with nothing at either end — the inside of the model — still goes.
+  Nothing is handed to an edge from one end alone. Faces follow the same
+  rule, one dimension up.
+- **The handles can be hidden**, like edges, faces and blocks — and hidden,
+  they are out of the pointer's way as well: a handle you cannot see but
+  can still grab moves the model with nothing on screen to say what you took
+  hold of.
+- The mesh's controls sit directly in their band: the **skin** fold inside
+  it is gone. A mesh has no groups to tell apart, so the fold was a step to
+  open before reaching three controls.
+
 ## 0.1.2
 
 Smoothing, a session you can replay, and a handful of things from using it.

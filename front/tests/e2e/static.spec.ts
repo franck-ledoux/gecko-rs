@@ -3053,15 +3053,68 @@ test("the mesh is written out as VTK", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
-test("the mesh has a fold of its own, and can be put away", async ({ page }) => {
+test("the handles can be put away, and the pointer lets them be", async ({ page }) => {
+  // Edges, faces and blocks could each be hidden; the handles could not,
+  // on the grounds that they are what you grab. A hundred blocks is a
+  // thousand dots over the model, and looking at the shape of a blocking
+  // is a thing you do as much as working on it.
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await openDrawer(page);
+  await openGroup(page, "nodes");
+
+  const name = (await page.evaluate(() => (window as any).__gecko.names()[0])) as number;
+  const at = (await page.evaluate(
+    (n) => (window as any).__gecko.nodeScreen(n),
+    name,
+  )) as [number, number];
+  const box = (await page.locator("#view").boundingBox())!;
+
+  // There to begin with, and a click on it picks it.
+  expect(await page.evaluate((p) => (window as any).__gecko.pickNode(p[0], p[1]), at)).toBe(name);
+
+  await page.locator('[data-test="nodes-visible"]').uncheck();
+  await expect(page.locator("#grp-nodes .digest")).toHaveText("hidden");
+  expect(await page.evaluate(() => (window as any).__gecko.nodeShape(0))).not.toBeNull();
+
+  // Gone from the picture, and gone from the pointer with it: a handle you
+  // cannot see but can still grab moves the model with nothing on screen
+  // to say what you took hold of.
+  expect(await page.evaluate((p) => (window as any).__gecko.pickNode(p[0], p[1]), at)).toBeNull();
+  await page.mouse.click(box.x + at[0], box.y + at[1]);
+  expect(await page.evaluate(() => (window as any).__gecko.selectedNodes())).toEqual([]);
+
+  // Nor caught by a band drawn over them.
+  await page.keyboard.down("Shift");
+  await page.mouse.move(box.x + 10, box.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width - 10, box.y + box.height - 10, { steps: 8 });
+  await page.mouse.up();
+  await page.keyboard.up("Shift");
+  expect(await page.evaluate(() => (window as any).__gecko.selectedNodes())).toEqual([]);
+
+  // And the setting is remembered, like every other thing about how it looks.
+  await page.reload();
+  await page.waitForSelector("body[data-ready='1']");
+  expect(await page.evaluate(() => (window as any).__gecko.prefs().nodes.visible)).toBe(false);
+  expect(errors).toEqual([]);
+});
+
+test("the mesh has a band of its own, and can be put away", async ({ page }) => {
   const errors = await boot(page);
   await page.locator("#cube").click();
   await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
   await page.keyboard.press("e");
   await expect(page.locator("[data-test=mesh-hexes]")).toHaveText("1000");
 
+  // One band, and its controls are in it — no fold inside the fold. A mesh
+  // has no groups to tell apart, so there was nothing for the inner one to
+  // separate.
   await openSection(page, "mesh");
-  await expect(page.locator("#grp-mesh .digest")).toHaveText("uniform · 100%");
+  expect(await page.locator("#mesh-layer details").count()).toBe(0);
+  await expect(page.locator('[data-test="mesh-uniform"]')).toBeVisible();
+  await expect(page.locator('[data-test="mesh-alpha"]')).toBeVisible();
   await page.locator("[data-test=mesh-visible]").uncheck();
   // Still meshed — the kernel holds it — but nothing of it is drawn.
   expect(await page.evaluate(() => (window as any).__gecko.skinCount())).toBe(0);

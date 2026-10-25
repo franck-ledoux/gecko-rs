@@ -1916,13 +1916,13 @@ describe("wearing its classification", () => {
     expect(viewer.nodeState(names[0])).toEqual({ on: { dim: 2, tag: 1 }, frozen: true });
 
     // And the colour still says its classification, which is a surface.
-    viewer.applyPrefs({ ...DEFAULTS, nodes: { colouring: "class", size: DEFAULTS.nodes.size } });
+    viewer.applyPrefs({ ...DEFAULTS, nodes: { ...DEFAULTS.nodes, colouring: "class" } });
     expect(handle(viewer, 0)).toBe(DEFAULTS.theme.onSurface.toLowerCase());
     // Or its id, or nothing at all, as the setting says — the frozen node
     // is treated like any other in each case.
-    viewer.applyPrefs({ ...DEFAULTS, nodes: { colouring: "id", size: DEFAULTS.nodes.size } });
+    viewer.applyPrefs({ ...DEFAULTS, nodes: { ...DEFAULTS.nodes, colouring: "id" } });
     expect(handle(viewer, 0)).toBe(colourForId(names[0], FAMILY.nodes).toLowerCase());
-    viewer.applyPrefs({ ...DEFAULTS, nodes: { colouring: "uniform", size: DEFAULTS.nodes.size } });
+    viewer.applyPrefs({ ...DEFAULTS, nodes: { ...DEFAULTS.nodes, colouring: "uniform" } });
     expect(handle(viewer, 0)).toBe(DEFAULTS.theme.nodes.toLowerCase());
   });
 
