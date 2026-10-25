@@ -3,7 +3,9 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
-## Unreleased
+## 0.1.3
+
+Three things from a session with it, and one of them took the measuring.
 
 - **A session no longer bleeds classification.** A node an operation makes
   among nodes that are on the model is now put on the model too, when it is
