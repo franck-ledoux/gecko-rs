@@ -154,7 +154,21 @@ pub struct Census {
 pub struct GroupMasks {
     pub nodes: HashMap<VertexIdType, u64>,
     pub edges: HashMap<EdgeIdType, u64>,
-    pub faces: HashMap<FaceIdType, u64>,
+    /// Cells that bound a block in **no** group, as well as whatever else
+    /// they bound.
+    ///
+    /// The mask alone cannot say this, and that is the whole reason this
+    /// is here: an edge between a block of the fluid and a block of
+    /// nothing carries the fluid's bit, so hiding the fluid would take it
+    /// away — and leave the block that is still on screen with a hole
+    /// where its edge used to be. A cell is drawn when **any** block it
+    /// bounds is drawn, and this is the half of that sentence a mask
+    /// cannot hold.
+    ///
+    /// Only filled when something is grouped: where nothing is, every
+    /// cell's mask is zero and that says it already.
+    pub loose_nodes: HashSet<VertexIdType>,
+    pub loose_edges: HashSet<EdgeIdType>,
 }
 
 /// A cell asking where it belongs, and everything there is to answer with.
@@ -696,15 +710,31 @@ impl Blocking {
     /// look at each volume's tag.
     pub fn group_masks(&self) -> GroupMasks {
         let mut out = GroupMasks::default();
+        let mut grouped = false;
         for volume in self.map.iter_volumes() {
             let groups = self.block_tag(volume).groups;
             if groups == 0 {
                 continue;
             }
+            grouped = true;
             for dart in self.map.orbit(OrbitPolicy::Volume, volume as DartIdType) {
                 *out.nodes.entry(self.map.vertex_id(dart)).or_default() |= groups;
                 *out.edges.entry(self.map.edge_id(dart)).or_default() |= groups;
-                *out.faces.entry(self.map.face_id(dart)).or_default() |= groups;
+            }
+        }
+        // A second pass, and only when there is something to tell apart:
+        // which cells touch a block that is in no group. Without it, an
+        // edge between a grouped block and an ungrouped one would go when
+        // the group did, taking a side off the block left behind.
+        if grouped {
+            for volume in self.map.iter_volumes() {
+                if self.block_tag(volume).groups != 0 {
+                    continue;
+                }
+                for dart in self.map.orbit(OrbitPolicy::Volume, volume as DartIdType) {
+                    out.loose_nodes.insert(self.map.vertex_id(dart));
+                    out.loose_edges.insert(self.map.edge_id(dart));
+                }
             }
         }
         out

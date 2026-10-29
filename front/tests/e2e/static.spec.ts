@@ -3120,6 +3120,16 @@ test("blocks are put in a group, which colours and filters what is drawn", async
   });
   expect(new Set(tints as string[]).size).toBe(2);
 
+  // Whether it reaches the mesh is said on its own row, in words, and it
+  // goes both ways: the command that names a group is create-or-find, and
+  // finding one used to ignore what it was told about the mesh.
+  await expect(page.locator("[data-test=group-written]")).toBeChecked();
+  await page.locator("[data-test=group-written]").uncheck();
+  await expect(page.locator("[data-test=group-written]")).not.toBeChecked();
+  await expect(page.locator("#status")).toContainText("not written into the mesh");
+  await page.locator("[data-test=group-written]").check();
+  await expect(page.locator("[data-test=group-written]")).toBeChecked();
+
   // Renamed in place, which is the one thing anybody does to a group
   // twice.
   await page.locator("[data-test=group-name]").fill("water");
@@ -3130,6 +3140,51 @@ test("blocks are put in a group, which colours and filters what is drawn", async
   await page.locator("[data-test=group-drop]").click();
   await expect(page.locator("#groups")).toContainText("No groups yet");
   await expect(page.locator("[data-test=blocks]")).toHaveText("2");
+  expect(errors).toEqual([]);
+});
+
+test("hiding a group leaves the blocks beside it whole", async ({ page }) => {
+  // The bug this answers: an edge between a grouped block and an
+  // ungrouped one carries the group's bit, so hiding the group took the
+  // edge away from the block still on screen — and left it looking like a
+  // box with a side missing. A cell is drawn when **any** block it bounds
+  // is drawn.
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+
+  // Glued, so the two blocks share a face — four nodes and four edges
+  // belong to both.
+  await page.evaluate(async () => {
+    const g = (window as any).__gecko;
+    const [first, second] = facingPair();
+    g.apply({ op: "glue_faces", first, second });
+    await g.refresh();
+  });
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 12);
+
+  // One of the two in a group.
+  await page.evaluate(async () => {
+    const g = (window as any).__gecko;
+    const blocks = [...new Set(Array.from(g.surface("faces").blocks as number[]))];
+    g.apply({ op: "group", name: "fluid", blocks: [blocks[0]] });
+    await g.refresh();
+  });
+  await openDrawer(page);
+  await openSection(page, "groups");
+  await page.locator("[data-test=group-shown]").uncheck();
+
+  // What is left is one whole cube: eight handles, twelve edges, six
+  // faces — the shared ones among them.
+  await expect
+    .poll(async () => page.evaluate(() => (window as any).__gecko.nodesDrawn()))
+    .toBe(8);
+  expect(await page.evaluate(() => (window as any).__gecko.counts().edges)).toBe(12);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.surface("faces").faces.length),
+  ).toBe(6);
   expect(errors).toEqual([]);
 });
 

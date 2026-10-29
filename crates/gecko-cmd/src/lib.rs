@@ -94,10 +94,6 @@ pub const SMOOTH_ROUNDS: u32 = 5;
 /// watch what is happening to their model.
 pub const SMOOTH_SHARE: f64 = 0.5;
 
-fn yes() -> bool {
-    true
-}
-
 fn default_snap() -> f64 {
     SNAP_SHARE
 }
@@ -326,8 +322,15 @@ pub enum Command {
         name: String,
         #[serde(default)]
         blocks: Vec<u32>,
-        #[serde(default = "yes")]
-        written: bool,
+        /// Whether the group reaches the mesh as a variable of its own.
+        ///
+        /// **Left out, it is not changed**: a group is created written,
+        /// and `gecko.group("fluid", {7})` on a group that is only a way
+        /// of looking at the model must not quietly turn it into part of
+        /// the file. Said, it is set — which is how the box in the band
+        /// is both ticked and unticked.
+        #[serde(default)]
+        written: Option<bool>,
     },
     /// Take blocks out of a group, leaving the group itself alone.
     Ungroup {
@@ -1217,12 +1220,15 @@ impl Session {
                 // Every name checked before anything is written: a group
                 // half filled is worse than one not made, since the undo
                 // would put back a state nobody asked for.
-                let named = self.named(&blocks)?;
+                let named = self.named_blocks(&blocks)?;
                 let bit = self
                     .groups
-                    .make(&name, written)
+                    .make(&name, written.unwrap_or(true))
                     .ok_or(GroupError::Full)?
                     .bit;
+                if let Some(written) = written {
+                    self.groups.write_out(&name, written)?;
+                }
                 self.blocking.set_in_group(&named, bit, true)?;
                 Ok(Outcome {
                     script: None,
@@ -1231,7 +1237,11 @@ impl Session {
                         named.len(),
                         plural(named.len()),
                         self.in_group(bit),
-                        if written { "" } else { ", not written out" },
+                        if self.groups.by_name(&name).is_some_and(|g| g.written) {
+                            ""
+                        } else {
+                            ", not written into the mesh"
+                        },
                     ),
                     view_changed: true,
                 })
@@ -1242,7 +1252,7 @@ impl Session {
                     .by_name(&name)
                     .ok_or_else(|| GroupError::NoSuch(name.clone()))?
                     .bit;
-                let named = self.named(&blocks)?;
+                let named = self.named_blocks(&blocks)?;
                 self.blocking.set_in_group(&named, bit, false)?;
                 Ok(Outcome {
                     script: None,
@@ -1415,6 +1425,24 @@ impl Session {
     /// An empty list is refused rather than quietly doing nothing: it means
     /// the interface sent a gesture with nothing selected, and a command
     /// that changed nothing would still cost a step of undo.
+    /// The same for **blocks**, and an empty list is not an error.
+    ///
+    /// Its own function rather than [`named`][Self::named]: that one looks
+    /// up nodes, and a block's name and a node's are both small numbers —
+    /// so passing blocks to it checks that a node of that number exists,
+    /// which is no check at all. And naming no blocks is a thing somebody
+    /// does on purpose: making a group before filling it, or saying
+    /// whether an existing one reaches the mesh.
+    fn named_blocks(&self, blocks: &[u32]) -> Result<Vec<CellId>, SessionError> {
+        let names: Vec<CellId> = blocks.iter().copied().map(CellId::from_raw).collect();
+        for block in &names {
+            if !self.blocking.named_is_block(*block) {
+                return Err(BlockingError::NoSuchBlock(*block).into());
+            }
+        }
+        Ok(names)
+    }
+
     fn named(&self, nodes: &[u32]) -> Result<Vec<CellId>, SessionError> {
         if nodes.is_empty() {
             return Err(SessionError::BadCommand("no node named".to_string()));

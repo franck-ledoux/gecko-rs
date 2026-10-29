@@ -81,6 +81,17 @@ pub struct ViewBuffer {
     pub edge_groups_hi: Vec<u32>,
     pub quad_groups_lo: Vec<u32>,
     pub quad_groups_hi: Vec<u32>,
+    /// 1 where a node or an edge bounds a block that is in **no** group.
+    ///
+    /// A cell is drawn when any block it bounds is drawn, and the mask
+    /// alone cannot say that: an edge between a block of the fluid and a
+    /// block of nothing carries the fluid's bit, so hiding the fluid
+    /// would take the edge off a block that is still on screen.
+    ///
+    /// Quadrangles need none: one is a (face, block) pair, so its own
+    /// mask already speaks for the one block it is drawn with.
+    pub node_loose: Vec<u32>,
+    pub edge_loose: Vec<u32>,
 }
 
 impl ViewBuffer {
@@ -113,6 +124,7 @@ impl ViewBuffer {
         let mut node_frozen = Vec::with_capacity(nodes.len());
         let mut node_groups_lo = Vec::with_capacity(nodes.len());
         let mut node_groups_hi = Vec::with_capacity(nodes.len());
+        let mut node_loose = Vec::with_capacity(nodes.len());
         for (i, n) in nodes.iter().enumerate() {
             at.insert(*n, i as u32);
             world.extend_from_slice(&blocking.position(*n).unwrap_or([0.0; 3]));
@@ -124,6 +136,7 @@ impl ViewBuffer {
             let (lo, hi) = halves(masks.nodes.get(n).copied().unwrap_or(0));
             node_groups_lo.push(lo);
             node_groups_hi.push(hi);
+            node_loose.push(u32::from(masks.loose_nodes.contains(n)));
         }
 
         let centre = origin.unwrap_or_else(|| stable_centre(&world, None));
@@ -148,6 +161,7 @@ impl ViewBuffer {
         let mut edge_class_tag = Vec::new();
         let mut edge_groups_lo = Vec::new();
         let mut edge_groups_hi = Vec::new();
+        let mut edge_loose = Vec::new();
         for e in blocking.map().iter_edges() {
             let (a, b) = blocking.edge_endpoints(e);
             if let (Some(a), Some(b)) = (at.get(&a), at.get(&b)) {
@@ -159,6 +173,7 @@ impl ViewBuffer {
                 let (lo, hi) = halves(masks.edges.get(&e).copied().unwrap_or(0));
                 edge_groups_lo.push(lo);
                 edge_groups_hi.push(hi);
+                edge_loose.push(u32::from(masks.loose_edges.contains(&e)));
             }
         }
 
@@ -216,6 +231,8 @@ impl ViewBuffer {
             edge_groups_hi,
             quad_groups_lo,
             quad_groups_hi,
+            node_loose,
+            edge_loose,
         }
     }
 
@@ -239,8 +256,8 @@ impl ViewBuffer {
                     + self.edge_class_tag.len()
                     + self.quad_class_dim.len()
                     + self.quad_class_tag.len()
-                    + self.node_groups_lo.len() * 2
-                    + self.edge_groups_lo.len() * 2
+                    + self.node_groups_lo.len() * 3
+                    + self.edge_groups_lo.len() * 3
                     + self.quad_groups_lo.len() * 2)
                     * 4,
         );
@@ -303,8 +320,10 @@ impl ViewBuffer {
         for list in [
             &self.node_groups_lo,
             &self.node_groups_hi,
+            &self.node_loose,
             &self.edge_groups_lo,
             &self.edge_groups_hi,
+            &self.edge_loose,
             &self.quad_groups_lo,
             &self.quad_groups_hi,
         ] {

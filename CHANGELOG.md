@@ -22,6 +22,9 @@ the day a tag was cut.
   it: cutting a block in two leaves both halves in whatever it was in, and
   welding two gives the result both their groups. Nothing recomputes it and
   nothing can go stale.
+- A cell is drawn when **any** block it bounds is drawn, so hiding a group
+  leaves the blocks beside it whole — a shared edge stays because the block
+  still on screen still needs it.
 - `gecko.group`, `gecko.ungroup`, `gecko.rename_group`, `gecko.drop_group`
   and the `gecko.groups()` read, so a session's groups are in its script and
   replay with it.

@@ -519,7 +519,7 @@ fn the_classification_travels_in_the_view_buffer() {
     let bytes = s.view_buffer();
     assert_eq!(
         bytes.len(),
-        gecko_cmd::view::HEADER + 8 * 36 + 12 * 28 + 6 * 40
+        gecko_cmd::view::HEADER + 8 * 40 + 12 * 32 + 6 * 40
     );
 }
 

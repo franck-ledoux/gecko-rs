@@ -53,6 +53,12 @@ export interface View {
   edgeGroupsHi: Uint32Array;
   quadGroupsLo: Uint32Array;
   quadGroupsHi: Uint32Array;
+  /** 1 where a node or an edge bounds a block in **no** group. A cell is
+   *  drawn when any block it bounds is drawn, and the mask alone cannot
+   *  say that: an edge between a grouped block and an ungrouped one
+   *  carries the group's bit. */
+  nodeLoose: Uint32Array;
+  edgeLoose: Uint32Array;
 }
 
 const MAGIC = 0x3142_4b47; // "GKB1" little-endian
@@ -85,10 +91,12 @@ export function decodeView(bytes: Uint8Array): View {
   // Per node: three f32 of position, one u32 of name, three more for what
   // it is classified on and whether it is frozen, and two for the groups
   // it is in. Per edge: two node indices, a name, two for its
-  // classification and two for its groups. Per quadrangle: four corner
-  // indices, the two names it can be coloured by, two for its
-  // classification and two for its groups.
-  const expected = HEADER + nNodes * 36 + nEdges * 28 + nQuads * 40;
+  // classification, two for its groups and one saying whether it touches
+  // a block in no group. Per quadrangle: four corner indices, the two
+  // names it can be coloured by, two for its classification and two for
+  // its groups — a quadrangle is drawn with one block, so its own mask
+  // speaks for it.
+  const expected = HEADER + nNodes * 40 + nEdges * 32 + nQuads * 40;
   if (expected !== bytes.byteLength) {
     throw new Error(
       `view buffer: header declares ${expected} bytes, buffer holds ${bytes.byteLength}`,
@@ -125,8 +133,10 @@ export function decodeView(bytes: Uint8Array): View {
     quadClassTag: take(i32, nQuads),
     nodeGroupsLo: take(u32, nNodes),
     nodeGroupsHi: take(u32, nNodes),
+    nodeLoose: take(u32, nNodes),
     edgeGroupsLo: take(u32, nEdges),
     edgeGroupsHi: take(u32, nEdges),
+    edgeLoose: take(u32, nEdges),
     quadGroupsLo: take(u32, nQuads),
     quadGroupsHi: take(u32, nQuads),
   };

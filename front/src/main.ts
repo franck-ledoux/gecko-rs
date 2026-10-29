@@ -388,16 +388,25 @@ async function boot() {
               const shown = !hiddenGroups.has(g.name);
               return (
                 `<div class="group" data-group="${escaped(g.name)}">` +
+                `<div class="top">` +
                 `<label class="check"><input type="checkbox" data-test="group-shown"` +
-                `${shown ? " checked" : ""} /></label>` +
+                `${shown ? " checked" : ""} title="draw this group" /></label>` +
                 `<i class="swatch" style="background:${colourForId(g.bit, FAMILY.groups)}"></i>` +
                 `<input class="group-name" data-test="group-name" value="${escaped(g.name)}" />` +
-                `<span class="digest" data-test="group-blocks">${g.blocks}</span>` +
-                `<label class="check written"><input type="checkbox" data-test="group-written"` +
-                `${g.written ? " checked" : ""} title="written into the mesh" /></label>` +
                 `<button data-test="group-add" title="put the selected blocks in">+</button>` +
                 `<button data-test="group-take" title="take the selected blocks out">−</button>` +
                 `<button data-test="group-drop" title="forget this group">×</button>` +
+                `</div>` +
+                // What the row could not say in a line of boxes: how many
+                // blocks, and whether the group is part of the model or a
+                // way of looking at it.
+                `<div class="note">` +
+                `<span data-test="group-blocks">${g.blocks}</span> block${
+                  g.blocks === 1 ? "" : "s"
+                }` +
+                `<label class="check"><input type="checkbox" data-test="group-written"` +
+                `${g.written ? " checked" : ""} /> in the mesh</label>` +
+                `</div>` +
                 `</div>`
               );
             })
@@ -427,6 +436,9 @@ async function boot() {
       find("group-written").addEventListener("change", (e) => {
         // Said by making the group again under its own name: the command
         // is create-or-find, and `written` is one of the things it says.
+        // The command says `written` only when somebody did: left out it
+        // leaves the flag alone, which is what makes a plain
+        // `gecko.group(name, blocks)` safe on a temporary group.
         const written = (e.target as HTMLInputElement).checked;
         void send({ op: "group", name, blocks: [], written }).then(after);
       });

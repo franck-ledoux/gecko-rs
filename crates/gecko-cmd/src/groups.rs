@@ -72,6 +72,17 @@ impl Groups {
         self.by_bit(bit)
     }
 
+    /// Say whether a group reaches the mesh.
+    pub fn write_out(&mut self, name: &str, written: bool) -> Result<(), GroupError> {
+        let group = self
+            .kept
+            .iter_mut()
+            .find(|g| g.name == name)
+            .ok_or_else(|| GroupError::NoSuch(name.to_string()))?;
+        group.written = written;
+        Ok(())
+    }
+
     /// Give a group another name, unless something else has it.
     pub fn rename(&mut self, from: &str, to: &str) -> Result<u8, GroupError> {
         if self.kept.iter().any(|g| g.name == to && g.name != from) {

@@ -43,7 +43,7 @@ fn a_group_is_made_by_naming_it_and_found_by_the_same_name() {
         .apply(Command::Group {
             name: "fluid".to_string(),
             blocks: vec![all[0]],
-            written: true,
+            written: Some(true),
         })
         .expect("a group");
     assert!(out.message.contains("fluid"), "{}", out.message);
@@ -53,7 +53,7 @@ fn a_group_is_made_by_naming_it_and_found_by_the_same_name() {
     s.apply(Command::Group {
         name: "fluid".to_string(),
         blocks: vec![all[1]],
-        written: true,
+        written: Some(true),
     })
     .unwrap();
     assert_eq!(groups(&s).len(), 1, "the same name is the same group");
@@ -63,7 +63,7 @@ fn a_group_is_made_by_naming_it_and_found_by_the_same_name() {
     s.apply(Command::Group {
         name: "inlet".to_string(),
         blocks: vec![all[0]],
-        written: false,
+        written: Some(false),
     })
     .unwrap();
     assert_eq!(groups(&s).len(), 2);
@@ -96,7 +96,7 @@ fn a_name_nobody_gave_is_refused_rather_than_guessed() {
         .apply(Command::Group {
             name: "   ".to_string(),
             blocks: vec![],
-            written: true,
+            written: Some(true),
         })
         .expect_err("unnamed")
         .to_string();
@@ -112,7 +112,7 @@ fn cutting_a_block_puts_both_halves_in_what_it_was_in() {
     s.apply(Command::Group {
         name: "fluid".to_string(),
         blocks: vec![all[0]],
-        written: true,
+        written: Some(true),
     })
     .unwrap();
 
@@ -133,7 +133,7 @@ fn taking_a_block_out_leaves_the_group_and_dropping_the_group_leaves_the_blocks(
     s.apply(Command::Group {
         name: "fluid".to_string(),
         blocks: all.clone(),
-        written: true,
+        written: Some(true),
     })
     .unwrap();
     assert_eq!(groups(&s)[0]["blocks"], 2);
@@ -162,7 +162,7 @@ fn renaming_touches_no_block_and_refuses_a_name_in_use() {
         s.apply(Command::Group {
             name: name.to_string(),
             blocks: vec![block],
-            written: true,
+            written: Some(true),
         })
         .unwrap();
     }
@@ -193,7 +193,7 @@ fn a_group_comes_back_with_an_undo() {
     s.apply(Command::Group {
         name: "fluid".to_string(),
         blocks: all,
-        written: true,
+        written: Some(true),
     })
     .unwrap();
     s.apply(Command::DropGroup {
@@ -216,7 +216,7 @@ fn the_mesh_carries_a_column_per_written_group() {
     s.apply(Command::Group {
         name: "fluid".to_string(),
         blocks: vec![all[0]],
-        written: true,
+        written: Some(true),
     })
     .unwrap();
     // A group somebody made to look at part of the model is not part of
@@ -224,7 +224,7 @@ fn the_mesh_carries_a_column_per_written_group() {
     s.apply(Command::Group {
         name: "today".to_string(),
         blocks: vec![all[1]],
-        written: false,
+        written: Some(false),
     })
     .unwrap();
     s.apply(Command::Mesh { segments: 2 }).expect("a mesh");
@@ -252,13 +252,13 @@ fn a_session_writes_its_groups_down_as_lua() {
     s.apply(Command::Group {
         name: "fluid".to_string(),
         blocks: vec![all[0]],
-        written: true,
+        written: Some(true),
     })
     .unwrap();
     s.apply(Command::Group {
         name: "today".to_string(),
         blocks: vec![all[1]],
-        written: false,
+        written: Some(false),
     })
     .unwrap();
     s.apply(Command::RenameGroup {
@@ -274,4 +274,67 @@ fn a_session_writes_its_groups_down_as_lua() {
         script.contains(r#"gecko.rename_group("today", "tomorrow")"#),
         "{script}"
     );
+}
+
+#[test]
+fn saying_written_again_changes_it_and_saying_nothing_leaves_it() {
+    // The box in the band, which could be ticked and not unticked: the
+    // command is create-or-find, and finding one used to ignore what it
+    // was told about the mesh. Naming **no** blocks is how the band says
+    // only that, so an empty list is not an error either.
+    let mut s = pair();
+    let all = blocks(&s);
+    s.apply(Command::Group {
+        name: "fluid".to_string(),
+        blocks: vec![all[0]],
+        written: None,
+    })
+    .unwrap();
+    assert_eq!(groups(&s)[0]["written"], true, "written unless it says so");
+
+    s.apply(Command::Group {
+        name: "fluid".to_string(),
+        blocks: vec![],
+        written: Some(false),
+    })
+    .expect("said, so set");
+    assert_eq!(groups(&s)[0]["written"], false);
+    assert_eq!(groups(&s)[0]["blocks"], 1, "and no block moved");
+
+    // And a plain `group(name, blocks)` leaves it alone: adding a block to
+    // a group somebody made for looking at the model must not quietly
+    // write it into the file.
+    s.apply(Command::Group {
+        name: "fluid".to_string(),
+        blocks: vec![all[1]],
+        written: None,
+    })
+    .unwrap();
+    assert_eq!(groups(&s)[0]["written"], false, "still not written");
+    assert_eq!(groups(&s)[0]["blocks"], 2);
+}
+
+#[test]
+fn a_block_name_is_checked_as_a_block() {
+    // The trap this is here for: a block's name and a node's are both
+    // small numbers, so checking a block against the nodes passes for the
+    // wrong reason and fails for a worse one. Cut once so there are three
+    // blocks and plenty of nodes, then name a block that cannot exist.
+    let mut s = pair();
+    let edge = serde_json::from_str::<Vec<serde_json::Value>>(&s.edges_json()).unwrap()[0]["id"]
+        .as_u64()
+        .unwrap() as u32;
+    s.apply(Command::SplitSheet { edge, at: 0.5 }).unwrap();
+    let highest = blocks(&s).into_iter().max().expect("a block");
+
+    let said = s
+        .apply(Command::Group {
+            name: "fluid".to_string(),
+            blocks: vec![highest + 50],
+            written: None,
+        })
+        .expect_err("no such block")
+        .to_string();
+    assert!(said.contains("block"), "{said}");
+    assert!(groups(&s).is_empty(), "and nothing was made");
 }

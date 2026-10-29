@@ -738,8 +738,10 @@ function sharedFaceView(): View {
     quadBlocks: new Uint32Array([100, 200]),
     nodeGroupsLo: new Uint32Array([0, 0, 0, 0]),
     nodeGroupsHi: new Uint32Array([0, 0, 0, 0]),
+    nodeLoose: new Uint32Array([0, 0, 0, 0]),
     edgeGroupsLo: new Uint32Array([0]),
     edgeGroupsHi: new Uint32Array([0]),
+    edgeLoose: new Uint32Array([0]),
     quadGroupsLo: new Uint32Array([0, 0]),
     quadGroupsHi: new Uint32Array([0, 0]),
   };
@@ -1160,8 +1162,10 @@ describe("how close the camera may get", () => {
       quadBlocks: new Uint32Array(0),
       nodeGroupsLo: new Uint32Array([0]),
       nodeGroupsHi: new Uint32Array([0]),
+      nodeLoose: new Uint32Array([0]),
       edgeGroupsLo: new Uint32Array(0),
       edgeGroupsHi: new Uint32Array(0),
+      edgeLoose: new Uint32Array(0),
       quadGroupsLo: new Uint32Array(0),
       quadGroupsHi: new Uint32Array(0),
     });

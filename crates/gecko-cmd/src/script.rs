@@ -126,10 +126,12 @@ pub fn line(command: &Command) -> String {
             blocks,
             written,
         } => {
-            let tail = if *written {
-                String::new()
-            } else {
-                ", { written = false }".to_string()
+            // Said only when it was said: a line that writes `written =
+            // true` on every group would turn a replay of a temporary
+            // group into a written one.
+            let tail = match written {
+                Some(written) => format!(", {{ written = {written} }}"),
+                None => String::new(),
             };
             format!("gecko.group({}, {}{tail})", quoted(name), numbers(blocks))
         }

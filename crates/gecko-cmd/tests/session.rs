@@ -141,7 +141,7 @@ fn the_encoding_is_the_layout_a_client_will_decode() {
     // classification and two for its groups.
     assert_eq!(
         bytes.len(),
-        HEADER + n_nodes * 36 + n_edges * 28 + n_quads * 40
+        HEADER + n_nodes * 40 + n_edges * 32 + n_quads * 40
     );
     // Everything after the f64 centre is 4-aligned, so a client can make typed
     // array views over these bytes without copying them first.

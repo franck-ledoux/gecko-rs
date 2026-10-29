@@ -815,10 +815,18 @@ export class Viewer {
     return { ...this.shown };
   }
 
-  /** Is a cell with this mask one of the ones being looked at? */
-  private inShown(lo: number, hi: number): boolean {
-    if (lo === 0 && hi === 0) return this.shown.ungrouped;
-    return (lo & this.shown.lo) !== 0 || (hi & this.shown.hi) !== 0;
+  /**
+   * Is a cell one of the ones being looked at?
+   *
+   * A cell is drawn when **any** block it bounds is drawn. `loose` says
+   * it bounds a block in no group, which the mask cannot: an edge between
+   * a block of the fluid and a block of nothing carries the fluid's bit,
+   * and hiding the fluid used to take that edge off the block still on
+   * screen. A cell with no groups at all is loose by definition.
+   */
+  private inShown(lo: number, hi: number, loose = false): boolean {
+    if ((lo & this.shown.lo) !== 0 || (hi & this.shown.hi) !== 0) return true;
+    return (loose || (lo === 0 && hi === 0)) && this.shown.ungrouped;
   }
 
   /** Which quadrangles of the view are in a group being looked at. */
@@ -832,6 +840,8 @@ export class Viewer {
     }
     const kept = new Set<number>();
     for (let q = 0; q < view.quadFaces.length; q++) {
+      // A quadrangle is drawn with one block, so its own mask is the
+      // whole answer: zero means that block is in no group.
       if (this.inShown(view.quadGroupsLo[q], view.quadGroupsHi[q])) kept.add(q);
     }
     return kept;
@@ -1701,6 +1711,8 @@ export class Viewer {
       edgeGroupsHi: Uint32Array.from(view.edgeGroupsHi),
       quadGroupsLo: Uint32Array.from(view.quadGroupsLo),
       quadGroupsHi: Uint32Array.from(view.quadGroupsHi),
+      nodeLoose: Uint32Array.from(view.nodeLoose),
+      edgeLoose: Uint32Array.from(view.edgeLoose),
     };
     this.nodes.forEach((m) => m.dispose());
     this.nodes = [];
@@ -1862,7 +1874,10 @@ export class Viewer {
   private edgesShown(): number[] {
     const out: number[] = [];
     for (let e = 0; e < (this.view?.edgeNames.length ?? 0); e++) {
-      if (this.inShown(this.view!.edgeGroupsLo[e], this.view!.edgeGroupsHi[e])) out.push(e);
+      const loose = this.view!.edgeLoose[e] === 1;
+      if (this.inShown(this.view!.edgeGroupsLo[e], this.view!.edgeGroupsHi[e], loose)) {
+        out.push(e);
+      }
     }
     return out;
   }
@@ -1890,7 +1905,11 @@ export class Viewer {
       // and nothing on screen says what you took hold of.
       mesh.isVisible =
         this.prefs.nodes.visible &&
-        this.inShown(this.view?.nodeGroupsLo[n] ?? 0, this.view?.nodeGroupsHi[n] ?? 0);
+        this.inShown(
+          this.view?.nodeGroupsLo[n] ?? 0,
+          this.view?.nodeGroupsHi[n] ?? 0,
+          (this.view?.nodeLoose[n] ?? 0) === 1,
+        );
     });
   }
 
