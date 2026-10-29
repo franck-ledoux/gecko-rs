@@ -13,6 +13,7 @@ use honeycomb_core::cmap::{
     CMap3, CMapBuilder, DartIdType, DartReleaseError, EdgeIdType, FaceIdType, LinkError,
     OrbitPolicy, SewError, VertexIdType, VolumeIdType, NULL_DART_ID,
 };
+use honeycomb_core::stm::atomically;
 use thiserror::Error;
 
 use crate::attributes::{BlockTag, EdgeTag, FaceTag, NodeTag, On};
@@ -530,31 +531,38 @@ impl Blocking {
         // The topology before anything that hangs off it: a cell is named by
         // the smallest dart of its orbit, and until β is in place there are
         // no orbits to name.
-        for d in 1..total {
-            copy.map.set_betas(
-                d,
-                [
-                    self.map.beta::<0>(d),
-                    self.map.beta::<1>(d),
-                    self.map.beta::<2>(d),
-                    self.map.beta::<3>(d),
-                ],
-            );
+        //
+        // Read in one transaction, because a single `beta` is a transaction
+        // of its own and there are four of them per dart.
+        let betas: Vec<[DartIdType; 4]> = atomically(|t| {
+            let mut out = Vec::with_capacity(total as usize);
+            for d in 1..total {
+                out.push([
+                    self.map.beta_tx::<0>(t, d)?,
+                    self.map.beta_tx::<1>(t, d)?,
+                    self.map.beta_tx::<2>(t, d)?,
+                    self.map.beta_tx::<3>(t, d)?,
+                ]);
+            }
+            Ok(out)
+        });
+        for (d, beta) in (1..total).zip(betas) {
+            copy.map.set_betas(d, beta);
         }
 
-        for v in self.map.iter_vertices() {
+        for v in self.map_vertices() {
             if let Some(at) = self.map.read_vertex(v) {
                 copy.map.write_vertex(v, at);
             }
             copy.map.write_attribute(v, self.node_tag(v));
         }
-        for e in self.map.iter_edges() {
+        for e in self.map_edges() {
             copy.map.write_attribute(e, self.edge_tag(e));
         }
-        for f in self.map.iter_faces() {
+        for f in self.map_faces() {
             copy.map.write_attribute(f, self.face_tag(f));
         }
-        for b in self.map.iter_volumes() {
+        for b in self.map_volumes() {
             copy.map.write_attribute(b, self.block_tag(b));
         }
 
@@ -650,8 +658,8 @@ impl Blocking {
     /// The nodes whose corner was made at or after `mark`.
     pub fn nodes_since(&self, mark: u32) -> Vec<CellId> {
         let mut out: Vec<CellId> = self
-            .map
-            .iter_vertices()
+            .map_vertices()
+            .into_iter()
             .filter(|v| {
                 self.node_tag(*v)
                     .corner_key
@@ -671,8 +679,8 @@ impl Blocking {
     /// open sheet of faces is not a block and cannot be in a group.
     pub fn blocks(&self) -> Vec<CellId> {
         let mut out: Vec<CellId> = self
-            .map
-            .iter_volumes()
+            .map_volumes()
+            .into_iter()
             .filter(|v| self.is_block(*v))
             .map(|v| self.block_tag(v).id)
             .filter(|id| id.is_some())
@@ -692,7 +700,7 @@ impl Blocking {
     /// rather than one per group or one per block.
     pub fn counted_in_groups(&self) -> [usize; 64] {
         let mut out = [0usize; 64];
-        for volume in self.map.iter_volumes() {
+        for volume in self.map_volumes() {
             if !self.is_block(volume) {
                 continue;
             }
@@ -741,7 +749,7 @@ impl Blocking {
     /// Take one group away from every block that is in it.
     pub fn drop_group(&mut self, bit: u8) {
         let mask = !(1u64 << bit);
-        let blocks: Vec<VolumeIdType> = self.map.iter_volumes().collect();
+        let blocks: Vec<VolumeIdType> = self.map_volumes();
         for volume in blocks {
             let tag = self.block_tag(volume);
             if tag.groups & !mask != 0 {
@@ -767,7 +775,7 @@ impl Blocking {
     pub fn group_masks(&self) -> GroupMasks {
         let mut out = GroupMasks::default();
         let mut grouped = false;
-        for volume in self.map.iter_volumes() {
+        for volume in self.map_volumes() {
             let groups = self.block_tag(volume).groups;
             if groups == 0 {
                 continue;
@@ -783,7 +791,7 @@ impl Blocking {
         // edge between a grouped block and an ungrouped one would go when
         // the group did, taking a side off the block left behind.
         if grouped {
-            for volume in self.map.iter_volumes() {
+            for volume in self.map_volumes() {
                 if self.block_tag(volume).groups != 0 {
                     continue;
                 }
@@ -860,8 +868,8 @@ impl Blocking {
         // By name, so the order does not depend on how the map happened to
         // lay its darts out.
         let mut movable: Vec<(CellId, VertexIdType)> = self
-            .map
-            .iter_vertices()
+            .map_vertices()
+            .into_iter()
             .map(|v| (self.node_tag(v).id, v))
             .filter(|(name, v)| {
                 let tag = self.node_tag(*v);
@@ -1062,8 +1070,8 @@ impl Blocking {
 
     /// Every patch: the connected components of faces that are not blocks.
     pub fn patches(&self) -> Vec<CellId> {
-        self.map
-            .iter_volumes()
+        self.map_volumes()
+            .into_iter()
             .filter(|v| !self.is_block(*v))
             .map(|v| self.block_tag(v).id)
             .collect()
@@ -1135,7 +1143,8 @@ impl Blocking {
             );
         }
 
-        self.assign_missing_ids();
+        // Only the new block can be unnamed: nothing else was touched.
+        self.name_cells_near(OrbitPolicy::Volume, base);
         Ok((self.block_tag(self.map.volume_id(base)).id, base))
     }
 
@@ -1146,9 +1155,68 @@ impl Blocking {
     /// effect of changing topology, and asking each edit to name what it
     /// happened to create is how a cell ends up with two names or none.
     pub fn assign_missing_ids(&mut self) {
-        let nodes: Vec<_> = self
-            .map
-            .iter_vertices()
+        self.name_cells(None);
+    }
+
+    /// The same naming, but only among the cells one orbit runs through —
+    /// which is all that laying one block or sewing one face can have left
+    /// unnamed.
+    ///
+    /// Those two are called once per block and once per face glued: a
+    /// pillow along a chord of a hundred-and-fifty-block grid does eighty
+    /// of them, and a sweep of the whole map apiece is where its time went.
+    ///
+    /// The lists are in ascending order, as a sweep of the whole map would
+    /// hand them over, so the **names come out the same** either way. That
+    /// matters: a name is what a script says, and renumbering would make
+    /// every script written before mean something else.
+    fn name_cells_near(&mut self, policy: OrbitPolicy, dart: DartIdType) {
+        self.name_cells(Some((policy, dart)));
+    }
+
+    /// The cells of each dimension that one orbit runs through, each named
+    /// by the dart the map names it by, in ascending order.
+    fn cells_near(&self, policy: OrbitPolicy, dart: DartIdType) -> [Vec<DartIdType>; 4] {
+        atomically(|t| {
+            // The orbit's own iterator holds the transaction while it runs,
+            // so the walk comes first and the questions after.
+            let mut darts: Vec<DartIdType> = Vec::new();
+            for d in self.map.orbit_tx(t, policy.clone(), dart) {
+                darts.push(d?);
+            }
+            let mut out: [Vec<DartIdType>; 4] = Default::default();
+            for d in darts {
+                let cells = [
+                    self.map.vertex_id_tx(t, d)?,
+                    self.map.edge_id_tx(t, d)?,
+                    self.map.face_id_tx(t, d)?,
+                    self.map.volume_id_tx(t, d)?,
+                ];
+                for (slot, cell) in out.iter_mut().zip(cells) {
+                    if !slot.contains(&cell) {
+                        slot.push(cell);
+                    }
+                }
+            }
+            for slot in out.iter_mut() {
+                slot.sort_unstable();
+            }
+            Ok(out)
+        })
+    }
+
+    fn name_cells(&mut self, near: Option<(OrbitPolicy, DartIdType)>) {
+        let [every_node, every_edge, every_face, every_block] = match near {
+            Some((policy, dart)) => self.cells_near(policy, dart),
+            None => [
+                self.map_vertices(),
+                self.map_edges(),
+                self.map_faces(),
+                self.map_volumes(),
+            ],
+        };
+        let nodes: Vec<_> = every_node
+            .into_iter()
             .filter(|v| self.node_tag(*v).id.is_none())
             .collect();
         for v in nodes {
@@ -1158,9 +1226,8 @@ impl Blocking {
             self.seen.nodes.insert(id, v);
         }
 
-        let edges: Vec<_> = self
-            .map
-            .iter_edges()
+        let edges: Vec<_> = every_edge
+            .into_iter()
             .filter(|e| self.edge_tag(*e).id.is_none())
             .collect();
         for e in edges {
@@ -1172,9 +1239,8 @@ impl Blocking {
             self.seen.edges.insert(id, e);
         }
 
-        let faces: Vec<_> = self
-            .map
-            .iter_faces()
+        let faces: Vec<_> = every_face
+            .into_iter()
             .filter(|f| self.face_tag(*f).id.is_none())
             .collect();
         for f in faces {
@@ -1184,9 +1250,8 @@ impl Blocking {
             self.seen.faces.insert(id, f);
         }
 
-        let blocks: Vec<_> = self
-            .map
-            .iter_volumes()
+        let blocks: Vec<_> = every_block
+            .into_iter()
             .filter(|b| self.block_tag(*b).id.is_none())
             .collect();
         for b in blocks {
@@ -1292,7 +1357,7 @@ impl Blocking {
 
     /// Every face by name, with the names of its four edges.
     pub fn faces(&self) -> impl Iterator<Item = (CellId, [CellId; 4])> + '_ {
-        self.map.iter_faces().map(move |f| {
+        self.map_faces().into_iter().map(move |f| {
             let edges = self
                 .face_darts(f)
                 .map(|d| self.edge_tag(self.map.edge_id(d)).id);
@@ -1303,7 +1368,7 @@ impl Blocking {
     /// Every edge by name, with the names of its two ends and what it is
     /// classified on.
     pub fn edges(&self) -> impl Iterator<Item = (CellId, CellId, CellId, Option<On>)> + '_ {
-        self.map.iter_edges().map(move |e| {
+        self.map_edges().into_iter().map(move |e| {
             let (a, b) = self.edge_endpoints(e);
             let tag = self.edge_tag(e);
             (tag.id, self.node_tag(a).id, self.node_tag(b).id, tag.on)
@@ -1318,7 +1383,7 @@ impl Blocking {
     /// whole map per node, which is quadratic and was: `nodes_json` took
     /// six seconds on sixty-four blocks.
     pub fn nodes_in_full(&self) -> impl Iterator<Item = (CellId, [f64; 3], Option<On>, bool)> + '_ {
-        self.map.iter_vertices().map(move |v| {
+        self.map_vertices().into_iter().map(move |v| {
             let tag = self.node_tag(v);
             (
                 tag.id,
@@ -1341,21 +1406,21 @@ impl Blocking {
     /// where one does.
     pub fn census(&self) -> Census {
         let mut out = Census::default();
-        for v in self.map.iter_vertices() {
+        for v in self.map_vertices() {
             let tag = self.node_tag(v);
             out.nodes += 1;
             out.classified_nodes += usize::from(tag.on.is_some());
             out.frozen += usize::from(tag.frozen);
         }
-        for e in self.map.iter_edges() {
+        for e in self.map_edges() {
             out.edges += 1;
             out.classified_edges += usize::from(self.edge_tag(e).on.is_some());
         }
-        for f in self.map.iter_faces() {
+        for f in self.map_faces() {
             out.faces += 1;
             out.classified_faces += usize::from(self.face_tag(f).on.is_some());
         }
-        for v in self.map.iter_volumes() {
+        for v in self.map_volumes() {
             if self.is_block(v) {
                 out.blocks += 1;
             } else {
@@ -1416,8 +1481,8 @@ impl Blocking {
         project: impl Fn(On, [f64; 3]) -> Option<[f64; 3]>,
     ) {
         let found: Vec<(VertexIdType, Option<On>, Option<[f64; 3]>)> = self
-            .map
-            .iter_vertices()
+            .map_vertices()
+            .into_iter()
             .filter(|v| {
                 let tag = self.node_tag(*v);
                 !tag.frozen && which(&tag)
@@ -1453,8 +1518,8 @@ impl Blocking {
     /// blocks it had moving one node taking a tenth of a second.
     pub fn reclassify(&mut self, settle: impl Fn(Settling<'_>) -> Option<On>) {
         let edges: Vec<(EdgeIdType, Option<On>)> = self
-            .map
-            .iter_edges()
+            .map_edges()
+            .into_iter()
             .map(|e| {
                 let (a, b) = self.edge_endpoints(e);
                 let already = self.edge_tag(e).on;
@@ -1505,8 +1570,8 @@ impl Blocking {
         }
 
         let faces: Vec<(FaceIdType, Option<On>)> = self
-            .map
-            .iter_faces()
+            .map_faces()
+            .into_iter()
             .map(|f| {
                 let darts = self.face_darts(f);
                 let edges: Vec<Option<On>> = darts
@@ -1557,11 +1622,11 @@ impl Blocking {
     /// right while editing and wrong when the whole point is to decide
     /// again.
     pub fn unclassify_cells(&mut self) {
-        for e in self.map.iter_edges().collect::<Vec<_>>() {
+        for e in self.map_edges() {
             let tag = self.edge_tag(e);
             self.map.write_attribute(e, EdgeTag { on: None, ..tag });
         }
-        for f in self.map.iter_faces().collect::<Vec<_>>() {
+        for f in self.map_faces() {
             let tag = self.face_tag(f);
             self.map.write_attribute(f, FaceTag { on: None, ..tag });
         }
@@ -1592,15 +1657,15 @@ impl Blocking {
                 return Some(*v);
             }
         }
-        self.map
-            .iter_vertices()
+        self.map_vertices()
+            .into_iter()
             .find(|v| self.node_tag(*v).id == node)
     }
 
     /// Every node, by stable name and position.
     pub fn nodes(&self) -> impl Iterator<Item = (CellId, [f64; 3])> + '_ {
-        self.map
-            .iter_vertices()
+        self.map_vertices()
+            .into_iter()
             .map(move |v| (self.node_tag(v).id, self.position(v).unwrap_or([0.0; 3])))
     }
 
@@ -1765,7 +1830,7 @@ impl Blocking {
         }
 
         self.map.sew::<3>(da[0], db[(turn + 3) % 4])?;
-        self.assign_missing_ids();
+        self.name_cells_near(OrbitPolicy::Face, da[0]);
 
         // The map's own merge keeps "either of the two, and the first when
         // both" — a reasonable default everywhere else, and not the rule for
@@ -1823,7 +1888,9 @@ impl Blocking {
         // B corner now sitting on A₁ back to the one on A₀. That is the dart
         // starting at `b[(turn + 3) % 4]`.
         self.map.sew::<3>(da[0], db[(turn + 3) % 4])?;
-        self.assign_missing_ids();
+        // A sew touches the face it joins, its four edges and their nodes,
+        // and nothing else.
+        self.name_cells_near(OrbitPolicy::Face, da[0]);
         Ok(())
     }
 
@@ -2097,8 +2164,8 @@ impl Blocking {
                 return Some(*v);
             }
         }
-        self.map
-            .iter_volumes()
+        self.map_volumes()
+            .into_iter()
             .find(|v| self.block_tag(*v).id == block)
     }
 
@@ -3182,9 +3249,8 @@ impl Blocking {
                 .ok_or(BlockingError::LostFace)?;
             self.glue_onto(side.face, under)?;
             if let Some(behind) = plan.behind {
-                let sides = self.block_faces();
                 let far = self
-                    .side_at(&sides, behind, &plan.points)
+                    .side_of(behind, &plan.points)
                     .ok_or(BlockingError::LostFace)?;
                 let over = self
                     .face_at(layer.block, &plan.points)
@@ -3236,7 +3302,7 @@ impl Blocking {
         // a box drawn in off the rim of a disc is still on that disc, and
         // only the caller holds the triangles that say so.
         let mut drawn: Vec<(CellId, Option<On>)> = Vec::new();
-        for v in self.map.iter_vertices() {
+        for v in self.map_vertices() {
             let at = self.position(v).unwrap_or([0.0; 3]);
             let Some((from, _)) = moved.iter().find(|(_, to)| same_point(**to, at)) else {
                 continue;
@@ -3292,16 +3358,14 @@ impl Blocking {
 
     /// The face of a block whose four corners are these four points.
     fn face_at(&self, block: CellId, points: &[[f64; 3]; 4]) -> Option<CellId> {
-        self.block_faces()
-            .iter()
-            .filter(|s| s.block == block)
-            .find(|s| {
-                s.nodes.iter().all(|n| {
-                    let p = self.position(*n).unwrap_or([0.0; 3]);
-                    points.iter().any(|q| same_point(p, *q))
-                })
-            })
-            .map(|s| s.face)
+        self.side_of(block, points).map(|s| s.face)
+    }
+
+    /// The side of `block` whose four corners are these four points, read
+    /// from that one block rather than from every face in the map.
+    fn side_of(&self, block: CellId, points: &[[f64; 3]; 4]) -> Option<BlockFace> {
+        let volume = self.block_by_id(block)?;
+        self.side_at(&self.faces_of(volume), block, points)
     }
 
     /// Every β₁ cycle in the map: one per face side.
@@ -3475,8 +3539,8 @@ impl Blocking {
     /// hazard a standing index carries is that an edit invalidates it
     /// silently, and this one never outlives the loop it was made for.
     fn edge_index(&self) -> HashMap<CellId, EdgeIdType> {
-        self.map
-            .iter_edges()
+        self.map_edges()
+            .into_iter()
             .map(|e| (self.edge_tag(e).id, e))
             .collect()
     }
@@ -3492,7 +3556,9 @@ impl Blocking {
                 return Some(*e);
             }
         }
-        self.map.iter_edges().find(|e| self.edge_tag(*e).id == edge)
+        self.map_edges()
+            .into_iter()
+            .find(|e| self.edge_tag(*e).id == edge)
     }
 
     /// The four darts of a face, in the order β₁ walks them.
@@ -3522,7 +3588,9 @@ impl Blocking {
                 return Some(*f);
             }
         }
-        self.map.iter_faces().find(|f| self.face_tag(*f).id == face)
+        self.map_faces()
+            .into_iter()
+            .find(|f| self.face_tag(*f).id == face)
     }
 
     /// Every face of every block.
@@ -3534,43 +3602,71 @@ impl Blocking {
     /// still wants a closed surface of its own. Having the shape right now
     /// costs nothing and saves a format change then.
     pub fn block_faces(&self) -> Vec<BlockFace> {
-        let mut out = Vec::new();
-        for volume in self.map.iter_volumes() {
-            let block = self.block_tag(volume).id;
+        self.map_volumes()
+            .into_iter()
+            .flat_map(|volume| self.faces_of(volume))
+            .collect()
+    }
 
-            // The first dart of each face **on this block's side**. `face_id`
-            // alone would not do: it is the smallest dart of the whole face
-            // orbit, which once β₃ is set may well be the other block's.
-            let mut sides: Vec<(FaceIdType, DartIdType)> = Vec::new();
-            for dart in self.map.orbit(OrbitPolicy::Volume, volume as DartIdType) {
-                let face = self.map.face_id(dart);
-                if !sides.iter().any(|(seen, _)| *seen == face) {
-                    sides.push((face, dart));
-                }
+    /// The faces of **one** volume, exactly as
+    /// [`block_faces`][Self::block_faces] lists them for the whole map.
+    ///
+    /// Asking about one block is the common case — which face of this one
+    /// is at these four corners — and the whole map is a thousand times
+    /// the work for it.
+    pub fn faces_of(&self, volume: VolumeIdType) -> Vec<BlockFace> {
+        let block = self.block_tag(volume).id;
+        // One transaction for the lot: every β lookup and every cell name
+        // this map hands out is a transaction of its own otherwise.
+        let sides: Vec<(FaceIdType, [VertexIdType; 4])> = atomically(|t| {
+            // The first dart of each face **on this block's side**.
+            // `face_id` alone would not do: it is the smallest dart of the
+            // whole face orbit, which once β₃ is set may well be the other
+            // block's.
+            // The orbit's own iterator holds the transaction while it
+            // runs, so the walk comes first and the questions after.
+            let mut darts: Vec<DartIdType> = Vec::new();
+            for dart in self
+                .map
+                .orbit_tx(t, OrbitPolicy::Volume, volume as DartIdType)
+            {
+                darts.push(dart?);
             }
-            // Sorted, so the order cannot depend on how the orbit happened to
-            // be walked. Both modes ship these bytes and compare them.
-            sides.sort_by_key(|(face, _)| *face);
-
-            for (face, dart) in sides {
+            let mut seen: Vec<FaceIdType> = Vec::new();
+            let mut out: Vec<(FaceIdType, [VertexIdType; 4])> = Vec::new();
+            for dart in darts {
+                let face = self.map.face_id_tx(t, dart)?;
+                if seen.contains(&face) {
+                    continue;
+                }
+                seen.push(face);
                 let mut nodes = [0; 4];
                 let mut walk = dart;
                 for slot in nodes.iter_mut() {
-                    *slot = self.map.vertex_id(walk);
-                    walk = self.map.beta::<1>(walk);
+                    *slot = self.map.vertex_id_tx(t, walk)?;
+                    walk = self.map.beta_tx::<1>(t, walk)?;
                 }
                 debug_assert_eq!(walk, dart, "a block face that is not a quadrangle");
+                out.push((face, nodes));
+            }
+            // Sorted, so the order cannot depend on how the orbit happened
+            // to be walked. Both modes ship these bytes and compare them.
+            out.sort_by_key(|(face, _)| *face);
+            Ok(out)
+        });
+        sides
+            .into_iter()
+            .map(|(face, nodes)| {
                 let tag = self.face_tag(face);
-                out.push(BlockFace {
+                BlockFace {
                     face: tag.id,
                     block,
                     volume,
                     nodes,
                     on: tag.on,
-                });
-            }
-        }
-        out
+                }
+            })
+            .collect()
     }
 
     // --- reading ----------------------------------------------------------
@@ -3578,6 +3674,60 @@ impl Blocking {
     /// The map itself. Topological questions belong to it, not here.
     pub fn map(&self) -> &CMap3<f64> {
         &self.map
+    }
+
+    /// Every cell of one dimension, each named by the dart the map names it
+    /// by: the smallest of its orbit.
+    ///
+    /// `iter_vertices` and its siblings ask the map, **for every dart**,
+    /// which cell that dart belongs to, and each of those questions walks
+    /// the whole orbit over again. One walk per cell is enough. Going up the
+    /// darts in order, the first dart of an orbit that has not been marked
+    /// yet *is* the smallest of that orbit, which is exactly the name the
+    /// map would give it; walking the orbit once to mark the rest off leaves
+    /// one walk per cell where there were as many as the cell has darts.
+    ///
+    /// Several blocks meeting at a node is what makes that difference grow:
+    /// the orbit is long, and the map was walking it once per dart of it.
+    fn cells(&self, policy: OrbitPolicy) -> Vec<DartIdType> {
+        let darts = self.map.n_darts();
+        // One transaction for the whole sweep, rather than one per β
+        // lookup: in this map every single `beta` is a transaction of its
+        // own, and that — not the walking — is where the time went.
+        atomically(|t| {
+            let mut seen = vec![false; darts];
+            let mut out = Vec::new();
+            for start in 1..darts as DartIdType {
+                if seen[start as usize] || self.map.is_unused(start) {
+                    continue;
+                }
+                for d in self.map.orbit_tx(t, policy.clone(), start) {
+                    seen[d? as usize] = true;
+                }
+                out.push(start);
+            }
+            Ok(out)
+        })
+    }
+
+    /// The map's vertices, as [`CMap3::iter_vertices`] names them.
+    pub fn map_vertices(&self) -> Vec<VertexIdType> {
+        self.cells(OrbitPolicy::Vertex)
+    }
+
+    /// The map's edges, as [`CMap3::iter_edges`] names them.
+    pub fn map_edges(&self) -> Vec<EdgeIdType> {
+        self.cells(OrbitPolicy::Edge)
+    }
+
+    /// The map's faces, as [`CMap3::iter_faces`] names them.
+    pub fn map_faces(&self) -> Vec<FaceIdType> {
+        self.cells(OrbitPolicy::Face)
+    }
+
+    /// The map's volumes, as [`CMap3::iter_volumes`] names them.
+    pub fn map_volumes(&self) -> Vec<VolumeIdType> {
+        self.cells(OrbitPolicy::Volume)
     }
 
     pub fn node_tag(&self, node: VertexIdType) -> NodeTag {
@@ -3613,21 +3763,21 @@ impl Blocking {
     }
 
     pub fn nb_nodes(&self) -> usize {
-        self.map.iter_vertices().count()
+        self.map_vertices().len()
     }
 
     pub fn nb_edges(&self) -> usize {
-        self.map.iter_edges().count()
+        self.map_edges().len()
     }
 
     pub fn nb_faces(&self) -> usize {
-        self.map.iter_faces().count()
+        self.map_faces().len()
     }
 
     /// How many **blocks** — shells that close. A patch is not one.
     pub fn nb_blocks(&self) -> usize {
-        self.map
-            .iter_volumes()
+        self.map_volumes()
+            .into_iter()
             .filter(|v| self.is_block(*v))
             .count()
     }
@@ -3635,8 +3785,8 @@ impl Blocking {
     /// How many patches: open sheets of faces, each one a connected
     /// component.
     pub fn nb_patches(&self) -> usize {
-        self.map
-            .iter_volumes()
+        self.map_volumes()
+            .into_iter()
             .filter(|v| !self.is_block(*v))
             .count()
     }

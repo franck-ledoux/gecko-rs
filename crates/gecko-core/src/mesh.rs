@@ -162,7 +162,7 @@ impl Blocking {
     pub fn hexes(&self) -> Vec<Hex> {
         let map = self.map();
         let mut out = Vec::new();
-        for volume in map.iter_volumes() {
+        for volume in self.map_volumes() {
             // Blocks only. A patch — an open sheet of faces on its way to
             // being extruded — has no inside to fill, and the walk below
             // would step off the end of it: finding the corner above one of
@@ -251,7 +251,7 @@ impl Blocking {
     /// expensive part, and a sheet answers for every edge on it at once.
     pub fn segments_by_sheet(&self, default: u32) -> HashMap<CellId, u32> {
         let mut out: HashMap<CellId, u32> = HashMap::new();
-        for e in self.map().iter_edges() {
+        for e in self.map_edges() {
             let name = self.edge_tag(e).id;
             if out.contains_key(&name) || name.is_none() {
                 continue;
@@ -341,7 +341,6 @@ impl Blocking {
     /// edges that already lie on their curves and a block from faces that
     /// already lie on their surfaces.
     pub fn mesh(&self, default: u32, project: impl Fn(On, [f64; 3]) -> Option<[f64; 3]>) -> Mesh {
-        let map = self.map();
         let segments = self.segments_by_sheet(default.max(1));
         let mut table = Table::default();
         let at = |v: VertexIdType| self.position(v).unwrap_or([0.0; 3]);
@@ -349,12 +348,12 @@ impl Blocking {
         let cuts = |e: EdgeIdType| *segments.get(&self.edge_tag(e).id).unwrap_or(&default);
 
         // --- the corners of the blocking ---------------------------------
-        for v in map.iter_vertices() {
+        for v in self.map_vertices() {
             table.put(Site::Node(name(v)), at(v));
         }
 
         // --- along each edge ---------------------------------------------
-        for e in map.iter_edges() {
+        for e in self.map_edges() {
             let tag = self.edge_tag(e);
             let n = cuts(e);
             let (from, to) = self.edge_endpoints(e);
@@ -379,7 +378,7 @@ impl Blocking {
         // One lattice per **face**, in the face's own cycle, rather than
         // one per block: that is what makes two blocks share these points
         // instead of each placing its own on top of the other's.
-        for f in map.iter_faces() {
+        for f in self.map_faces() {
             let quad = self.quad(f, &segments);
             let (na, nb) = quad.extents;
             let tag = self.face_tag(f);

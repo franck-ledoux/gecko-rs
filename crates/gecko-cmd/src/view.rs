@@ -115,7 +115,7 @@ impl ViewBuffer {
         let masks = blocking.group_masks();
         let halves = |mask: u64| ((mask & 0xffff_ffff) as u32, (mask >> 32) as u32);
 
-        let nodes: Vec<_> = blocking.map().iter_vertices().collect();
+        let nodes = blocking.map_vertices();
         let mut at: HashMap<u32, u32> = HashMap::with_capacity(nodes.len());
         let mut world = Vec::with_capacity(nodes.len() * 3);
         let mut names = Vec::with_capacity(nodes.len());
@@ -162,7 +162,7 @@ impl ViewBuffer {
         let mut edge_groups_lo = Vec::new();
         let mut edge_groups_hi = Vec::new();
         let mut edge_loose = Vec::new();
-        for e in blocking.map().iter_edges() {
+        for e in blocking.map_edges() {
             let (a, b) = blocking.edge_endpoints(e);
             if let (Some(a), Some(b)) = (at.get(&a), at.get(&b)) {
                 let tag = blocking.edge_tag(e);

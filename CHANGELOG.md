@@ -14,6 +14,29 @@ up with a model of a hundred blocks.
   read of the faces 3.1, and a cut 0.6. They take 60 ms, 63 ms and 125 ms
   now. On B10, a cut at forty blocks went from 181 ms to 40.
 
+  Then, reported again of pillowing: a chord pillowed on a
+  hundred-and-fifty-block grid took **7.5 seconds**, and takes **57 ms**.
+  Laying that grid out in the kernel went from 9 seconds to 44 ms.
+
+  - **Walking the map was the whole of it.** This map answers "which cell
+    is this dart in?" by walking the dart's orbit, and its own iterators
+    ask that **once per dart** — so listing the nodes walked every node's
+    orbit once for each dart of it. The kernel goes up the darts once now
+    and marks each orbit off as it walks it, which is one walk per cell;
+    and it does so inside a single transaction, because a single β lookup
+    in this map is a transaction of its own and that, rather than the
+    walking, was most of the cost. Naming the cells of a model went from
+    27 ms to 2.9.
+  - **Finding the face of a block at four given corners** read every face
+    in the map. A pillow does that a few hundred times — once per wall
+    between two layers it has laid — so it is read from the one block now.
+  - **Laying a block and gluing a face each named the cells of the whole
+    map** afterwards, to catch whatever the operation left unnamed. A block
+    laid can only have left its own cells unnamed, and a face sewn its own
+    face, edges and nodes; so each looks only there. The names come out in
+    the same order either way, which matters: a name is what a script says,
+    and renumbering would make every script written before mean something
+    else. There is a test with the names in it.
   - Finding a cell **by name** walked the whole map, and the walks were
     inside loops: once per quadrangle to ask which groups its block is in
     and whether it is a patch, once per node a cut makes to put it back on
