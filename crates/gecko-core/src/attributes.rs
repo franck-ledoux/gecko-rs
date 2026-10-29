@@ -13,7 +13,7 @@
 //! would be *for* is reading off the entities that contain the one named
 //! here, and the geometry can answer that from the name alone.
 //!
-//! The `merge` and `split` behaviour below is the whole contract with the map,
+//! The `merge` and `split` behavior below is the whole contract with the map,
 //! and it is where this kind of code goes wrong, so it is spelled out rather
 //! than defaulted.
 
@@ -148,7 +148,7 @@ impl AttributeUpdate for NodeTag {
     /// the original's identity — and a later `assign_missing_ids` hands out
     /// fresh ones. The corner key is **copied** instead, because a split orbit
     /// is still the same corner to every cell that had it, and those cells have
-    /// to go on recognising it.
+    /// to go on recognizing it.
     ///
     /// The classification is copied for the same reason, and it is a
     /// different reason from the name's: where a cell *is* is not a claim

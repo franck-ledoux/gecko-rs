@@ -210,7 +210,7 @@ fn a_box_standing_clear_of_the_geometry_is_on_nothing() {
 
 #[test]
 fn classifying_pulls_a_node_onto_what_it_was_classified_on() {
-    // Not merely labelled: the point of saying a node is on a corner is
+    // Not merely labeled: the point of saying a node is on a corner is
     // that it then **is** on that corner.
     let mut s = Session::new().unwrap();
     s.apply(Command::LoadGeometry {
@@ -417,7 +417,7 @@ fn an_unclassified_node_dropped_near_the_model_takes_hold_of_it() {
     .unwrap();
     let found = nodes(&s).into_iter().find(|n| n["id"] == node).unwrap();
     assert_eq!(found["on"], serde_json::json!({ "dim": 2, "tag": 1 }));
-    // Pulled onto it, not merely labelled.
+    // Pulled onto it, not merely labeled.
     assert!(found["pos"][2].as_f64().unwrap().abs() < 1e-9, "{found}");
 
     // Dropped far from everything, it stays free and stays where it was put.
@@ -491,7 +491,7 @@ fn classifying_needs_a_geometry_to_classify_onto() {
 
 #[test]
 fn the_classification_travels_in_the_view_buffer() {
-    // Three decoders read these bytes; the colour of a classified node is
+    // Three decoders read these bytes; the color of a classified node is
     // the first thing that would quietly stop matching the kernel.
     let mut s = on_the_box();
     s.apply(Command::Classify { tolerance: 0.02 }).unwrap();
@@ -513,7 +513,7 @@ fn the_classification_travels_in_the_view_buffer() {
     assert!(v.quad_class_dim.iter().all(|d| *d == 2));
 
     // Exact length, or a client's typed-array views walk off the end. Per
-    // node three more words than before the classification travelled and
+    // node three more words than before the classification traveled and
     // two more again for its groups, per edge two and two, per quadrangle
     // two and two.
     let bytes = s.view_buffer();
@@ -640,7 +640,7 @@ fn on_the_bend() -> (Session, u32) {
 fn cutting_an_edge_leaves_a_node_on_what_the_edge_was_on() {
     // What a cut of a classified edge has to produce: a node and two
     // edges, all three on what the whole was on — and the node **on** it,
-    // not merely labelled with it.
+    // not merely labeled with it.
     let (mut s, edge) = on_the_bend();
     let before = nodes(&s).len();
 
@@ -678,7 +678,7 @@ fn the_other_nodes_a_cut_makes_are_taken_only_where_the_model_is() {
     // they belong, and they are left where it put them.
     //
     // The third is on the bottom, which is **lying on** the surface. That
-    // one is taken by it — a node made among classified neighbours is
+    // one is taken by it — a node made among classified neighbors is
     // judged by where it is, which is the rule that stops a session
     // bleeding classification. Nothing moves: it was already there.
     let (mut s, edge) = on_the_bend();
@@ -815,14 +815,14 @@ fn under_the_lid() -> Session {
     s
 }
 
-/// The face whose centre is nearest a point, and what it is on.
+/// The face whose center is nearest a point, and what it is on.
 fn face_at(session: &Session, at: [f64; 3]) -> serde_json::Value {
     serde_json::from_str::<Vec<serde_json::Value>>(&session.faces_json())
         .unwrap()
         .into_iter()
         .min_by(|a, b| {
             let far = |f: &serde_json::Value| {
-                let c = f["centre"].as_array().unwrap();
+                let c = f["center"].as_array().unwrap();
                 (0..3)
                     .map(|k| (c[k].as_f64().unwrap() - at[k]).powi(2))
                     .sum::<f64>()
@@ -1171,7 +1171,7 @@ fn a_weld_between_two_surfaces_lands_on_the_curve_they_share() {
     let faces: Vec<serde_json::Value> = serde_json::from_str(&s.faces_json()).unwrap();
     let flat: Vec<u32> = faces
         .iter()
-        .filter(|f| f["centre"][2].as_f64().unwrap().abs() < 1e-9)
+        .filter(|f| f["center"][2].as_f64().unwrap().abs() < 1e-9)
         .map(|f| f["id"].as_u64().unwrap() as u32)
         .collect();
     assert_eq!(flat.len(), 2, "one face from each block, both at z = 0");
@@ -1223,7 +1223,7 @@ fn a_weld_between_two_strangers_says_which_classification_it_dropped() {
     let faces: Vec<serde_json::Value> = serde_json::from_str(&s.faces_json()).unwrap();
     let flat: Vec<u32> = faces
         .iter()
-        .filter(|f| f["centre"][2].as_f64().unwrap().abs() < 1e-9)
+        .filter(|f| f["center"][2].as_f64().unwrap().abs() < 1e-9)
         .map(|f| f["id"].as_u64().unwrap() as u32)
         .collect();
     assert_eq!(flat.len(), 2);

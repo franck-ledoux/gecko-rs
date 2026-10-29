@@ -5,35 +5,65 @@ the day a tag was cut.
 
 ## 0.1.4
 
-Groups of blocks, and the display settled around them.
+Groups of blocks, the display settled around them, and editing that keeps
+up with a model of a hundred blocks.
+
+- **Editing is no longer quadratic in the size of the model.** Reported as
+  "every operation is far too slow past a hundred blocks", and measured:
+  at a hundred and twenty-five blocks the view buffer took 3.2 seconds, a
+  read of the faces 3.1, and a cut 0.6. They take 60 ms, 63 ms and 125 ms
+  now. On B10, a cut at forty blocks went from 181 ms to 40.
+
+  - Finding a cell **by name** walked the whole map, and the walks were
+    inside loops: once per quadrangle to ask which groups its block is in
+    and whether it is a patch, once per node a cut makes to put it back on
+    the geometry. A face of a block now carries the volume it belongs to,
+    which the caller already had in hand, and a name is looked up from a
+    hint — where that name was last seen — checked against the cell's own
+    tag, falling back to the walk.
+  - The **geometry's bounding box** was worked out again after every edit,
+    walking every point of the model to find a number that cannot have
+    changed. It is worked out once per geometry now.
+
+- American spelling throughout — `color`, `center`, `neighbor`, `behavior`,
+  `gray` — in the code, the interface, the documentation and the keys a
+  script reads. **A script that reads `face.centre` must now read
+  `face.center`.**
 
 - **Groups of blocks.** A group is a part of the model you have named: a set
   of blocks, and with them everything they are made of — a face, an edge or
   a node is in a group when a block it bounds is. A block can be in several
   at once, and sixty-four groups is what a session holds.
+
 - A **Groups** band in the display drawer has a row each: show it, rename it
   in place, put the selected blocks in or take them out, and forget it. The
   last row is the blocks in no group, which is how the unnamed part of a
   model is hidden.
+
 - A group marked **written** becomes a variable of the mesh: one cell array
   per group, named after it, holding 1 for the cells of its blocks. One
   array per group rather than one number per cell, because a cell can be in
   several and a column of numbers could only name one.
-- A fourth **colouring**, `group`, for nodes, edges, faces and blocks alike —
-  and the colourings are a list now rather than a row of boxes, since four
+
+- A fourth **coloring**, `group`, for nodes, edges, faces and blocks alike —
+  and the colorings are a list now rather than a row of boxes, since four
   of them do not fit across the drawer.
+
 - Membership lives on the block itself, one bit each, so the model carries
   it: cutting a block in two leaves both halves in whatever it was in, and
   welding two gives the result both their groups. Nothing recomputes it and
   nothing can go stale.
+
 - **The local server says how long its answers may be kept**: never for the
   page, for ever for the bundle under `assets/`, whose name carries a hash
   of what is in it. A reply with no freshness on it is one a browser may
   guess about, and guessing wrong here means rebuilding and seeing the
   application you had before.
+
 - A cell is drawn when **any** block it bounds is drawn, so hiding a group
   leaves the blocks beside it whole — a shared edge stays because the block
   still on screen still needs it.
+
 - `gecko.group`, `gecko.ungroup`, `gecko.rename_group`, `gecko.drop_group`
   and the `gecko.groups()` read, so a session's groups are in its script and
   replay with it.
@@ -80,7 +110,7 @@ Three things from a session with it, and one of them took the measuring.
 Smoothing, a session you can replay, and a handful of things from using it.
 
 - **`R` smooths the blocking**: every node towards the middle of its
-  neighbours, as far as its classification allows. A node on a curve slides
+  neighbors, as far as its classification allows. A node on a curve slides
   along the curve, one on a surface over the surface, one on a geometric
   corner stays, and so does one on the outside of the blocking that is
   classified on nothing — it has no surface to be kept on, and moving it
@@ -95,13 +125,13 @@ Smoothing, a session you can replay, and a handful of things from using it.
 - **Dragging a node still moves only that node** (and whatever was picked
   with it). Smoothing outwards from a drag, ring by ring, was built for this
   release and taken out again before it: what you want of a drag is the node
-  under the pointer, and a neighbourhood rearranging itself around it is a
+  under the pointer, and a neighborhood rearranging itself around it is a
   surprise rather than a help.
 - A **frozen** node is drawn as a **cube** rather than a ball, in whatever
-  colour the colouring gives it. It was grey of its own until now, which hid
-  the two things the colouring is for — which node it is, and what it
+  color the coloring gives it. It was gray of its own until now, which hid
+  the two things the coloring is for — which node it is, and what it
   follows. Being out of play is a thing about the cell, so it is said with
-  the shape. The colour panel has one fewer swatch for it.
+  the shape. The color panel has one fewer swatch for it.
 - **Open takes a `.lua`**, and replays it from an empty session: blocks,
   geometry and mesh go first, because a script describes a session from
   nothing and run on top of a model it would describe something else. The
@@ -119,13 +149,13 @@ Smoothing, a session you can replay, and a handful of things from using it.
   selection that took a while to build. It knows which of the selections
   your last click went to, so mixing nodes, faces, edges and geometric
   entities does not confuse it.
-- **The classification colours are told apart.** They were three violets of
+- **The classification colors are told apart.** They were three violets of
   one hue and a corner looked like a curve: measured in OKLab, the nearest
   pair was 11 units in the dark theme and 6 in the light. They are a ramp
   now — pink, magenta, violet, the lightness falling and the hue turning the
-  same way — at 22 and 20, and each stays clear of the colour an
+  same way — at 22 and 20, and each stays clear of the color an
   unclassified cell wears, which the old deep violet was 7 from. The
-  measurement is a test, so they cannot be quietly harmonised back together.
+  measurement is a test, so they cannot be quietly harmonized back together.
 - **How big the blocking is drawn is a setting**: *handles* and *edges*
   under *Drawing*, in pixels on the screen. The wireframe is a ribbon rather
   than a GL line to make the second of those possible at all — a GL line is
@@ -133,10 +163,10 @@ Smoothing, a session you can replay, and a handful of things from using it.
   edges, the ribbon costs about 2% more to rebuild and 1.5% more per frame
   than the line it replaces at the default width, and 10% more per frame at
   the widest setting the panel offers.
-- **Nodes, edges and faces start coloured by their classification.** Putting
+- **Nodes, edges and faces start colored by their classification.** Putting
   the blocking onto the model is what a session is for, so what each cell is
   attached to is the thing worth seeing first. Blocks keep their own
-  colouring, being classified on nothing.
+  coloring, being classified on nothing.
 - **A bounding box hugs the model**: 2% of each half-side rather than 10%,
   in the kernel's default as well as in the drawer, because pulling its
   faces onto the surfaces nearby is the first thing anybody does with a box.
@@ -150,7 +180,7 @@ Smoothing, a session you can replay, and a handful of things from using it.
   small, and the blocking's own view was choosing an origin of its own, over
   the blocking alone: a smaller world than the one the session settles over,
   and so one that walks past its own threshold first. The mesh and the
-  geometry never heard about the new centre, so they stayed where they were
+  geometry never heard about the new center, so they stayed where they were
   and the block structure jumped. The view now takes the origin it is given.
   The page also fetches the geometry and the mesh again when the origin does
   move, which it had no reason to do before: neither buffer had changed, only
@@ -245,5 +275,5 @@ Lua, with a kernel on a 3-dimensional combinatorial map.
 - Four views at once (3D, X, Y, Z), a lasso over the node handles, drag
   several nodes together, and every operation on the keyboard as well as in
   the toolbar.
-- Colours, shrink, visibility and the geometry's groups all adjustable and
+- Colors, shrink, visibility and the geometry's groups all adjustable and
   remembered; a picture saved at the size you ask for.

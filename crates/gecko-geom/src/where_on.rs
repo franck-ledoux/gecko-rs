@@ -85,7 +85,7 @@ impl Geometry {
     /// How big the geometry is, corner to corner.
     ///
     /// What a tolerance is a share of: "within a hundredth" has to mean a
-    /// hundredth of something, and a figure in millimetres would be wrong
+    /// hundredth of something, and a figure in millimeters would be wrong
     /// for every model but the one it was chosen on.
     pub fn span(&self) -> f64 {
         let mut lo = [f64::INFINITY; 3];

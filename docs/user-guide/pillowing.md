@@ -37,7 +37,7 @@ gecko.stats()   -- {nodes = 16, edges = 32, faces = 24, blocks = 7}
 ## How thick
 
 A third of the cell it is cut from, measured through the block from its
-centre to the face and back. No setting: a layer you have to dial in before
+center to the face and back. No setting: a layer you have to dial in before
 you can see it is a layer you dial in twice.
 
 Where a node sits on several selected faces at once, the copy goes to the

@@ -6,12 +6,12 @@ away.
 ## Three layers
 
 **A toolbar**, top left, carrying the verbs you use constantly: create a cube,
-glue, remove, recentre, save a picture, settings, shortcuts. Icons with a
+glue, remove, recenter, save a picture, settings, shortcuts. Icons with a
 tooltip each, and a key each.
 
 **Two panels**, shut unless asked for, and never both at once — they are
 drawn in the same place. The sliders button, or `Tab`, opens **Display**:
-colours, cells, geometry, and how a saved picture comes out. The cog, or `,`,
+colors, cells, geometry, and how a saved picture comes out. The cog, or `,`,
 opens **Settings**: what the operations do. Both remember their state.
 
 **A readout**, bottom left: the counts, which kind of thing the mouse is
@@ -67,7 +67,7 @@ cannot disagree with the release it was built from.
 | `1` `2` `3` | faces, blocks, edges                                 |
 | `4` `5` `6` | geometric surfaces, curves, corners                  |
 | `I`         | internal faces                                       |
-| `Tab`       | display: colours, cells, geometry                    |
+| `Tab`       | display: colors, cells, geometry                     |
 | `,`         | settings: what the operations do                     |
 | `⇧Tab`      | hide everything                                      |
 | `S`         | save a picture                                       |
@@ -80,7 +80,7 @@ Two things are deliberately left alone. A combination the table does not
 claim belongs to the browser or the system: a shortcut that swallowed ⌘S
 would be a bug, and alt is left out altogether, being how several keyboards
 type the characters above the digits. And anything typed into a field is
-typing — the colour inputs and the sliders both take characters and arrow
+typing — the color inputs and the sliders both take characters and arrow
 keys, and `Tab` inside the open drawer walks its fields rather than shutting
 it.
 
@@ -123,12 +123,12 @@ they are about the picture.
 | **steps**      | how far back `⌘Z` can go — see below                                                                                                                                                                                                                  |
 
 Both shares are of the model rather than lengths, because a tolerance in
-millimetres is right for exactly one geometry.
+millimeters is right for exactly one geometry.
 
 ## Going back
 
 `⌘Z`, or the arrow in the toolbar, puts the block structure back the way it
-was before the last thing that changed it. The button is greyed out when
+was before the last thing that changed it. The button is grayed out when
 there is nothing to go back to, so the history is something you can see
 rather than something you find out by pressing.
 
@@ -140,7 +140,7 @@ What it covers is everything that changes the model: blocks created, boxed,
 glued, removed, extruded and pillowed; nodes moved, frozen, classified and
 unclassified; sheets cut and taken out; and loading or clearing a geometry,
 which comes back with the blocks. What it does not cover is how the model is
-*drawn* — colours, opacity, which groups are showing, where the camera is.
+*drawn* — colors, opacity, which groups are showing, where the camera is.
 Those are not changes to anything, and they are already a key away.
 
 !!! note "What a step costs"
@@ -169,7 +169,7 @@ Two settings, under **Picture** in the drawer:
   which is what a figure in a paper wants; a window has fewer pixels than a
   page. On a high-density display the canvas is already twice its CSS size,
   so 2× there is a generously large image.
-- **transparent background**, for dropping a figure onto a page whose colour
+- **transparent background**, for dropping a figure onto a page whose color
   you do not know yet.
 
 **The interface is never in the picture.** The scene is rendered to an

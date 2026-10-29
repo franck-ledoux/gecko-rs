@@ -36,7 +36,7 @@ gecko.create_cube{ origin = {1.5, 0, 0}, size = 1 }
 -- The two faces that look at each other, found by where they are.
 local pair = {}
 for _, face in ipairs(gecko.faces()) do
-  if math.abs(face.centre[1] - 1) < 1e-9 or math.abs(face.centre[1] - 1.5) < 1e-9 then
+  if math.abs(face.center[1] - 1) < 1e-9 or math.abs(face.center[1] - 1.5) < 1e-9 then
     pair[#pair + 1] = face.id
   end
 end
@@ -46,7 +46,7 @@ gecko.stats()   -- {nodes = 12, edges = 20, faces = 11, blocks = 2}
 ```
 
 `gecko.faces()` gives each face its stable name, the block it bounds, and its
-centre. A face with a block on each side is listed once per block, as the
+center. A face with a block on each side is listed once per block, as the
 surface is.
 
 ## Where the seam ends up
@@ -129,15 +129,15 @@ line names the block before you commit to it.
 From a script, `gecko.remove_block(id)`, with the names from `gecko.blocks()`.
 
 **Whatever it was glued to keeps its own cells.** They are split off on the
-way out, not deleted with it: the neighbour comes out of the operation a
+way out, not deleted with it: the neighbor comes out of the operation a
 closed block again, with the face that was internal back on its boundary and
 free to be glued to something else. Removing the middle of three glued blocks
 leaves two closed ones.
 
-The names of the neighbour's split cells are **cleared** and reissued, which
+The names of the neighbor's split cells are **cleared** and reissued, which
 is exactly the case the two identities were designed around: nothing was cut
-in two, so the corner keys are copied across and the neighbour goes on
-recognising its own corners. See
+in two, so the corner keys are copied across and the neighbor goes on
+recognizing its own corners. See
 [Architecture](../developer-guide/architecture.md#naming-a-cell).
 
 ## The camera stays where you put it
@@ -149,13 +149,13 @@ have to re-aim after every edit.
 Creating a cube does reframe, because it puts a new block down beside the
 others and a model growing past the edge of the window is no use. For
 everything else there is
-[**Recentre view**](display.md#recentring) — `F` — which brings the whole model
+[**Recenter view**](display.md#recentring) — `F` — which brings the whole model
 into view without changing the direction you are looking from.
 
 ## Growing a block out of a face
 
 Click a face to select it, then **drag that same face**: a new block grows
-out of it, along the normal at its centre, as far as you pull. Let go and it
+out of it, along the normal at its center, as far as you pull. Let go and it
 is built, welded to the face it came from.
 
 Selecting first is what arms the gesture, and it is not ceremony. A face

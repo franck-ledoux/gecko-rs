@@ -27,12 +27,12 @@ import {
   SWATCHES,
   type Theme,
 } from "./theme";
-import { colourForId, FAMILY } from "./palette";
+import { colorForId, FAMILY } from "./palette";
 import { actionFor, helpRows, type Action } from "./shortcuts";
 import { capture, fileName, save, saveBlob, shotName } from "./capture";
 import { Interpreter, type Answer } from "./lua";
 import * as files from "./files";
-import type { Colouring } from "./surface";
+import type { Coloring } from "./surface";
 import { GEOM_GROUPS, spotName, type GeomGroup, type Spot } from "./geometry";
 import type { Axis } from "./axes";
 import "./style.css";
@@ -72,7 +72,7 @@ async function boot() {
   /** The rebasing origin those two were drawn relative to.
    *
    *  Everything in the scene is sent rebased on one origin, and that origin
-   *  can move: a model that has walked away from it has to be re-centred,
+   *  can move: a model that has walked away from it has to be re-centerd,
    *  or f32 coordinates lose their precision. When it moves, the geometry
    *  and the mesh have to be fetched again even though **neither has
    *  changed** — the numbers in the buffers this tab is holding are
@@ -115,14 +115,14 @@ async function boot() {
       if (span) span.outerHTML = html;
     };
     for (const { group } of LAYERS) {
-      say(group, digest(prefs[group].colouring, prefs[group].alpha, prefs[group].visible));
+      say(group, digest(prefs[group].coloring, prefs[group].alpha, prefs[group].visible));
     }
-    say("edges", digest(prefs.edges.colouring, undefined, prefs.edges.visible));
-    say("nodes", digest(prefs.nodes.colouring, undefined, prefs.nodes.visible));
+    say("edges", digest(prefs.edges.coloring, undefined, prefs.edges.visible));
+    say("nodes", digest(prefs.nodes.coloring, undefined, prefs.nodes.visible));
     for (const group of GEOM_GROUPS) {
-      say(group, digest(prefs[group].colouring, prefs[group].alpha, prefs[group].visible));
+      say(group, digest(prefs[group].coloring, prefs[group].alpha, prefs[group].visible));
     }
-    say("mesh", digest(prefs.mesh.colouring, prefs.mesh.alpha, prefs.mesh.visible));
+    say("mesh", digest(prefs.mesh.coloring, prefs.mesh.alpha, prefs.mesh.visible));
   }
 
   function setTheme(theme: Theme) {
@@ -140,7 +140,7 @@ async function boot() {
    * The faces and blocks controls, generated from this list.
    *
    * Both groups are drawn from the same quadrangles, so they take the same
-   * four controls — shown, coloured how, how opaque, how shrunk — and only
+   * four controls — shown, colored how, how opaque, how shrunk — and only
    * faces have anything extra to say.
    */
   /**
@@ -151,7 +151,7 @@ async function boot() {
    *
    * `class` is offered where it means something. A block is classified on
    * nothing — a surface mesh has no volumes to classify one on — so it
-   * keeps the two colourings it always had.
+   * keeps the two colorings it always had.
    */
   const LAYERS: ReadonlyArray<{ group: Group; label: string; classified: boolean }> = [
     { group: "blocks", label: "Blocks", classified: false },
@@ -164,7 +164,7 @@ async function boot() {
     ` data-test="${test}" /></label>`;
 
   /**
-   * How a group of cells is coloured: one line, one list.
+   * How a group of cells is colored: one line, one list.
    *
    * A list rather than a row of radios. There are four of them for a cell
    * of the blocking — uniform, id, classification, group — and four
@@ -175,7 +175,7 @@ async function boot() {
    */
   const modes = (
     group: string,
-    now: Colouring,
+    now: Coloring,
     /** `class` is for cells of the **blocking**, which are classified on
      *  the geometry; `group` for cells of the blocking too, since a group
      *  is of blocks. The geometry's own groups and the mesh take
@@ -183,25 +183,25 @@ async function boot() {
      *  it, and a mesh is what the blocking was for. */
     offers: { classified?: boolean; grouped?: boolean } = {},
   ) => {
-    const one = (value: Colouring, text: string) =>
+    const one = (value: Coloring, text: string) =>
       `<option value="${value}"${now === value ? " selected" : ""}>${text}</option>`;
     return (
-      `<label class="row modes"><span>colour by</span>` +
+      `<label class="row modes"><span>color</span>` +
       `<select data-test="${group}-mode">` +
-      one("uniform", "one colour") +
-      one("id", "its id") +
-      (offers.classified ? one("class", "its classification") : "") +
-      (offers.grouped ? one("group", "its group") : "") +
+      one("uniform", "uniform") +
+      one("id", "id") +
+      (offers.classified ? one("class", "classification") : "") +
+      (offers.grouped ? one("group", "group") : "") +
       `</select></label>`
     );
   };
 
-  /** What a folded group says about itself: hidden, or how it is coloured
+  /** What a folded group says about itself: hidden, or how it is colored
    *  and how far through it you can see. The line that stands for a group
    *  has to answer the question you opened it to ask. */
-  const digest = (colouring: Colouring, alpha?: number, visible = true) => {
+  const digest = (coloring: Coloring, alpha?: number, visible = true) => {
     if (!visible) return `<span class="digest">hidden</span>`;
-    const how = colouring === "class" ? "classification" : colouring;
+    const how = coloring === "class" ? "classification" : coloring;
     const seen = alpha === undefined ? "" : ` · ${Math.round(alpha * 100)}%`;
     return `<span class="digest">${how}${seen}</span>`;
   };
@@ -223,11 +223,11 @@ async function boot() {
         `${show ? " checked" : ""} /></label>`) +
     `<span class="name">${label}</span>${inside}</summary>`;
 
-  /** Hook up one group's colour list. */
-  function wireModes(group: string, set: (value: Colouring) => void) {
+  /** Hook up one group's color list. */
+  function wireModes(group: string, set: (value: Coloring) => void) {
     const list = $("layers").querySelector<HTMLSelectElement>(`[data-test="${group}-mode"]`);
     list?.addEventListener("change", () => {
-      set(list.value as Colouring);
+      set(list.value as Coloring);
       redraw();
     });
   }
@@ -241,10 +241,10 @@ async function boot() {
             "cells",
             group,
             label,
-            digest(layer.colouring, layer.alpha, layer.visible),
+            digest(layer.coloring, layer.alpha, layer.visible),
             layer.visible,
           ) +
-          modes(group, layer.colouring, { classified, grouped: true }) +
+          modes(group, layer.coloring, { classified, grouped: true }) +
           slider(`${group}-alpha`, "opacity", 0, layer.alpha) +
           slider(`${group}-shrink`, "shrink", 0.1, layer.shrink) +
           (group === "faces"
@@ -260,20 +260,20 @@ async function boot() {
         "cells",
         "edges",
         "Edges",
-        digest(prefs.edges.colouring, undefined, prefs.edges.visible),
+        digest(prefs.edges.coloring, undefined, prefs.edges.visible),
         prefs.edges.visible,
       ) +
-      modes("edges", prefs.edges.colouring, { classified: true, grouped: true }) +
+      modes("edges", prefs.edges.coloring, { classified: true, grouped: true }) +
       slider("edges-shrink", "shrink", 0.1, prefs.edges.shrink) +
       `</details>` +
       summary(
         "cells",
         "nodes",
         "Nodes",
-        digest(prefs.nodes.colouring, undefined, prefs.nodes.visible),
+        digest(prefs.nodes.coloring, undefined, prefs.nodes.visible),
         prefs.nodes.visible,
       ) +
-      modes("nodes", prefs.nodes.colouring, { classified: true, grouped: true }) +
+      modes("nodes", prefs.nodes.coloring, { classified: true, grouped: true }) +
       `</details>`;
 
     for (const { group } of LAYERS) {
@@ -284,7 +284,7 @@ async function boot() {
         redraw();
       });
       wireModes(group, (value) => {
-        prefs[group].colouring = value;
+        prefs[group].coloring = value;
       });
       find(`${group}-alpha`).addEventListener("input", (e) => {
         prefs[group].alpha = Number((e.target as HTMLInputElement).value);
@@ -296,10 +296,10 @@ async function boot() {
       });
     }
     wireModes("edges", (value) => {
-      prefs.edges.colouring = value;
+      prefs.edges.coloring = value;
     });
     wireModes("nodes", (value) => {
-      prefs.nodes.colouring = value;
+      prefs.nodes.coloring = value;
     });
     const internal = $("layers").querySelector<HTMLInputElement>('[data-test="faces-internal"]')!;
     internal.addEventListener("change", (e) => {
@@ -328,7 +328,7 @@ async function boot() {
   /**
    * The geometry's three groups, generated the same way.
    *
-   * The same three controls each — shown, coloured how, how opaque — and
+   * The same three controls each — shown, colored how, how opaque — and
    * deliberately no shrink: a geometry is not a decomposition you can
    * explode, its surfaces meet along the very curves also on screen.
    */
@@ -340,10 +340,10 @@ async function boot() {
           "geometry",
           group,
           group,
-          digest(layer.colouring, layer.alpha, layer.visible),
+          digest(layer.coloring, layer.alpha, layer.visible),
           layer.visible,
         ) +
-        modes(group, layer.colouring) +
+        modes(group, layer.coloring) +
         slider(`${group}-alpha`, "opacity", 0, layer.alpha) +
         `</details>`
       );
@@ -360,7 +360,7 @@ async function boot() {
         `[data-test="${group}-mode"]`,
       )!;
       list.addEventListener("change", () => {
-        prefs[group].colouring = list.value as Colouring;
+        prefs[group].coloring = list.value as Coloring;
         redraw();
       });
       find(`${group}-alpha`).addEventListener("input", (e) => {
@@ -401,7 +401,7 @@ async function boot() {
                 `<div class="top">` +
                 `<label class="check"><input type="checkbox" data-test="group-shown"` +
                 `${shown ? " checked" : ""} title="draw this group" /></label>` +
-                `<i class="swatch" style="background:${colourForId(g.bit, FAMILY.groups)}"></i>` +
+                `<i class="swatch" style="background:${colorForId(g.bit, FAMILY.groups)}"></i>` +
                 `<input class="group-name" data-test="group-name" value="${escaped(g.name)}" />` +
                 `<button data-test="group-add" title="put the selected blocks in">+</button>` +
                 `<button data-test="group-take" title="take the selected blocks out">−</button>` +
@@ -533,7 +533,7 @@ async function boot() {
     $("mesh-layer").innerHTML =
       `<label class="check"><input type="checkbox" data-test="mesh-visible"` +
       `${layer.visible ? " checked" : ""} /> show</label>` +
-      modes("mesh", layer.colouring) +
+      modes("mesh", layer.coloring) +
       slider("mesh-alpha", "opacity", 0, layer.alpha);
 
     const find = (test: string) =>
@@ -544,7 +544,7 @@ async function boot() {
     });
     const list = $("mesh-layer").querySelector<HTMLSelectElement>('[data-test="mesh-mode"]')!;
     list.addEventListener("change", () => {
-      prefs.mesh.colouring = list.value as Colouring;
+      prefs.mesh.coloring = list.value as Coloring;
       redraw();
     });
     find("mesh-alpha").addEventListener("input", (e) => {
@@ -555,13 +555,13 @@ async function boot() {
   drawMeshLayer();
   drawGroups();
 
-  /** The panel is generated from the theme's own keys, so a colour added later
+  /** The panel is generated from the theme's own keys, so a color added later
    *  needs no new markup. */
   function drawSwatches() {
     $("swatches").innerHTML = SWATCHES.map(
       ({ key, label }) =>
         `<label class="swatch">${label}` +
-        `<input type="color" data-key="${key}" data-test="colour-${key}"` +
+        `<input type="color" data-key="${key}" data-test="color-${key}"` +
         ` value="${prefs.theme[key]}" /></label>`,
     ).join("");
     for (const input of $("swatches").querySelectorAll("input")) {
@@ -908,7 +908,7 @@ async function boot() {
     // Smallest target first: a handle, then a line, then the surface behind
     // them. Each is the thing you had to aim at to hit it. A press and
     // release on a handle without moving is a click on that node, which
-    // picks it — the drag behaviour has already decided it was not a drag.
+    // picks it — the drag behavior has already decided it was not a drag.
     const node = viewer.pickNode(x, y);
     if (node !== null) {
       pickNode(node);
@@ -1268,7 +1268,7 @@ async function boot() {
   }
 
   /**
-   * Smooth the blocking: the nodes towards the middle of their neighbours,
+   * Smooth the blocking: the nodes towards the middle of their neighbors,
    * as far as what they follow allows.
    *
    * How many passes and how far each one goes are the two sliders in the
@@ -1686,9 +1686,9 @@ async function boot() {
 
   /** Put everything back in view. Camera state, so it never goes near the
    *  kernel: in station mode two tabs on one session each have their own. */
-  function recentre() {
+  function recenter() {
     viewer.frameAll();
-    say("view recentred");
+    say("view recenterd");
   }
 
   /**
@@ -1767,11 +1767,11 @@ async function boot() {
   async function refresh(frame: false | "jump" | "glide" = false) {
     const [bytes, stats] = await Promise.all([kernel.view(), kernel.stats()]);
     const view = decodeView(bytes);
-    // Whether the scene has been re-centred under us, decided before the
+    // Whether the scene has been re-centerd under us, decided before the
     // view is handed over: what is drawn after it has to agree with it.
-    const recentred =
-      originDrawn === null || view.centre.some((c, k) => c !== originDrawn![k]);
-    originDrawn = view.centre;
+    const recenterd =
+      originDrawn === null || view.center.some((c, k) => c !== originDrawn![k]);
+    originDrawn = view.center;
     viewer.setView(view);
     // Which components are open sheets of faces. Asked once a redraw
     // rather than once a pick: it is a short list, and both the verbs and
@@ -1785,10 +1785,10 @@ async function boot() {
     // Only when it has actually changed. The geometry is the big buffer and
     // the one that never moves; re-sending it because a node was dragged is
     // the whole cost this generation number exists to avoid.
-    if (recentred || stats.geometry.generation !== geometryDrawn) {
+    if (recenterd || stats.geometry.generation !== geometryDrawn) {
       // A new geometry shares nothing with the old one, so `setGeometry`
       // lets go of whatever was picked on it. When the only reason for
-      // fetching it again is that the scene has been re-centred, it *is*
+      // fetching it again is that the scene has been re-centerd, it *is*
       // the same geometry, and dropping a selection over a change of
       // coordinates would lose a click for no reason the reader can see.
       const picked = stats.geometry.generation === geometryDrawn ? viewer.geomSelection : [];
@@ -1799,7 +1799,7 @@ async function boot() {
     // The mesh on the same terms, and for the same reason: it is the big
     // buffer, and the number counts the edits that threw one away as well
     // as the builds, so this is also how a stale picture goes.
-    if (recentred || stats.mesh.generation !== meshDrawn) {
+    if (recenterd || stats.mesh.generation !== meshDrawn) {
       meshDrawn = stats.mesh.generation;
       viewer.setMesh(stats.mesh.nodes === undefined ? null : decodeMesh(kernel.mesh()));
     }
@@ -2017,15 +2017,15 @@ async function boot() {
   }
 
   /**
-   * What the classification colours mean.
+   * What the classification colors mean.
    *
    * Read off the theme rather than written out, so the card cannot come
    * to disagree with the screen — the same reason the keys above it are
    * generated from the table they are matched against.
    */
   function legend() {
-    const swatch = (colour: string, says: string) =>
-      `<span class="key"><i style="background:${colour}"></i>${says}</span>`;
+    const swatch = (color: string, says: string) =>
+      `<span class="key"><i style="background:${color}"></i>${says}</span>`;
     return (
       `<section><h2>What a cell is classified on</h2>` +
       `<div id="help-legend">` +
@@ -2036,7 +2036,7 @@ async function boot() {
       `</div>` +
       `<p class="aside" data-test="legend-note">Nodes, edges and faces start` +
       ` here; the <b>class</b> box in the display panel turns it off. A` +
-      ` <b>frozen</b> node is a cube, in whatever colour the colouring` +
+      ` <b>frozen</b> node is a cube, in whatever color the coloring` +
       ` gives it.</p></section>`
     );
   }
@@ -2080,7 +2080,7 @@ async function boot() {
     "pillow-chord": pillowChord,
     clear: clearSelection,
     unpick,
-    recentre,
+    recenter,
     screenshot,
     "axis-x": () => lookDown("+x"),
     "axis-y": () => lookDown("+y"),
@@ -2165,7 +2165,7 @@ async function boot() {
     ["pillow", "pillow"],
     ["undo", "undo"],
     ["quad", "quad"],
-    ["recentre", "recentre"],
+    ["recenter", "recenter"],
     ["shot", "screenshot"],
     ["display", "drawer"],
     ["settings", "params"],
@@ -2361,7 +2361,7 @@ async function boot() {
      *  they have to agree or the scene is in pieces. */
     origins: () => viewer.origins(),
     /** What is actually on screen for a node: the shape of its handle
-     *  and the colour that handle is wearing. */
+     *  and the color that handle is wearing. */
     nodesDrawn: () => viewer.nodesDrawn,
     groupsShown: () => viewer.groupsShown,
     nodeShape: (name: number) => viewer.nodeShape(name),
@@ -2383,10 +2383,10 @@ async function boot() {
     choose: (pick: Pick | null) => choose(pick),
     nodeScreen: (name: number) => viewer.nodeScreen(name),
     nodePosition: (name: number) => viewer.nodePosition(name),
-    centre: () => viewer.centre,
+    center: () => viewer.center,
     apply: (command: Record<string, unknown>) => kernel.apply(command),
     refresh: () => refresh(),
-    recentre: () => viewer.frameAll(),
+    recenter: () => viewer.frameAll(),
     /** Put the camera at a distance, without the wheel's thirty-five notches.
      *  What lets a test say "and from twice as far away it looks the same". */
     setRadius: (radius: number) => {

@@ -1,7 +1,7 @@
 //! Taking a block away.
 //!
 //! The interesting case is not the lone block — it is the one glued to
-//! something. Removing it has to give the neighbour its own cells back, which
+//! something. Removing it has to give the neighbor its own cells back, which
 //! is the split that `CornerKey` exists for, and leave nothing of the block
 //! behind for the next operation to trip over.
 
@@ -74,7 +74,7 @@ fn the_map_can_be_used_again_afterwards() {
 }
 
 #[test]
-fn removing_a_glued_block_leaves_the_neighbour_whole() {
+fn removing_a_glued_block_leaves_the_neighbor_whole() {
     let mut b = glued();
     assert_eq!(cells(&b), (12, 20, 11, 2));
     let names = blocks(&b);
@@ -93,7 +93,7 @@ fn removing_a_glued_block_leaves_the_neighbour_whole() {
 }
 
 #[test]
-fn the_neighbour_can_be_glued_again() {
+fn the_neighbor_can_be_glued_again() {
     // The real test of "whole": the face that was internal has to be back on
     // the boundary, or nothing can ever be attached there again.
     let mut b = glued();
@@ -151,4 +151,47 @@ fn a_name_no_block_answers_to_is_refused_and_changes_nothing() {
         Err(BlockingError::NoSuchBlock(_))
     ));
     assert_eq!(cells(&b), before);
+}
+
+#[test]
+fn a_name_is_found_again_after_the_map_has_been_rearranged() {
+    // Finding a cell by name starts from a hint — where that name was last
+    // seen — and falls back to a walk. The hint is written where names are
+    // handed out and nowhere else, so an operation that moves cells about
+    // leaves stale entries behind on purpose: what makes that safe is that
+    // every answer is checked against the cell's own tag before it is
+    // given.
+    //
+    // Why it exists: without it, every lookup walked the whole map, and a
+    // cut of a hundred-block model spent half a second doing it once per
+    // node it made.
+    let mut b = Blocking::new().expect("a map");
+    let first = b.add_block(cube_corners([0.0, 0.0, 0.0], 1.0)).unwrap();
+    let second = b.add_block(cube_corners([2.0, 0.0, 0.0], 1.0)).unwrap();
+
+    // Names of the second block's cells, taken before the first goes.
+    let nodes: Vec<CellId> = b.nodes().map(|(id, _)| id).collect();
+    let kept: Vec<CellId> = b
+        .nodes()
+        .filter(|(_, p)| p[0] > 1.5)
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(kept.len(), 8, "the second block's eight corners");
+
+    b.remove_block(first).expect("the first goes");
+
+    // Every name that is still there answers, and with the right cell.
+    for node in &kept {
+        let found = b.node_by_id(*node).expect("still there");
+        assert_eq!(b.node_tag(found).id, *node, "a hint gave the wrong cell");
+    }
+    // And the ones that went answer with nothing rather than with whatever
+    // now sits where they used to.
+    let gone: Vec<CellId> = nodes.into_iter().filter(|n| !kept.contains(n)).collect();
+    assert_eq!(gone.len(), 8);
+    for node in gone {
+        assert!(b.node_by_id(node).is_none(), "{node:?} is gone");
+    }
+    assert!(b.block_by_id(first).is_none());
+    assert!(b.block_by_id(second).is_some());
 }

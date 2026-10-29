@@ -3,7 +3,7 @@
 A blocking attached to a model is rarely a *tidy* blocking: edges end up
 long in one place and short in another, and corners end up less square than
 they could be. Press `R` and every node moves towards the middle of its
-neighbours — as far as its classification allows.
+neighbors — as far as its classification allows.
 
 ```lua
 gecko.smooth{ rounds = 5, share = 0.5 }
@@ -60,7 +60,7 @@ curve.
 A drag moves **the node you have hold of**, and the ones you had picked with
 it, and nothing else. For a while it also smoothed outwards from it, ring by
 ring; that came out again. What you want of a drag is the node under the
-pointer, and a neighbourhood rearranging itself around it is a surprise
+pointer, and a neighborhood rearranging itself around it is a surprise
 rather than a help.
 
 Smoothing is something you ask for: `R`, or `gecko.smooth`, when the

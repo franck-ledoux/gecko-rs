@@ -24,10 +24,10 @@ pub struct CellId(u32);
 ///
 /// The two are different questions and only one field each can answer. A map
 /// splits a node's attribute when the vertex orbit behind it comes apart —
-/// deleting a neighbouring block does exactly that: what was one attribute
+/// deleting a neighboring block does exactly that: what was one attribute
 /// becomes two, and every cell that had that corner keeps one of them. Nothing
 /// was cut in two; geometrically, and to those cells, it is still the same
-/// corner. So the key is copied across and the cells go on recognising it,
+/// corner. So the key is copied across and the cells go on recognizing it,
 /// while the [`CellId`] is cleared.
 ///
 /// The price is the mirror image: a key is unique only *within a cell*, two

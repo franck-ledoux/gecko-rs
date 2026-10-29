@@ -101,7 +101,7 @@ fn the_file_is_vtk_legacy_a_reader_would_take() {
     // One cell, nine numbers: how many corners, and which.
     assert!(file.contains("\nCELLS 1 9\n"), "{file}");
     assert!(file.contains("\nCELL_TYPES 1\n12\n"), "{file}");
-    // And which block it came from, for anything that wants to colour it.
+    // And which block it came from, for anything that wants to color it.
     assert!(
         file.contains("SCALARS block int 1\nLOOKUP_TABLE default\n0\n"),
         "{file}"
@@ -332,7 +332,7 @@ fn a_pillowed_cylinder_meshes_the_right_way_out() {
     let patch: Vec<gecko_cmd::PickedFace> = faces
         .iter()
         .filter(|f| {
-            let at = &f["centre"];
+            let at = &f["center"];
             at[0].as_f64().unwrap().abs() > 0.1 || at[1].as_f64().unwrap().abs() > 0.1
         })
         .map(|f| gecko_cmd::PickedFace {

@@ -65,13 +65,13 @@ import {
   type Pane,
 } from "./panes";
 import { DEFAULTS, NODE_SIZE, type GeomLayer, type Layer, type ViewPrefs } from "./theme";
-import { ANCHOR, FAMILY, MATE, colourForId } from "./palette";
+import { ANCHOR, FAMILY, MATE, colorForId } from "./palette";
 import type { SheetEdge } from "./kernel";
 import {
   buildMesh,
   buildSurfaces,
   edgeSegments,
-  groupColour,
+  groupColor,
   meshEdges,
   type SurfaceData,
   type SurfaceOptions,
@@ -123,7 +123,7 @@ export const FROZEN_SIDE = 0.8;
  * A corner of the geometry and a node of the blocking are two different
  * things that will often sit on top of each other — the whole point of the
  * geometry being there is for the blocking to land on it — so they are told
- * apart by size as well as by colour.
+ * apart by size as well as by color.
  */
 export const CORNER_PIXELS = 15;
 
@@ -210,11 +210,11 @@ export const THINNEST = 0.02;
 export function heightAlong(
   origin: readonly [number, number, number],
   towards: readonly [number, number, number],
-  centre: readonly [number, number, number],
+  center: readonly [number, number, number],
   normal: readonly [number, number, number],
 ): number | null {
   const dot = (a: readonly number[], b: readonly number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-  const gap = [0, 1, 2].map((k) => origin[k] - centre[k]);
+  const gap = [0, 1, 2].map((k) => origin[k] - center[k]);
   const slant = dot(towards, normal);
   const denominator = 1 - slant * slant;
   if (Math.abs(denominator) < 1e-6) return null;
@@ -394,7 +394,7 @@ export class Viewer {
    *  that would put the float32 world matrices back in the precision hole the
    *  rebasing just dug us out of. It is applied only when converting a scene
    *  point back to model coordinates. */
-  centre: [number, number, number] = [0, 0, 0];
+  center: [number, number, number] = [0, 0, 0];
 
   private nodes: Mesh[] = [];
   /**
@@ -463,7 +463,7 @@ export class Viewer {
    *  which way is out, and how far the pointer has asked for so far. */
   private growing?: {
     pick: Pick;
-    centre: Vector3;
+    center: Vector3;
     normal: Vector3;
     corners: Vector3[];
     /** Whether the drag may go **behind** the face. True for a face of an
@@ -477,7 +477,7 @@ export class Viewer {
   /** The geometry, if one has been loaded. Read-only here: nothing in the
    *  viewer edits it, and no operation moves it. */
   private geometry?: GeometryView;
-  /** One mesh per geometric entity, so each can be coloured, faded and
+  /** One mesh per geometric entity, so each can be colored, faded and
    *  hidden as the one thing it is — and so the transparency sorter has
    *  something to sort. */
   private geomMeshes: Record<GeomGroup, Mesh[]> = { corners: [], curves: [], surfaces: [] };
@@ -533,8 +533,8 @@ export class Viewer {
     const light = new HemisphericLight("hemi", new Vector3(0, 1, 0), this.scene);
     light.intensity = 0.9;
     // Not black underneath: surfaces are lit by this one light, and a face
-    // turned away from it would otherwise be a silhouette with no colour left
-    // to read — which defeats colouring by name.
+    // turned away from it would otherwise be a silhouette with no color left
+    // to read — which defeats coloring by name.
     light.groundColor = new Color3(0.42, 0.42, 0.46);
 
     this.panes = {
@@ -556,14 +556,14 @@ export class Viewer {
     this.layOut();
     // Rendering leaves `activeCamera` set to whichever camera went last — the
     // corner gizmo. Everything that runs between frames then reads the wrong
-    // one, and Babylon's own drag behaviour reads it twice: to decide whose
+    // one, and Babylon's own drag behavior reads it twice: to decide whose
     // controls to suspend, and to build the ray the drag follows. So the
     // dragged node went the wrong way *and* the view orbited along with it.
     // Put it back to the main camera once the frame is done.
     this.scene.onAfterRenderObservable.add(() => {
       this.scene.activeCamera = this.panes[this.hovered];
     });
-    // Babylon's own picking — which is what the drag behaviours run on — must
+    // Babylon's own picking — which is what the drag behaviors run on — must
     // use the main camera, not whichever happens to be active. The gizmo does
     // its own pick, through its own camera.
     this.scene.cameraToUseForPointers = this.camera;
@@ -573,7 +573,7 @@ export class Viewer {
     // the mouse. But Babylon's pointer system returns the nearest pickable
     // mesh, so a node on the far side of the model became ungrabbable the
     // moment the faces were drawn — the face in front answered first, and
-    // the drag behaviour, which checks that the pick is *its* mesh, never
+    // the drag behavior, which checks that the pick is *its* mesh, never
     // started. Half the handles of every cube, silently.
     //
     // Faces are picked deliberately instead, by `pickSurface`, on a click that
@@ -639,9 +639,9 @@ export class Viewer {
    *  is left to face the camera. */
   dragPlane(): [number, number, number] | null {
     for (const mesh of this.nodes) {
-      for (const behaviour of mesh.behaviors) {
-        if (behaviour.name !== "PointerDrag") continue;
-        const normal = (behaviour as PointerDragBehavior).options.dragPlaneNormal;
+      for (const behavior of mesh.behaviors) {
+        if (behavior.name !== "PointerDrag") continue;
+        const normal = (behavior as PointerDragBehavior).options.dragPlaneNormal;
         return normal ? [normal.x, normal.y, normal.z] : null;
       }
     }
@@ -703,7 +703,7 @@ export class Viewer {
     for (const pane of PANES) this.panes[pane].detachControl();
     const camera = this.panes[this.hovered];
     if (this.held) camera.attachControl(this.held, true);
-    // Babylon's own pointer system — which is what the node drag behaviours
+    // Babylon's own pointer system — which is what the node drag behaviors
     // run on — builds its ray through this one.
     this.scene.cameraToUseForPointers = camera;
   }
@@ -745,9 +745,9 @@ export class Viewer {
   private setDragPlane(mesh: Mesh) {
     const axis = PANE_AXIS[this.hovered];
     const normal = axis ? planeNormal(axis) : undefined;
-    for (const behaviour of mesh.behaviors) {
-      if (behaviour.name !== "PointerDrag") continue;
-      (behaviour as PointerDragBehavior).options = normal ? { dragPlaneNormal: normal } : {};
+    for (const behavior of mesh.behaviors) {
+      if (behavior.name !== "PointerDrag") continue;
+      (behavior as PointerDragBehavior).options = normal ? { dragPlaneNormal: normal } : {};
     }
   }
 
@@ -773,11 +773,11 @@ export class Viewer {
 
   /**
    * How the scene looks. Not the kernel's business, so it never goes through
-   * it: the kernel says what exists, not what colour it is here.
+   * it: the kernel says what exists, not what color it is here.
    *
-   * One entry point rather than one per control. Colour, transparency and
+   * One entry point rather than one per control. Color, transparency and
    * shrink are not independent of each other at the mesh level — a shrink
-   * moves vertices, a colouring rewrites the colour buffer — and splitting
+   * moves vertices, a coloring rewrites the color buffer — and splitting
    * them into separate methods only invites two of them to disagree.
    */
   applyPrefs(prefs: ViewPrefs) {
@@ -785,8 +785,8 @@ export class Viewer {
     const theme = this.prefs.theme;
     this.scene.clearColor = Color3.FromHexString(theme.background).toColor4(1);
     this.paintNodes();
-    // The wireframe's colours and width both come out of the rebuild: a
-    // ribbon carries its colours in its material, not in a `color` on the
+    // The wireframe's colors and width both come out of the rebuild: a
+    // ribbon carries its colors in its material, not in a `color` on the
     // mesh.
     this.rebuildEdges();
     this.rebuildHighlight();
@@ -860,7 +860,7 @@ export class Viewer {
     const layer = this.layerOf(group);
     return {
       by: group === "faces" ? "face" : "block",
-      colouring: layer.colouring,
+      coloring: layer.coloring,
       uniform: group === "faces" ? this.prefs.theme.faces : this.prefs.theme.blocks,
       shrink: layer.shrink,
       // A block keeps all six of its own faces whatever this says: shrink an
@@ -872,7 +872,7 @@ export class Viewer {
     };
   }
 
-  /** The colour each classified face wears, by face name. */
+  /** The color each classified face wears, by face name. */
   private classifiedFaces(): Map<number, string> {
     const out = new Map<number, string>();
     for (let q = 0; q < (this.view?.quadFaces.length ?? 0); q++) {
@@ -880,7 +880,7 @@ export class Viewer {
       if (dim < 0) continue;
       out.set(
         this.view!.quadFaces[q],
-        this.classColour(dim, 0, this.prefs.theme.faces).toHexString(),
+        this.classColor(dim, 0, this.prefs.theme.faces).toHexString(),
       );
     }
     return out;
@@ -1029,10 +1029,10 @@ export class Viewer {
     const corners = [0, 1, 2, 3].map((k) => this.point(this.view!.quads[quad * 4 + k]));
     const normal = quadNormal(corners);
     if (normal.length() < 1e-12) return false;
-    const centre = corners
+    const center = corners
       .reduce((at, p) => at.addInPlace(p), new Vector3(0, 0, 0))
       .scale(0.25);
-    this.growing = { pick, centre, normal: normal.normalize(), corners, bothWays };
+    this.growing = { pick, center, normal: normal.normalize(), corners, bothWays };
     this.grown = null;
     this.showGrown();
     return true;
@@ -1041,13 +1041,13 @@ export class Viewer {
   /** How far the pointer is asking for, and the preview to match. */
   aimExtrusion(x: number, y: number): number | null {
     if (!this.growing) return null;
-    const { centre, normal, corners } = this.growing;
+    const { center, normal, corners } = this.growing;
     const ray = this.scene.createPickingRay(x, y, Matrix.Identity(), this.cameraFor(x, y));
     const towards = ray.direction.normalizeToNew();
     const asked = heightAlong(
       [ray.origin.x, ray.origin.y, ray.origin.z],
       [towards.x, towards.y, towards.z],
-      [centre.x, centre.y, centre.z],
+      [center.x, center.y, center.z],
       [normal.x, normal.y, normal.z],
     );
     // Looking straight down the extrusion: hold what we had rather than
@@ -1127,10 +1127,10 @@ export class Viewer {
     vertices.normals = boxNormals(positions);
     vertices.applyToMesh(mesh, true);
 
-    const colour = Color3.FromHexString(MATE);
+    const color = Color3.FromHexString(MATE);
     const material = new StandardMaterial("grownMat", this.scene);
-    material.diffuseColor = colour;
-    material.emissiveColor = colour.scale(0.45);
+    material.diffuseColor = color;
+    material.emissiveColor = color.scale(0.45);
     material.specularColor = Color3.Black();
     material.backFaceCulling = false;
     material.separateCullingPass = true;
@@ -1147,7 +1147,7 @@ export class Viewer {
     this.grownWire = CreateGreasedLine(
       "grown-edges",
       { points: outline, updatable: true },
-      { color: colour, ...this.ribbon(1) },
+      { color: color, ...this.ribbon(1) },
       this.scene,
     ) as GreasedLineMesh;
     this.grownWire.isPickable = false;
@@ -1258,9 +1258,9 @@ export class Viewer {
     mesh: readonly [number, number, number] | null;
   } {
     return {
-      view: this.centre,
-      geometry: this.geometry?.centre ?? null,
-      mesh: this.meshView?.centre ?? null,
+      view: this.center,
+      geometry: this.geometry?.center ?? null,
+      mesh: this.meshView?.center ?? null,
     };
   }
 
@@ -1280,32 +1280,32 @@ export class Viewer {
     return this.geomMeshes[group].map((m) => Number(m.name.split("-").pop()));
   }
 
-  /** The colour and opacity one geometric entity is drawn in — everything
+  /** The color and opacity one geometric entity is drawn in — everything
    *  there is to assert about a group's display without rendering. */
-  geomLook(group: GeomGroup, tag: number): { colour: string; alpha: number } | null {
+  geomLook(group: GeomGroup, tag: number): { color: string; alpha: number } | null {
     const mesh = this.geomMeshes[group].find((m) => m.name === `geom-${group}-${tag}`);
     if (!mesh) return null;
     const material = mesh.material as StandardMaterial | null;
-    // Where each group keeps the colour it was given: a line mesh has no
+    // Where each group keeps the color it was given: a line mesh has no
     // material of its own, a corner is unlit and so carries it as its own
     // light, and a surface is lit and carries it as what the light falls on.
-    const colour =
+    const color =
       group === "curves"
         ? (mesh as LinesMesh).color
         : group === "corners"
           ? (material?.emissiveColor ?? Color3.Black())
           : (material?.diffuseColor ?? Color3.Black());
-    return { colour: colour.toHexString().toLowerCase(), alpha: mesh.visibility };
+    return { color: color.toHexString().toLowerCase(), alpha: mesh.visibility };
   }
 
-  private geomColour(group: GeomGroup, tag: number): Color3 {
-    // Picked surfaces take the selection colour, whatever the colouring
+  private geomColor(group: GeomGroup, tag: number): Color3 {
+    // Picked surfaces take the selection color, whatever the coloring
     // says — the same convention as a picked face, so there is one thing
     // to learn rather than two.
     if (this.pickedGeom.some((s) => s.dim === DIM_OF[group] && s.tag === tag)) {
       return Color3.FromHexString(ANCHOR);
     }
-    return this.entityColour(group, tag);
+    return this.entityColor(group, tag);
   }
 
   /**
@@ -1337,7 +1337,7 @@ export class Viewer {
 
     const data = buildMesh(view, {
       uniform: this.prefs.theme.mesh,
-      colouring: layer.colouring,
+      coloring: layer.coloring,
     });
     const skin = new Mesh("mesh-skin", this.scene);
     const vertices = new VertexData();
@@ -1381,51 +1381,51 @@ export class Viewer {
     }
   }
 
-  /** What a geometric entity is drawn in: one colour for its group, or one
+  /** What a geometric entity is drawn in: one color for its group, or one
    *  per entity, as that group's own setting says. */
-  private entityColour(group: GeomGroup, tag: number): Color3 {
+  private entityColor(group: GeomGroup, tag: number): Color3 {
     const layer: GeomLayer = this.prefs[group];
     return Color3.FromHexString(
-      layer.colouring === "id" ? colourForId(tag, FAMILY[group]) : this.prefs.theme[group],
+      layer.coloring === "id" ? colorForId(tag, FAMILY[group]) : this.prefs.theme[group],
     );
   }
 
   /**
-   * The colour of a cell of the **blocking**, by the *kind* of thing it is
+   * The color of a cell of the **blocking**, by the *kind* of thing it is
    * classified on: a corner, a curve, a surface, or nothing.
    *
-   * Three colours and a legend, not a hue per entity. What you read off a
-   * `class` colouring is whether the blocking has taken hold of the
+   * Three colors and a legend, not a hue per entity. What you read off a
+   * `class` coloring is whether the blocking has taken hold of the
    * geometry, which is a question with four answers — and painting a
-   * block face the colour of the very surface it is classified on, on top of that
+   * block face the color of the very surface it is classified on, on top of that
    * surface, made two things nobody could tell apart.
    */
-  private classColour(dim: number, tag: number, free: string): Color3 {
+  private classColor(dim: number, tag: number, free: string): Color3 {
     void tag;
     const named = (["onCorner", "onCurve", "onSurface"] as const)[dim];
     return Color3.FromHexString(named ? this.prefs.theme[named] : free);
   }
 
   /**
-   * The colour of one node handle: picked, then whatever the colouring
+   * The color of one node handle: picked, then whatever the coloring
    * says.
    *
    * Being frozen is **not** in this list. It is drawn as a cube instead,
    * so that a frozen node can still be read for its id or for what it
-   * classified on — the two things the colouring is there to show.
+   * classified on — the two things the coloring is there to show.
    */
-  private nodeColour(index: number): Color3 {
+  private nodeColor(index: number): Color3 {
     const plain = this.prefs.theme.nodes;
     if (!this.view) return Color3.FromHexString(plain);
     if (this.pickedNodes.includes(this.view.names[index])) return Color3.FromHexString(ANCHOR);
-    switch (this.prefs.nodes.colouring) {
+    switch (this.prefs.nodes.coloring) {
       case "class":
-        return this.classColour(this.view.nodeClassDim[index], 0, plain);
+        return this.classColor(this.view.nodeClassDim[index], 0, plain);
       case "id":
-        return Color3.FromHexString(colourForId(this.view.names[index], FAMILY.nodes));
+        return Color3.FromHexString(colorForId(this.view.names[index], FAMILY.nodes));
       case "group":
         return Color3.FromHexString(
-          groupColour(this.view.nodeGroupsLo[index], this.view.nodeGroupsHi[index]) ?? plain,
+          groupColor(this.view.nodeGroupsLo[index], this.view.nodeGroupsHi[index]) ?? plain,
         );
       default:
         return Color3.FromHexString(plain);
@@ -1437,7 +1437,7 @@ export class Viewer {
    *
    * Thrown away and remade rather than patched, unlike the blocking's
    * surfaces. There is no slider dragging a stream of these: a geometry has
-   * no shrink, so the only things that change are a colour, an opacity and
+   * no shrink, so the only things that change are a color, an opacity and
    * whether it is on at all — one click each, not one per mouse move.
    */
   private rebuildGeometry() {
@@ -1465,12 +1465,12 @@ export class Viewer {
       vertices.normals = normals;
       vertices.applyToMesh(mesh, false);
 
-      const colour = this.geomColour("surfaces", surface.tag);
+      const color = this.geomColor("surfaces", surface.tag);
       const material = new StandardMaterial(`geomSurfaceMat${surface.tag}`, this.scene);
-      material.diffuseColor = colour;
+      material.diffuseColor = color;
       // A little of its own light, so a patch turned away from the lamp is
-      // still the colour it was given rather than a silhouette.
-      material.emissiveColor = colour.scale(0.35);
+      // still the color it was given rather than a silhouette.
+      material.emissiveColor = color.scale(0.35);
       material.specularColor = Color3.Black();
       material.backFaceCulling = false;
       material.separateCullingPass = true;
@@ -1493,7 +1493,7 @@ export class Viewer {
         ]);
       }
       const mesh = CreateLineSystem(`geom-curves-${curve.tag}`, { lines }, this.scene);
-      mesh.color = this.geomColour("curves", curve.tag);
+      mesh.color = this.geomColor("curves", curve.tag);
       this.dressGeometry(mesh, "curves");
     }
   }
@@ -1505,7 +1505,7 @@ export class Viewer {
       const mesh = CreateSphere(`geom-corners-${corner.tag}`, { diameter: 1, segments: 8 }, this.scene);
       mesh.position = new Vector3(...corner.at);
       const material = new StandardMaterial(`geomCornerMat${corner.tag}`, this.scene);
-      material.emissiveColor = this.geomColour("corners", corner.tag);
+      material.emissiveColor = this.geomColor("corners", corner.tag);
       material.disableLighting = true;
       mesh.material = material;
       this.dressGeometry(mesh, "corners");
@@ -1539,13 +1539,13 @@ export class Viewer {
       return;
     }
     const lines = this.segments().map(([a, b]) => [a.x, a.y, a.z, b.x, b.y, b.z]);
-    const colours = this.edgeColours().map(([c]) => new Color3(c.r, c.g, c.b));
+    const colors = this.edgeColors().map(([c]) => new Color3(c.r, c.g, c.b));
     // Reused while the shape of the thing has not changed: a drag rebuilds
     // this on every frame, and rewriting the points of a ribbon that is
     // already there costs a fraction of building one.
     if (this.wire && this.wireSegments === lines.length) {
       this.wire.setPoints(lines);
-      this.dressEdges(colours);
+      this.dressEdges(colors);
       return;
     }
     this.wire?.dispose(false, true);
@@ -1553,14 +1553,14 @@ export class Viewer {
       "edges",
       { points: lines, updatable: true },
       {
-        colors: colours,
+        colors: colors,
         useColors: true,
-        // One colour per segment: an edge wears what it is classified on,
+        // One color per segment: an edge wears what it is classified on,
         // and each segment of this ribbon **is** an edge.
         colorDistributionType: GreasedLineMeshColorDistributionType.COLOR_DISTRIBUTION_TYPE_SEGMENT,
         // The unlit material rather than the lit one the builder reaches
         // for by default: a wireframe takes no light, and this is the one
-        // that can be handed new colours without being rebuilt.
+        // that can be handed new colors without being rebuilt.
         materialType: GreasedLineMeshMaterialType.MATERIAL_TYPE_SIMPLE,
         ...this.ribbon(this.prefs.edges.width / SHEET_PIXELS),
       },
@@ -1576,16 +1576,16 @@ export class Viewer {
   }
 
   /**
-   * Write the colours **and the width** onto a ribbon that is being kept.
+   * Write the colors **and the width** onto a ribbon that is being kept.
    *
    * Both, because both are settings and a kept ribbon hears about a
    * setting only here: writing one and not the other is how a width that
    * was asked for went nowhere until the model's shape happened to change.
    */
-  private dressEdges(colours: Color3[]) {
+  private dressEdges(colors: Color3[]) {
     const material = this.wire?.material as GreasedLineSimpleMaterial | undefined;
     if (!material) return;
-    material.setColors(colours, false, true);
+    material.setColors(colors, false, true);
     material.width = this.ribbon(this.prefs.edges.width / SHEET_PIXELS).width;
   }
 
@@ -1686,11 +1686,11 @@ export class Viewer {
   }
 
   setView(view: View) {
-    this.centre = view.centre;
+    this.center = view.center;
     // A copy, because the drag writes into it. The incoming arrays are views
     // onto the kernel's bytes.
     this.view = {
-      centre: view.centre,
+      center: view.center,
       positions: Float32Array.from(view.positions),
       names: Uint32Array.from(view.names),
       edges: Uint32Array.from(view.edges),
@@ -1724,9 +1724,9 @@ export class Viewer {
     for (let n = 0; n < view.positions.length / 3; n++) {
       // A cube for a node that is frozen, a ball for one that can move.
       // The *shape* says whether it is out of play, which leaves its
-      // colour free to say whatever the colouring is set to — a frozen
+      // color free to say whatever the coloring is set to — a frozen
       // node still shows its id or its classification, which it could not
-      // when being frozen was a colour of its own.
+      // when being frozen was a color of its own.
       //
       // Unit size; the per-frame pass below scales it to a fixed number
       // of pixels.
@@ -1742,7 +1742,7 @@ export class Viewer {
       // next edit reorders the view.
       s.metadata = { index: n, name: view.names[n] };
       const m = new StandardMaterial(`nodeMat${n}`, this.scene);
-      m.emissiveColor = this.nodeColour(n);
+      m.emissiveColor = this.nodeColor(n);
       m.disableLighting = true;
       s.material = m;
       s.layerMask = MAIN_LAYER;
@@ -1756,7 +1756,7 @@ export class Viewer {
   /**
    * Drag and drop, one gesture.
    *
-   * A behaviour per node rather than one attached on selection: attaching on
+   * A behavior per node rather than one attached on selection: attaching on
    * the press that should *start* the drag misses that press, which turns the
    * gesture into click-then-drag. Cheap at this size; an instanced hit target
    * goes here when it is not.
@@ -1815,9 +1815,9 @@ export class Viewer {
       if (Vector3.Distance(from, p) < 1e-9) return;
       const name = sphere.metadata.name as number;
       const to: [number, number, number] = [
-        p.x + this.centre[0],
-        p.y + this.centre[1],
-        p.z + this.centre[2],
+        p.x + this.center[0],
+        p.y + this.center[1],
+        p.z + this.center[2],
       ];
       const also = carried.map((o) => o.mesh.metadata.name as number);
       carried = [];
@@ -1844,28 +1844,28 @@ export class Viewer {
   }
 
   /**
-   * A colour per end of every edge.
+   * A color per end of every edge.
    *
-   * Classified, an edge wears the colour of the curve or surface it
+   * Classified, an edge wears the color of the curve or surface it
    * classified on; unclassified, the wireframe's own. Both ends the same: an
    * edge is on one entity or none, and a gradient would suggest otherwise.
    */
-  private edgeColours(): Color4[][] {
+  private edgeColors(): Color4[][] {
     const plain = this.prefs.theme.edges;
-    const how = this.prefs.edges.colouring;
+    const how = this.prefs.edges.coloring;
     const out: Color4[][] = [];
     for (const e of this.edgesShown()) {
-      const colour =
+      const color =
         how === "class"
-          ? this.classColour(this.view!.edgeClassDim[e], 0, plain)
+          ? this.classColor(this.view!.edgeClassDim[e], 0, plain)
           : how === "id"
-            ? Color3.FromHexString(colourForId(this.view!.edgeNames[e], FAMILY.edges))
+            ? Color3.FromHexString(colorForId(this.view!.edgeNames[e], FAMILY.edges))
             : how === "group"
               ? Color3.FromHexString(
-                  groupColour(this.view!.edgeGroupsLo[e], this.view!.edgeGroupsHi[e]) ?? plain,
+                  groupColor(this.view!.edgeGroupsLo[e], this.view!.edgeGroupsHi[e]) ?? plain,
                 )
               : Color3.FromHexString(plain);
-      out.push([colour.toColor4(1), colour.toColor4(1)]);
+      out.push([color.toColor4(1), color.toColor4(1)]);
     }
     return out;
   }
@@ -1895,11 +1895,11 @@ export class Viewer {
     return out;
   }
 
-  /** Give every handle the colour its node has earned, and show or hide
+  /** Give every handle the color its node has earned, and show or hide
    *  the lot of them. */
   private paintNodes() {
     this.nodes.forEach((mesh, n) => {
-      (mesh.material as StandardMaterial).emissiveColor = this.nodeColour(n);
+      (mesh.material as StandardMaterial).emissiveColor = this.nodeColor(n);
       // Hidden means hidden from the pointer too. A handle you cannot see
       // but can still grab is worse than one you can see: the model moves
       // and nothing on screen says what you took hold of.
@@ -1984,7 +1984,7 @@ export class Viewer {
     return mesh.getTotalVertices() === 24 ? "cube" : "ball";
   }
 
-  /** The colour a node's handle is wearing, as `#rrggbb`. */
+  /** The color a node's handle is wearing, as `#rrggbb`. */
   nodeTint(name: number): string | null {
     const mesh = this.nodes.find((m) => m.metadata.name === name);
     const material = mesh?.material as StandardMaterial | undefined;
@@ -2058,7 +2058,7 @@ export class Viewer {
   /**
    * Light up a set of edges by name.
    *
-   * A second line mesh rather than per-vertex colours on the first: the
+   * A second line mesh rather than per-vertex colors on the first: the
    * wireframe is rebuilt on every drag frame, and this changes only when a
    * selection does. It is drawn in a later rendering group, so it shows
    * **through** the model — which is the point, since a sheet runs through
@@ -2078,7 +2078,7 @@ export class Viewer {
    * Show where a cut at `t` would land, on every edge of the sheet at once.
    *
    * Drawn as a second ribbon from each edge's `from` end up to the cut, so
-   * the join between the two colours *is* the plane. One edge would not be
+   * the join between the two colors *is* the plane. One edge would not be
    * enough: what the parameter does to the rest of the sheet is the thing
    * worth seeing before committing to it.
    */
@@ -2097,7 +2097,7 @@ export class Viewer {
     const edge = this.lit.find((e) => e.id === name);
     if (!edge) return null;
     const scene = (p: readonly number[]) =>
-      new Vector3(p[0] - this.centre[0], p[1] - this.centre[1], p[2] - this.centre[2]);
+      new Vector3(p[0] - this.center[0], p[1] - this.center[1], p[2] - this.center[2]);
     return [this.toScreen(scene(edge.from)), this.toScreen(scene(edge.to))];
   }
 
@@ -2109,12 +2109,12 @@ export class Viewer {
     if (this.aim === null || !this.lit.length) return;
     const t = this.aim;
     const points = this.lit.map((e) => [
-      e.from[0] - this.centre[0],
-      e.from[1] - this.centre[1],
-      e.from[2] - this.centre[2],
-      e.from[0] + (e.to[0] - e.from[0]) * t - this.centre[0],
-      e.from[1] + (e.to[1] - e.from[1]) * t - this.centre[1],
-      e.from[2] + (e.to[2] - e.from[2]) * t - this.centre[2],
+      e.from[0] - this.center[0],
+      e.from[1] - this.center[1],
+      e.from[2] - this.center[2],
+      e.from[0] + (e.to[0] - e.from[0]) * t - this.center[0],
+      e.from[1] + (e.to[1] - e.from[1]) * t - this.center[1],
+      e.from[2] + (e.to[2] - e.from[2]) * t - this.center[2],
     ]);
     this.aimWire = CreateGreasedLine(
       "aim",
@@ -2195,7 +2195,7 @@ export class Viewer {
     return this.toScreen(mid);
   }
 
-  /** The centre of a drawn face, in **CSS pixels** — the inverse of
+  /** The center of a drawn face, in **CSS pixels** — the inverse of
    *  `pickSurface`, and what lets a test aim a real mouse at a real face. */
   faceScreen(name: number): [number, number] | null {
     for (const group of ["faces", "blocks"] as Group[]) {
@@ -2254,9 +2254,9 @@ export class Viewer {
     const mesh = this.nodes.find((m) => m.metadata.name === name);
     if (!mesh) return null;
     return [
-      mesh.position.x + this.centre[0],
-      mesh.position.y + this.centre[1],
-      mesh.position.z + this.centre[2],
+      mesh.position.x + this.center[0],
+      mesh.position.y + this.center[1],
+      mesh.position.z + this.center[2],
     ];
   }
 
@@ -2370,7 +2370,7 @@ export class Viewer {
     if (at < 0) return null;
     const [a, b] = [this.view.edges[at * 2] * 3, this.view.edges[at * 2 + 1] * 3];
     return [0, 1, 2].map(
-      (k) => (this.view!.positions[a + k] + this.view!.positions[b + k]) / 2 + this.centre[k],
+      (k) => (this.view!.positions[a + k] + this.view!.positions[b + k]) / 2 + this.center[k],
     ) as [number, number, number];
   }
 
@@ -2465,14 +2465,14 @@ export class Viewer {
   /**
    * What one of the two surfaces currently holds.
    *
-   * How many quadrangles, how many distinct colours, how opaque, and where the
+   * How many quadrangles, how many distinct colors, how opaque, and where the
    * corners ended up — which is everything there is to assert about drawing,
-   * colouring and shrinking without asking a GPU to render anything.
+   * coloring and shrinking without asking a GPU to render anything.
    */
   surface(group: Group): {
     quads: number;
     alpha: number;
-    colours: number;
+    colors: number;
     positions: Float32Array;
     faces: Uint32Array;
     blocks: Uint32Array;
@@ -2498,7 +2498,7 @@ export class Viewer {
     return {
       quads,
       alpha: (slots[0].mesh.material as StandardMaterial).alpha,
-      colours: seen.size,
+      colors: seen.size,
       positions: new Float32Array(positions),
       faces: new Uint32Array(faces),
       blocks: new Uint32Array(blocks),

@@ -14,7 +14,7 @@ gecko.create_cube{ origin = {1, 0, 0} }
 -- x = 1, one from each block.
 local pair = {}
 for _, face in ipairs(gecko.faces()) do
-  if math.abs(face.centre[1] - 1) < 1e-9 then pair[#pair + 1] = face.id end
+  if math.abs(face.center[1] - 1) < 1e-9 then pair[#pair + 1] = face.id end
 end
 assert(#pair == 2, "two faces meet at x = 1")
 gecko.glue_faces(pair[1], pair[2])
@@ -41,7 +41,7 @@ assert(sum == 392026, "the two hosts do not agree on the bytes: " .. sum)
 --
 -- The two cubes above are all boundary and follow nothing, so none of
 -- their nodes may move. Three by three by three has **eight** nodes
--- inside it, and they are neighbours of each other — which is what makes
+-- inside it, and they are neighbors of each other — which is what makes
 -- the order they are visited in observable at all: each move is applied
 -- before the next is worked out, so a host walking them another way round
 -- would reach different positions from the same model.
@@ -56,11 +56,11 @@ for i = 0, 2 do
   end
 end
 
--- Every pair of faces sharing a centre, read once: gluing one pair leaves
+-- Every pair of faces sharing a center, read once: gluing one pair leaves
 -- the others' names alone.
 local seen, pairs_to_glue = {}, {}
 for _, face in ipairs(gecko.faces()) do
-  local key = string.format("%.4f/%.4f/%.4f", face.centre[1], face.centre[2], face.centre[3])
+  local key = string.format("%.4f/%.4f/%.4f", face.center[1], face.center[2], face.center[3])
   if seen[key] then
     pairs_to_glue[#pairs_to_glue + 1] = { seen[key], face.id }
   else
@@ -72,7 +72,7 @@ for _, both in ipairs(pairs_to_glue) do
 end
 assert(gecko.stats().blocks == 27, "twenty-seven blocks")
 
--- The node in the middle, dragged off centre and then smoothed back by
+-- The node in the middle, dragged off center and then smoothed back by
 -- hand: rounds and a share, both said out loud.
 local middle
 for _, node in ipairs(gecko.nodes()) do

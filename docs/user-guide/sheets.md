@@ -65,7 +65,7 @@ from across the room.
 
 The readout says how far the sheet reaches: how many edges it runs along,
 and **how many blocks** it covers. Only the edges are lit, and a sheet that
-turns a corner through a glued neighbour can reach further than it looks —
+turns a corner through a glued neighbor can reach further than it looks —
 the count is there to be read before removing anything.
 
 Clicking the same edge again puts it out, as does `Esc`, as does clicking the
@@ -77,7 +77,7 @@ whatever was held, sheet or faces alike.
 **Press an edge and drag along it.** The sheet lights up as you press, the
 cut follows the pointer, and letting go cuts.
 
-While you drag, every edge of the sheet is drawn in two colours: from its
+While you drag, every edge of the sheet is drawn in two colors: from its
 start up to the cut in one, beyond it in the other. The join between the two
 *is* the plane. One edge would not be enough — what the parameter does to the
 rest of the sheet is the thing worth seeing before committing to it.
@@ -110,13 +110,13 @@ close against, so the model simply loses that layer.
 Which face meets which is a question about the map, not about where
 anything is. From a dart of one cap, crossing into the lateral face beside
 it and out the far side lands on the cap at the other end, on the matching
-edge; the β₃ of both is the pair the neighbours are sewn along, read before
+edge; the β₃ of both is the pair the neighbors are sewn along, read before
 the layer goes. Nothing is positioned by hand either: sewing merges two
 vertices by averaging them, so the seam finds the middle of its own accord.
 
 Matching the faces by **where they were** instead is what the first version
 did, and it failed on anything bigger than one block in a layer: the caps
-of neighbouring blocks share their corners, so closing the first pair moved
+of neighboring blocks share their corners, so closing the first pair moved
 the corners the next pair was to be found by. It failed after the blocks
 were already gone, too, which left a hole.
 
@@ -136,7 +136,7 @@ means here: what comes out is new cells, not a cell and a claimant to an old
 name.
 
 Cells the sheet does not touch keep their names. The corner keys survive
-throughout, so the cells that had a corner go on recognising it.
+throughout, so the cells that had a corner go on recognizing it.
 
 ## And the other dual thing
 

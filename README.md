@@ -139,7 +139,7 @@ passes locally passes there.
   band to catch a handful of handles at once;
 - **mesh**: every block discretised by transfinite interpolation, following
   the geometry its cells are classified on, written out as VTK legacy;
-- **look at it**: every group shown, coloured, faded and shrunk on its own,
+- **look at it**: every group shown, colored, faded and shrunk on its own,
   one view or four, with a picture saved at publication size;
 - **script**: all of the above, in Lua, in the page or from a terminal.
 

@@ -163,7 +163,7 @@ button { font: inherit; }
 .layer > summary .check { margin: 0; display: flex; }
 .layer > summary input { margin: 0; }
 .layer .check, .layer .row { margin: 3px 0; }
-/* How a group is coloured: a label and a list on one line. A list rather
+/* How a group is colored: a label and a list on one line. A list rather
    than a row of radios — there are four of them for a cell of the
    blocking, and four radios do not fit across a 246-pixel drawer. */
 .layer .row.modes { align-items: center; gap: 6px; font-size: 12px; color: var(--dim); }
@@ -346,7 +346,7 @@ kbd {
 
 #help-hint { margin: 12px 0 0; font-size: 11px; color: var(--dim); text-align: center; }
 
-/* A group of blocks: a show box, its colour, its name, how many blocks,
+/* A group of blocks: a show box, its color, its name, how many blocks,
    whether it is written out, and three things to do to it. The name is the
    part that stretches, since it is the part somebody typed. */
 .group { margin: 6px 0; }

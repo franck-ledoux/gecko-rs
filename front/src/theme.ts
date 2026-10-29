@@ -3,16 +3,16 @@
  *
  * This is the one piece of state in the project that deliberately does **not**
  * go through the kernel. The kernel describes what exists; it has no business
- * knowing what colour you like it. So a theme is per viewer, kept in the
+ * knowing what color you like it. So a theme is per viewer, kept in the
  * browser, and two tabs on one station session may legitimately look nothing
  * alike.
  *
  * Everything is driven off the `Theme` keys: the settings panel is generated
- * from them, so adding a colour later costs one entry here and nothing in the
+ * from them, so adding a color later costs one entry here and nothing in the
  * interface.
  */
 
-import type { Colouring } from "./surface";
+import type { Coloring } from "./surface";
 import { hexToRgb } from "./palette";
 
 export interface Theme {
@@ -31,18 +31,18 @@ export interface Theme {
    *  the geometry, it is what the two of them were for. */
   mesh: string;
   /** What a cell of the **blocking** wears to say what it is classified
-   *  on, in `class` colouring. A family of its own rather than the colour
+   *  on, in `class` coloring. A family of its own rather than the color
    *  of the entity itself: a block face painted the same as the surface it
    *  is attached to, and drawn on top of that surface, is two things
    *  nobody can tell apart.
    *
-   *  A **ramp**, not three colours that happen to sit together: the
+   *  A **ramp**, not three colors that happen to sit together: the
    *  lightness falls and the hue turns the same way all along it, so it
    *  reads as one family while the three ends stay apart. The three were
    *  violets of one hue until 0.1.2 and nobody could tell a corner from a
    *  curve: measured in OKLab, the nearest pair of them was 11 units in
    *  the dark theme and 6 in the light, against 22 and 20 now, and each is
-   *  at least 18 from the colour an unclassified cell wears — which the
+   *  at least 18 from the color an unclassified cell wears — which the
    *  old deep violet was 7 from. */
   onCorner: string;
   onCurve: string;
@@ -97,9 +97,9 @@ export const PRESETS: Record<"dark" | "light", Theme> = {
 };
 
 /**
- * Is this colour light enough to put dark text on?
+ * Is this color light enough to put dark text on?
  *
- * Used to decide which way round the interface's own colours go, so that a
+ * Used to decide which way round the interface's own colors go, so that a
  * light scene does not leave a slab of night floating on top of it. The
  * coefficients are the usual luminance weights: the eye is far more
  * sensitive to green than to blue.
@@ -119,14 +119,14 @@ export function isLight(hex: string): boolean {
  */
 export interface GeomLayer {
   visible: boolean;
-  colouring: Colouring;
+  coloring: Coloring;
   /** 1 is opaque. */
   alpha: number;
 }
 
 /** How one group of cells of the blocking is drawn. */
 export interface Layer extends GeomLayer {
-  /** 1 leaves a cell where it is; smaller pulls it towards its own centre. */
+  /** 1 leaves a cell where it is; smaller pulls it towards its own center. */
   shrink: number;
 }
 
@@ -174,7 +174,7 @@ export const SEGMENTS = 10;
 export const MAX_SEGMENTS = 60;
 
 /** What a smoothing pass does, and the most the drawer offers: how many
- *  passes, and how far along the way to the middle of its neighbours a
+ *  passes, and how far along the way to the middle of its neighbors a
  *  node goes in each. Half, not all: all of it is what makes a Laplacian
  *  swing from one side of a crease to the other and never settle. The
  *  kernel's own defaults are the same two numbers. */
@@ -192,7 +192,7 @@ export interface ViewPrefs {
   chrome: boolean;
   /** Which parts of the display drawer are unfolded, by element id. A list
    *  rather than a flag each, so a section added later needs no migration:
-   *  an id nobody recognises is simply not there. */
+   *  an id nobody recognizes is simply not there. */
   panels: string[];
   /** Groups whose cells are not drawn, **by name**, and `""` for the cells
    *  in no group at all. By name rather than by bit: a bit is handed out
@@ -217,16 +217,16 @@ export interface ViewPrefs {
   /** How many segments a sheet nobody has set is meshed into. */
   segments: number;
   /** What a smoothing pass does: how many times over, and how far along
-   *  the way to the middle of its neighbours a node goes each time. */
+   *  the way to the middle of its neighbors a node goes each time. */
   smooth: { rounds: number; share: number };
-  /** Nodes carry how they are coloured, how big they are drawn, and
+  /** Nodes carry how they are colored, how big they are drawn, and
    *  whether they are drawn at all. Hiding them is for looking at the
    *  shape of a blocking rather than working on it: a handle on every
    *  corner of a hundred blocks is a thousand dots over the model. */
-  nodes: { visible: boolean; colouring: Colouring; size: number };
+  nodes: { visible: boolean; coloring: Coloring; size: number };
   /** Edges carry that, whether they are drawn at all, and how far they
    *  are pulled off the surfaces they would otherwise lie exactly on. */
-  edges: { visible: boolean; shrink: number; colouring: Colouring; width: number };
+  edges: { visible: boolean; shrink: number; coloring: Coloring; width: number };
   faces: Layer & { internal: boolean };
   blocks: Layer;
   /** The geometry, which is not edited and so has no notion of a selection
@@ -247,7 +247,7 @@ export const DEFAULTS: ViewPrefs = {
   drawer: false,
   params: false,
   chrome: true,
-  // Cells and geometry unfolded, colours and picture put away: the first
+  // Cells and geometry unfolded, colors and picture put away: the first
   // two are what you reach for while working, the other two are set once.
   panels: ["sec-cells", "sec-geometry"],
   hiddenGroups: [],
@@ -256,7 +256,7 @@ export const DEFAULTS: ViewPrefs = {
   quad: false,
   // Twice the canvas, which is what a figure in a paper wants. The
   // background is kept by default: transparency is for dropping a figure
-  // onto a page of unknown colour, and surprises anyone not expecting it.
+  // onto a page of unknown color, and surprises anyone not expecting it.
   shot: { scale: 2, transparent: false },
   history: HISTORY_STEPS,
   box: { margin: BOX_MARGIN, snap: SNAP_SHARE },
@@ -265,25 +265,25 @@ export const DEFAULTS: ViewPrefs = {
   // By their classification to begin with: putting the blocking onto the
   // model is what the whole session is for, so what each cell is attached
   // to is the thing worth seeing before anything else.
-  nodes: { visible: true, colouring: "class", size: NODE_SIZE },
-  edges: { visible: true, shrink: 1, colouring: "class", width: EDGE_WIDTH },
+  nodes: { visible: true, coloring: "class", size: NODE_SIZE },
+  edges: { visible: true, shrink: 1, coloring: "class", width: EDGE_WIDTH },
   // Faces on but well short of opaque, so the wireframe and the handles still
   // read through them. Blocks off: they draw the same surfaces, and two
-  // colourings of one shape at once is a choice rather than a default.
-  faces: { visible: true, colouring: "class", alpha: 0.35, shrink: 1, internal: true },
-  blocks: { visible: false, colouring: "id", alpha: 0.55, shrink: 0.85 },
+  // colorings of one shape at once is a choice rather than a default.
+  faces: { visible: true, coloring: "class", alpha: 0.35, shrink: 1, internal: true },
+  blocks: { visible: false, coloring: "id", alpha: 0.55, shrink: 0.85 },
   // All three on, because a geometry you have just loaded is a geometry you
   // want to see. Surfaces by id: telling one CAD patch from the next is the
   // whole reason the file was read as a model rather than as triangles, and
-  // one colour for the lot would hide exactly that. Translucent, because
+  // one color for the lot would hide exactly that. Translucent, because
   // what goes inside it is the point.
-  corners: { visible: true, colouring: "uniform", alpha: 1 },
-  curves: { visible: true, colouring: "uniform", alpha: 1 },
-  surfaces: { visible: true, colouring: "id", alpha: 0.3 },
+  corners: { visible: true, coloring: "uniform", alpha: 1 },
+  curves: { visible: true, coloring: "uniform", alpha: 1 },
+  surfaces: { visible: true, coloring: "id", alpha: 0.3 },
   // Shown and solid: a mesh you asked for is a mesh you want to look at,
   // and what you are looking for in it — whether the elements are any good
   // — is not visible through three other layers.
-  mesh: { visible: true, colouring: "uniform", alpha: 1 },
+  mesh: { visible: true, coloring: "uniform", alpha: 1 },
 };
 
 /** Out of range is clamped rather than refused: these come back from storage,
@@ -298,8 +298,8 @@ const within = (v: unknown, most: number, fallback: number) =>
   typeof v === "number" && Number.isFinite(v) ? Math.min(most, Math.max(0, v)) : fallback;
 
 /** One of the three, or the fallback: storage is a thing anyone can edit,
- *  and a colouring nobody has heard of is not an error worth reporting. */
-function colouring(stored: unknown, fallback: Colouring): Colouring {
+ *  and a coloring nobody has heard of is not an error worth reporting. */
+function coloring(stored: unknown, fallback: Coloring): Coloring {
   return stored === "id" || stored === "uniform" || stored === "class"
     ? stored
     : fallback;
@@ -308,7 +308,7 @@ function colouring(stored: unknown, fallback: Colouring): Colouring {
 function geomLayer(stored: Partial<GeomLayer> | undefined, fallback: GeomLayer): GeomLayer {
   return {
     visible: typeof stored?.visible === "boolean" ? stored.visible : fallback.visible,
-    colouring: colouring(stored?.colouring, fallback.colouring),
+    coloring: coloring(stored?.coloring, fallback.coloring),
     alpha: clamp(stored?.alpha, fallback.alpha),
   };
 }
@@ -385,7 +385,7 @@ export function loadPrefs(): ViewPrefs {
           typeof stored.nodes?.visible === "boolean"
             ? stored.nodes.visible
             : DEFAULTS.nodes.visible,
-        colouring: colouring(stored.nodes?.colouring, DEFAULTS.nodes.colouring),
+        coloring: coloring(stored.nodes?.coloring, DEFAULTS.nodes.coloring),
         // A size of nought would be a handle nobody could find again, so
         // the floor is one pixel rather than none.
         size: Math.max(1, within(stored.nodes?.size, MAX_NODE_SIZE, DEFAULTS.nodes.size)),
@@ -396,7 +396,7 @@ export function loadPrefs(): ViewPrefs {
             ? stored.edges.visible
             : DEFAULTS.edges.visible,
         shrink: clamp(stored.edges?.shrink, DEFAULTS.edges.shrink),
-        colouring: colouring(stored.edges?.colouring, DEFAULTS.edges.colouring),
+        coloring: coloring(stored.edges?.coloring, DEFAULTS.edges.coloring),
         width: Math.max(1, within(stored.edges?.width, MAX_EDGE_WIDTH, DEFAULTS.edges.width)),
       },
       faces: {
@@ -421,6 +421,6 @@ export function savePrefs(prefs: ViewPrefs): void {
   try {
     localStorage.setItem(KEY, JSON.stringify(prefs));
   } catch {
-    // Not being able to remember a colour is not worth interrupting anyone.
+    // Not being able to remember a color is not worth interrupting anyone.
   }
 }

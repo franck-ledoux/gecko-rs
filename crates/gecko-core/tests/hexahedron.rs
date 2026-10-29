@@ -62,7 +62,7 @@ fn the_block_is_closed_in_itself_and_free_on_its_boundary() {
         // Every edge of the block is shared by two of its faces: no dart may be
         // left without a beta-2 partner, or the hexahedron has a slit in it.
         assert_ne!(b.map().beta::<2>(d), NULL_DART_ID, "dart {d} has no beta2");
-        // And nothing is sewn to a neighbour yet, so every face is on the
+        // And nothing is sewn to a neighbor yet, so every face is on the
         // outside. Joining blocks is a later operation.
         assert_eq!(b.map().beta::<3>(d), NULL_DART_ID, "dart {d} has a beta3");
     }
@@ -243,7 +243,7 @@ fn splitting_a_node_clears_the_name_and_keeps_the_corner() {
     // Neither copy may go on claiming the original's identity...
     assert!(left.id.is_none() && right.id.is_none());
     // ...but both are still the same corner, and every cell that had it has to
-    // go on recognising it.
+    // go on recognizing it.
     assert_eq!(left.corner_key, original.corner_key);
     assert_eq!(right.corner_key, original.corner_key);
 
@@ -299,7 +299,7 @@ mod faces_for_display {
         // The winding is what the renderer culls and lights by, so it is not a
         // detail: wound the other way, a solid block is drawn inside out.
         let b = one_block();
-        let centre = [0.5, 0.5, 0.5];
+        let center = [0.5, 0.5, 0.5];
 
         for f in b.block_faces() {
             let p = f.nodes.map(|n| b.position(n).expect("a placed node"));
@@ -309,7 +309,7 @@ mod faces_for_display {
                 p.iter().map(|q| q[1]).sum::<f64>() / 4.0,
                 p.iter().map(|q| q[2]).sum::<f64>() / 4.0,
             ];
-            let out = [mid[0] - centre[0], mid[1] - centre[1], mid[2] - centre[2]];
+            let out = [mid[0] - center[0], mid[1] - center[1], mid[2] - center[2]];
             let dot = n[0] * out[0] + n[1] * out[1] + n[2] * out[2];
             assert!(dot > 0.0, "face {:?} is wound inward: {dot}", f.face);
         }

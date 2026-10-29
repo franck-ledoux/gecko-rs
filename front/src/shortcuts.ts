@@ -37,7 +37,7 @@ export const ACTIONS = [
   "pillow-chord",
   "clear",
   "unpick",
-  "recentre",
+  "recenter",
   "screenshot",
   "axis-x",
   "axis-y",
@@ -236,7 +236,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     group: "Select",
   },
 
-  { show: "F", key: "f", action: "recentre", does: "frame everything", group: "View" },
+  { show: "F", key: "f", action: "recenter", does: "frame everything", group: "View" },
   { show: "X", key: "x", action: "axis-x", does: "look down X", group: "View" },
   { show: "Y", key: "y", action: "axis-y", does: "look down Y", group: "View" },
   { show: "Z", key: "z", action: "axis-z", does: "look down Z", group: "View" },
@@ -296,7 +296,7 @@ export interface KeyPress {
  * claims belongs to the browser or the system — a shortcut that swallowed ⌘S
  * would be a bug, not a feature — and alt is left out of the table
  * altogether, being how several keyboards type the characters above the
- * digits. And anything typed into a field is typing: the colour inputs and
+ * digits. And anything typed into a field is typing: the color inputs and
  * the sliders both take arrow keys and characters, and a slider that jumped
  * to a new view instead of nudging would be unusable.
  */

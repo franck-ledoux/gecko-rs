@@ -61,24 +61,24 @@ in different modes and used together. `Esc` is how you let go of both.
 
 ### Reading it off the screen
 
-Nodes, edges and faces each take one of **three colourings**, from their own
+Nodes, edges and faces each take one of **three colorings**, from their own
 box in the drawer:
 
-|             |                                                  |
-| ----------- | ------------------------------------------------ |
-| **uniform** | one colour for the group, from its swatch        |
-| **id**      | a colour per cell, from its stable name          |
-| **class**   | a colour per *kind* of thing it is classified on |
+|             |                                                 |
+| ----------- | ----------------------------------------------- |
+| **uniform** | one color for the group, from its swatch        |
+| **id**      | a color per cell, from its stable name          |
+| **class**   | a color per *kind* of thing it is classified on |
 
-The third is the classification one, and it is four colours rather than one
+The third is the classification one, and it is four colors rather than one
 per entity:
 
-|              |                        |
-| ------------ | ---------------------- |
-| on a corner  | pink                   |
-| on a curve   | magenta                |
-| on a surface | violet                 |
-| on nothing   | the group's own colour |
+|              |                       |
+| ------------ | --------------------- |
+| on a corner  | pink                  |
+| on a curve   | magenta               |
+| on a surface | violet                |
+| on nothing   | the group's own color |
 
 `H` shows them, read off the theme so the card cannot come to disagree with
 the screen.
@@ -113,25 +113,25 @@ way all along it, so they read as one family while staying far enough apart
 to be told at a glance. They were three violets of one hue until 0.1.2, and
 nobody could tell a corner from a curve — measured in OKLab, the nearest
 pair of them was 11 units in the dark theme and 6 in the light, against 22
-and 20 now. Each is also kept clear of the colour an unclassified cell
+and 20 now. Each is also kept clear of the color an unclassified cell
 wears, which the old deep violet was 7 units from.
 
-!!! note "Why not the colour of the entity itself"
-    It was, and it was a mistake. A block face painted the colour of the
+!!! note "Why not the color of the entity itself"
+    It was, and it was a mistake. A block face painted the color of the
     very surface it is classified on, and then drawn on top of that surface, is two
     things nobody can tell apart — and on a cylinder, where every face of
     the bounding box is classified on some surface, the whole blocking disappeared
     into the geometry.
 
-    What you read off this colouring is whether the blocking has taken
+    What you read off this coloring is whether the blocking has taken
     hold of the geometry, and that is a question with four answers.
 
 A **frozen** node is drawn as a **cube** rather than a ball, in whatever
-colour the colouring gives it. Being out of play is not a kind of
+color the coloring gives it. Being out of play is not a kind of
 classification — it is a thing about the cell — so it is said with the
-shape of the handle, which leaves the colour free to go on saying what the
-node is classified on or which node it is. It was a grey of its own until 0.1.2, and
-grey hid the two things the colouring is there for. It cannot be dragged at
+shape of the handle, which leaves the color free to go on saying what the
+node is classified on or which node it is. It was a gray of its own until 0.1.2, and
+gray hid the two things the coloring is there for. It cannot be dragged at
 all — letting it be dragged and having the
 kernel refuse would show it moving and snapping back, which reads as a bug
 rather than as a locked node.
@@ -152,7 +152,7 @@ gecko.classify()       -- and pin what is near enough
 ```
 
 `classify(tolerance=0.02)` does the whole blocking at once. The tolerance is
-a **share of the geometry's own size**, not a length: a figure in millimetres
+a **share of the geometry's own size**, not a length: a figure in millimeters
 is right for exactly one model.
 
 There is a second way in, and it is the one you use with the mouse: **a node
@@ -169,7 +169,7 @@ on the corner — not on the three curves through it, nor on the surfaces, all
 of which are just as near.
 
 Then it is **pulled onto** what it was classified on. Saying a node is on a
-corner and leaving it a millimetre away would be a label rather than a fact.
+corner and leaving it a millimeter away would be a label rather than a fact.
 
 ## How an edge is classified
 
@@ -217,7 +217,7 @@ geometry is measured.
 ## Cutting something that is classified
 
 Cut an edge lying on a curve and you get **a node and two edges, all three
-on that curve** — and the node is *pulled onto* it, not merely labelled with
+on that curve** — and the node is *pulled onto* it, not merely labeled with
 it. On a curve that bends between the edge's two ends, the straight middle
 of the edge is nowhere near the curve, and leaving the node there would be
 the same empty label a classification without a projection always is.

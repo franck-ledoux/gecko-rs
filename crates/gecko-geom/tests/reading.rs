@@ -254,7 +254,7 @@ fn a_coordinate_that_is_not_a_number_names_its_line() {
 
 #[test]
 fn the_same_file_read_twice_comes_out_in_the_same_order() {
-    // Tag order, not hash order: a colour-by-id palette keyed on the position
+    // Tag order, not hash order: a color-by-id palette keyed on the position
     // in these arrays would otherwise repaint the model on every reload.
     let once = Geometry::read(SQUARE).expect("a square");
     let twice = Geometry::read(SQUARE).expect("a square");

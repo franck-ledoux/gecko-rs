@@ -118,7 +118,7 @@ pub fn mitre(inward: &[[f64; 3]], depth: f64) -> [f64; 3] {
 }
 
 /// The outward normal of a quadrangle, by the shoelace formula in 3D, and
-/// its centre. Not normalised: the caller decides what to do with a face of
+/// its center. Not normalised: the caller decides what to do with a face of
 /// no area.
 pub fn quad_normal(p: [[f64; 3]; 4]) -> [f64; 3] {
     let mut n = [0.0; 3];
@@ -206,7 +206,7 @@ pub struct SheetEdge {
 pub struct Smoothing<'a> {
     /// How many passes. Each one moves every node once.
     pub rounds: u32,
-    /// How far along the way to the middle of its neighbours a node goes,
+    /// How far along the way to the middle of its neighbors a node goes,
     /// from 0 (nowhere) to 1 (all the way).
     pub share: f64,
     /// Nodes that must not move whatever their classification allows —
@@ -311,6 +311,12 @@ pub fn across(
 pub struct BlockFace {
     pub face: CellId,
     pub block: CellId,
+    /// The block's volume in the map, for the same reason `on` is here:
+    /// everything that draws a surface walks this list, and finding a
+    /// block by name is a scan of every volume — so asking per entry
+    /// turns a walk of the model into a walk of the model squared. It
+    /// cost three seconds at a hundred and twenty-five blocks.
+    pub volume: VolumeIdType,
     pub nodes: [VertexIdType; 4],
     /// What the face is classified on. Carried here rather than looked up
     /// by name: everything that draws a surface walks this list, and a
@@ -432,6 +438,34 @@ pub struct Blocking {
     /// dimension, not across dimensions.
     names: [Counter; 4],
     corners: Counter,
+    /// Where each name was last seen, so that finding a cell by its name
+    /// is a lookup rather than a walk of the whole map.
+    ///
+    /// A **hint**, not a register: every answer is checked against the
+    /// cell's own tag before it is given, and a miss falls back to the
+    /// walk. That is what makes it safe to leave alone — a stale entry
+    /// costs one scan, which is what the lookup cost before there were any
+    /// hints, and never a wrong answer.
+    ///
+    /// Written where names are handed out, one entry per cell named, and
+    /// nowhere else. Rebuilding the whole thing there instead was tried
+    /// and was worse: it walks the four dimensions on every operation,
+    /// which cost more on a model being built than the walks it saves.
+    ///
+    /// Why it had to exist: `pull_onto_class` is called once per node a
+    /// cut makes, and each call began by finding its node by name. At a
+    /// hundred and twenty-five blocks that was twelve milliseconds a node
+    /// and half a second a cut.
+    seen: Seen,
+}
+
+/// Where each name was last seen. See [`Blocking::seen`].
+#[derive(Clone, Debug, Default)]
+struct Seen {
+    nodes: HashMap<CellId, VertexIdType>,
+    edges: HashMap<CellId, EdgeIdType>,
+    faces: HashMap<CellId, FaceIdType>,
+    blocks: HashMap<CellId, VolumeIdType>,
 }
 
 impl Blocking {
@@ -447,6 +481,7 @@ impl Blocking {
             map,
             names: Default::default(),
             corners: Counter::default(),
+            seen: Seen::default(),
         })
     }
 
@@ -525,6 +560,9 @@ impl Blocking {
 
         copy.names = self.names.clone();
         copy.corners = self.corners.clone();
+        // The darts land on the same numbers as the original's, so where
+        // each name was seen is still where it is.
+        copy.seen = self.seen.clone();
         Ok(copy)
     }
 
@@ -650,6 +688,24 @@ impl Blocking {
             .unwrap_or(0)
     }
 
+    /// How many blocks are in each group, by bit: one walk of the volumes
+    /// rather than one per group or one per block.
+    pub fn counted_in_groups(&self) -> [usize; 64] {
+        let mut out = [0usize; 64];
+        for volume in self.map.iter_volumes() {
+            if !self.is_block(volume) {
+                continue;
+            }
+            let groups = self.block_tag(volume).groups;
+            for (bit, count) in out.iter_mut().enumerate() {
+                if groups & (1u64 << bit) != 0 {
+                    *count += 1;
+                }
+            }
+        }
+        out
+    }
+
     /// Put blocks into a group, or take them out of it.
     ///
     /// By bit rather than by name: what a group is **called** is no
@@ -748,12 +804,12 @@ impl Blocking {
         let Some(vertex) = self.node_by_id(node) else {
             return false;
         };
-        self.neighbours(vertex)
+        self.neighbors(vertex)
             .into_iter()
             .any(|other| self.node_tag(other).on.is_some())
     }
 
-    /// Move the nodes towards the middle of their neighbours, as far as
+    /// Move the nodes towards the middle of their neighbors, as far as
     /// what they are classified on allows.
     ///
     /// A **smart Laplacian**, and both halves of that name earn their keep:
@@ -823,7 +879,7 @@ impl Blocking {
         let mut furthest = 0.0f64;
         for _ in 0..how.rounds {
             for &(_, v) in &movable {
-                let ring = self.neighbours(v);
+                let ring = self.neighbors(v);
                 if ring.is_empty() {
                     continue;
                 }
@@ -952,9 +1008,9 @@ impl Blocking {
     /// The nodes an edge of the blocking joins to this one — its one-ring.
     ///
     /// What a Laplacian averages. Read off the vertex's own orbit, so a
-    /// node shared by several blocks has each of its neighbours once
+    /// node shared by several blocks has each of its neighbors once
     /// however many blocks it is shared by.
-    pub fn neighbours(&self, node: VertexIdType) -> Vec<VertexIdType> {
+    pub fn neighbors(&self, node: VertexIdType) -> Vec<VertexIdType> {
         let mut out: Vec<VertexIdType> = self
             .map
             .orbit(OrbitPolicy::Vertex, node as DartIdType)
@@ -1099,6 +1155,7 @@ impl Blocking {
             let tag = self.node_tag(v);
             let id = self.names[0].next_cell();
             self.map.write_attribute(v, NodeTag { id, ..tag });
+            self.seen.nodes.insert(id, v);
         }
 
         let edges: Vec<_> = self
@@ -1112,6 +1169,7 @@ impl Blocking {
             // `..tag`, not a fresh one: naming a cell must not quietly undo
             // what it was classified on.
             self.map.write_attribute(e, EdgeTag { id, ..tag });
+            self.seen.edges.insert(id, e);
         }
 
         let faces: Vec<_> = self
@@ -1123,6 +1181,7 @@ impl Blocking {
             let tag = self.face_tag(f);
             let id = self.names[2].next_cell();
             self.map.write_attribute(f, FaceTag { id, ..tag });
+            self.seen.faces.insert(id, f);
         }
 
         let blocks: Vec<_> = self
@@ -1134,6 +1193,7 @@ impl Blocking {
             let id = self.names[3].next_cell();
             let tag = self.block_tag(b);
             self.map.write_attribute(b, BlockTag { id, ..tag });
+            self.seen.blocks.insert(id, b);
         }
     }
 
@@ -1527,6 +1587,11 @@ impl Blocking {
         if node.is_none() {
             return None;
         }
+        if let Some(v) = self.seen.nodes.get(&node) {
+            if self.node_tag(*v).id == node {
+                return Some(*v);
+            }
+        }
         self.map
             .iter_vertices()
             .find(|v| self.node_tag(*v).id == node)
@@ -1790,7 +1855,7 @@ impl Blocking {
     /// where anything is.** From a dart of one cap, crossing into the
     /// lateral face beside it and out the far side lands on the cap at the
     /// other end, on the matching edge. Taking the β₃ of both gives the two
-    /// darts the neighbours will have to be sewn along — read before the
+    /// darts the neighbors will have to be sewn along — read before the
     /// layer goes, since they are what the layer was holding together.
     ///
     /// Nothing is moved by hand either. Sewing merges the two vertices by
@@ -1856,8 +1921,8 @@ impl Blocking {
             }
             // A sheet that comes back round onto itself has no outside to
             // close against.
-            for neighbour in [above, below] {
-                if crossing.contains_key(&self.map.volume_id(neighbour)) {
+            for neighbor in [above, below] {
+                if crossing.contains_key(&self.map.volume_id(neighbor)) {
                     return Err(BlockingError::BrokenSheet(edge));
                 }
             }
@@ -1923,10 +1988,10 @@ impl Blocking {
     /// has not yet destroyed:
     ///
     /// 1. **unsew β₃**, while the orbits that walk takes still exist. This is
-    ///    where a neighbour gets its own copy of the shared cells back — and
+    ///    where a neighbor gets its own copy of the shared cells back — and
     ///    it is the case [`CornerKey`][crate::ids::CornerKey] was written
-    ///    for: the names on both sides are cleared, but the neighbour goes on
-    ///    recognising the corner.
+    ///    for: the names on both sides are cleared, but the neighbor goes on
+    ///    recognizing the corner.
     /// 2. **unlink β₂ then β₁** — the raw operations, not the sewing ones.
     ///    There is no cell left to split by then; what is left is a block
     ///    being taken apart.
@@ -1937,7 +2002,7 @@ impl Blocking {
             .block_by_id(block)
             .ok_or(BlockingError::NoSuchBlock(block))?;
         self.drop_volume(volume)?;
-        // The neighbour's cells came out of the split unnamed.
+        // The neighbor's cells came out of the split unnamed.
         self.assign_missing_ids();
         Ok(())
     }
@@ -1952,7 +2017,7 @@ impl Blocking {
     fn drop_volume(&mut self, volume: VolumeIdType) -> Result<(), BlockingError> {
         // Collected first: the orbit is about to stop being walkable. β₃ is
         // not one of its generators, so this is one block's darts, never a
-        // neighbour's.
+        // neighbor's.
         let darts: Vec<DartIdType> = self
             .map
             .orbit(OrbitPolicy::Volume, volume as DartIdType)
@@ -2004,7 +2069,7 @@ impl Blocking {
         let darts = self.face_darts(f).to_vec();
         for &dart in &darts {
             if self.map.beta::<2>(dart) != NULL_DART_ID {
-                // Unsewn rather than unlinked: this is where the neighbour
+                // Unsewn rather than unlinked: this is where the neighbor
                 // gets its own copy of the edge and corners back.
                 self.map.unsew::<2>(dart)?;
             }
@@ -2026,6 +2091,11 @@ impl Blocking {
     pub fn block_by_id(&self, block: CellId) -> Option<VolumeIdType> {
         if block.is_none() {
             return None;
+        }
+        if let Some(v) = self.seen.blocks.get(&block) {
+            if self.block_tag(*v).id == block {
+                return Some(*v);
+            }
         }
         self.map
             .iter_volumes()
@@ -2390,7 +2460,7 @@ impl Blocking {
     /// Three passes, in this order, because each needs the one before it
     /// finished across the **whole** sheet rather than cell by cell: split
     /// every edge, then every face the sheet crosses, then every block.
-    /// Doing one block at a time would leave its neighbour's shared face
+    /// Doing one block at a time would leave its neighbor's shared face
     /// half-cut, and nothing downstream could tell that from a mistake.
     ///
     /// `t` runs along the direction [`sheet_through`][Self::sheet_through]
@@ -2581,7 +2651,7 @@ impl Blocking {
     /// Grow a block out of **every** face of a patch, all at once.
     ///
     /// A patch is extruded whole or not at all. Raising one face of it and
-    /// leaving its neighbours behind would weld a block to an open sheet of
+    /// leaving its neighbors behind would weld a block to an open sheet of
     /// faces, and in a 3-map that is not a thing: β₂ joins the faces of one
     /// volume, so the sheet and the block would have to be the same volume
     /// and a different one at once.
@@ -2658,7 +2728,7 @@ impl Blocking {
             })
             .collect();
 
-        // Where each dart's neighbour is, as (face, slot) — the pairs that
+        // Where each dart's neighbor is, as (face, slot) — the pairs that
         // have to end up sharing a face once the blocks are up.
         let mut slot_of: HashMap<DartIdType, (usize, usize)> = HashMap::new();
         for (k, side) in sides.iter().enumerate() {
@@ -2808,7 +2878,7 @@ impl Blocking {
             .id
     }
 
-    /// Grow a new block out of a face, along the normal at its centre.
+    /// Grow a new block out of a face, along the normal at its center.
     ///
     /// The face stays exactly where it is and the new block is laid against
     /// it: four corners copied, four more `height` away along the outward
@@ -2957,12 +3027,12 @@ impl Blocking {
             if length < 1e-12 {
                 return Err(BlockingError::LostFace);
             }
-            // The block's own extent in that direction, from its centre to
+            // The block's own extent in that direction, from its center to
             // the face and back again; a third of it is the layer.
-            let centre = self.block_centre(&sides, block);
+            let center = self.block_center(&sides, block);
             let middle = [0, 1, 2].map(|k| points.iter().map(|p| p[k]).sum::<f64>() / 4.0);
             let reach = (0..3)
-                .map(|k| (middle[k] - centre[k]).powi(2))
+                .map(|k| (middle[k] - center[k]).powi(2))
                 .sum::<f64>()
                 .sqrt();
             plans.push(Plan {
@@ -3202,10 +3272,10 @@ impl Blocking {
             .copied()
     }
 
-    /// The centre of a block: the mean of the corners its faces list, each
+    /// The center of a block: the mean of the corners its faces list, each
     /// of the eight counted once per face it is on, which weighs them all
     /// the same.
-    fn block_centre(&self, sides: &[BlockFace], block: CellId) -> [f64; 3] {
+    fn block_center(&self, sides: &[BlockFace], block: CellId) -> [f64; 3] {
         let mut sum = [0.0; 3];
         let mut n = 0.0_f64;
         for side in sides.iter().filter(|s| s.block == block) {
@@ -3353,7 +3423,7 @@ impl Blocking {
     /// Say how many segments the sheet through this edge is divided into.
     ///
     /// On every edge of the sheet, which is the only way it can mean
-    /// anything: an edge divided into four against its neighbour's five
+    /// anything: an edge divided into four against its neighbor's five
     /// leaves a face with nothing to match along.
     pub fn set_sheet_segments(&mut self, edge: CellId, segments: u32) -> Result<(), BlockingError> {
         let index = self.edge_index();
@@ -3417,6 +3487,11 @@ impl Blocking {
         if edge.is_none() {
             return None;
         }
+        if let Some(e) = self.seen.edges.get(&edge) {
+            if self.edge_tag(*e).id == edge {
+                return Some(*e);
+            }
+        }
         self.map.iter_edges().find(|e| self.edge_tag(*e).id == edge)
     }
 
@@ -3441,6 +3516,11 @@ impl Blocking {
     pub fn face_by_id(&self, face: CellId) -> Option<FaceIdType> {
         if face.is_none() {
             return None;
+        }
+        if let Some(f) = self.seen.faces.get(&face) {
+            if self.face_tag(*f).id == face {
+                return Some(*f);
+            }
         }
         self.map.iter_faces().find(|f| self.face_tag(*f).id == face)
     }
@@ -3484,6 +3564,7 @@ impl Blocking {
                 out.push(BlockFace {
                     face: tag.id,
                     block,
+                    volume,
                     nodes,
                     on: tag.on,
                 });

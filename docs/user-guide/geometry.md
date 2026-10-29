@@ -70,27 +70,27 @@ Three groups in the drawer — **surfaces**, **curves**, **corners** — and
 `4`, `5`, `6` to show and hide each. Each takes the same three controls as
 faces and blocks:
 
-| Control     | What it does                                          |
-| ----------- | ----------------------------------------------------- |
-| **show**    | draw this group at all                                |
-| **uniform** | one colour for the whole group, taken from its swatch |
-| **id**      | a colour per entity, from its gmsh tag                |
-| **opacity** | transparency, per group                               |
+| Control     | What it does                                         |
+| ----------- | ---------------------------------------------------- |
+| **show**    | draw this group at all                               |
+| **uniform** | one color for the whole group, taken from its swatch |
+| **id**      | a color per entity, from its gmsh tag                |
+| **opacity** | transparency, per group                              |
 
 There is no **shrink**. A geometry is not a decomposition you can explode: its
 surfaces meet along the very curves also on screen, and pulling them apart
 would only break that.
 
-Surfaces come up coloured **by id** and translucent by default, because telling one CAD
+Surfaces come up colored **by id** and translucent by default, because telling one CAD
 patch from the next is the whole reason the file was read as a model rather
 than as a pile of triangles — and because what goes inside it is the point.
-The geometry's colours are a family of their own, green against the blocking's
+The geometry's colors are a family of their own, green against the blocking's
 blues and browns, so that at a glance you can tell the model from the thing it
 is meant to follow.
 
 A geometric corner is drawn larger than a node handle. The two will often sit
 on top of each other — that is what the geometry is there for — so they are
-told apart by size as well as by colour.
+told apart by size as well as by color.
 
 `F` frames the geometry along with the blocks: a geometry with nothing on it
 yet is still what there is to see.
@@ -103,7 +103,7 @@ quadrilaterals for the blocks, whole for the geometry — and the readout
 along the bottom names it, because a toggle that looks the same either way
 is one you have to click to find out about. Clicking an entity then picks
 it, clicking it again puts it out, and the background or `Esc` lets go of
-the lot. A picked entity turns the selection colour, exactly as a picked
+the lot. A picked entity turns the selection color, exactly as a picked
 face does.
 
 Corners, curves and surfaces are all pickable, **smallest target first**: a

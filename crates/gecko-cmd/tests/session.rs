@@ -70,7 +70,7 @@ fn the_view_buffer_describes_the_block() {
     assert_eq!(v.positions.len() / 3, 8);
     assert_eq!(v.names.len(), 8);
     assert_eq!(v.edges.len() / 2, 12);
-    assert_eq!(v.centre, [0.5, 0.5, 0.5]);
+    assert_eq!(v.center, [0.5, 0.5, 0.5]);
     // Every edge index addresses a node that exists.
     assert!(v
         .edges
@@ -115,7 +115,7 @@ fn two_blocks_each_bring_a_closed_surface() {
     blocks.dedup();
     assert_eq!(blocks.len(), 2);
     // No name is the sentinel: every quadrangle knows what it belongs to, and
-    // the browser colours by these.
+    // the browser colors by these.
     assert!(v.quad_faces.iter().all(|n| *n != u32::MAX));
     assert!(v.quad_blocks.iter().all(|n| *n != u32::MAX));
 }
@@ -137,13 +137,13 @@ fn the_encoding_is_the_layout_a_client_will_decode() {
     // what it is classified on and whether it is frozen, and two for the
     // groups it is in. Per edge: two node indices, a name, two for its
     // classification and two for its groups. Per quadrangle: four corner
-    // indices, the two names it is coloured by, two for its own
+    // indices, the two names it is colored by, two for its own
     // classification and two for its groups.
     assert_eq!(
         bytes.len(),
         HEADER + n_nodes * 40 + n_edges * 32 + n_quads * 40
     );
-    // Everything after the f64 centre is 4-aligned, so a client can make typed
+    // Everything after the f64 center is 4-aligned, so a client can make typed
     // array views over these bytes without copying them first.
     assert_eq!(HEADER % 4, 0);
 }
@@ -162,10 +162,10 @@ fn a_model_far_from_the_origin_keeps_its_precision() {
         v.positions.iter().all(|x| x.abs() <= 0.5 + 1e-6),
         "not rebased"
     );
-    // Recompose f64 centre + f32 offset and land back on the cube's corners.
+    // Recompose f64 center + f32 offset and land back on the cube's corners.
     for p in v.positions.as_chunks::<3>().0 {
         for k in 0..3 {
-            let back = v.centre[k] + p[k] as f64;
+            let back = v.center[k] + p[k] as f64;
             let expected = far[k] + if p[k] < 0.0 { 0.0 } else { 1.0 };
             assert!((back - expected).abs() < 1e-3, "{back} vs {expected}");
         }
@@ -347,9 +347,9 @@ fn both_new_commands_travel_as_json() {
 
 #[test]
 fn the_view_stays_put_when_a_node_moves() {
-    // The bug this guards: the rebasing origin was the bounding box's centre,
+    // The bug this guards: the rebasing origin was the bounding box's center,
     // recomputed every time. So dragging one node slid the other seven across
-    // the screen — all of them are drawn relative to that centre, and it had
+    // the screen — all of them are drawn relative to that center, and it had
     // just moved.
     let mut s = Session::new().unwrap();
     s.apply(Command::CreateCube {
@@ -357,7 +357,7 @@ fn the_view_stays_put_when_a_node_moves() {
         size: 1.0,
     })
     .unwrap();
-    let before = ViewBuffer::of(s.blocking(), None).centre;
+    let before = ViewBuffer::of(s.blocking(), None).center;
     let _ = s.view_buffer(); // the session adopts that origin
 
     let name = ViewBuffer::of(s.blocking(), Some(before)).names[0];
@@ -369,7 +369,7 @@ fn the_view_stays_put_when_a_node_moves() {
     })
     .unwrap();
 
-    let after = ViewBuffer::of(s.blocking(), Some(before)).centre;
+    let after = ViewBuffer::of(s.blocking(), Some(before)).center;
     assert_eq!(after, before, "the whole scene would have shifted");
 }
 
@@ -399,7 +399,7 @@ $Elements
 $EndElements
 ";
 
-/// The centre a buffer was rebased on, read out of its header: magic,
+/// The center a buffer was rebased on, read out of its header: magic,
 /// version, then three f64. What the page reads, so what a test should.
 fn rebased_on(bytes: &[u8]) -> [f64; 3] {
     [0, 1, 2].map(|k| {
@@ -448,7 +448,7 @@ fn the_origin_follows_a_model_that_walks_away() {
     let blocks: Vec<serde_json::Value> = serde_json::from_str(&s.blocks_json()).unwrap();
     let here = blocks
         .iter()
-        .find(|b| b["centre"][0].as_f64().unwrap() < 1.0)
+        .find(|b| b["center"][0].as_f64().unwrap() < 1.0)
         .expect("the cube that was here");
     s.apply(Command::RemoveBlock {
         block: here["id"].as_u64().unwrap() as u32,
@@ -468,7 +468,7 @@ fn the_blocking_the_geometry_and_the_mesh_are_rebased_on_one_origin() {
     // the middle of the scene is. The view used to settle an origin of its
     // own, over the blocking **alone** — a smaller world than the one the
     // session settles over, and so one that walks past its own threshold
-    // first. Take enough blocks out and the view adopted a new centre that
+    // first. Take enough blocks out and the view adopted a new center that
     // the geometry and the mesh never heard about: the mesh stayed where it
     // was and the whole block structure jumped.
     let mut s = Session::new().unwrap();
@@ -498,7 +498,7 @@ fn the_blocking_the_geometry_and_the_mesh_are_rebased_on_one_origin() {
     let blocks: Vec<serde_json::Value> = serde_json::from_str(&s.blocks_json()).unwrap();
     let doomed: Vec<u32> = blocks
         .iter()
-        .filter(|b| b["centre"][0].as_f64().unwrap() < 5.0)
+        .filter(|b| b["center"][0].as_f64().unwrap() < 5.0)
         .map(|b| b["id"].as_u64().unwrap() as u32)
         .collect();
     assert_eq!(doomed.len(), 5, "half of them");
@@ -523,9 +523,9 @@ fn the_blocking_the_geometry_and_the_mesh_are_rebased_on_one_origin() {
 #[test]
 fn an_empty_session_keeps_whatever_origin_it_had() {
     let s = Session::new().unwrap();
-    assert_eq!(ViewBuffer::of(s.blocking(), None).centre, [0.0; 3]);
+    assert_eq!(ViewBuffer::of(s.blocking(), None).center, [0.0; 3]);
     assert_eq!(
-        ViewBuffer::of(s.blocking(), Some([7.0, 8.0, 9.0])).centre,
+        ViewBuffer::of(s.blocking(), Some([7.0, 8.0, 9.0])).center,
         [7.0, 8.0, 9.0]
     );
 }
@@ -546,7 +546,7 @@ mod gluing {
         s
     }
 
-    /// The face of the n-th listed block whose centre sits at this x.
+    /// The face of the n-th listed block whose center sits at this x.
     fn face_at(s: &Session, block: usize, x: f64) -> u32 {
         let faces: serde_json::Value = serde_json::from_str(&s.faces_json()).unwrap();
         let faces = faces.as_array().unwrap();
@@ -555,7 +555,7 @@ mod gluing {
         faces
             .iter()
             .filter(|f| f["block"].as_u64() == Some(blocks[block]))
-            .find(|f| (f["centre"][0].as_f64().unwrap() - x).abs() < 1e-9)
+            .find(|f| (f["center"][0].as_f64().unwrap() - x).abs() < 1e-9)
             .expect("a face there")["id"]
             .as_u64()
             .unwrap() as u32
@@ -569,7 +569,7 @@ mod gluing {
         assert_eq!(faces.as_array().unwrap().len(), 12);
         for f in faces.as_array().unwrap() {
             assert!(f["id"].is_u64() && f["block"].is_u64());
-            assert_eq!(f["centre"].as_array().unwrap().len(), 3);
+            assert_eq!(f["center"].as_array().unwrap().len(), 3);
         }
     }
 
@@ -667,10 +667,10 @@ mod removal {
         let blocks: serde_json::Value = serde_json::from_str(&s.blocks_json()).unwrap();
         let blocks = blocks.as_array().unwrap();
         assert_eq!(blocks.len(), 3);
-        // Each cube's centre, in the order they were made.
+        // Each cube's center, in the order they were made.
         for (n, block) in blocks.iter().enumerate() {
-            assert!((block["centre"][0].as_f64().unwrap() - (n as f64 + 0.5)).abs() < 1e-9);
-            assert!((block["centre"][1].as_f64().unwrap() - 0.5).abs() < 1e-9);
+            assert!((block["center"][0].as_f64().unwrap() - (n as f64 + 0.5)).abs() < 1e-9);
+            assert!((block["center"][1].as_f64().unwrap() - 0.5).abs() < 1e-9);
         }
     }
 
@@ -903,14 +903,14 @@ mod pillowing {
         s
     }
 
-    /// The `(face, block)` pair whose centre sits at this value on an axis.
+    /// The `(face, block)` pair whose center sits at this value on an axis.
     fn face_at(s: &Session, axis: usize, value: f64) -> (u32, u32) {
         let faces: serde_json::Value = serde_json::from_str(&s.faces_json()).unwrap();
         let found = faces
             .as_array()
             .unwrap()
             .iter()
-            .find(|f| (f["centre"][axis].as_f64().unwrap() - value).abs() < 1e-9)
+            .find(|f| (f["center"][axis].as_f64().unwrap() - value).abs() < 1e-9)
             .expect("a face there");
         (
             found["id"].as_u64().unwrap() as u32,
@@ -1003,7 +1003,7 @@ mod sheet_removal {
                 .as_array()
                 .unwrap()
                 .iter()
-                .filter(|f| (f["centre"][2].as_f64().unwrap() - z).abs() < 1e-9)
+                .filter(|f| (f["center"][2].as_f64().unwrap() - z).abs() < 1e-9)
                 .map(|f| f["id"].as_u64().unwrap() as u32)
                 .collect();
             assert_eq!(pair.len(), 2);
@@ -1022,8 +1022,8 @@ mod sheet_removal {
         for e in 0..v.edge_names.len() {
             let (a, b) = (v.edges[e * 2] as usize * 3, v.edges[e * 2 + 1] as usize * 3);
             let mut z = [
-                v.positions[a + 2] as f64 + v.centre[2],
-                v.positions[b + 2] as f64 + v.centre[2],
+                v.positions[a + 2] as f64 + v.center[2],
+                v.positions[b + 2] as f64 + v.center[2],
             ];
             z.sort_by(f64::total_cmp);
             if (z[0] - low).abs() < 1e-6 && (z[1] - high).abs() < 1e-6 {
@@ -1090,7 +1090,7 @@ mod chords {
                 .as_array()
                 .unwrap()
                 .iter()
-                .filter(|f| (f["centre"][2].as_f64().unwrap() - z).abs() < 1e-9)
+                .filter(|f| (f["center"][2].as_f64().unwrap() - z).abs() < 1e-9)
                 .map(|f| f["id"].as_u64().unwrap() as u32)
                 .collect();
             assert_eq!(pair.len(), 2);
@@ -1111,8 +1111,8 @@ mod chords {
             .unwrap()
             .iter()
             .find(|f| {
-                (f["centre"][2].as_f64().unwrap() - z).abs() < 1e-9
-                    && (f["centre"][0].as_f64().unwrap() - 0.5).abs() < 1e-9
+                (f["center"][2].as_f64().unwrap() - z).abs() < 1e-9
+                    && (f["center"][0].as_f64().unwrap() - 0.5).abs() < 1e-9
             })
             .cloned()
             .expect("a face there");
@@ -1242,7 +1242,7 @@ fn a_face_is_grown_into_a_block_through_the_door() {
         .unwrap()
         .iter()
         .max_by(|a, b| {
-            let z = |f: &serde_json::Value| f["centre"][2].as_f64().unwrap();
+            let z = |f: &serde_json::Value| f["center"][2].as_f64().unwrap();
             z(a).partial_cmp(&z(b)).unwrap()
         })
         .unwrap()

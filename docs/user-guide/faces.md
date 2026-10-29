@@ -10,12 +10,12 @@ else, and the only thing it cannot do is be mistaken for a block.
 ## A patch is a connected component of faces
 
 Faces welded edge to edge make a **patch**. That is not a list anybody
-keeps: in the map a face is welded to its neighbour by β₂, and β₂ joins the
+keeps: in the map a face is welded to its neighbor by β₂, and β₂ joins the
 faces *of one volume*, so a connected component of faces already **is** one
 volume — with a name of its own, which a pick carries like any other.
 
 What tells a patch from a block is whether the shell closes. A block has a
-neighbour across every edge of every one of its faces; a patch has a
+neighbor across every edge of every one of its faces; a patch has a
 boundary, which is exactly where that is missing. Nothing is flagged and
 nothing is declared: six faces welded into a closed box are a block, because
 they are one.

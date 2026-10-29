@@ -17,7 +17,7 @@ declare function edgeNear(want: number[]): number;
 const FACING_PAIR = `
 window.facingPair = () => {
   const s = window.__gecko.surface("faces");
-  const centre = (q) => {
+  const center = (q) => {
     const at = [0, 0, 0];
     for (let k = 0; k < 4; k++)
       for (let axis = 0; axis < 3; axis++) at[axis] += s.positions[(q * 4 + k) * 3 + axis] / 4;
@@ -28,7 +28,7 @@ window.facingPair = () => {
   for (let a = 0; a < s.quads; a++)
     for (let b = 0; b < s.quads; b++) {
       if (s.blocks[a] === s.blocks[b]) continue;
-      const [p, q] = [centre(a), centre(b)];
+      const [p, q] = [center(a), center(b)];
       const gap = Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
       if (gap < shortest) { shortest = gap; best = [s.faces[a], s.faces[b]]; }
     }
@@ -130,15 +130,15 @@ test("a refused command is reported and changes nothing", async ({ page }) => {
   await expect(page.locator("[data-test=blocks]")).toHaveText("1");
 });
 
-test("the model is rebased on its own centre", async ({ page }) => {
+test("the model is rebased on its own center", async ({ page }) => {
   await boot(page);
   await page.evaluate(
     (cube) => (window as any).__gecko.apply({ op: "add_block", corners: cube }),
     CUBE.map((p) => [p[0] + 1e6, p[1], p[2]]),
   );
   await page.evaluate(() => (window as any).__gecko.refresh());
-  const centre = await page.evaluate(() => (window as any).__gecko.centre());
-  expect(centre[0]).toBeCloseTo(1e6 + 0.5, 3);
+  const center = await page.evaluate(() => (window as any).__gecko.center());
+  expect(center[0]).toBeCloseTo(1e6 + 0.5, 3);
 });
 
 test("dragging a node with the mouse moves it in the kernel", async ({ page }) => {
@@ -214,26 +214,26 @@ test("dragging a node with the mouse moves it in the kernel", async ({ page }) =
   expect(errors).toEqual([]);
 });
 
-test("colours can be changed, and are remembered", async ({ page }) => {
+test("colors can be changed, and are remembered", async ({ page }) => {
   const errors = await boot(page);
   await openDrawer(page);
 
   // The panel is generated from the theme's keys, so there is one input per
-  // colour and no markup to keep in step: background, nodes, edges, faces,
+  // color and no markup to keep in step: background, nodes, edges, faces,
   // blocks, the geometry's corners, curves and surfaces, the mesh, and the
   // three that say what a cell follows. Being frozen is not among them —
-  // that is a shape, not a colour.
+  // that is a shape, not a color.
   await expect(page.locator("#swatches input[type=color]")).toHaveCount(12);
   expect(await page.evaluate(() => (window as any).__gecko.theme())).toMatchObject({
     background: "#15171b",
   });
 
-  await openSection(page, "colours");
+  await openSection(page, "colors");
   await page.locator("#preset-light").click();
   const light = await page.evaluate(() => (window as any).__gecko.theme());
   expect(light.background).toBe("#f4f5f7");
 
-  await page.locator("[data-test=colour-nodes]").fill("#ff00aa");
+  await page.locator("[data-test=color-nodes]").fill("#ff00aa");
   await page.waitForFunction(
     () => (window as any).__gecko.theme().nodes === "#ff00aa",
   );
@@ -249,7 +249,7 @@ test("colours can be changed, and are remembered", async ({ page }) => {
 
 test("the triad turns the view, and can be hidden", async ({ page }) => {
   await boot(page);
-  await openSection(page, "colours");
+  await openSection(page, "colors");
   await page.locator("#cube").click();
   await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
   await page.evaluate(() => (window as any).__gecko.settled());
@@ -292,7 +292,7 @@ test("the triad turns the view, and can be hidden", async ({ page }) => {
   expect(await page.evaluate(() => (window as any).__gecko.axesVisible())).toBe(false);
 });
 
-test("faces and blocks are drawn, coloured and faded from the panel", async ({ page }) => {
+test("faces and blocks are drawn, colored and faded from the panel", async ({ page }) => {
   const errors = await boot(page);
   await openDrawer(page);
   await page.locator("#cube").click();
@@ -303,21 +303,21 @@ test("faces and blocks are drawn, coloured and faded from the panel", async ({ p
 
   // Faces by default; blocks are the same six quadrangles read the other way,
   // so showing them too is a choice rather than something to default to.
-  expect(await surface("faces")).toMatchObject({ quads: 6, colours: 1 });
+  expect(await surface("faces")).toMatchObject({ quads: 6, colors: 1 });
   expect(await surface("blocks")).toBeNull();
 
-  // One colour per face. Six faces, six colours — and the kernel was not
+  // One color per face. Six faces, six colors — and the kernel was not
   // asked anything: these come off the names already in the view buffer.
   await openGroup(page, "faces");
   await page.locator("[data-test=faces-mode]").selectOption("id");
-  expect(await surface("faces")).toMatchObject({ quads: 6, colours: 6 });
+  expect(await surface("faces")).toMatchObject({ quads: 6, colors: 6 });
 
-  // Both at once, each with its own colouring and its own transparency.
+  // Both at once, each with its own coloring and its own transparency.
   await page.locator("[data-test=blocks-visible]").check();
   await openGroup(page, "blocks");
   await page.locator("[data-test=blocks-mode]").selectOption("uniform");
-  expect(await surface("blocks")).toMatchObject({ quads: 6, colours: 1 });
-  expect(await surface("faces")).toMatchObject({ colours: 6 });
+  expect(await surface("blocks")).toMatchObject({ quads: 6, colors: 1 });
+  expect(await surface("faces")).toMatchObject({ colors: 6 });
 
   await openGroup(page, "faces");
   await page.locator("[data-test=faces-alpha]").fill("0.2");
@@ -329,7 +329,7 @@ test("faces and blocks are drawn, coloured and faded from the panel", async ({ p
   expect(errors).toEqual([]);
 });
 
-test("each kind of cell shrinks towards its own centre", async ({ page }) => {
+test("each kind of cell shrinks towards its own center", async ({ page }) => {
   const errors = await boot(page);
   await openDrawer(page);
   await page.locator("#cube").click();
@@ -369,7 +369,7 @@ test("each kind of cell shrinks towards its own centre", async ({ page }) => {
   // And the faces, which were not asked to move, did not.
   expect(await extent("faces")).toBeCloseTo(1, 5);
 
-  // A face pulls towards its own centre, which is in its own plane: the cube
+  // A face pulls towards its own center, which is in its own plane: the cube
   // keeps its width while every face shrinks inside it.
   await openGroup(page, "faces");
   await page.locator("[data-test=faces-shrink]").fill("0.5");
@@ -399,7 +399,7 @@ test("the display settings survive a reload", async ({ page }) => {
   // never went near the kernel.
   const kept = await page.evaluate(() => (window as any).__gecko.display());
   expect(kept.blocks.visible).toBe(true);
-  expect(kept.faces.colouring).toBe("id");
+  expect(kept.faces.coloring).toBe("id");
   expect(kept.edges.shrink).toBe(0.8);
   // And the controls came back showing it.
   await expect(page.locator("[data-test=blocks-visible]")).toBeChecked();
@@ -558,7 +558,7 @@ test("a glue across a gap meets in the middle", async ({ page }) => {
    * The distinct x every **node** sits at.
    *
    * The nodes, not the quadrangles: faces are drawn shrunk towards their own
-   * centres, so no corner of the drawing is where a node is.
+   * centers, so no corner of the drawing is where a node is.
    */
   const columns = () =>
     page.evaluate(() => {
@@ -666,13 +666,13 @@ test("recentring shows everything without changing the direction", async ({ page
   await page.evaluate(() => (window as any).__gecko.settled());
 
   const box = (await page.locator("#view").boundingBox())!;
-  const centre = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 
   // Look at it from somewhere deliberate — not the angle it starts at, or
   // "unchanged" would be indistinguishable from "reset to the default".
-  await page.mouse.move(centre.x, centre.y);
+  await page.mouse.move(center.x, center.y);
   await page.mouse.down();
-  await page.mouse.move(centre.x + 110, centre.y + 40);
+  await page.mouse.move(center.x + 110, center.y + 40);
   await page.mouse.up();
   // Then lose the model by zooming right in.
   for (let i = 0; i < 40; i++) await page.mouse.wheel(0, -120);
@@ -704,9 +704,9 @@ test("recentring shows everything without changing the direction", async ({ page
     };
     requestAnimationFrame(tick);
   });
-  await page.locator("#recentre").click();
+  await page.locator("#recenter").click();
   await page.evaluate(() => (window as any).__gecko.settled());
-  await expect(page.locator("#status")).toHaveText("view recentred");
+  await expect(page.locator("#status")).toHaveText("view recenterd");
 
   // It glided: a cut goes straight from one radius to the other and leaves
   // nothing in between, however the frames happen to fall.
@@ -819,7 +819,7 @@ test("the help card lists the keys, and any key dismisses it", async ({ page }) 
 });
 
 test("typing in a field is typing, not a shortcut", async ({ page }) => {
-  // The colour inputs and the sliders take characters and arrow keys. A
+  // The color inputs and the sliders take characters and arrow keys. A
   // slider that jumped to a new view instead of nudging would be unusable.
   const errors = await boot(page);
   await openGroup(page, "faces");
@@ -868,7 +868,7 @@ test("a picture is saved, at the size the drawer asks for", async ({ page }) => 
 });
 
 test("a picture can be saved with nothing behind it", async ({ page }) => {
-  // For dropping a figure onto a page whose colour you do not know yet.
+  // For dropping a figure onto a page whose color you do not know yet.
   const errors = await boot(page);
   await page.locator("#cube").click();
   await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
@@ -1187,7 +1187,7 @@ test("the selection grows as far as you like", async ({ page }) => {
   await expect(page.locator("#glue")).toBeDisabled();
   await expect(page.locator("#pillow")).toBeEnabled();
   // All three lit, which is what tells you what the layer will cover.
-  expect(await page.evaluate(() => (window as any).__gecko.surface("faces").colours)).toBe(3);
+  expect(await page.evaluate(() => (window as any).__gecko.surface("faces").colors)).toBe(3);
 
   // Clicking one again takes it out rather than starting over.
   await page.evaluate((t) => (window as any).__gecko.choose(t), faces[0]);
@@ -1196,8 +1196,8 @@ test("the selection grows as far as you like", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
-/** The colour in the middle of the canvas, as three numbers. */
-async function centrePixel(page: import("@playwright/test").Page) {
+/** The color in the middle of the canvas, as three numbers. */
+async function centerPixel(page: import("@playwright/test").Page) {
   return page.evaluate(() => {
     const view = document.querySelector("#view") as HTMLCanvasElement;
     const flat = document.createElement("canvas");
@@ -1228,7 +1228,7 @@ test("the nearer of two translucent blocks is the one you see", async ({ page })
   await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
   await page.evaluate(() => (window as any).__gecko.snapTo("+x"));
   await page.evaluate(() => (window as any).__gecko.settled());
-  const alone = await centrePixel(page);
+  const alone = await centerPixel(page);
 
   // A second cube at a greater x, so it stands between that one and the
   // camera. Along the row they cover each other exactly.
@@ -1236,12 +1236,12 @@ test("the nearer of two translucent blocks is the one you see", async ({ page })
   await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
   await page.evaluate(() => (window as any).__gecko.snapTo("+x"));
   await page.evaluate(() => (window as any).__gecko.settled());
-  const behindIt = await centrePixel(page);
+  const behindIt = await centerPixel(page);
 
   // From the far side the first cube is the near one again.
   await page.evaluate(() => (window as any).__gecko.snapTo("-x"));
   await page.evaluate(() => (window as any).__gecko.settled());
-  const inFront = await centrePixel(page);
+  const inFront = await centerPixel(page);
 
   // No threshold to pick: whichever cube is nearer dominates, so the view
   // that has the first one in front must land closer to how it looks alone.
@@ -1403,7 +1403,7 @@ test("everything on screen is drawn against one origin, even when it moves", asy
   await page.locator("#cube").click();
   await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
 
-  // A geometry a thousand kilometres away from that block: only its node
+  // A geometry a thousand kilometers away from that block: only its node
   // coordinates move, so it is the same square and still one surface.
   const far = SQUARE_MSH.split("$EndNodes")
     .map((part, at) =>
@@ -1470,7 +1470,7 @@ test("a geometry is opened from a file and drawn in its three groups", async ({ 
   expect(errors).toEqual([]);
 });
 
-test("each geometry group is hidden, coloured and faded on its own", async ({ page }) => {
+test("each geometry group is hidden, colored and faded on its own", async ({ page }) => {
   const errors = await boot(page);
   await openSquare(page);
   await expect(page.locator("[data-test=geom-curves]")).toHaveText("4");
@@ -1488,13 +1488,13 @@ test("each geometry group is hidden, coloured and faded on its own", async ({ pa
   await page.locator('[data-test="curves-visible"]').check();
   expect(await count("curves")).toBe(4);
 
-  // One colour for the lot, then one per tag.
+  // One color for the lot, then one per tag.
   await openGroup(page, "curves");
   await page.locator('[data-test="curves-mode"]').selectOption("uniform");
   const uniform = await look("curves", 11);
-  expect((await look("curves", 12))!.colour).toBe(uniform!.colour);
+  expect((await look("curves", 12))!.color).toBe(uniform!.color);
   await page.locator('[data-test="curves-mode"]').selectOption("id");
-  expect((await look("curves", 12))!.colour).not.toBe((await look("curves", 11))!.colour);
+  expect((await look("curves", 12))!.color).not.toBe((await look("curves", 11))!.color);
 
   // And opacity, per group.
   await openGroup(page, "surfaces");
@@ -1561,7 +1561,7 @@ test("framing takes in the geometry as well as the blocks", async ({ page }) => 
  * on screen from there.
  *
  * Read from the face opposite it: on a cube the line between the two face
- * centres is the normal, so the direction from the far one to the picked one
+ * centers is the normal, so the direction from the far one to the picked one
  * is outward, whatever angle the camera happens to be at. Guessing instead —
  * "up the screen is up the model" — is wrong here, because the scene's up is
  * Y and the model's is Z.
@@ -1569,7 +1569,7 @@ test("framing takes in the geometry as well as the blocks", async ({ page }) => 
 const OUTWARD = `
 window.outward = (picked) => {
   const s = window.__gecko.surface("faces");
-  const centre = (q) => {
+  const center = (q) => {
     const at = [0, 0, 0];
     for (let k = 0; k < 4; k++)
       for (let axis = 0; axis < 3; axis++) at[axis] += s.positions[(q * 4 + k) * 3 + axis] / 4;
@@ -1579,7 +1579,7 @@ window.outward = (picked) => {
   for (let q = 0; q < s.quads; q++) if (s.faces[q] === picked) mine = q;
   let far = mine;
   const gap = (q) => {
-    const [a, b] = [centre(q), centre(mine)];
+    const [a, b] = [center(q), center(mine)];
     return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
   };
   for (let q = 0; q < s.quads; q++) if (gap(q) > gap(far)) far = q;
@@ -1748,7 +1748,7 @@ test("aiming at the geometry picks surfaces, and the blocks stay out of it", asy
   // of the view — this geometry is three units deep and the block sits in a
   // corner of it, so the middle of the view is thin air.
   //
-  // And not the face's own centre either: a click asks for a node, then an
+  // And not the face's own center either: a click asks for a node, then an
   // edge, then a face, and the far edges of a cube project into the middle
   // of the faces in front of them. So the point is chosen by asking the
   // page what is there — somewhere on the face that no handle and no line
@@ -1809,12 +1809,12 @@ test("aiming at the geometry picks surfaces, and the blocks stay out of it", asy
     (window as any).__gecko.surfaceSelection(),
   )) as number[];
   await expect(page.locator("#status")).toContainText(`surface ${tag} selected`);
-  // And it is drawn in the selection colour, like a picked face.
+  // And it is drawn in the selection color, like a picked face.
   expect(
     (await page.evaluate((t) => (window as any).__gecko.geomLook("surfaces", t), tag)) as {
-      colour: string;
+      color: string;
     },
-  ).toMatchObject({ colour: "#ffcc33" });
+  ).toMatchObject({ color: "#ffcc33" });
   // Nothing of the blocking answered the click: the face selection is the
   // one from before the change of mode, not a second one.
   expect(await page.evaluate(() => (window as any).__gecko.selection())).toHaveLength(1);
@@ -1962,7 +1962,7 @@ test("the blocking is put on the geometry and wears what it follows", async ({ p
   await expect(page.locator("[data-test=pinned]")).toHaveText("8");
 
   // Every corner of the block is on a corner of the model, and wears its
-  // colour rather than the wireframe's.
+  // color rather than the wireframe's.
   const state = (await page.evaluate(() => {
     const g = (window as any).__gecko;
     return g.names().map((n: number) => g.nodeState(n));
@@ -1972,9 +1972,9 @@ test("the blocking is put on the geometry and wears what it follows", async ({ p
   expect(errors).toEqual([]);
 });
 
-test("a frozen node is a cube, and still wears what the colouring says", async ({ page }) => {
-  // Freezing used to paint the handle grey, which hid the very thing the
-  // colouring is for. Now it changes the handle's shape, and the colour is
+test("a frozen node is a cube, and still wears what the coloring says", async ({ page }) => {
+  // Freezing used to paint the handle gray, which hid the very thing the
+  // coloring is for. Now it changes the handle's shape, and the color is
   // left to say what the node is on.
   const errors = await boot(page);
   await boxedAndPinned(page);
@@ -1988,7 +1988,7 @@ test("a frozen node is a cube, and still wears what the colouring says", async (
   const tint = (n: number) => page.evaluate((who) => (window as any).__gecko.nodeTint(who), n);
 
   // Every corner of the block is on a corner of the model, so under the
-  // `follows` colouring every handle wears the corner colour — set from
+  // `follows` coloring every handle wears the corner color — set from
   // the drawer, the way somebody would.
   await openDrawer(page);
   await openGroup(page, "nodes");
@@ -2007,7 +2007,7 @@ test("a frozen node is a cube, and still wears what the colouring says", async (
   }, name);
   await page.waitForFunction((n) => (window as any).__gecko.nodeState(n).frozen, name);
 
-  // A cube where it was a ball, and the colour unchanged — while the node
+  // A cube where it was a ball, and the color unchanged — while the node
   // beside it is still a ball.
   expect(await shape(name)).toBe("cube");
   expect(await shape(other)).toBe("ball");
@@ -2022,7 +2022,7 @@ test("a node is picked, locked, and taken off the model", async ({ page }) => {
   await expect(page.locator("[data-test=pinned]")).toHaveText("8");
 
   // There was no such thing as a picked node until freezing needed one:
-  // a press and release on a handle, which the drag behaviour has already
+  // a press and release on a handle, which the drag behavior has already
   // decided was not a drag.
   const name = (await page.evaluate(() => (window as any).__gecko.names()[0])) as number;
   const at = (await page.evaluate(
@@ -2116,7 +2116,7 @@ test("dragging a node in an axis view keeps it in the plane of the screen", asyn
   await page.locator("#cube").click();
   await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
   await page.keyboard.press("v");
-  await page.evaluate(() => (window as any).__gecko.run("recentre"));
+  await page.evaluate(() => (window as any).__gecko.run("recenter"));
   await page.evaluate(() => (window as any).__gecko.settled());
 
   const box = (await page.locator("#view").boundingBox())!;
@@ -2172,7 +2172,7 @@ test("a face is picked in an axis view, through that view's own camera", async (
   await page.locator("#cube").click();
   await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
   await page.keyboard.press("v");
-  await page.evaluate(() => (window as any).__gecko.run("recentre"));
+  await page.evaluate(() => (window as any).__gecko.run("recenter"));
   await page.evaluate(() => (window as any).__gecko.settled());
 
   // The middle of the Y pane, which is looking straight at the model.
@@ -2182,8 +2182,8 @@ test("a face is picked in an axis view, through that view's own camera", async (
   expect(errors).toEqual([]);
 });
 
-test("the help card says what the classification colours mean", async ({ page }) => {
-  // A colour code nobody can look up is a colour code nobody reads. It is
+test("the help card says what the classification colors mean", async ({ page }) => {
+  // A color code nobody can look up is a color code nobody reads. It is
   // generated from the theme, so it cannot come to disagree with the
   // screen — the same reason the keys beside it are generated from the
   // table they are matched against.
@@ -2193,12 +2193,12 @@ test("the help card says what the classification colours mean", async ({ page })
   await expect(page.locator("#help-legend")).toContainText("on a corner");
   await expect(page.locator("#help-legend")).toContainText("on a curve");
   await expect(page.locator("#help-legend")).toContainText("on a surface");
-  // And the one thing about a node that is **not** a colour is said in
+  // And the one thing about a node that is **not** a color is said in
   // words, beside them.
   await expect(page.locator("[data-test=legend-note]")).toContainText("frozen");
   await expect(page.locator("[data-test=legend-note]")).toContainText("cube");
 
-  // The swatch really is the colour the scene uses.
+  // The swatch really is the color the scene uses.
   const first = await page
     .locator("#help-legend .key i")
     .first()
@@ -2213,14 +2213,14 @@ test("the help card says what the classification colours mean", async ({ page })
   expect(errors).toEqual([]);
 });
 
-test("nodes, edges and faces each take three colourings", async ({ page }) => {
+test("nodes, edges and faces each take three colorings", async ({ page }) => {
   const errors = await boot(page);
   await openCube(page);
   await page.locator("#cube").click();
   await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
   await openDrawer(page);
 
-  // Four for each of the three — one colour, its id, its classification,
+  // Four for each of the three — one color, its id, its classification,
   // its group — and three for blocks: a block is classified on nothing, a
   // surface mesh having no volumes to put it on.
   const offered = (group: string) =>
@@ -2240,10 +2240,10 @@ test("nodes, edges and faces each take three colourings", async ({ page }) => {
   // looks.
   await openGroup(page, "nodes");
   await page.locator('[data-test="nodes-mode"]').selectOption("class");
-  expect(await page.evaluate(() => (window as any).__gecko.prefs().nodes.colouring)).toBe("class");
+  expect(await page.evaluate(() => (window as any).__gecko.prefs().nodes.coloring)).toBe("class");
   await page.reload();
   await page.waitForSelector("body[data-ready='1']");
-  expect(await page.evaluate(() => (window as any).__gecko.prefs().nodes.colouring)).toBe("class");
+  expect(await page.evaluate(() => (window as any).__gecko.prefs().nodes.coloring)).toBe("class");
   expect(errors).toEqual([]);
 });
 
@@ -2257,7 +2257,7 @@ test("an edge is picked and its sheet cut from an axis view", async ({ page }) =
   await page.locator("#cube").click();
   await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
   await page.keyboard.press("v");
-  await page.evaluate(() => (window as any).__gecko.run("recentre"));
+  await page.evaluate(() => (window as any).__gecko.run("recenter"));
   await page.evaluate(() => (window as any).__gecko.settled());
 
   // Into the Y pane, bottom left, and ask it where an edge is.
@@ -2389,7 +2389,7 @@ test("the drawer folds, and what is open is remembered", async ({ page }) => {
     page.locator(`#${id}`).evaluate((d) => (d as HTMLDetailsElement).open);
   expect(await open("sec-cells")).toBe(true);
   expect(await open("sec-geometry")).toBe(true);
-  expect(await open("sec-colours")).toBe(false);
+  expect(await open("sec-colors")).toBe(false);
   expect(await open("grp-faces")).toBe(false);
 
   // It fits: no scrolling, which is the whole complaint this answers.
@@ -2461,19 +2461,19 @@ test("a fresh window starts on the classification, with a box that hugs", async 
   // What somebody sees the first time: putting the blocking onto the model
   // is what the session is for, so nodes, edges and faces say what they
   // are classified on before they say anything else. Blocks keep their own
-  // colouring — a block is classified on nothing.
+  // coloring — a block is classified on nothing.
   const errors = await boot(page);
   const prefs = (await page.evaluate(() => (window as any).__gecko.prefs())) as {
-    nodes: { colouring: string };
-    edges: { colouring: string };
-    faces: { colouring: string };
-    blocks: { colouring: string };
+    nodes: { coloring: string };
+    edges: { coloring: string };
+    faces: { coloring: string };
+    blocks: { coloring: string };
     box: { margin: number };
   };
-  expect(prefs.nodes.colouring).toBe("class");
-  expect(prefs.edges.colouring).toBe("class");
-  expect(prefs.faces.colouring).toBe("class");
-  expect(prefs.blocks.colouring).toBe("id");
+  expect(prefs.nodes.coloring).toBe("class");
+  expect(prefs.edges.coloring).toBe("class");
+  expect(prefs.faces.coloring).toBe("class");
+  expect(prefs.blocks.coloring).toBe("id");
   // And a bounding box that hugs the model: two percent of each half-side.
   expect(prefs.box.margin).toBeCloseTo(0.02, 12);
   await openParams(page);
@@ -2717,7 +2717,7 @@ test("the band is opened with W as well, and works in an axis view", async ({ pa
   await page.locator("#cube").click();
   await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
   await page.keyboard.press("v");
-  await page.evaluate(() => (window as any).__gecko.run("recentre"));
+  await page.evaluate(() => (window as any).__gecko.run("recenter"));
   await page.evaluate(() => (window as any).__gecko.settled());
 
   // Into the Y pane, bottom left, and read the handles as **it** sees them.
@@ -3060,7 +3060,7 @@ test("the mesh is written out as VTK", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
-test("blocks are put in a group, which colours and filters what is drawn", async ({ page }) => {
+test("blocks are put in a group, which colors and filters what is drawn", async ({ page }) => {
   // Groups are of blocks; a face, an edge or a node is in a group when a
   // block it bounds is. Nothing here touches the geometry: a group is a
   // part of the model somebody named.
@@ -3114,7 +3114,7 @@ test("blocks are put in a group, which colours and filters what is drawn", async
   await page.locator("[data-test=ungrouped-visible]").uncheck();
   await expect.poll(async () => (await drawn()).nodes).toBe(0);
 
-  // Both back, and the colouring by group gives the group's own colour to
+  // Both back, and the coloring by group gives the group's own color to
   // its cells and the plain one to the rest.
   await page.locator("[data-test=group-shown]").check();
   await page.locator("[data-test=ungrouped-visible]").check();
@@ -3748,7 +3748,7 @@ test("R smooths the blocking, by what the sliders say", async ({ page }) => {
      end end end
      local seen, both = {}, {}
      for _, f in ipairs(gecko.faces()) do
-       local key = string.format("%.3f/%.3f/%.3f", f.centre[1], f.centre[2], f.centre[3])
+       local key = string.format("%.3f/%.3f/%.3f", f.center[1], f.center[2], f.center[3])
        if seen[key] then both[#both + 1] = { seen[key], f.id } else seen[key] = f.id end
      end
      for _, pair in ipairs(both) do gecko.glue_faces(pair[1], pair[2]) end

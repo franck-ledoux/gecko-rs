@@ -7,7 +7,7 @@
  *
  * **One mesh per geometric entity.** A surface is one CAD face however many
  * triangles it was faceted into, and one mesh per entity is what lets it be
- * coloured, faded and hidden as the one thing it is. It also gives Babylon's
+ * colored, faded and hidden as the one thing it is. It also gives Babylon's
  * back-to-front sorter something to sort, which is what a translucent model
  * needs — the same reason the blocking draws a mesh per block.
  */
@@ -48,7 +48,7 @@ export function spotName(on: Spot): string {
 }
 
 export interface GeomSurface {
-  /** The gmsh entity tag — the surface's name, and what a colour-by-id uses. */
+  /** The gmsh entity tag — the surface's name, and what a color-by-id uses. */
   tag: number;
   /** Three per vertex. */
   positions: Float32Array;
@@ -71,8 +71,8 @@ export interface GeomCorner {
  * One mesh's worth of triangles per surface tag.
  *
  * Vertices are **shared** inside a surface, unlike the blocking's, where
- * every corner is a vertex of its own because each carries its own colour.
- * Here a surface is one colour throughout, so sharing costs nothing — and
+ * every corner is a vertex of its own because each carries its own color.
+ * Here a surface is one color throughout, so sharing costs nothing — and
  * it buys the right shading: normals averaged across a surface's own
  * triangles make a faceted sphere look like a sphere, while nothing is
  * shared *between* surfaces, so the edge where two meet stays a crease.

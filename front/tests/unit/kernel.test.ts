@@ -29,7 +29,7 @@ import {
   type Axis,
 } from "../../src/axes";
 import { DEFAULTS, PRESETS } from "../../src/theme";
-import { colourForId, FAMILY, hexToRgb, hslToHex, UNNAMED } from "../../src/palette";
+import { colorForId, FAMILY, hexToRgb, hslToHex, UNNAMED } from "../../src/palette";
 import { buildSurface, edgeSegments, meshEdges, quadsToDraw } from "../../src/surface";
 import { geomBounds, geomCorners, geomCurves, geomSurfaces, GEOM_GROUPS } from "../../src/geometry";
 import {
@@ -76,7 +76,7 @@ describe("the mesh buffer", () => {
     // Every corner of the skin is on the surface of the cube.
     for (let q = 0; q < view.quads.length; q++) {
       const node = view.quads[q];
-      const at = [0, 1, 2].map((k) => view.positions[node * 3 + k] + view.centre[k]);
+      const at = [0, 1, 2].map((k) => view.positions[node * 3 + k] + view.center[k]);
       expect(at.some((x) => Math.abs(x) < 1e-6 || Math.abs(x - 1) < 1e-6)).toBe(true);
     }
 
@@ -108,8 +108,8 @@ describe("the binary transport", () => {
     expect(view.names.length).toBe(8);
     expect(new Set(view.names).size).toBe(8);
     expect(view.edges.length / 2).toBe(12);
-    expect(view.centre).toEqual([0.5, 0.5, 0.5]);
-    // Rebased on the model centre: the unit cube sits in [-0.5, 0.5].
+    expect(view.center).toEqual([0.5, 0.5, 0.5]);
+    // Rebased on the model center: the unit cube sits in [-0.5, 0.5].
     expect([...view.positions].every((x) => Math.abs(x) <= 0.5 + 1e-6)).toBe(true);
     // Every edge addresses a node that exists.
     expect([...view.edges].every((i) => i < view.positions.length / 3)).toBe(true);
@@ -132,9 +132,9 @@ describe("the binary transport", () => {
     const view = decodeView(kernel.view());
 
     expect([...view.positions].every((x) => Math.abs(x) <= 0.5 + 1e-6)).toBe(true);
-    // Recompose f64 centre + f32 offset and land back on the cube.
+    // Recompose f64 center + f32 offset and land back on the cube.
     for (let i = 0; i < view.positions.length; i += 3) {
-      const back = [0, 1, 2].map((k) => view.centre[k] + view.positions[i + k]);
+      const back = [0, 1, 2].map((k) => view.center[k] + view.positions[i + k]);
       expect(Math.abs(back[0] - 1e6)).toBeLessThan(1.001);
       expect(Math.abs(back[1] - 2e6)).toBeLessThan(1.001);
     }
@@ -206,9 +206,9 @@ describe("the scene is a function of the view", () => {
     expect(viewer.nodeCount).toBe(16);
     expect(viewer.edgeCount).toBe(24);
     // The rebasing origin has not followed the new cube. It is there so f32
-    // coordinates stay small, not to keep the model centred, and moving it
+    // coordinates stay small, not to keep the model centerd, and moving it
     // would slide everything already on screen.
-    expect(viewer.centre[0]).toBeCloseTo(0.5, 9);
+    expect(viewer.center[0]).toBeCloseTo(0.5, 9);
   });
 
   it("frames the model from its bounds, and leaves the direction alone", async () => {
@@ -295,7 +295,7 @@ describe("the contract the other mode has to meet", () => {
     // nowhere else — which is exactly how an earlier prototype's HashSet was
     // caught.
     const view = decodeView(kernel.view());
-    const centre = (q: number) => {
+    const center = (q: number) => {
       const at = [0, 0, 0];
       for (let k = 0; k < 4; k++)
         for (let axis = 0; axis < 3; axis++)
@@ -307,7 +307,7 @@ describe("the contract the other mode has to meet", () => {
     for (let a = 0; a < view.quadFaces.length; a++)
       for (let b = 0; b < view.quadFaces.length; b++) {
         if (view.quadBlocks[a] === view.quadBlocks[b]) continue;
-        const [p, q] = [centre(a), centre(b)];
+        const [p, q] = [center(a), center(b)];
         const gap = Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
         if (gap < shortest) {
           shortest = gap;
@@ -413,7 +413,7 @@ describe("creating a cube and moving a node", () => {
     expect([...after.names].sort()).toEqual([...before.names].sort());
     const where = (v: typeof after, n: number) => {
       const i = [...v.names].indexOf(n);
-      return [0, 1, 2].map((k) => v.centre[k] + v.positions[i * 3 + k]);
+      return [0, 1, 2].map((k) => v.center[k] + v.positions[i * 3 + k]);
     };
     expect(where(after, name)).toEqual([7, 8, 9]);
     for (const other of before.names) {
@@ -518,7 +518,7 @@ describe("the orientation gizmo", () => {
     viewer.setView(decodeView(kernel.view()));
 
     // Two cameras, and the pointer picking is pinned to the main one — the
-    // drag behaviours run on that, and must not see the corner.
+    // drag behaviors run on that, and must not see the corner.
     expect(viewer.scene.activeCameras).toHaveLength(2);
     expect(viewer.scene.cameraToUseForPointers).toBe(viewer.camera);
     expect(viewer.camera.layerMask).toBe(MAIN_LAYER);
@@ -594,7 +594,7 @@ describe("the theme", () => {
       Color3.FromHexString(PRESETS.light.nodes).toHexString(),
     );
 
-    // And a theme set before there is anything to colour still applies to what
+    // And a theme set before there is anything to color still applies to what
     // arrives afterwards.
     const fresh = new Viewer(new NullEngine());
     fresh.applyPrefs({ ...DEFAULTS, theme: PRESETS.light });
@@ -667,7 +667,7 @@ describe("which camera is the active one", () => {
   it("is the main camera once a frame is over", async () => {
     // Rendering leaves it set to whichever camera went last, which is the
     // corner gizmo. Anything running between frames reads it — including
-    // Babylon's drag behaviour, which uses it both to suspend the right
+    // Babylon's drag behavior, which uses it both to suspend the right
     // camera's controls and to build the ray the drag follows.
     const viewer = new Viewer(new NullEngine());
     const kernel = new WasmKernel();
@@ -681,30 +681,30 @@ describe("which camera is the active one", () => {
   });
 });
 
-describe("a colour per name", () => {
-  it("gives a name the same colour for ever", () => {
-    // The whole reason not to colour by position in a list: an edit reorders
+describe("a color per name", () => {
+  it("gives a name the same color for ever", () => {
+    // The whole reason not to color by position in a list: an edit reorders
     // that list, and the model would repaint itself while you watched.
-    expect(colourForId(7, 2)).toBe(colourForId(7, 2));
-    expect(colourForId(7, 2)).toMatch(/^#[0-9a-f]{6}$/);
+    expect(colorForId(7, 2)).toBe(colorForId(7, 2));
+    expect(colorForId(7, 2)).toMatch(/^#[0-9a-f]{6}$/);
   });
 
   it("does not depend on how many cells there are", () => {
     // `hue = name / total` is the obvious formula and the wrong one: adding
-    // one block would recolour every other block in the model.
-    const before = [1, 2, 3].map((n) => colourForId(n, 3));
-    const after = [1, 2, 3].map((n) => colourForId(n, 3));
+    // one block would recolor every other block in the model.
+    const before = [1, 2, 3].map((n) => colorForId(n, 3));
+    const after = [1, 2, 3].map((n) => colorForId(n, 3));
     expect(after).toEqual(before);
-    // And it is still spread out: three names, three colours.
+    // And it is still spread out: three names, three colors.
     expect(new Set(before).size).toBe(3);
   });
 
   it("keeps a face and a block of the same number apart", () => {
-    expect(colourForId(4, 2)).not.toBe(colourForId(4, 3));
+    expect(colorForId(4, 2)).not.toBe(colorForId(4, 3));
   });
 
   it("has something to say about a cell with no name yet", () => {
-    expect(colourForId(UNNAMED, 2)).toBe(colourForId(UNNAMED, 3));
+    expect(colorForId(UNNAMED, 2)).toBe(colorForId(UNNAMED, 3));
   });
 
   it("round-trips through hex the way Babylon reads it", () => {
@@ -720,7 +720,7 @@ describe("a colour per name", () => {
  *  it cannot yet produce one. */
 function sharedFaceView(): View {
   return {
-    centre: [0, 0, 0],
+    center: [0, 0, 0],
     positions: new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]),
     names: new Uint32Array([0, 1, 2, 3]),
     nodeClassDim: new Int32Array([-1, -1, -1, -1]),
@@ -782,7 +782,7 @@ describe("building a surface", () => {
 
   const options = (over: Partial<Parameters<typeof buildSurface>[1]> = {}) => ({
     by: "face" as const,
-    colouring: "uniform" as const,
+    coloring: "uniform" as const,
     uniform: "#808080",
     shrink: 1,
     internal: true,
@@ -790,15 +790,15 @@ describe("building a surface", () => {
   });
 
   it("splits a vertex per quadrangle", async () => {
-    // Corners cannot be shared: each one carries its quadrangle's colour and
-    // is pulled towards its quadrangle's centre.
+    // Corners cannot be shared: each one carries its quadrangle's color and
+    // is pulled towards its quadrangle's center.
     const data = buildSurface(await cube(), options());
     expect(data.positions.length / 3).toBe(6 * 4);
     expect(data.indices.length).toBe(6 * 6);
     expect(data.colors.length / 4).toBe(6 * 4);
   });
 
-  it("uses one colour, or one per name", async () => {
+  it("uses one color, or one per name", async () => {
     const view = await cube();
     const distinct = (d: ReturnType<typeof buildSurface>) => {
       const seen = new Set<string>();
@@ -806,9 +806,9 @@ describe("building a surface", () => {
       return seen.size;
     };
     expect(distinct(buildSurface(view, options()))).toBe(1);
-    expect(distinct(buildSurface(view, options({ colouring: "id" })))).toBe(6);
-    // Six faces, one block: by block it is one colour whichever mode.
-    expect(distinct(buildSurface(view, options({ by: "block", colouring: "id" })))).toBe(1);
+    expect(distinct(buildSurface(view, options({ coloring: "id" })))).toBe(6);
+    // Six faces, one block: by block it is one color whichever mode.
+    expect(distinct(buildSurface(view, options({ by: "block", coloring: "id" })))).toBe(1);
   });
 
   it("leaves the geometry alone at a shrink of 1", async () => {
@@ -818,7 +818,7 @@ describe("building a surface", () => {
     for (const x of data.positions) expect(Math.abs(x)).toBeCloseTo(0.5, 6);
   });
 
-  it("pulls a face towards its own centre, and a block towards the block's", async () => {
+  it("pulls a face towards its own center, and a block towards the block's", async () => {
     const view = await cube();
     const faces = buildSurface(view, options({ shrink: 0.5 }));
     const blocks = buildSurface(view, options({ by: "block", shrink: 0.5 }));
@@ -834,7 +834,7 @@ describe("building a surface", () => {
     for (const x of blocks.positions) expect(Math.abs(x)).toBeCloseTo(0.25, 6);
   });
 
-  it("collapses to nothing at a shrink of 0, and never moves the centre", async () => {
+  it("collapses to nothing at a shrink of 0, and never moves the center", async () => {
     const view = await cube();
     const blocks = buildSurface(view, options({ by: "block", shrink: 0 }));
     for (const x of blocks.positions) expect(x).toBeCloseTo(0, 6);
@@ -886,17 +886,17 @@ describe("the surfaces in the scene", () => {
   });
 
   it("draws both at once when both are asked for", async () => {
-    // Two colourings of one shape, which is the point of having both.
+    // Two colorings of one shape, which is the point of having both.
     const viewer = await show({
       ...DEFAULTS,
-      faces: { ...DEFAULTS.faces, visible: true, colouring: "id" },
-      blocks: { ...DEFAULTS.blocks, visible: true, colouring: "uniform" },
+      faces: { ...DEFAULTS.faces, visible: true, coloring: "id" },
+      blocks: { ...DEFAULTS.blocks, visible: true, coloring: "uniform" },
     });
-    expect(viewer.surface("faces")?.colours).toBe(6);
-    expect(viewer.surface("blocks")?.colours).toBe(1);
+    expect(viewer.surface("faces")?.colors).toBe(6);
+    expect(viewer.surface("blocks")?.colors).toBe(1);
   });
 
-  it("puts the transparency on the material, not in the colours", async () => {
+  it("puts the transparency on the material, not in the colors", async () => {
     const viewer = await show({
       ...DEFAULTS,
       faces: { ...DEFAULTS.faces, alpha: 0.25 },
@@ -906,7 +906,7 @@ describe("the surfaces in the scene", () => {
 
   it("lets a surface answer a pick, because a face is chosen with the mouse", async () => {
     // This was the other way round until faces could be glued. The handles
-    // still win where the two overlap — a sphere is centred on the surface,
+    // still win where the two overlap — a sphere is centerd on the surface,
     // so its near half is in front — and the end-to-end test "a surface never
     // swallows the node under it" is what holds that down.
     const viewer = await show({
@@ -960,7 +960,7 @@ describe("the surfaces in the scene", () => {
     const before = viewer.surface("faces")!.positions.slice();
     const node = viewer.scene.getMeshByName("node0")!;
     node.position.x += 3;
-    // What the drag behaviour calls on every mouse move.
+    // What the drag behavior calls on every mouse move.
     (viewer as unknown as { preview: (i: number, to: Vector3) => void }).preview(
       0,
       node.position,
@@ -1024,10 +1024,10 @@ describe("preferences that outlive a version", () => {
   });
 
   it("keeps the folds that were open, and ignores a name it does not know", () => {
-    store.set("gecko.view", JSON.stringify({ panels: ["sec-colours", "grp-faces", 7] }));
+    store.set("gecko.view", JSON.stringify({ panels: ["sec-colors", "grp-faces", 7] }));
     // Not checked against a list: a fold added later would need a migration
-    // for nothing, and an id nobody recognises is simply not on screen.
-    expect(loadPrefs().panels).toEqual(["sec-colours", "grp-faces"]);
+    // for nothing, and an id nobody recognizes is simply not on screen.
+    expect(loadPrefs().panels).toEqual(["sec-colors", "grp-faces"]);
     store.set("gecko.view", JSON.stringify({ panels: "all of them" }));
     expect(loadPrefs().panels).toEqual(DEFAULTS.panels);
   });
@@ -1073,22 +1073,22 @@ describe("changing a setting without rebuilding the scene", () => {
     );
   });
 
-  it("keeps the same mesh when only the transparency or the colouring changes", async () => {
+  it("keeps the same mesh when only the transparency or the coloring changes", async () => {
     const viewer = await shown();
     const before = idOf(viewer, "faces");
     viewer.applyPrefs({
       ...DEFAULTS,
-      faces: { ...DEFAULTS.faces, alpha: 0.1, colouring: "id" },
+      faces: { ...DEFAULTS.faces, alpha: 0.1, coloring: "id" },
     });
     expect(idOf(viewer, "faces")).toBe(before);
     expect(viewer.surface("faces")!.alpha).toBeCloseTo(0.1, 9);
-    expect(viewer.surface("faces")!.colours).toBe(6);
+    expect(viewer.surface("faces")!.colors).toBe(6);
   });
 
   it("keeps the edges when only their shrink moves", async () => {
     const viewer = await shown();
     const before = idOf(viewer, "edges");
-    viewer.applyPrefs({ ...DEFAULTS, edges: { visible: true, shrink: 0.5, colouring: "uniform", width: DEFAULTS.edges.width } });
+    viewer.applyPrefs({ ...DEFAULTS, edges: { visible: true, shrink: 0.5, coloring: "uniform", width: DEFAULTS.edges.width } });
     expect(idOf(viewer, "edges")).toBe(before);
     expect(viewer.edgeCount).toBe(12);
   });
@@ -1098,11 +1098,11 @@ describe("changing a setting without rebuilding the scene", () => {
     // for one: a wireframe pulled to a tenth is still a wireframe, just a
     // dotted one, and there was no way to ask for none at all.
     const viewer = await shown();
-    viewer.applyPrefs({ ...DEFAULTS, edges: { visible: false, shrink: 1, colouring: "uniform", width: DEFAULTS.edges.width } });
+    viewer.applyPrefs({ ...DEFAULTS, edges: { visible: false, shrink: 1, coloring: "uniform", width: DEFAULTS.edges.width } });
     expect(viewer.edgeCount).toBe(0);
     expect(viewer.scene.getMeshByName("edges")).toBeNull();
 
-    viewer.applyPrefs({ ...DEFAULTS, edges: { visible: true, shrink: 1, colouring: "uniform", width: DEFAULTS.edges.width } });
+    viewer.applyPrefs({ ...DEFAULTS, edges: { visible: true, shrink: 1, coloring: "uniform", width: DEFAULTS.edges.width } });
     expect(viewer.edgeCount).toBe(12);
   });
 
@@ -1136,7 +1136,7 @@ describe("how close the camera may get", () => {
 
     const diagonal = Math.sqrt(3);
     expect(viewer.camera.lowerRadiusLimit).toBeCloseTo(diagonal * CLOSEST_APPROACH, 5);
-    // Room to zoom in, and never as far as the centre it orbits.
+    // Room to zoom in, and never as far as the center it orbits.
     expect(viewer.camera.lowerRadiusLimit!).toBeGreaterThan(0);
     expect(viewer.camera.lowerRadiusLimit!).toBeLessThan(viewer.camera.radius);
   });
@@ -1145,7 +1145,7 @@ describe("how close the camera may get", () => {
     // One node has no diagonal; a limit of zero would be worse than none.
     const viewer = new Viewer(new NullEngine());
     viewer.setView({
-      centre: [0, 0, 0],
+      center: [0, 0, 0],
       positions: new Float32Array([0, 0, 0]),
       names: new Uint32Array([1]),
       nodeClassDim: new Int32Array([-1]),
@@ -1196,18 +1196,18 @@ describe("picking faces to glue", () => {
       face,
       block: surface.blocks[i],
     }));
-    expect(viewer.surface("faces")!.colours).toBe(1);
+    expect(viewer.surface("faces")!.colors).toBe(1);
 
     viewer.select([picks[0]]);
     expect(viewer.selection).toEqual([picks[0]]);
-    expect(viewer.surface("faces")!.colours).toBe(2);
+    expect(viewer.surface("faces")!.colors).toBe(2);
 
     viewer.select([picks[0], picks[1]]);
     // The rest, the anchor, and the one coming to meet it.
-    expect(viewer.surface("faces")!.colours).toBe(3);
+    expect(viewer.surface("faces")!.colors).toBe(3);
 
     viewer.select([]);
-    expect(viewer.surface("faces")!.colours).toBe(1);
+    expect(viewer.surface("faces")!.colors).toBe(1);
   });
 
   it("shows the selection on the blocks as well as the faces", async () => {
@@ -1216,7 +1216,7 @@ describe("picking faces to glue", () => {
     const surface = viewer.surface("faces")!;
     viewer.select([{ face: surface.faces[0], block: surface.blocks[0] }]);
     // Keyed by face, so one pick lights up wherever that face is drawn.
-    expect(viewer.surface("blocks")!.colours).toBeGreaterThan(1);
+    expect(viewer.surface("blocks")!.colors).toBeGreaterThan(1);
   });
 
   it("glues, and the model becomes one object", async () => {
@@ -1225,12 +1225,12 @@ describe("picking faces to glue", () => {
 
     // The two faces that meet at x = 1, found the way a mouse would: by
     // where they are.
-    const centreX = (quad: number) => {
+    const centerX = (quad: number) => {
       let x = 0;
       for (let k = 0; k < 4; k++) x += view.positions[view.quads[quad * 4 + k] * 3] / 4;
-      return x + view.centre[0];
+      return x + view.center[0];
     };
-    const meeting = [...view.quadFaces.keys()].filter((q) => Math.abs(centreX(q) - 1) < 1e-6);
+    const meeting = [...view.quadFaces.keys()].filter((q) => Math.abs(centerX(q) - 1) < 1e-6);
     expect(meeting).toHaveLength(2);
 
     const reply = kernel.apply({
@@ -1388,7 +1388,7 @@ describe("the keyboard", () => {
   });
 
   it("leaves typing alone", () => {
-    // The colour inputs and the sliders both take characters and arrow keys.
+    // The color inputs and the sliders both take characters and arrow keys.
     // A slider that jumped to a new view instead of nudging would be unusable.
     for (const tagName of ["INPUT", "TEXTAREA", "SELECT"]) {
       expect(press({ key: "c", code: "KeyC", target: { tagName } })).toBeNull();
@@ -1422,7 +1422,7 @@ describe("saving a picture", () => {
   });
 });
 
-describe("the interface's own colours", () => {
+describe("the interface's own colors", () => {
   it("follow the scene rather than fighting it", () => {
     expect(isLight(PRESETS.light.background)).toBe(true);
     expect(isLight(PRESETS.dark.background)).toBe(false);
@@ -1492,7 +1492,7 @@ describe("lighting up a sheet", () => {
     expect(viewer.highlighted).toEqual(names);
     expect(viewer.scene.getMeshByName("sheet")).not.toBeNull();
 
-    viewer.applyPrefs({ ...DEFAULTS, edges: { visible: true, shrink: 0.4, colouring: "uniform", width: DEFAULTS.edges.width } });
+    viewer.applyPrefs({ ...DEFAULTS, edges: { visible: true, shrink: 0.4, coloring: "uniform", width: DEFAULTS.edges.width } });
     expect(viewer.scene.getMeshByName("sheet")).not.toBeNull();
   });
 
@@ -1555,8 +1555,8 @@ describe("the geometry's own buffer", () => {
     expect(Array.from(geometry.triangleTags)).toEqual([1, 1]);
     expect(Array.from(geometry.segmentTags)).toEqual([11, 12, 13, 14]);
     expect(Array.from(geometry.cornerTags)).toEqual([21, 22, 23, 24]);
-    // Rebased like everything else: the square's own centre is the origin.
-    expect(geometry.centre).toEqual([0.5, 0.5, 0]);
+    // Rebased like everything else: the square's own center is the origin.
+    expect(geometry.center).toEqual([0.5, 0.5, 0]);
     expect(Array.from(geometry.positions.slice(0, 3))).toEqual([-0.5, -0.5, 0]);
   });
 
@@ -1640,7 +1640,7 @@ describe("the geometry in the scene", () => {
     return viewer;
   }
 
-  it("draws one mesh per entity, so each can be coloured and faded alone", async () => {
+  it("draws one mesh per entity, so each can be colored and faded alone", async () => {
     const viewer = await scene();
     expect(viewer.geomCount("surfaces")).toBe(1);
     expect(viewer.geomCount("curves")).toBe(4);
@@ -1662,47 +1662,47 @@ describe("the geometry in the scene", () => {
     }
   });
 
-  it("colours a group one colour, or one colour per tag", async () => {
+  it("colors a group one color, or one color per tag", async () => {
     const viewer = await scene();
     const prefs = structuredClone(DEFAULTS);
-    prefs.curves.colouring = "uniform";
+    prefs.curves.coloring = "uniform";
     prefs.theme.curves = "#123456";
     viewer.applyPrefs(prefs);
-    expect(viewer.geomLook("curves", 11)!.colour).toBe("#123456");
-    expect(viewer.geomLook("curves", 12)!.colour).toBe("#123456");
+    expect(viewer.geomLook("curves", 11)!.color).toBe("#123456");
+    expect(viewer.geomLook("curves", 12)!.color).toBe("#123456");
 
-    prefs.curves.colouring = "id";
+    prefs.curves.coloring = "id";
     viewer.applyPrefs(prefs);
-    const eleven = viewer.geomLook("curves", 11)!.colour;
-    expect(eleven).not.toBe(viewer.geomLook("curves", 12)!.colour);
-    expect(eleven).toBe(colourForId(11, FAMILY.curves).toLowerCase());
-    // And not the colour a *face* of the blocking numbered 11 would be:
+    const eleven = viewer.geomLook("curves", 11)!.color;
+    expect(eleven).not.toBe(viewer.geomLook("curves", 12)!.color);
+    expect(eleven).toBe(colorForId(11, FAMILY.curves).toLowerCase());
+    // And not the color a *face* of the blocking numbered 11 would be:
     // two different things with the same number must not look alike.
-    expect(eleven).not.toBe(colourForId(11, FAMILY.faces).toLowerCase());
+    expect(eleven).not.toBe(colorForId(11, FAMILY.faces).toLowerCase());
   });
 
-  it("gives all three groups the colour they were asked for", async () => {
+  it("gives all three groups the color they were asked for", async () => {
     // Each keeps it somewhere different — a line has no material, a corner
-    // is unlit and a surface is lit — so "the colour it is drawn in" is
+    // is unlit and a surface is lit — so "the color it is drawn in" is
     // three different fields and worth asserting on each.
     const viewer = await scene();
     const prefs = structuredClone(DEFAULTS);
     for (const group of GEOM_GROUPS) {
-      prefs[group].colouring = "uniform";
+      prefs[group].coloring = "uniform";
       prefs.theme[group] = "#abcdef";
     }
     viewer.applyPrefs(prefs);
-    expect(viewer.geomLook("surfaces", 1)!.colour).toBe("#abcdef");
-    expect(viewer.geomLook("curves", 11)!.colour).toBe("#abcdef");
-    expect(viewer.geomLook("corners", 21)!.colour).toBe("#abcdef");
+    expect(viewer.geomLook("surfaces", 1)!.color).toBe("#abcdef");
+    expect(viewer.geomLook("curves", 11)!.color).toBe("#abcdef");
+    expect(viewer.geomLook("corners", 21)!.color).toBe("#abcdef");
 
-    for (const group of GEOM_GROUPS) prefs[group].colouring = "id";
+    for (const group of GEOM_GROUPS) prefs[group].coloring = "id";
     viewer.applyPrefs(prefs);
-    expect(viewer.geomLook("surfaces", 1)!.colour).toBe(
-      colourForId(1, FAMILY.surfaces).toLowerCase(),
+    expect(viewer.geomLook("surfaces", 1)!.color).toBe(
+      colorForId(1, FAMILY.surfaces).toLowerCase(),
     );
-    expect(viewer.geomLook("corners", 21)!.colour).toBe(
-      colourForId(21, FAMILY.corners).toLowerCase(),
+    expect(viewer.geomLook("corners", 21)!.color).toBe(
+      colorForId(21, FAMILY.corners).toLowerCase(),
     );
   });
 
@@ -1870,10 +1870,10 @@ describe("wearing its classification", () => {
     viewer.setView(decodeView(kernel.view()));
   }
 
-  it("says a node's classification in the colouring that asks for it", async () => {
-    // Classification colouring is a mode, not an override — it is where
+  it("says a node's classification in the coloring that asks for it", async () => {
+    // Classification coloring is a mode, not an override — it is where
     // nodes, edges and faces start, and `uniform` turns it off. Before it
-    // was a mode it was on always, which painted a block face the colour
+    // was a mode it was on always, which painted a block face the color
     // of the very surface it is attached to and drew it on top of that
     // surface.
     const { kernel, viewer } = await pinned();
@@ -1882,44 +1882,44 @@ describe("wearing its classification", () => {
     await redraw(kernel, viewer);
 
     const plain = structuredClone(DEFAULTS);
-    plain.nodes.colouring = "uniform";
+    plain.nodes.coloring = "uniform";
     viewer.applyPrefs(plain);
     expect(handle(viewer, 0)).toBe(DEFAULTS.theme.nodes.toLowerCase());
 
     const prefs = structuredClone(DEFAULTS);
-    prefs.nodes.colouring = "class";
+    prefs.nodes.coloring = "class";
     viewer.applyPrefs(prefs);
     expect(handle(viewer, 0)).toBe(DEFAULTS.theme.onCurve.toLowerCase());
-    // One colour per *kind* of entity, not per entity: a second
+    // One color per *kind* of entity, not per entity: a second
     // node on another curve reads the same.
     kernel.apply({ op: "classify_node", nodes: [names[1]], on: { dim: 1, tag: 12 } });
     await redraw(kernel, viewer);
     expect(handle(viewer, 1)).toBe(DEFAULTS.theme.onCurve.toLowerCase());
-    // And a node on nothing keeps the group's own colour, which is what
-    // makes the colouring readable as an answer to "has this taken hold".
+    // And a node on nothing keeps the group's own color, which is what
+    // makes the coloring readable as an answer to "has this taken hold".
     expect(handle(viewer, 2)).toBe(DEFAULTS.theme.nodes.toLowerCase());
 
-    // On a surface it is a third colour again.
+    // On a surface it is a third color again.
     kernel.apply({ op: "classify_node", nodes: [names[2]], on: { dim: 2, tag: 1 } });
     await redraw(kernel, viewer);
     expect(handle(viewer, 2)).toBe(DEFAULTS.theme.onSurface.toLowerCase());
   });
 
-  it("colours a node by its own name when asked for that instead", async () => {
+  it("colors a node by its own name when asked for that instead", async () => {
     const { viewer } = await pinned();
     const prefs = structuredClone(DEFAULTS);
-    prefs.nodes.colouring = "id";
+    prefs.nodes.coloring = "id";
     viewer.applyPrefs(prefs);
     const names = viewer.names();
-    expect(handle(viewer, 0)).toBe(colourForId(names[0], FAMILY.nodes).toLowerCase());
+    expect(handle(viewer, 0)).toBe(colorForId(names[0], FAMILY.nodes).toLowerCase());
     expect(handle(viewer, 0)).not.toBe(handle(viewer, 1));
   });
 
-  it("draws a frozen node as a cube, and leaves its colour to the colouring", async () => {
+  it("draws a frozen node as a cube, and leaves its color to the coloring", async () => {
     // A frozen node is a cell out of play, which is a thing about the cell
     // and not about its classification — so it is said with the *shape* of
-    // the handle. Said with its colour, as it once was, it hid the two
-    // things the colouring is for: the node's id and its classification.
+    // the handle. Said with its color, as it once was, it hid the two
+    // things the coloring is for: the node's id and its classification.
     const { kernel, viewer } = await pinned();
     const names = viewer.names();
     kernel.apply({ op: "classify_node", nodes: [names[0]], on: { dim: 2, tag: 1 } });
@@ -1931,14 +1931,14 @@ describe("wearing its classification", () => {
     expect(viewer.nodeShape(names[1])).toBe("ball");
     expect(viewer.nodeState(names[0])).toEqual({ on: { dim: 2, tag: 1 }, frozen: true });
 
-    // And the colour still says its classification, which is a surface.
-    viewer.applyPrefs({ ...DEFAULTS, nodes: { ...DEFAULTS.nodes, colouring: "class" } });
+    // And the color still says its classification, which is a surface.
+    viewer.applyPrefs({ ...DEFAULTS, nodes: { ...DEFAULTS.nodes, coloring: "class" } });
     expect(handle(viewer, 0)).toBe(DEFAULTS.theme.onSurface.toLowerCase());
     // Or its id, or nothing at all, as the setting says — the frozen node
     // is treated like any other in each case.
-    viewer.applyPrefs({ ...DEFAULTS, nodes: { ...DEFAULTS.nodes, colouring: "id" } });
-    expect(handle(viewer, 0)).toBe(colourForId(names[0], FAMILY.nodes).toLowerCase());
-    viewer.applyPrefs({ ...DEFAULTS, nodes: { ...DEFAULTS.nodes, colouring: "uniform" } });
+    viewer.applyPrefs({ ...DEFAULTS, nodes: { ...DEFAULTS.nodes, coloring: "id" } });
+    expect(handle(viewer, 0)).toBe(colorForId(names[0], FAMILY.nodes).toLowerCase());
+    viewer.applyPrefs({ ...DEFAULTS, nodes: { ...DEFAULTS.nodes, coloring: "uniform" } });
     expect(handle(viewer, 0)).toBe(DEFAULTS.theme.nodes.toLowerCase());
   });
 
@@ -1980,21 +1980,21 @@ describe("wearing its classification", () => {
     expect(handle(viewer, 1)).toBe("#ffcc33");
   });
 
-  it("colours the wireframe edge by edge", async () => {
-    // One mesh for the lot, so this is a colour per **segment** of the
-    // ribbon rather than a colour per mesh — one segment being one edge,
+  it("colors the wireframe edge by edge", async () => {
+    // One mesh for the lot, so this is a color per **segment** of the
+    // ribbon rather than a color per mesh — one segment being one edge,
     // which is on one entity or on none.
     const { kernel, viewer } = await pinned();
     const names = viewer.names();
     const prefs = structuredClone(DEFAULTS);
-    prefs.edges.colouring = "class";
+    prefs.edges.coloring = "class";
     viewer.applyPrefs(prefs);
-    const colours = () => {
+    const colors = () => {
       const material = viewer.scene.getMeshByName("edges")!
         .material as unknown as { colors: { r: number; g: number; b: number }[] | null };
       return (material.colors ?? []).map((c) => [c.r, c.g, c.b]);
     };
-    const plain = colours();
+    const plain = colors();
     expect(plain).toHaveLength(12);
 
     // Two corners of the cube on one curve puts every edge between them
@@ -2006,7 +2006,7 @@ describe("wearing its classification", () => {
       on: { dim: 1, tag: 11 },
     });
     await redraw(kernel, viewer);
-    expect(colours()).not.toEqual(plain);
+    expect(colors()).not.toEqual(plain);
   });
 });
 
@@ -2124,7 +2124,7 @@ describe("the chord through a face", () => {
   interface Face {
     id: number;
     block: number;
-    centre: [number, number, number];
+    center: [number, number, number];
   }
   const faces = (kernel: WasmKernel): Face[] =>
     JSON.parse(kernel.direct.query("faces", "")) as Face[];
@@ -2135,7 +2135,7 @@ describe("the chord through a face", () => {
     for (const z of [0, 1, 2]) kernel.apply({ op: "create_cube", origin: [0, 0, z], size: 1 });
     for (const z of [1, 2]) {
       const pair = faces(kernel)
-        .filter((f) => Math.abs(f.centre[2] - z) < 1e-9)
+        .filter((f) => Math.abs(f.center[2] - z) < 1e-9)
         .map((f) => f.id);
       expect(pair).toHaveLength(2);
       kernel.apply({ op: "glue_faces", first: pair[0], second: pair[1] });
@@ -2144,7 +2144,7 @@ describe("the chord through a face", () => {
   };
 
   const flatAt = (kernel: WasmKernel, z: number) => {
-    const face = faces(kernel).find((f) => Math.abs(f.centre[2] - z) < 1e-9);
+    const face = faces(kernel).find((f) => Math.abs(f.center[2] - z) < 1e-9);
     expect(face).toBeDefined();
     return { face: face!.id, block: face!.block };
   };
@@ -2187,7 +2187,7 @@ describe("the chord through a face", () => {
     // A face with a block on each side is listed once per block, and the
     // chord through it does not depend on which side was clicked.
     const kernel = slabs();
-    const both = faces(kernel).filter((f) => Math.abs(f.centre[2] - 1) < 1e-9);
+    const both = faces(kernel).filter((f) => Math.abs(f.center[2] - 1) < 1e-9);
     expect(both).toHaveLength(2);
     const answers = both.map((f) => {
       const chord = kernel.chord(f.id, f.block);
@@ -2197,7 +2197,7 @@ describe("the chord through a face", () => {
   });
 });
 
-describe("the classification colours are told apart", () => {
+describe("the classification colors are told apart", () => {
   // The complaint this answers: the three were violets of one hue, and a
   // corner, a curve and a surface looked the same. Measured rather than
   // judged, so that "harmonising" them back into one violet fails here
@@ -2205,7 +2205,7 @@ describe("the classification colours are told apart", () => {
   //
   // The distance is Euclidean in **OKLab**, which is built so that a step
   // of the same size looks the same size wherever it is taken — unlike
-  // hex arithmetic, where two colours can be far apart in numbers and
+  // hex arithmetic, where two colors can be far apart in numbers and
   // identical to look at. Scaled by 100, so the numbers read like ΔE.
   const oklab = (hex: string): [number, number, number] => {
     const channel = (at: number) => {

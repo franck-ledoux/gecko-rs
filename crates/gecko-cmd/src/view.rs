@@ -4,7 +4,7 @@
 //! page reads it straight out of wasm memory, the station sends the identical
 //! bytes down a WebSocket. One producer, one decoder, no second format to drift.
 //!
-//! Positions are **f32 relative to the model centre**, with the centre shipped
+//! Positions are **f32 relative to the model center**, with the center shipped
 //! alongside as f64. WebGL has nothing but f32, and a model parked far from the
 //! origin quantises: at 10⁶ units, f32 steps are about 0.06, which is visible
 //! jitter and z-fighting. Rebasing costs nothing and cannot be retrofitted
@@ -21,13 +21,13 @@ pub const MAGIC: [u8; 4] = *b"GKB1";
 /// three independent decoders read this, and a silent change is how one of
 /// them ends up reading the wrong field as a coordinate.
 pub const VERSION: u32 = 7;
-/// magic + version + f64 centre + three counts.
+/// magic + version + f64 center + three counts.
 pub const HEADER: usize = 44;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ViewBuffer {
-    pub centre: [f64; 3],
-    /// Three f32 per node, relative to `centre`.
+    pub center: [f64; 3],
+    /// Three f32 per node, relative to `center`.
     pub positions: Vec<f32>,
     /// The stable name of each node, in the order `positions` lists them.
     ///
@@ -46,7 +46,7 @@ pub struct ViewBuffer {
     ///
     /// One quadrangle per **(face, block) pair**, which is why there are two
     /// name arrays beside it rather than one: the same surface is what the
-    /// viewer draws for faces and for blocks, and only the name it colours by
+    /// viewer draws for faces and for blocks, and only the name it colors by
     /// differs. Once blocks are joined, a shared face will appear twice here —
     /// once per block, wound each way — and that is what gives each block a
     /// closed surface of its own.
@@ -108,7 +108,7 @@ impl ViewBuffer {
     ///
     /// `None` means a session that has never settled one, which is a session
     /// with nothing in it; then there is nothing to disagree with and the
-    /// centre is chosen here.
+    /// center is chosen here.
     pub fn of(blocking: &Blocking, origin: Option<[f64; 3]>) -> ViewBuffer {
         // Which groups each cell is in, by the blocks that bound it. Empty
         // and free when nobody has made a group, which is most sessions.
@@ -139,7 +139,7 @@ impl ViewBuffer {
             node_loose.push(u32::from(masks.loose_nodes.contains(n)));
         }
 
-        let centre = origin.unwrap_or_else(|| stable_centre(&world, None));
+        let center = origin.unwrap_or_else(|| stable_center(&world, None));
         // `as_chunks` rather than `chunks_exact`: it yields `&[f64; 3]`, so the
         // three coordinates are a type rather than a convention.
         let positions = world
@@ -148,9 +148,9 @@ impl ViewBuffer {
             .iter()
             .flat_map(|p| {
                 [
-                    (p[0] - centre[0]) as f32,
-                    (p[1] - centre[1]) as f32,
-                    (p[2] - centre[2]) as f32,
+                    (p[0] - center[0]) as f32,
+                    (p[1] - center[1]) as f32,
+                    (p[2] - center[2]) as f32,
                 ]
             })
             .collect();
@@ -203,14 +203,17 @@ impl ViewBuffer {
             quad_class_tag.push(side.on.map(|on| on.tag).unwrap_or(0));
             // A quadrangle is a (face, block) pair, so its groups are that
             // block's — and the face's own mask, which is the union over
-            // both sides, would say the far block's too.
-            let (lo, hi) = halves(blocking.block_groups(side.block));
+            // both sides, would say the far block's too. By the volume the
+            // side already carries: asking for it by name is a scan of
+            // every volume, and once per quadrangle that is the whole walk
+            // squared.
+            let (lo, hi) = halves(blocking.block_tag(side.volume).groups);
             quad_groups_lo.push(lo);
             quad_groups_hi.push(hi);
         }
 
         ViewBuffer {
-            centre,
+            center,
             positions,
             names,
             edges,
@@ -236,7 +239,7 @@ impl ViewBuffer {
         }
     }
 
-    /// Flat little-endian encoding. The f64 centre sits 8-aligned and
+    /// Flat little-endian encoding. The f64 center sits 8-aligned and
     /// everything after it 4-aligned, so a client can view the bytes as typed
     /// arrays without copying.
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -263,7 +266,7 @@ impl ViewBuffer {
         );
         out.extend_from_slice(&MAGIC);
         out.extend_from_slice(&VERSION.to_le_bytes());
-        for c in self.centre {
+        for c in self.center {
             out.extend_from_slice(&c.to_le_bytes());
         }
         out.extend_from_slice(&((self.positions.len() / 3) as u32).to_le_bytes());
@@ -341,48 +344,65 @@ impl ViewBuffer {
 const DRIFT: f64 = 0.5;
 
 /// The rebasing origin: the previous one if it still serves, otherwise the
-/// model's centre.
+/// model's center.
 ///
-/// Recomputing the centre on every edit means **every edit shifts the whole
+/// Recomputing the center on every edit means **every edit shifts the whole
 /// scene**: drag one node and the other seven slide across the screen,
-/// because all of them are drawn relative to a centre that just moved. The
+/// because all of them are drawn relative to a center that just moved. The
 /// origin exists for precision, not for centring, so it only has to stay
-/// *near* the model — and staying put is worth more than staying centred.
-pub fn stable_centre(world: &[f64], previous: Option<[f64; 3]>) -> [f64; 3] {
-    if world.is_empty() {
-        return previous.unwrap_or([0.0; 3]);
+/// *near* the model — and staying put is worth more than staying centerd.
+pub fn stable_center(world: &[f64], previous: Option<[f64; 3]>) -> [f64; 3] {
+    match bounds(world.as_chunks::<3>().0.iter().copied()) {
+        Some((lo, hi)) => center_of(lo, hi, previous),
+        None => previous.unwrap_or([0.0; 3]),
     }
+}
+
+/// The box round a cloud of points, or nothing when there are none.
+///
+/// Its own function because the **geometry's** box is worked out once and
+/// kept: a model's triangles do not move, and walking ten thousand of them
+/// after every edit to find a box that cannot have changed is the kind of
+/// work that makes an interactive tool feel slow with a big model open.
+pub fn bounds(points: impl Iterator<Item = [f64; 3]>) -> Option<([f64; 3], [f64; 3])> {
     let mut lo = [f64::INFINITY; 3];
     let mut hi = [f64::NEG_INFINITY; 3];
-    for p in world.as_chunks::<3>().0 {
+    let mut any = false;
+    for p in points {
+        any = true;
         for k in 0..3 {
             lo[k] = lo[k].min(p[k]);
             hi[k] = hi[k].max(p[k]);
         }
     }
-    let centre = [
+    any.then_some((lo, hi))
+}
+
+/// The same rule as [`stable_center`], from a box already worked out.
+pub fn center_of(lo: [f64; 3], hi: [f64; 3], previous: Option<[f64; 3]>) -> [f64; 3] {
+    let center = [
         (lo[0] + hi[0]) / 2.0,
         (lo[1] + hi[1]) / 2.0,
         (lo[2] + hi[2]) / 2.0,
     ];
     let Some(previous) = previous else {
-        return centre;
+        return center;
     };
     let diagonal = (0..3).map(|k| (hi[k] - lo[k]).powi(2)).sum::<f64>().sqrt();
     let drifted = (0..3)
-        .map(|k| (previous[k] - centre[k]).powi(2))
+        .map(|k| (previous[k] - center[k]).powi(2))
         .sum::<f64>()
         .sqrt();
     if drifted <= DRIFT * diagonal.max(f64::MIN_POSITIVE) {
         previous
     } else {
-        centre
+        center
     }
 }
 
 pub const GEOMETRY_MAGIC: [u8; 4] = *b"GKG1";
 pub const GEOMETRY_VERSION: u32 = 1;
-/// magic + version + f64 centre + four counts.
+/// magic + version + f64 center + four counts.
 pub const GEOMETRY_HEADER: usize = 48;
 
 /// What the browser draws of the **geometry** — a buffer of its own.
@@ -394,19 +414,19 @@ pub const GEOMETRY_HEADER: usize = 48;
 /// a corner is the whole cost of the obvious design, and the client avoids it
 /// by watching a generation number rather than by guessing.
 ///
-/// The `centre` is the **same rebasing origin** the view buffer uses. It has
+/// The `center` is the **same rebasing origin** the view buffer uses. It has
 /// to be: both are drawn in one scene, and two origins would put the geometry
 /// at a different place from the blocks that follow it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GeometryBuffer {
-    pub centre: [f64; 3],
-    /// Three f32 per node, relative to `centre`, shared by everything below.
+    pub center: [f64; 3],
+    /// Three f32 per node, relative to `center`, shared by everything below.
     pub positions: Vec<f32>,
     /// Three node indices per triangle.
     pub triangles: Vec<u32>,
     /// The gmsh entity tag of the surface each triangle is on. Signed,
     /// because a gmsh tag is — and a tag read as unsigned would be a
-    /// four-billion-ish colour in the palette rather than an obvious wrong.
+    /// four-billion-ish color in the palette rather than an obvious wrong.
     pub triangle_tags: Vec<i32>,
     /// Two node indices per segment.
     pub segments: Vec<u32>,
@@ -419,15 +439,15 @@ pub struct GeometryBuffer {
 }
 
 impl GeometryBuffer {
-    pub fn of(geometry: &Geometry, centre: [f64; 3]) -> GeometryBuffer {
+    pub fn of(geometry: &Geometry, center: [f64; 3]) -> GeometryBuffer {
         let positions = geometry
             .nodes()
             .iter()
             .flat_map(|p| {
                 [
-                    (p[0] - centre[0]) as f32,
-                    (p[1] - centre[1]) as f32,
-                    (p[2] - centre[2]) as f32,
+                    (p[0] - center[0]) as f32,
+                    (p[1] - center[1]) as f32,
+                    (p[2] - center[2]) as f32,
                 ]
             })
             .collect();
@@ -451,7 +471,7 @@ impl GeometryBuffer {
         }
 
         GeometryBuffer {
-            centre,
+            center,
             positions,
             triangles,
             triangle_tags,
@@ -477,7 +497,7 @@ impl GeometryBuffer {
         );
         out.extend_from_slice(&GEOMETRY_MAGIC);
         out.extend_from_slice(&GEOMETRY_VERSION.to_le_bytes());
-        for c in self.centre {
+        for c in self.center {
             out.extend_from_slice(&c.to_le_bytes());
         }
         out.extend_from_slice(&((self.positions.len() / 3) as u32).to_le_bytes());
@@ -510,9 +530,9 @@ impl GeometryBuffer {
 
     /// An empty geometry, so a client that has never been given one still
     /// gets a buffer it can decode rather than a special case.
-    pub fn empty(centre: [f64; 3]) -> Vec<u8> {
+    pub fn empty(center: [f64; 3]) -> Vec<u8> {
         GeometryBuffer {
-            centre,
+            center,
             ..Default::default()
         }
         .to_bytes()
@@ -521,7 +541,7 @@ impl GeometryBuffer {
 
 pub const MESH_MAGIC: [u8; 4] = *b"GKM1";
 pub const MESH_VERSION: u32 = 1;
-/// magic + version + f64 centre + two counts.
+/// magic + version + f64 center + two counts.
 pub const MESH_HEADER: usize = 40;
 
 /// What the browser draws of the **mesh**: its skin, and nothing else.
@@ -537,8 +557,8 @@ pub const MESH_HEADER: usize = 40;
 /// throws the last one away.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MeshBuffer {
-    pub centre: [f64; 3],
-    /// Three f32 per node of the skin, relative to `centre`.
+    pub center: [f64; 3],
+    /// Three f32 per node of the skin, relative to `center`.
     pub positions: Vec<f32>,
     /// Four node indices per quadrangle.
     pub quads: Vec<u32>,
@@ -547,7 +567,7 @@ pub struct MeshBuffer {
 }
 
 impl MeshBuffer {
-    pub fn of(mesh: &Mesh, centre: [f64; 3]) -> MeshBuffer {
+    pub fn of(mesh: &Mesh, center: [f64; 3]) -> MeshBuffer {
         let (quads, blocks) = mesh.skin();
         // Only the nodes the skin uses, renumbered: the interior ones are
         // most of them, and none of them is drawn.
@@ -559,16 +579,16 @@ impl MeshBuffer {
                 let next = seen.len() as u32;
                 let at = *seen.entry(*node).or_insert_with(|| {
                     let p = mesh.points[*node as usize];
-                    positions.push((p[0] - centre[0]) as f32);
-                    positions.push((p[1] - centre[1]) as f32);
-                    positions.push((p[2] - centre[2]) as f32);
+                    positions.push((p[0] - center[0]) as f32);
+                    positions.push((p[1] - center[1]) as f32);
+                    positions.push((p[2] - center[2]) as f32);
                     next
                 });
                 out.push(at);
             }
         }
         MeshBuffer {
-            centre,
+            center,
             positions,
             quads: out,
             blocks: blocks.iter().map(|b| b.get().unwrap_or(u32::MAX)).collect(),
@@ -582,7 +602,7 @@ impl MeshBuffer {
         );
         out.extend_from_slice(&MESH_MAGIC);
         out.extend_from_slice(&MESH_VERSION.to_le_bytes());
-        for c in self.centre {
+        for c in self.center {
             out.extend_from_slice(&c.to_le_bytes());
         }
         out.extend_from_slice(&((self.positions.len() / 3) as u32).to_le_bytes());
@@ -600,9 +620,9 @@ impl MeshBuffer {
     }
 
     /// No mesh, as a buffer a client can decode rather than a special case.
-    pub fn empty(centre: [f64; 3]) -> Vec<u8> {
+    pub fn empty(center: [f64; 3]) -> Vec<u8> {
         MeshBuffer {
-            centre,
+            center,
             ..Default::default()
         }
         .to_bytes()

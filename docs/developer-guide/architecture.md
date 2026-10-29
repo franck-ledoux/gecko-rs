@@ -137,7 +137,7 @@ sheet cut is dart surgery, in three passes over the whole sheet: every edge,
 then every face it crosses, then every block.
 
 Whole sheet at a time, not cell by cell. Cutting one block and then its
-neighbour would leave their shared face half cut in between, and nothing
+neighbor would leave their shared face half cut in between, and nothing
 downstream could tell that state from a mistake.
 
 **An edge is a ring of darts**, one per face-side around it, and every one
@@ -189,7 +189,7 @@ is a new cell with a new name, not a second claimant to an old one.
 
 **`CornerKey`** — which *corner* a node is, as against which node it is. A map
 splits a node's attribute when the vertex orbit behind it comes apart; deleting
-a neighbouring block does that. Nothing was cut in two — geometrically, and to
+a neighboring block does that. Nothing was cut in two — geometrically, and to
 the cells that had it, it is still the same corner — so the key is **copied
 across** while the `CellId` is cleared.
 
@@ -276,7 +276,7 @@ Two things are deliberately **not** on the stack. `Command::Undo` itself
 leaves no state behind — an undo that remembered what it undid would be a
 toggle rather than a step — and neither does `Command::SetHistory`, a
 setting being not a change to the model. Nor is anything under [what does not
-go through the kernel](#what-does-not-go-through-the-kernel): colours and the
+go through the kernel](#what-does-not-go-through-the-kernel): colors and the
 camera are not changes to anything.
 
 The geometry is **shared**, not copied (`Option<Arc<Geometry>>`). It is
@@ -296,7 +296,7 @@ That constraint is not in the way, it *is* the design: an attribute carries only
 a stable name, and everything that grows hangs off that name in tables beside
 the map. GECKO arrived at the same arrangement for its own reasons.
 
-The `merge` and `split` behaviour is the whole contract with the map, so it is
+The `merge` and `split` behavior is the whole contract with the map, so it is
 spelled out rather than defaulted: a merge keeps one existing name (it creates
 no cell, so it must consume no new name); a split clears both and leaves them
 for `assign_missing_ids`.
@@ -314,11 +314,11 @@ Little-endian throughout. Version 6.
 | ------ | ----- | ----- | ----------------------------------------------------------- |
 | 0      | `u8`  | 4     | magic, `GKB1`                                               |
 | 4      | `u32` | 1     | format version                                              |
-| 8      | `f64` | 3     | model centre                                                |
+| 8      | `f64` | 3     | model center                                                |
 | 32     | `u32` | 1     | number of nodes, *N*                                        |
 | 36     | `u32` | 1     | number of edges, *E*                                        |
 | 40     | `u32` | 1     | number of quadrangles, *Q*                                  |
-| 44     | `f32` | 3*N*  | positions, relative to the centre                           |
+| 44     | `f32` | 3*N*  | positions, relative to the center                           |
 | …      | `u32` | *N*   | each node's `CellId`                                        |
 | …      | `u32` | 2*E*  | node indices, two per edge                                  |
 | …      | `u32` | *E*   | each edge's `CellId`                                        |
@@ -343,10 +343,10 @@ Arrays rather than one interleaved record per quadrangle, like everything
 above them: a client makes a typed-array view over each one instead of walking
 a stride.
 
-The f64 centre sits 8-byte aligned and everything after it 4-byte aligned, so a
+The f64 center sits 8-byte aligned and everything after it 4-byte aligned, so a
 client can view the bytes as typed arrays with no copy.
 
-**Positions are f32 relative to the centre, with the centre alongside in f64.**
+**Positions are f32 relative to the center, with the center alongside in f64.**
 WebGL has nothing but f32, and a model parked a million units from the origin
 quantises to steps of about 0.06 — visible jitter and z-fighting. Rebasing costs
 nothing and cannot be retrofitted cheaply once a client assumes absolute
@@ -364,8 +364,8 @@ picked. Its position in the array is not a name: edits reorder it.
 
 A quadrangle is listed **per (face, block) pair**, and carries both names. So
 the faces and the blocks are the same geometry read twice — differing only in
-which name picks the colour, and which centre a shrink pulls towards. That is
-what lets both be on screen at once, each with its own colouring, transparency
+which name picks the color, and which center a shrink pulls towards. That is
+what lets both be on screen at once, each with its own coloring, transparency
 and shrink, without the kernel shipping the surface twice.
 
 A shared face arrives twice, once per block, wound each way — which is exactly
@@ -377,18 +377,18 @@ It also means **internal is derived, not declared**: a face with a block on
 both sides is one whose name appears twice in the list. No parallel flag to
 disagree with the topology.
 
-The colours themselves are not in here, and never will be. The buffer carries
-names; what colour a name is drawn in is the viewer's business — see
+The colors themselves are not in here, and never will be. The buffer carries
+names; what color a name is drawn in is the viewer's business — see
 [Appearance](../user-guide/display.md).
 
 ### The origin stays put
 
-The centre is **not** recomputed from the bounding box each time. It is session
+The center is **not** recomputed from the bounding box each time. It is session
 state, settled when the model changes, and left alone while it still serves.
 
 Recomputing it means every edit shifts the whole scene: drag one node and the
 other seven slide across the screen, because all of them are drawn relative to
-a centre that just moved. The origin is there for precision, not for centring,
+a center that just moved. The origin is there for precision, not for centring,
 so it only has to stay *near* the model — it follows only once the model has
 wandered half a diagonal away from it.
 
@@ -406,12 +406,12 @@ rebasing origin, version 1.
 | ------ | ----- | ----- | ----------------------------------- |
 | 0      | `u8`  | 4     | magic, `GKG1`                       |
 | 4      | `u32` | 1     | format version                      |
-| 8      | `f64` | 3     | model centre, the view buffer's own |
+| 8      | `f64` | 3     | model center, the view buffer's own |
 | 32     | `u32` | 1     | number of nodes, *N*                |
 | 36     | `u32` | 1     | number of triangles, *T*            |
 | 40     | `u32` | 1     | number of segments, *S*             |
 | 44     | `u32` | 1     | number of corners, *C*              |
-| 48     | `f32` | 3*N*  | positions, relative to the centre   |
+| 48     | `f32` | 3*N*  | positions, relative to the center   |
 | …      | `u32` | 3*T*  | node indices, three per triangle    |
 | …      | `i32` | *T*   | each triangle's surface tag         |
 | …      | `u32` | 2*S*  | node indices, two per segment       |
@@ -426,7 +426,7 @@ triangles down the socket because somebody moved a corner is the whole cost
 this split avoids.
 
 The tags are signed, because a gmsh tag is. Read as unsigned, a negative one
-would be a four-billion-ish number in the colour palette rather than an
+would be a four-billion-ish number in the color palette rather than an
 obvious wrong.
 
 ### How a client knows to fetch it
@@ -444,7 +444,7 @@ counts would go on drawing the first.
 
 The rebasing origin is settled over the blocking's nodes **and** the
 geometry's. They share one scene, so they have to share one origin: a geometry
-a kilometre from the blocks, rebased on its own centre, would be drawn on top
+a kilometer from the blocks, rebased on its own center, would be drawn on top
 of them.
 
 It also means loading a geometry reports `viewChanged` even though not one
@@ -458,7 +458,7 @@ Two consequences, and both were learned the hard way:
 it is handed and never settles one of its own. It used to, over the
 blocking's nodes alone — a smaller world than the session's, so it crossed
 its own drift threshold first. Take a sheet of blocks out of a model that has
-a geometry round it and the view adopted a new centre while the geometry and
+a geometry round it and the view adopted a new center while the geometry and
 the mesh kept the old one: the mesh stayed where it was and the whole block
 structure appeared to jump.
 
@@ -466,7 +466,7 @@ structure appeared to jump.
 fetched again only when their generation changes, which is what keeps a drag
 from re-sending megabytes. The origin is the other reason to re-fetch them:
 nothing in either buffer has changed, but the numbers in it are relative to a
-middle of the scene that has moved. The page compares the centre in the view
+middle of the scene that has moved. The page compares the center in the view
 buffer with the one it last drew them against.
 
 ## Reading a gmsh file
@@ -576,11 +576,11 @@ has gone. A mesh of a model you have since edited is a lie that looks right.
 ## What does not go through the kernel
 
 Exactly one thing, and it is worth naming because everything else does: **how
-the scene looks**. Colours and the triad's visibility are view state. They are
+the scene looks**. Colors and the triad's visibility are view state. They are
 kept in the browser, per viewer, and two tabs may look nothing alike.
 
 The line is that the kernel describes what *exists*; it has no opinion on what
-colour that is on your screen. Anything that would change what another client
+color that is on your screen. Anything that would change what another client
 sees belongs in a command; anything that only changes what *you* see does not.
 
 ## Direct manipulation
@@ -594,7 +594,7 @@ So the view diverges from the kernel for the length of the gesture. That is a
 deliberate exception to "the view is a function of the kernel", and it ends at
 the drop, when the view is rebuilt from what the kernel actually holds.
 
-Every node sphere carries its own drag behaviour rather than one being attached
+Every node sphere carries its own drag behavior rather than one being attached
 on selection: attaching on the press that should *start* the drag misses that
 press, and turns the gesture into click-then-drag.
 
@@ -616,7 +616,7 @@ find:
   the triad. Anything projecting a world point to the screen has to use its own
   camera's view and projection matrices, and anything picking has to name its
   camera rather than relying on the active one.
-- **So is `scene.activeCamera`**, and Babylon's own drag behaviour reads it
+- **So is `scene.activeCamera`**, and Babylon's own drag behavior reads it
   twice: to decide whose controls to suspend while dragging, and to build the
   ray the drag follows. Left alone, dragging a node turned the view *and* sent
   the node along a plane belonging to the corner gizmo. The viewer puts

@@ -8,7 +8,7 @@ local function three_slabs()
   for z = 1, 2 do
     local pair = {}
     for _, face in ipairs(gecko.faces()) do
-      if math.abs(face.centre[3] - z) < 1e-9 then
+      if math.abs(face.center[3] - z) < 1e-9 then
         pair[#pair + 1] = face.id
       end
     end
@@ -21,7 +21,7 @@ end
 -- matter, but the kernel is told which one anyway.
 local function flat_at(z)
   for _, face in ipairs(gecko.faces()) do
-    if math.abs(face.centre[3] - z) < 1e-9 then
+    if math.abs(face.center[3] - z) < 1e-9 then
       return face.id, face.block
     end
   end

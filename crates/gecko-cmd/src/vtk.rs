@@ -14,7 +14,7 @@ pub const VTK_HEXAHEDRON: u8 = 12;
 /// The mesh, as a `.vtk` file.
 ///
 /// The hexahedra carry the name of the block they came out of as cell data,
-/// which is what lets a reader colour the mesh by block — the one thing a
+/// which is what lets a reader color the mesh by block — the one thing a
 /// picture of a mesh of a blocking is for.
 ///
 /// `groups` is the name and the bit of each group that is written out, and

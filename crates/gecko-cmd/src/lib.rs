@@ -77,7 +77,7 @@ pub const MAX_SEGMENTS: u32 = 200;
 /// How near a node has to be to a geometric entity to be classified on it,
 /// as a share of the geometry's own size.
 ///
-/// A share rather than a length, because a tolerance in millimetres is
+/// A share rather than a length, because a tolerance in millimeters is
 /// right for exactly one model. One figure for all three dimensions, as the
 /// C++ defaults them — the geometry can take a different one per dimension
 /// and will, the day a model needs it.
@@ -86,7 +86,7 @@ pub const SNAP_SHARE: f64 = 0.02;
 /// How many passes a smoothing makes when nobody says.
 pub const SMOOTH_ROUNDS: u32 = 5;
 
-/// How far along the way to the middle of its neighbours a node goes in
+/// How far along the way to the middle of its neighbors a node goes in
 /// one pass, when nobody says.
 ///
 /// Half, not all: all of it is what makes a Laplacian swing from one side
@@ -262,7 +262,7 @@ pub enum Command {
         #[serde(default = "default_snap")]
         tolerance: f64,
     },
-    /// Grow a new block out of a face, along the normal at its centre.
+    /// Grow a new block out of a face, along the normal at its center.
     ///
     /// The face is given as the pair a click gives — the face and the block
     /// it was picked on — and does not move: the new block is laid against
@@ -284,7 +284,7 @@ pub enum Command {
         face: u32,
         height: f64,
     },
-    /// Move the nodes towards the middle of their neighbours, as far as
+    /// Move the nodes towards the middle of their neighbors, as far as
     /// what they are classified on allows: a **smart Laplacian**.
     ///
     /// A node goes `share` of the way to the average of its one-ring, and
@@ -390,7 +390,7 @@ pub enum Command {
     /// when the blocking is meshed.
     ///
     /// On the whole sheet, which is the only way it can mean anything: an
-    /// edge divided into four against its neighbour's five leaves a face
+    /// edge divided into four against its neighbor's five leaves a face
     /// with nothing to match along.
     SetSegments {
         edge: u32,
@@ -485,7 +485,7 @@ pub struct Session {
     /// did not make — someone typing `load_geometry` into the console.
     geometry_generation: u32,
     /// Kept between views so the scene does not slide every time something
-    /// moves. See [`view::stable_centre`].
+    /// moves. See [`view::stable_center`].
     origin: Option<[f64; 3]>,
     /// What the session looked like before each of the last few commands,
     /// oldest at the front.
@@ -508,6 +508,9 @@ pub struct Session {
     /// bargain as `geometry_generation`.
     mesh: Option<Mesh>,
     mesh_generation: u32,
+    /// The box round the geometry, and which geometry it was worked out
+    /// for — the Arc's address. See [`settle_origin`][Self::settle_origin].
+    geometry_box: Option<(usize, [f64; 3], [f64; 3])>,
     /// What the groups of blocks are called, and which reach the mesh.
     /// Beside the block structure rather than in it, like the composites
     /// and for the same reason: the model holds which blocks are in a
@@ -562,6 +565,7 @@ impl Session {
             blocking: Blocking::new()?,
             geometry: None,
             composites: Composites::default(),
+            geometry_box: None,
             groups: Groups::new(),
             geometry_generation: 0,
             origin: None,
@@ -1274,7 +1278,7 @@ impl Session {
                 Ok(Outcome {
                     script: None,
                     message: format!("{name:?} is now {to:?}"),
-                    // Nothing moved, but what the scene is coloured and
+                    // Nothing moved, but what the scene is colored and
                     // filtered by has a different name on it.
                     view_changed: true,
                 })
@@ -1529,12 +1533,9 @@ impl Session {
 
     /// How many blocks are in the group with this bit.
     fn in_group(&self, bit: u8) -> usize {
-        let mask = 1u64 << bit;
-        self.blocking
-            .blocks()
-            .into_iter()
-            .filter(|b| self.blocking.block_groups(*b) & mask != 0)
-            .count()
+        // One walk of the volumes, not one per block: `block_groups` finds
+        // its block by name, which is itself a walk.
+        self.blocking.counted_in_groups()[bit as usize]
     }
 
     /// Put the nodes this command **made** onto the geometry, when they
@@ -1814,22 +1815,40 @@ impl Session {
     fn settle_origin(&mut self) {
         // Blocks and geometry together. They share one origin because they
         // share one scene, and an origin settled on the blocks alone would
-        // put a geometry a kilometre away past the end of f32's precision.
-        let world: Vec<f64> = self
-            .blocking
-            .nodes()
-            .flat_map(|(_, p)| p)
-            .chain(
-                self.geometry
-                    .iter()
-                    .flat_map(|g| g.nodes().iter().flatten().copied()),
-            )
-            .collect();
-        self.origin = Some(view::stable_centre(&world, self.origin));
+        // put a geometry a kilometer away past the end of f32's precision.
+        //
+        // The blocking is walked every time — it is what just changed. The
+        // geometry is walked **once per geometry**: its triangles do not
+        // move, so the box round them cannot change, and a model of ten
+        // thousand points was being walked after every edit to find a
+        // number that was already known. The Arc's address says which
+        // geometry the box was worked out for, so an undo that puts an
+        // older one back is noticed without anything having to say so.
+        let mut box_of = view::bounds(self.blocking.nodes().map(|(_, p)| p));
+        if let Some(geometry) = &self.geometry {
+            let which = Arc::as_ptr(geometry) as usize;
+            if self.geometry_box.map(|(at, _, _)| at) != Some(which) {
+                self.geometry_box =
+                    view::bounds(geometry.nodes().iter().copied()).map(|(lo, hi)| (which, lo, hi));
+            }
+            if let Some((_, lo, hi)) = self.geometry_box {
+                box_of = Some(match box_of {
+                    Some((a, b)) => (
+                        [0, 1, 2].map(|k| a[k].min(lo[k])),
+                        [0, 1, 2].map(|k| b[k].max(hi[k])),
+                    ),
+                    None => (lo, hi),
+                });
+            }
+        }
+        self.origin = Some(match box_of {
+            Some((lo, hi)) => view::center_of(lo, hi, self.origin),
+            None => self.origin.unwrap_or([0.0; 3]),
+        });
     }
 
     /// Transport-agnostic entry point: a JSON command in, a JSON outcome out.
-    /// Both façades bottom out here, so neither can grow behaviour of its own.
+    /// Both façades bottom out here, so neither can grow behavior of its own.
     pub fn apply_json(&mut self, json: &str) -> String {
         let result = serde_json::from_str::<Command>(json)
             .map_err(|e| SessionError::BadCommand(e.to_string()))
@@ -1849,10 +1868,10 @@ impl Session {
     /// Rebased on the origin the view buffer last settled on, so the two land
     /// on top of each other in the scene.
     pub fn geometry_buffer(&self) -> Vec<u8> {
-        let centre = self.origin.unwrap_or([0.0; 3]);
+        let center = self.origin.unwrap_or([0.0; 3]);
         match &self.geometry {
-            Some(geometry) => GeometryBuffer::of(geometry, centre).to_bytes(),
-            None => GeometryBuffer::empty(centre),
+            Some(geometry) => GeometryBuffer::of(geometry, center).to_bytes(),
+            None => GeometryBuffer::empty(center),
         }
     }
 
@@ -1891,7 +1910,7 @@ impl Session {
         serde_json::Value::Array(edges).to_string()
     }
 
-    /// Every face, by stable name, with the block it bounds and its centre —
+    /// Every face, by stable name, with the block it bounds and its center —
     /// enough for a script to name one to [`Command::GlueFaces`] without
     /// having to see it.
     ///
@@ -1902,11 +1921,11 @@ impl Session {
             .block_faces()
             .iter()
             .map(|side| {
-                let mut centre = [0.0; 3];
+                let mut center = [0.0; 3];
                 for node in side.nodes {
                     let p = self.blocking.position(node).unwrap_or([0.0; 3]);
                     for k in 0..3 {
-                        centre[k] += p[k] / 4.0;
+                        center[k] += p[k] / 4.0;
                     }
                 }
                 serde_json::json!({
@@ -1916,8 +1935,12 @@ impl Session {
                     // face on its own, and what can be done with it is not
                     // the same. The caller should not have to work it out
                     // from the shape of the answer.
-                    "patch": !self.blocking.named_is_block(side.block),
-                    "centre": centre,
+                    //
+                    // By the volume the side carries rather than by name:
+                    // a name is found by scanning every volume, and this
+                    // list has six entries a block.
+                    "patch": !self.blocking.is_block(side.volume),
+                    "center": center,
                     "on": side.on.map(spot_json),
                 })
             })
@@ -2029,7 +2052,7 @@ impl Session {
         serde_json::Value::Array(all).to_string()
     }
 
-    /// Every block, by stable name and centre — enough for a script to name
+    /// Every block, by stable name and center — enough for a script to name
     /// one to [`Command::RemoveBlock`] without having to see it.
     pub fn blocks_json(&self) -> String {
         let sides = self.blocking.block_faces();
@@ -2038,21 +2061,21 @@ impl Session {
         let blocks: Vec<_> = names
             .iter()
             .map(|block| {
-                let mut centre = [0.0; 3];
+                let mut center = [0.0; 3];
                 let mut corners = 0.0_f64;
                 for side in sides.iter().filter(|s| s.block == *block) {
                     for node in side.nodes {
                         let p = self.blocking.position(node).unwrap_or([0.0; 3]);
                         for k in 0..3 {
-                            centre[k] += p[k];
+                            center[k] += p[k];
                         }
                         corners += 1.0;
                     }
                 }
-                for axis in &mut centre {
+                for axis in &mut center {
                     *axis /= corners.max(1.0);
                 }
-                serde_json::json!({ "id": block.get(), "centre": centre })
+                serde_json::json!({ "id": block.get(), "center": center })
             })
             .collect();
         serde_json::Value::Array(blocks).to_string()
@@ -2139,10 +2162,10 @@ impl Session {
     /// Rebased on the same origin as everything else in the scene, which
     /// it has to be: they are drawn on top of each other.
     pub fn mesh_buffer(&self) -> Vec<u8> {
-        let centre = self.origin.unwrap_or([0.0; 3]);
+        let center = self.origin.unwrap_or([0.0; 3]);
         match &self.mesh {
-            Some(mesh) => MeshBuffer::of(mesh, centre).to_bytes(),
-            None => MeshBuffer::empty(centre),
+            Some(mesh) => MeshBuffer::of(mesh, center).to_bytes(),
+            None => MeshBuffer::empty(center),
         }
     }
 

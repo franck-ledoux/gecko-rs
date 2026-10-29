@@ -1,14 +1,14 @@
 /**
- * A colour per cell name.
+ * A color per cell name.
  *
  * Three properties make this usable, and all three are easy to get wrong:
  *
- * **Stable.** A name keeps its colour for ever. Colouring by position in a
+ * **Stable.** A name keeps its color for ever. Coloring by position in a
  * list would repaint the model on every edit, which is exactly when you are
  * watching it.
  *
  * **Independent of how many there are.** `hue = name / total` is the obvious
- * formula and the wrong one: adding one block recolours every other. Stepping
+ * formula and the wrong one: adding one block recolors every other. Stepping
  * the hue by the golden angle instead spreads any number of names evenly
  * without any of them needing to know the total.
  *
@@ -26,7 +26,7 @@ const GOLDEN_ANGLE = 137.50776405003785;
 /** What the kernel sends for a cell it has not named yet. */
 export const UNNAMED = 0xffffffff;
 
-const UNNAMED_COLOUR = "#9aa0a8";
+const UNNAMED_COLOR = "#9aa0a8";
 
 /** Fixed saturation and lightness: a mid-tone reads against both presets, and
  *  letting them vary too would trade legibility for nothing. */
@@ -34,10 +34,10 @@ const SATURATION = 0.62;
 const LIGHTNESS = 0.56;
 
 /**
- * Which family a group of cells is coloured in.
+ * Which family a group of cells is colored in.
  *
- * `colourForId` shifts the hue by this, so two cells of the same number in
- * different groups never come out the same colour. The geometry gets numbers
+ * `colorForId` shifts the hue by this, so two cells of the same number in
+ * different groups never come out the same color. The geometry gets numbers
  * of its own rather than reusing 0, 1 and 2: a geometric surface and a block
  * face both called 3 are not the same thing and must not look alike.
  */
@@ -50,15 +50,15 @@ export const FAMILY = {
   curves: 5,
   surfaces: 6,
   /** A group's own hue, by its bit. Its own family so that group 3 and
-   *  block 3 are never the same colour. */
+   *  block 3 are never the same color. */
   groups: 7,
 } as const;
 
 /**
- * The colour for a cell, by its stable name and its [`FAMILY`].
+ * The color for a cell, by its stable name and its [`FAMILY`].
  */
-export function colourForId(name: number, dimension: number): string {
-  if (name === UNNAMED) return UNNAMED_COLOUR;
+export function colorForId(name: number, dimension: number): string {
+  if (name === UNNAMED) return UNNAMED_COLOR;
   // The dimension offset is a half-turn-ish shift, so a face and a block of
   // the same number are never confusable.
   const hue = (name * GOLDEN_ANGLE + dimension * 57) % 360;
@@ -91,7 +91,7 @@ export function hslToHex(hue: number, saturation: number, lightness: number): st
   return `#${byte(r)}${byte(g)}${byte(b)}`;
 }
 
-/** `#rrggbb` to three 0..1 components, the way Babylon reads a hex colour —
+/** `#rrggbb` to three 0..1 components, the way Babylon reads a hex color —
  *  a plain division by 255, no gamma anywhere. */
 export function hexToRgb(hex: string): [number, number, number] {
   const n = parseInt(hex.replace("#", ""), 16);
@@ -99,10 +99,10 @@ export function hexToRgb(hex: string): [number, number, number] {
 }
 
 /**
- * The two selection colours.
+ * The two selection colors.
  *
  * Fixed rather than themed, for two reasons: they have to stand out against
- * whatever the model is coloured, which is the one thing the user can change;
+ * whatever the model is colored, which is the one thing the user can change;
  * and the two must not be confusable with each other, because which is which
  * decides where the seam of a glue ends up.
  */

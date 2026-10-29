@@ -9,7 +9,7 @@ fn cube() -> Blocking {
     b
 }
 
-/// The face of `block` whose centre is nearest `at` — how a test says "the
+/// The face of `block` whose center is nearest `at` — how a test says "the
 /// top one" without depending on which name the kernel handed it.
 fn face_near(blocking: &Blocking, at: [f64; 3]) -> (CellId, CellId) {
     let sides = blocking.block_faces();

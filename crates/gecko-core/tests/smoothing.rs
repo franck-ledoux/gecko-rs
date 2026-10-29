@@ -1,4 +1,4 @@
-//! Moving the nodes towards the middle of their neighbours, as far as what
+//! Moving the nodes towards the middle of their neighbors, as far as what
 //! they follow allows.
 //!
 //! Two halves to the name. **Laplacian**: a node goes a share of the way to
@@ -46,7 +46,7 @@ fn weld_everything(b: &mut Blocking) {
 }
 
 /// Two by two by two unit cubes, every touching pair glued: one node
-/// inside, at (1, 1, 1), with six neighbours and no boundary at all.
+/// inside, at (1, 1, 1), with six neighbors and no boundary at all.
 fn grid() -> Blocking {
     let mut b = Blocking::new().unwrap();
     for i in 0..2 {
@@ -97,7 +97,7 @@ fn worst(b: &Blocking) -> f64 {
 }
 
 #[test]
-fn an_inside_node_pulled_off_centre_comes_back() {
+fn an_inside_node_pulled_off_center_comes_back() {
     let mut b = grid();
     let middle = node_at(&b, [1.0, 1.0, 1.0]);
     b.set_position(middle, [1.4, 1.3, 1.2]).unwrap();
@@ -117,7 +117,7 @@ fn an_inside_node_pulled_off_centre_comes_back() {
     for k in 0..3 {
         assert!(
             (back[k] - 1.0).abs() < 1e-9,
-            "it should be back at the centre, not {back:?}"
+            "it should be back at the center, not {back:?}"
         );
     }
 }
@@ -322,7 +322,7 @@ fn a_held_node_is_held_and_only_names_the_ones_to_consider() {
 fn a_move_that_would_spoil_a_corner_is_not_taken() {
     // The **smart** half. One cube, every corner of it classified on a
     // surface that takes anything, so the classification allows every node
-    // to move — and the average of a corner's three neighbours is towards
+    // to move — and the average of a corner's three neighbors is towards
     // the middle of the cube, which would collapse it.
     //
     // A cube's corners are right angles: nothing can improve them. So a
@@ -358,7 +358,7 @@ fn a_move_that_would_spoil_a_corner_is_not_taken() {
 #[test]
 fn smoothing_never_leaves_the_worst_corner_worse_than_it_found_it() {
     // The promise the guard makes, over a model that does have room to
-    // improve: eight blocks with the inside node shoved well off centre.
+    // improve: eight blocks with the inside node shoved well off center.
     let mut b = grid();
     let middle = node_at(&b, [1.0, 1.0, 1.0]);
     b.set_position(middle, [1.6, 1.5, 0.6]).unwrap();

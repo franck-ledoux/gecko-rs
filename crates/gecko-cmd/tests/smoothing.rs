@@ -17,13 +17,13 @@ fn grid(n: i32) -> Session {
             }
         }
     }
-    // Every pair of faces sharing a centre, read once: gluing one pair
+    // Every pair of faces sharing a center, read once: gluing one pair
     // leaves the others' names alone.
     let faces: Vec<serde_json::Value> = serde_json::from_str(&s.faces_json()).unwrap();
     let mut seen: std::collections::HashMap<[i64; 3], u32> = std::collections::HashMap::new();
     let mut pairs = Vec::new();
     for face in &faces {
-        let at = face["centre"].as_array().unwrap();
+        let at = face["center"].as_array().unwrap();
         let key = [0, 1, 2].map(|k| (at[k].as_f64().unwrap() * 1e4).round() as i64);
         let id = face["id"].as_u64().unwrap() as u32;
         match seen.entry(key) {
@@ -134,12 +134,12 @@ fn moving_a_node_moves_that_node_and_nothing_else() {
     // A drag used to ripple: the ring of nodes around the one being moved
     // was smoothed a pass, then the ring beyond it, and so on. It was
     // taken out again — what the reader wants of a drag is the node they
-    // have hold of, and a neighbourhood rearranging itself under the
+    // have hold of, and a neighborhood rearranging itself under the
     // pointer is a surprise, not a help. Smoothing is `gecko.smooth` and
     // the key that calls it, asked for when it is wanted.
     let mut s = grid(3);
     let (middle, _) = node_at(&s, [1.0, 1.0, 1.0]);
-    let (neighbour, was) = node_at(&s, [2.0, 1.0, 1.0]);
+    let (neighbor, was) = node_at(&s, [2.0, 1.0, 1.0]);
     let (further, stood) = node_at(&s, [2.0, 2.0, 1.0]);
 
     let out = s
@@ -152,7 +152,7 @@ fn moving_a_node_moves_that_node_and_nothing_else() {
         .expect("a move");
 
     assert_eq!(at(&s, middle), [1.5, 1.4, 1.3]);
-    assert_eq!(at(&s, neighbour), was, "the node next to it stayed");
+    assert_eq!(at(&s, neighbor), was, "the node next to it stayed");
     assert_eq!(at(&s, further), stood, "and so did the one beyond that");
     assert!(!out.message.contains("ring"), "{}", out.message);
 

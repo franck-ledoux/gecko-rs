@@ -8,11 +8,11 @@ local s = gecko.stats()
 assert(s.blocks == 2, "two blocks")
 assert(s.nodes == 16, "and sixteen corners between them")
 
--- Every block is listed with its centre, which is how a script names one
+-- Every block is listed with its center, which is how a script names one
 -- without having a mouse.
 local blocks = gecko.blocks()
 assert(#blocks == 2)
-assert(math.abs(blocks[1].centre[1] - 0.5) < 1e-9, "the first cube's centre")
+assert(math.abs(blocks[1].center[1] - 0.5) < 1e-9, "the first cube's center")
 
 gecko.remove_block(blocks[2].id)
 assert(gecko.stats().blocks == 1, "and one of them taken away")

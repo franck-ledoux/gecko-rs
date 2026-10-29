@@ -56,7 +56,7 @@ pub struct Mesh {
     /// anticlockwise seen from outside, then the face above it.
     pub hexes: Vec<[u32; 8]>,
     /// Which block each hexahedron came out of, for anything that wants to
-    /// colour them.
+    /// color them.
     pub blocks: Vec<CellId>,
 }
 

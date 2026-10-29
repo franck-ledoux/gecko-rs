@@ -16,7 +16,7 @@ export interface ShotOptions {
   /** 2 gives twice the pixels of the canvas in each direction. */
   scale: number;
   /** Drop the background, for a figure that has to sit on a page of unknown
-   *  colour. */
+   *  color. */
   transparent: boolean;
 }
 
@@ -34,7 +34,7 @@ export const shotName = (at: Date) => fileName(at, "png");
 /**
  * Render the scene to a PNG, and hand back a data URL.
  *
- * The clear colour is restored afterwards whatever happens: a failed capture
+ * The clear color is restored afterwards whatever happens: a failed capture
  * that left the scene transparent would be a strange thing to debug.
  */
 export async function capture(

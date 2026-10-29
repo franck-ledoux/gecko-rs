@@ -69,7 +69,7 @@ hundred thousand quadrangles of which perhaps twenty thousand are on the
 outside — so the rest is never sent to the browser at all.
 
 **Mesh** in the display panel folds like any other group: shown or not, one
-colour or one per block, and how far through it you can see. The element
+color or one per block, and how far through it you can see. The element
 grid is drawn over it, which is the half of the picture that says what the
 discretisation actually did.
 
@@ -94,7 +94,7 @@ gecko.export_vtk("mesh.vtk")
 
 An unstructured grid of cells of type 12, `VTK_HEXAHEDRON`, in the usual VTK
 corner order. Each cell carries the name of the block it came out of as cell
-data, so a reader can colour the mesh by block:
+data, so a reader can color the mesh by block:
 
 ```text
 CELL_DATA 1000

@@ -154,7 +154,7 @@ fn the_geometry_encoding_is_the_layout_a_client_will_decode() {
         bytes.len(),
         GEOMETRY_HEADER + nodes * 12 + triangles * 16 + segments * 12 + corners * 8
     );
-    assert_eq!(GEOMETRY_HEADER % 8, 0, "the f64 centre has to sit aligned");
+    assert_eq!(GEOMETRY_HEADER % 8, 0, "the f64 center has to sit aligned");
 }
 
 #[test]
@@ -176,7 +176,7 @@ fn far_square(far: f64) -> String {
         .replace("4 0 1 0", &format!("4 {far} 1 0"))
 }
 
-fn centre_of(bytes: &[u8]) -> [f64; 3] {
+fn center_of(bytes: &[u8]) -> [f64; 3] {
     [0, 1, 2].map(|k| f64::from_le_bytes(bytes[8 + k * 8..16 + k * 8].try_into().unwrap()))
 }
 
@@ -201,7 +201,7 @@ fn a_geometry_far_from_the_origin_keeps_its_precision() {
     load(&mut s, &far_square(far));
 
     assert!(
-        (centre_of(&s.geometry_buffer())[0] - far).abs() < 1.0,
+        (center_of(&s.geometry_buffer())[0] - far).abs() < 1.0,
         "the origin did not follow the geometry"
     );
     let positions = first_positions(&s.geometry_buffer(), 12);
@@ -221,8 +221,8 @@ fn the_geometry_and_the_blocks_are_rebased_on_one_origin() {
     .unwrap();
     load(&mut s, &far_square(far));
 
-    assert_eq!(centre_of(&s.view_buffer()), centre_of(&s.geometry_buffer()));
-    assert!(centre_of(&s.view_buffer())[0] > far / 2.0);
+    assert_eq!(center_of(&s.view_buffer()), center_of(&s.geometry_buffer()));
+    assert!(center_of(&s.view_buffer())[0] > far / 2.0);
 }
 
 #[test]

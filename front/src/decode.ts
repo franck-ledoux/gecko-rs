@@ -10,8 +10,8 @@
 
 export interface View {
   /** f64 offset the kernel subtracted; add it back for model coordinates. */
-  centre: [number, number, number];
-  /** Three f32 per node, relative to `centre`. */
+  center: [number, number, number];
+  /** Three f32 per node, relative to `center`. */
   positions: Float32Array;
   /** The kernel's stable name for each node, in the same order.
    *  A position in this array is not a name: edits reorder it. */
@@ -23,7 +23,7 @@ export interface View {
   /** Four node indices per quadrangle, wound outward.
    *
    *  One quadrangle per (face, block) pair — the same surface is what gets
-   *  drawn for faces and for blocks, and only the name it is coloured by
+   *  drawn for faces and for blocks, and only the name it is colored by
    *  differs. */
   quads: Uint32Array;
   /** The face each quadrangle belongs to. */
@@ -77,7 +77,7 @@ export function decodeView(bytes: Uint8Array): View {
   const version = head.getUint32(4, true);
   if (version !== 7) throw new Error(`view buffer: version ${version} not understood`);
 
-  const centre: [number, number, number] = [
+  const center: [number, number, number] = [
     head.getFloat64(8, true),
     head.getFloat64(16, true),
     head.getFloat64(24, true),
@@ -93,7 +93,7 @@ export function decodeView(bytes: Uint8Array): View {
   // it is in. Per edge: two node indices, a name, two for its
   // classification, two for its groups and one saying whether it touches
   // a block in no group. Per quadrangle: four corner indices, the two
-  // names it can be coloured by, two for its classification and two for
+  // names it can be colored by, two for its classification and two for
   // its groups — a quadrangle is drawn with one block, so its own mask
   // speaks for it.
   const expected = HEADER + nNodes * 40 + nEdges * 32 + nQuads * 40;
@@ -116,7 +116,7 @@ export function decodeView(bytes: Uint8Array): View {
   const i32 = (b: ArrayBufferLike, o: number, n: number) => new Int32Array(b, o, n);
 
   return {
-    centre,
+    center,
     positions: take(f32, nNodes * 3),
     names: take(u32, nNodes),
     edges: take(u32, nEdges * 2),
@@ -150,8 +150,8 @@ export function decodeView(bytes: Uint8Array): View {
  */
 export interface GeometryView {
   /** The same rebasing origin the view buffer uses. */
-  centre: [number, number, number];
-  /** Three f32 per node, relative to `centre`, shared by everything below. */
+  center: [number, number, number];
+  /** Three f32 per node, relative to `center`, shared by everything below. */
   positions: Float32Array;
   /** Three node indices per triangle. */
   triangles: Uint32Array;
@@ -181,7 +181,7 @@ export function decodeGeometry(bytes: Uint8Array): GeometryView {
   const version = head.getUint32(4, true);
   if (version !== 1) throw new Error(`geometry buffer: version ${version} not understood`);
 
-  const centre: [number, number, number] = [
+  const center: [number, number, number] = [
     head.getFloat64(8, true),
     head.getFloat64(16, true),
     head.getFloat64(24, true),
@@ -212,7 +212,7 @@ export function decodeGeometry(bytes: Uint8Array): GeometryView {
   const i32 = (b: ArrayBufferLike, o: number, n: number) => new Int32Array(b, o, n);
 
   return {
-    centre,
+    center,
     positions: take(f32, nNodes * 3),
     triangles: take(u32, nTriangles * 3),
     triangleTags: take(i32, nTriangles),
@@ -225,8 +225,8 @@ export function decodeGeometry(bytes: Uint8Array): GeometryView {
 
 /** What the kernel draws of the mesh: its skin, and nothing inside it. */
 export interface MeshView {
-  centre: [number, number, number];
-  /** Three f32 per node of the skin, relative to `centre`. */
+  center: [number, number, number];
+  /** Three f32 per node of the skin, relative to `center`. */
   positions: Float32Array;
   /** Four node indices per quadrangle. */
   quads: Uint32Array;
@@ -255,7 +255,7 @@ export function decodeMesh(bytes: Uint8Array): MeshView {
   const version = head.getUint32(4, true);
   if (version !== 1) throw new Error(`mesh buffer: version ${version} not understood`);
 
-  const centre: [number, number, number] = [
+  const center: [number, number, number] = [
     head.getFloat64(8, true),
     head.getFloat64(16, true),
     head.getFloat64(24, true),
@@ -278,7 +278,7 @@ export function decodeMesh(bytes: Uint8Array): MeshView {
     return made;
   };
   return {
-    centre,
+    center,
     positions: take((b, o, n) => new Float32Array(b, o, n), nNodes * 3),
     quads: take((b, o, n) => new Uint32Array(b, o, n), nQuads * 4),
     blocks: take((b, o, n) => new Uint32Array(b, o, n), nQuads),

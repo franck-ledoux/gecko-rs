@@ -343,7 +343,7 @@ mod removal {
     #[test]
     fn taking_a_layer_out_of_a_grid_glues_every_pair_it_leaves() {
         // Nine blocks in the layer, so nine pairs to close. The caps of
-        // neighbouring blocks share their corners, which is what a single
+        // neighboring blocks share their corners, which is what a single
         // block in a layer never shows.
         let mut b = grid(3);
         assert_eq!(b.nb_blocks(), 27);

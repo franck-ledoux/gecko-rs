@@ -246,16 +246,16 @@ fn removing_a_chord_leaves_a_tunnel() {
         .block_faces()
         .into_iter()
         .find(|s| {
-            let centre = |k: usize| {
+            let center = |k: usize| {
                 s.nodes
                     .iter()
                     .map(|n| b.position(*n).unwrap()[k])
                     .sum::<f64>()
                     / 4.0
             };
-            centre(0).abs() < 1e-9
-                && (centre(1) - 1.5).abs() < 1e-9
-                && (centre(2) - 1.5).abs() < 1e-9
+            center(0).abs() < 1e-9
+                && (center(1) - 1.5).abs() < 1e-9
+                && (center(2) - 1.5).abs() < 1e-9
         })
         .map(|s| (s.face, s.block))
         .expect("the middle face of one side");

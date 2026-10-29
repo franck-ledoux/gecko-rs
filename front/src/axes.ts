@@ -41,8 +41,8 @@ export type Axis = "+x" | "-x" | "+y" | "-y" | "+z" | "-z";
 
 export const AXES: readonly Axis[] = ["+x", "-x", "+y", "-y", "+z", "-z"];
 
-/** The conventional colours: X red, Y green, Z blue. */
-const COLOUR: Record<"x" | "y" | "z", Color3> = {
+/** The conventional colors: X red, Y green, Z blue. */
+const COLOR: Record<"x" | "y" | "z", Color3> = {
   x: new Color3(0.92, 0.3, 0.33),
   y: new Color3(0.35, 0.82, 0.4),
   z: new Color3(0.36, 0.56, 0.95),
@@ -123,9 +123,9 @@ export class AxisGizmo {
   }
 
   private build() {
-    const unlit = (name: string, colour: Color3) => {
+    const unlit = (name: string, color: Color3) => {
       const m = new StandardMaterial(name, this.scene);
-      m.emissiveColor = colour;
+      m.emissiveColor = color;
       m.disableLighting = true;
       return m;
     };
@@ -141,7 +141,7 @@ export class AxisGizmo {
 
       const ball = CreateSphere(`axis${axis}`, { diameter: sign > 0 ? 0.9 : 0.6 }, this.scene);
       ball.position = end;
-      ball.material = unlit(`axisMat${axis}`, COLOUR[letter].scale(sign > 0 ? 1 : 0.45));
+      ball.material = unlit(`axisMat${axis}`, COLOR[letter].scale(sign > 0 ? 1 : 0.45));
       // What the pick reads back.
       ball.metadata = { axis };
       this.adopt(ball);
@@ -152,7 +152,7 @@ export class AxisGizmo {
           { lines: [[Vector3.Zero(), end]] },
           this.scene,
         );
-        line.color = COLOUR[letter];
+        line.color = COLOR[letter];
         line.isPickable = false;
         this.adopt(line as unknown as Mesh);
         // The lettering needs a 2D canvas to draw into, and a headless engine
@@ -168,14 +168,14 @@ export class AxisGizmo {
   private label(letter: "x" | "y" | "z", at: Vector3): Mesh {
     const texture = new DynamicTexture(`axisLabel${letter}`, { width: 64, height: 64 }, this.scene, false);
     texture.hasAlpha = true;
-    // The letter takes its axis's colour rather than white: white vanishes on
+    // The letter takes its axis's color rather than white: white vanishes on
     // a light background, and the theme is the viewer's to change.
     texture.drawText(
       letter.toUpperCase(),
       null,
       50,
       "bold 52px sans-serif",
-      COLOUR[letter].toHexString(),
+      COLOR[letter].toHexString(),
       "transparent",
       true,
     );

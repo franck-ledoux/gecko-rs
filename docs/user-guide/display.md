@@ -8,7 +8,7 @@ to one served by `gecko` alike.
 The toolbar carries two, and they answer two different questions:
 
 - the **sliders** icon, or `Tab`, opens **Display** — everything on this
-  page: what is drawn, in what colour, how far through it you can see;
+  page: what is drawn, in what color, how far through it you can see;
 - the **cog**, or `,`, opens **Settings** — what the operations *do*: the
   margin a bounding box leaves, how near a node has to come to be taken by
   an entity, how many steps of undo. Those are in
@@ -25,28 +25,28 @@ it is drawn right now (`classification · 35%`, or `hidden`). Open it for the re
 
 Within a band only one group is open at a time, so the panel stays the height
 of one group however many there are. **Cells** and **Geometry** start
-unfolded, **Colours** and **Picture** put away, and what you leave open is
+unfolded, **Colors** and **Picture** put away, and what you leave open is
 remembered like every other preference.
 
-## Colours
+## Colors
 
-The drawer's **Colours** section has one swatch per colourable thing —
+The drawer's **Colors** section has one swatch per colorable thing —
 background, nodes, edges, faces, blocks, and the geometry's corners, curves
 and surfaces — and two presets, **Dark** and
 **Light** (`D` swaps them). The face and block swatches are what the
-**one colour** mode below uses; coloured by id they are ignored. The light
+**one color** mode below uses; colored by id they are ignored. The light
 preset
 exists because "change the background" nearly always means "I need a light one
 for a figure", and setting three swatches by hand to get there is tedious.
 
-The panel is generated from the theme's own keys, so a colour added later needs
+The panel is generated from the theme's own keys, so a color added later needs
 no new markup.
 
-!!! note "Your colours, not the session's"
+!!! note "Your colors, not the session's"
     A theme is **view state, not kernel state**. It never goes through
     `Session::apply`, and it is remembered by your browser rather than by
     the session — so two tabs may legitimately look nothing alike. The kernel
-    says what exists; it has no business knowing what colour you like it.
+    says what exists; it has no business knowing what color you like it.
 
     The flip side: clearing site data forgets them, and they do not follow you
     to another machine.
@@ -56,37 +56,37 @@ no new markup.
 Each has its own box in the panel, and the two are independent: either, both,
 or neither.
 
-| Control                           | What it does                                                                                                                                 |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| **show**                          | draw this group at all                                                                                                                       |
-| **colour by: one colour**         | one colour for the whole group, taken from its swatch                                                                                        |
-| **colour by: its id**             | a colour per cell, from its stable name                                                                                                      |
-| **colour by: its classification** | a colour per kind of geometric entity, by what the cell is classified on — see [Classification](classification.md#reading-it-off-the-screen) |
-| **colour by: its group**          | a colour per [group](#groups-of-blocks) it is in — the lowest one, since a cell can be in several and a pixel can be one colour              |
-| **opacity**                       | transparency, per group                                                                                                                      |
-| **shrink**                        | pull each cell towards its own centre                                                                                                        |
+| Control                          | What it does                                                                                                                                |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| **show**                         | draw this group at all                                                                                                                      |
+| **color by: one color**          | one color for the whole group, taken from its swatch                                                                                        |
+| **color by: its id**             | a color per cell, from its stable name                                                                                                      |
+| **color by: its classification** | a color per kind of geometric entity, by what the cell is classified on — see [Classification](classification.md#reading-it-off-the-screen) |
+| **color by: its group**          | a color per [group](#groups-of-blocks) it is in — the lowest one, since a cell can be in several and a pixel can be one color               |
+| **opacity**                      | transparency, per group                                                                                                                     |
+| **shrink**                       | pull each cell towards its own center                                                                                                       |
 
-**colour by** is one list rather than a row of boxes: there are four ways to
-colour a cell of the blocking, and four boxes do not fit across the drawer.
+**color by** is one list rather than a row of boxes: there are four ways to
+color a cell of the blocking, and four boxes do not fit across the drawer.
 The geometry's own groups and the mesh offer the first two only — a
 geometry is the thing a blocking is put on rather than part of it, and a
 mesh is what the blocking was for.
 
-Nodes and edges take the same colourings, and both can be **hidden**:
+Nodes and edges take the same colorings, and both can be **hidden**:
 a hundred blocks is a thousand handles over the model, and looking at the
 shape of a blocking is a thing you do as much as working on it. Hidden
 handles are out of the pointer's way as well — they cannot be clicked,
 dragged, or caught in a band — because a handle you cannot see but can
 still grab moves the model with nothing on screen to say what you took hold
-of. **Blocks** take only the first two colourings: a block is classified on
+of. **Blocks** take only the first two colorings: a block is classified on
 nothing, a surface mesh having no volumes to put it on.
 
 **They are the same surfaces.** A block is bounded by its faces, so with both
-on at full size you are looking at one shape coloured two ways. Shrinking is
+on at full size you are looking at one shape colored two ways. Shrinking is
 what makes the pair worth having: pull the blocks in and they become separate
 solids floating inside a translucent skin of faces.
 
-Each kind of cell shrinks towards **its own** centre, which is why the three
+Each kind of cell shrinks towards **its own** center, which is why the three
 sliders do visibly different things. A face pulls towards the middle of that
 face, so it shrinks within its own plane and the model keeps its outline. A
 block pulls towards the middle of the block, so the whole thing narrows. An
@@ -118,15 +118,15 @@ edge pulls towards its own midpoint, leaving a gap at each corner.
     the other half. The cost is a draw call per block, which is the trade to
     revisit when there are thousands of them.
 
-### Colour by id
+### Color by id
 
-The colour comes from the cell's **stable name**, and three things follow from
+The color comes from the cell's **stable name**, and three things follow from
 that being the rule rather than a position in a list:
 
-- a cell keeps its colour for as long as it exists;
-- adding a block recolours nothing — the hue is a function of the name alone,
+- a cell keeps its color for as long as it exists;
+- adding a block recolors nothing — the hue is a function of the name alone,
   not of how many cells there are;
-- a face and a block that happen to share a number do not share a colour.
+- a face and a block that happen to share a number do not share a color.
 
 Names are never reused, so over a long session the hues drift and two distant
 names can land near each other. That is the trade for stability; the
@@ -150,7 +150,7 @@ derived from the model rather than declared, so it cannot disagree with it.
 Nothing is internal until two blocks are [glued](gluing.md).
 
 !!! note "Dragging a slider does not rebuild the scene"
-    Moving opacity, shrink or colouring rewrites the mesh's buffers in place.
+    Moving opacity, shrink or coloring rewrites the mesh's buffers in place.
     Only a change that alters the *shape* — showing or hiding a group, hiding
     internal faces, a new model — builds a new mesh. Rebuilding on every
     mouse-move is what makes a slider stutter and the model blink while you
@@ -169,7 +169,7 @@ them everything they are made of — a face, an edge or a node is in a group
 when a block it bounds is. A block can be in several groups at once, and
 sixty-four groups is the most a session holds.
 
-The **Groups** band has a row each: a show box, the group's colour, its
+The **Groups** band has a row each: a show box, the group's color, its
 name, how many blocks are in it, whether it is written into the mesh, and
 three buttons — put the selected blocks in, take them out, forget the
 group. Select faces first; a click names the face *and* the block it was
@@ -186,16 +186,16 @@ on, so picking faces is how you pick blocks.
 The last row, **blocks in no group**, is how you hide everything that has
 not been named yet.
 
-Forgetting a group frees its colour for the next one. Cutting a block in two
+Forgetting a group frees its color for the next one. Cutting a block in two
 leaves both halves in whatever it was in, and welding two blocks gives the
 result both their groups: the model carries this through its own operations
 rather than having it recomputed, so there is nothing to go stale.
 
 ## The mesh
 
-**Mesh** carries the last mesh built — shown or not, one colour or one per
+**Mesh** carries the last mesh built — shown or not, one color or one per
 block, and how far through it you can see. The element grid is drawn over it
-in the edge colour, which is the half of the picture that says what the
+in the edge color, which is the half of the picture that says what the
 discretisation did. See [Meshing](meshing.md).
 
 Its three controls sit directly in the band, with no fold of their own: a
@@ -206,7 +206,7 @@ drawn as.
 ## The geometry
 
 The three groups a [geometry](geometry.md) is drawn in — surfaces, curves and
-corners — take the same **show / colour by / opacity** controls, and no
+corners — take the same **show / color by / opacity** controls, and no
 shrink. They are on that page rather than this one, because what the tags mean
 is the larger half of the story.
 
@@ -231,7 +231,7 @@ A fixed step is the same distance however near you are, which is wrong at both
 ends: far out it barely moves, and close in one notch is a leap straight
 through the model and out the far side. The camera also stops a little short
 of the model rather than reaching the point it orbits — an orbit camera that
-arrives at its own centre has nothing left to turn around, and the view flips.
+arrives at its own center has nothing left to turn around, and the view flips.
 
 How near and how far are both derived from the model's size, and they follow
 it: build a block from a script and the limits move with it, without the camera
@@ -239,7 +239,7 @@ being yanked anywhere.
 
 ## Recentring
 
-**Recentre view** (`F`) brings the whole model into view, and **leaves the
+**Recenter view** (`F`) brings the whole model into view, and **leaves the
 direction alone**. Where the model is and how far away it has to be come
 from its own bounds; which way round you are looking at it from is yours, and
 the triad is what changes that. A recentring that also swung the view back to
