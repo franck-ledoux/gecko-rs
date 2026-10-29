@@ -92,6 +92,17 @@ export interface Direct {
   query(kind: string, arg: string): string;
 }
 
+/** One group of blocks, as the kernel describes it. */
+export interface Group {
+  name: string;
+  /** Which bit of a cell's group mask this one is. */
+  bit: number;
+  /** Written into the mesh as a variable of its own. */
+  written: boolean;
+  /** How many blocks are in it. */
+  blocks: number;
+}
+
 export interface Kernel {
   /** The same session, as JSON: the door Lua goes through. */
   readonly direct: Direct;
@@ -116,6 +127,11 @@ export interface Kernel {
   /** Which components are **patches** — open sheets of faces — rather than
    *  blocks. What `Del` needs to know to take the right thing away. */
   patches(): number[];
+
+  /** The groups of blocks: what each is called, which bit of a cell's mask
+   *  it is, whether it is written into the mesh, and how many blocks are
+   *  in it. */
+  groups(): Group[];
 
   /** Which version of gecko this is: the kernel's own, so it cannot
    *  disagree with the release it was built from. */

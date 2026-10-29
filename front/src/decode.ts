@@ -44,6 +44,15 @@ export interface View {
   /** And per quadrangle, which is where a face is drawn. */
   quadClassDim: Int32Array;
   quadClassTag: Int32Array;
+  /** Which groups each cell is in, one bit per group, in two halves — the
+   *  low thirty-two bits and the high. Two numbers rather than a BigInt:
+   *  these are tested per cell per frame while a filter is on. */
+  nodeGroupsLo: Uint32Array;
+  nodeGroupsHi: Uint32Array;
+  edgeGroupsLo: Uint32Array;
+  edgeGroupsHi: Uint32Array;
+  quadGroupsLo: Uint32Array;
+  quadGroupsHi: Uint32Array;
 }
 
 const MAGIC = 0x3142_4b47; // "GKB1" little-endian
@@ -60,7 +69,7 @@ export function decodeView(bytes: Uint8Array): View {
   const head = new DataView(bytes.buffer, bytes.byteOffset, HEADER);
   if (head.getUint32(0, true) !== MAGIC) throw new Error("view buffer: bad magic");
   const version = head.getUint32(4, true);
-  if (version !== 6) throw new Error(`view buffer: version ${version} not understood`);
+  if (version !== 7) throw new Error(`view buffer: version ${version} not understood`);
 
   const centre: [number, number, number] = [
     head.getFloat64(8, true),
@@ -73,12 +82,13 @@ export function decodeView(bytes: Uint8Array): View {
 
   // Check the declared sizes before making any view, so a truncated buffer is
   // a clear error here rather than an opaque one three lines down.
-  // Per node: three f32 of position, one u32 of name, and three more for
-  // what it is classified on and whether it is frozen. Per edge: two node
-  // indices, a name, and two for its classification. Per quadrangle: four
-  // corner indices, the two names it can be coloured by, and two for its
-  // classification.
-  const expected = HEADER + nNodes * 28 + nEdges * 20 + nQuads * 32;
+  // Per node: three f32 of position, one u32 of name, three more for what
+  // it is classified on and whether it is frozen, and two for the groups
+  // it is in. Per edge: two node indices, a name, two for its
+  // classification and two for its groups. Per quadrangle: four corner
+  // indices, the two names it can be coloured by, two for its
+  // classification and two for its groups.
+  const expected = HEADER + nNodes * 36 + nEdges * 28 + nQuads * 40;
   if (expected !== bytes.byteLength) {
     throw new Error(
       `view buffer: header declares ${expected} bytes, buffer holds ${bytes.byteLength}`,
@@ -113,6 +123,12 @@ export function decodeView(bytes: Uint8Array): View {
     edgeClassTag: take(i32, nEdges),
     quadClassDim: take(i32, nQuads),
     quadClassTag: take(i32, nQuads),
+    nodeGroupsLo: take(u32, nNodes),
+    nodeGroupsHi: take(u32, nNodes),
+    edgeGroupsLo: take(u32, nEdges),
+    edgeGroupsHi: take(u32, nEdges),
+    quadGroupsLo: take(u32, nQuads),
+    quadGroupsHi: take(u32, nQuads),
   };
 }
 

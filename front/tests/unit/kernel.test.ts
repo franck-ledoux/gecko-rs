@@ -736,6 +736,12 @@ function sharedFaceView(): View {
     quads: new Uint32Array([0, 1, 2, 3, 0, 3, 2, 1]),
     quadFaces: new Uint32Array([9, 9]),
     quadBlocks: new Uint32Array([100, 200]),
+    nodeGroupsLo: new Uint32Array([0, 0, 0, 0]),
+    nodeGroupsHi: new Uint32Array([0, 0, 0, 0]),
+    edgeGroupsLo: new Uint32Array([0]),
+    edgeGroupsHi: new Uint32Array([0]),
+    quadGroupsLo: new Uint32Array([0, 0]),
+    quadGroupsHi: new Uint32Array([0, 0]),
   };
 }
 
@@ -1152,6 +1158,12 @@ describe("how close the camera may get", () => {
       quads: new Uint32Array(0),
       quadFaces: new Uint32Array(0),
       quadBlocks: new Uint32Array(0),
+      nodeGroupsLo: new Uint32Array([0]),
+      nodeGroupsHi: new Uint32Array([0]),
+      edgeGroupsLo: new Uint32Array(0),
+      edgeGroupsHi: new Uint32Array(0),
+      quadGroupsLo: new Uint32Array(0),
+      quadGroupsHi: new Uint32Array(0),
     });
     viewer.frameAll();
     expect(viewer.camera.lowerRadiusLimit).toBeNull();

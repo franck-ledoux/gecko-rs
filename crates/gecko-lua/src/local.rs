@@ -44,6 +44,7 @@ impl Kernel for Local {
             "blocks" => session.blocks_json(),
             "stats" => session.stats_json(),
             "patches" => session.patches_json(),
+            "groups" => session.groups_json(),
             "entities" => session.entities_json(),
             "sheet" => session.sheet_json(arg.trim().parse().unwrap_or(u32::MAX)),
             // Two numbers, as a JSON array: `query` carries one string, and

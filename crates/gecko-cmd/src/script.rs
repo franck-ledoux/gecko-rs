@@ -121,6 +121,25 @@ pub fn line(command: &Command) -> String {
         ),
         Command::ClearGeometry => "gecko.clear_geometry()".to_string(),
         Command::Reset => "gecko.reset()".to_string(),
+        Command::Group {
+            name,
+            blocks,
+            written,
+        } => {
+            let tail = if *written {
+                String::new()
+            } else {
+                ", { written = false }".to_string()
+            };
+            format!("gecko.group({}, {}{tail})", quoted(name), numbers(blocks))
+        }
+        Command::Ungroup { name, blocks } => {
+            format!("gecko.ungroup({}, {})", quoted(name), numbers(blocks))
+        }
+        Command::RenameGroup { name, to } => {
+            format!("gecko.rename_group({}, {})", quoted(name), quoted(to))
+        }
+        Command::DropGroup { name } => format!("gecko.drop_group({})", quoted(name)),
         Command::Classify { tolerance } => format!(
             "gecko.classify({})",
             braces(option("tolerance", *tolerance, crate::SNAP_SHARE))
@@ -177,6 +196,12 @@ fn number(x: f64) -> String {
 
 fn point(p: &[f64; 3]) -> String {
     format!("{{{}, {}, {}}}", number(p[0]), number(p[1]), number(p[2]))
+}
+
+/// A name, as Lua reads one. Rust's debug form of a string is a quoted
+/// Lua string too, escapes and all.
+fn quoted(name: &str) -> String {
+    format!("{name:?}")
 }
 
 fn numbers<T: std::fmt::Display>(all: &[T]) -> String {

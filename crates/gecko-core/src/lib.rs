@@ -16,8 +16,8 @@ pub mod mesh;
 pub use attributes::{BlockTag, EdgeTag, FaceTag, NodeTag, On};
 pub use blocking::{
     across, best_pairing, cube_corners, flatness, mitre, quad_normal, scaled_jacobian, BlockFace,
-    Blocking, BlockingError, ChordBlock, Settling, SheetEdge, Smoothing, Unmet, HEX_CORNER_EDGES,
-    HEX_FACES, PILLOW_SHARE,
+    Blocking, BlockingError, ChordBlock, GroupMasks, Settling, SheetEdge, Smoothing, Unmet,
+    HEX_CORNER_EDGES, HEX_FACES, PILLOW_SHARE,
 };
 pub use ids::{CellId, CornerKey};
 pub use mesh::{Mesh, SEGMENTS};

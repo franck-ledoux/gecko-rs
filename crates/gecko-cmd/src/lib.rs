@@ -9,6 +9,7 @@
 //! and it is what makes the two modes testable against each other, by replaying
 //! one script through both and comparing the bytes that come out.
 
+pub mod groups;
 pub mod script;
 pub mod view;
 pub mod vtk;
@@ -16,6 +17,7 @@ pub mod vtk;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
+use crate::groups::{GroupError, Groups};
 use gecko_core::ids::CellId;
 use gecko_core::{cube_corners, Blocking, BlockingError, Mesh, On, Smoothing, SEGMENTS};
 use gecko_geom::model::GeometryError;
@@ -41,6 +43,8 @@ pub enum SessionError {
     Quad(#[from] gecko_geom::QuadError),
     #[error("no geometry is loaded — open a .msh first")]
     NoGeometry,
+    #[error("{0}")]
+    Group(#[from] GroupError),
 }
 
 /// How much room a bounding box leaves round the geometry, as a share of
@@ -89,6 +93,10 @@ pub const SMOOTH_ROUNDS: u32 = 5;
 /// of a crease to the other and never settle, and half of it lets somebody
 /// watch what is happening to their model.
 pub const SMOOTH_SHARE: f64 = 0.5;
+
+fn yes() -> bool {
+    true
+}
 
 fn default_snap() -> f64 {
     SNAP_SHARE
@@ -307,6 +315,35 @@ pub enum Command {
     },
     /// Forget the geometry.
     ClearGeometry,
+    /// Put blocks into a group, making the group if there is none of that
+    /// name.
+    ///
+    /// Groups are of **blocks**; a face, an edge or a node is in a group
+    /// when a block it bounds is. `written` says whether the group
+    /// reaches the mesh as a variable of its own — a group that is only a
+    /// way of looking at part of the model says no.
+    Group {
+        name: String,
+        #[serde(default)]
+        blocks: Vec<u32>,
+        #[serde(default = "yes")]
+        written: bool,
+    },
+    /// Take blocks out of a group, leaving the group itself alone.
+    Ungroup {
+        name: String,
+        blocks: Vec<u32>,
+    },
+    /// Give a group another name.
+    RenameGroup {
+        name: String,
+        to: String,
+    },
+    /// Forget a group. Every block in it is let go of; nothing else
+    /// changes, and the bit it held is free for the next one.
+    DropGroup {
+        name: String,
+    },
     /// Back to an empty session: no blocks, no geometry, no composites, no
     /// mesh.
     ///
@@ -468,6 +505,11 @@ pub struct Session {
     /// bargain as `geometry_generation`.
     mesh: Option<Mesh>,
     mesh_generation: u32,
+    /// What the groups of blocks are called, and which reach the mesh.
+    /// Beside the block structure rather than in it, like the composites
+    /// and for the same reason: the model holds which blocks are in a
+    /// group, and the words for them are not the model's business.
+    groups: Groups,
     /// How near a node has to be to the geometry to be taken by it, as a
     /// share of the model's size — the last one [`Command::Classify`] was
     /// given, or the kernel's own until somebody says.
@@ -500,6 +542,10 @@ struct State {
     /// blocking back but not the sides it was classified on would leave a
     /// model classified on entities nothing could resolve.
     composites: Composites,
+    /// The same for what the groups are called. Which blocks are in them
+    /// travels in the block structure, so the two have to go back
+    /// together or a group would come back nameless.
+    groups: Groups,
     origin: Option<[f64; 3]>,
     /// How long the journal was. An undo cuts it back to here, so the
     /// script always describes the session as it now stands rather than
@@ -513,6 +559,7 @@ impl Session {
             blocking: Blocking::new()?,
             geometry: None,
             composites: Composites::default(),
+            groups: Groups::new(),
             geometry_generation: 0,
             origin: None,
             past: VecDeque::new(),
@@ -597,6 +644,7 @@ impl Session {
             blocking: self.blocking.snapshot()?,
             geometry: self.geometry.clone(),
             composites: self.composites.clone(),
+            groups: self.groups.clone(),
             origin: self.origin,
             journal: self.journal.len(),
         })
@@ -628,6 +676,7 @@ impl Session {
         self.blocking = state.blocking;
         self.geometry = state.geometry;
         self.composites = state.composites;
+        self.groups = state.groups;
         self.origin = state.origin;
         self.journal.truncate(state.journal);
         // Forwards even when the geometry goes backwards: the number says
@@ -1156,6 +1205,79 @@ impl Session {
                     view_changed: true,
                 })
             }
+            Command::Group {
+                name,
+                blocks,
+                written,
+            } => {
+                let name = name.trim().to_string();
+                if name.is_empty() {
+                    return Err(GroupError::Unnamed.into());
+                }
+                // Every name checked before anything is written: a group
+                // half filled is worse than one not made, since the undo
+                // would put back a state nobody asked for.
+                let named = self.named(&blocks)?;
+                let bit = self
+                    .groups
+                    .make(&name, written)
+                    .ok_or(GroupError::Full)?
+                    .bit;
+                self.blocking.set_in_group(&named, bit, true)?;
+                Ok(Outcome {
+                    script: None,
+                    message: format!(
+                        "{} block{} in {name:?} — {} in all{}",
+                        named.len(),
+                        plural(named.len()),
+                        self.in_group(bit),
+                        if written { "" } else { ", not written out" },
+                    ),
+                    view_changed: true,
+                })
+            }
+            Command::Ungroup { name, blocks } => {
+                let bit = self
+                    .groups
+                    .by_name(&name)
+                    .ok_or_else(|| GroupError::NoSuch(name.clone()))?
+                    .bit;
+                let named = self.named(&blocks)?;
+                self.blocking.set_in_group(&named, bit, false)?;
+                Ok(Outcome {
+                    script: None,
+                    message: format!(
+                        "{} block{} out of {name:?} — {} left",
+                        named.len(),
+                        plural(named.len()),
+                        self.in_group(bit),
+                    ),
+                    view_changed: true,
+                })
+            }
+            Command::RenameGroup { name, to } => {
+                let to = to.trim().to_string();
+                if to.is_empty() {
+                    return Err(GroupError::Unnamed.into());
+                }
+                self.groups.rename(&name, &to)?;
+                Ok(Outcome {
+                    script: None,
+                    message: format!("{name:?} is now {to:?}"),
+                    // Nothing moved, but what the scene is coloured and
+                    // filtered by has a different name on it.
+                    view_changed: true,
+                })
+            }
+            Command::DropGroup { name } => {
+                let bit = self.groups.drop(&name)?;
+                self.blocking.drop_group(bit);
+                Ok(Outcome {
+                    script: None,
+                    message: format!("{name:?} is gone — the blocks that were in it are not"),
+                    view_changed: true,
+                })
+            }
             Command::Reset => {
                 self.blocking = Blocking::new()?;
                 // The composites go with the geometry they name: their tags
@@ -1164,6 +1286,7 @@ impl Session {
                 // under the new one's names.
                 let had = self.geometry.take().is_some();
                 self.composites = Composites::new();
+                self.groups = Groups::new();
                 self.drop_mesh();
                 if had {
                     self.geometry_generation += 1;
@@ -1374,6 +1497,16 @@ impl Session {
             seen.classified_edges,
             seen.classified_faces,
         ))
+    }
+
+    /// How many blocks are in the group with this bit.
+    fn in_group(&self, bit: u8) -> usize {
+        let mask = 1u64 << bit;
+        self.blocking
+            .blocks()
+            .into_iter()
+            .filter(|b| self.blocking.block_groups(*b) & mask != 0)
+            .count()
     }
 
     /// Put the nodes this command **made** onto the geometry, when they
@@ -1914,6 +2047,25 @@ impl Session {
         serde_json::to_string(&names).unwrap_or_else(|_| "[]".into())
     }
 
+    /// The groups: what each is called, whether it is written into the
+    /// mesh, and how many blocks are in it.
+    pub fn groups_json(&self) -> String {
+        let all: Vec<_> = self
+            .groups
+            .all()
+            .iter()
+            .map(|g| {
+                serde_json::json!({
+                    "name": g.name,
+                    "bit": g.bit,
+                    "written": g.written,
+                    "blocks": self.in_group(g.bit),
+                })
+            })
+            .collect();
+        serde_json::Value::Array(all).to_string()
+    }
+
     pub fn stats_json(&self) -> String {
         // One census rather than eight counts: walking the map is what
         // this costs, and it is walked once per dimension here.
@@ -1974,7 +2126,16 @@ impl Session {
 
     /// The mesh as a VTK legacy file, or nothing if none has been built.
     pub fn mesh_vtk(&self) -> Option<String> {
-        self.mesh.as_ref().map(|m| vtk::write(m, "gecko blocking"))
+        let mesh = self.mesh.as_ref()?;
+        let written = self.groups.written();
+        // Which groups each hexahedron is in: its block's, since a cell of
+        // a block is part of whatever the block is part of.
+        let masks: Vec<u64> = mesh
+            .blocks
+            .iter()
+            .map(|b| self.blocking.block_groups(*b))
+            .collect();
+        Some(vtk::write(mesh, "gecko blocking", &written, &masks))
     }
 
     /// What there is of a geometry, and **which** geometry.

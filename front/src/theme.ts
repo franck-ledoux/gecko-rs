@@ -194,6 +194,11 @@ export interface ViewPrefs {
    *  rather than a flag each, so a section added later needs no migration:
    *  an id nobody recognises is simply not there. */
   panels: string[];
+  /** Groups whose cells are not drawn, **by name**, and `""` for the cells
+   *  in no group at all. By name rather than by bit: a bit is handed out
+   *  by the session and says nothing a month later, while a name is what
+   *  somebody typed. */
+  hiddenGroups: string[];
   /** Whether the window is split into four views. */
   quad: boolean;
   /** How a saved picture comes out. */
@@ -245,6 +250,7 @@ export const DEFAULTS: ViewPrefs = {
   // Cells and geometry unfolded, colours and picture put away: the first
   // two are what you reach for while working, the other two are set once.
   panels: ["sec-cells", "sec-geometry"],
+  hiddenGroups: [],
   // One view. The split is for placing corners, which is a thing you do
   // for a while and then stop doing.
   quad: false,
@@ -336,6 +342,9 @@ export function loadPrefs(): ViewPrefs {
       panels: Array.isArray(stored.panels)
         ? stored.panels.filter((id): id is string => typeof id === "string")
         : DEFAULTS.panels,
+      hiddenGroups: Array.isArray(stored.hiddenGroups)
+        ? stored.hiddenGroups.filter((name): name is string => typeof name === "string")
+        : [],
       chrome: typeof stored.chrome === "boolean" ? stored.chrome : DEFAULTS.chrome,
       quad: typeof stored.quad === "boolean" ? stored.quad : DEFAULTS.quad,
       shot: {

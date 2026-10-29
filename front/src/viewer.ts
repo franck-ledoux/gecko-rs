@@ -71,6 +71,7 @@ import {
   buildMesh,
   buildSurfaces,
   edgeSegments,
+  groupColour,
   meshEdges,
   type SurfaceData,
   type SurfaceOptions,
@@ -396,6 +397,17 @@ export class Viewer {
   centre: [number, number, number] = [0, 0, 0];
 
   private nodes: Mesh[] = [];
+  /**
+   * Which groups are being looked at, as the two halves of a mask, and
+   * whether the cells in no group at all are drawn.
+   *
+   * View state, like the theme: the kernel holds which cells are in which
+   * group and knows nothing about what anybody is looking at. Everything
+   * is shown until somebody says otherwise, so a model with no groups in
+   * it behaves exactly as it did before there were any.
+   */
+  private shown = { lo: 0xffffffff, hi: 0xffffffff, ungrouped: true };
+
   /** The blocking's wireframe: ribbons rather than GL lines, because a GL
    *  line is one pixel wide whatever anybody asks for. */
   private wire?: GreasedLineMesh;
@@ -784,6 +796,47 @@ export class Viewer {
     this.rebuildMesh();
   }
 
+  /**
+   * Look at these groups and no others.
+   *
+   * A cell is drawn when it is in **any** shown group — one cell can be
+   * in several, and hiding one of them should not take the cell with it.
+   */
+  showGroups(lo: number, hi: number, ungrouped: boolean) {
+    this.shown = { lo: lo >>> 0, hi: hi >>> 0, ungrouped };
+    this.rebuildEdges();
+    this.rebuildSurface("faces");
+    this.rebuildSurface("blocks");
+    this.paintNodes();
+  }
+
+  /** What is being looked at, for a test and for the drawer. */
+  get groupsShown(): { lo: number; hi: number; ungrouped: boolean } {
+    return { ...this.shown };
+  }
+
+  /** Is a cell with this mask one of the ones being looked at? */
+  private inShown(lo: number, hi: number): boolean {
+    if (lo === 0 && hi === 0) return this.shown.ungrouped;
+    return (lo & this.shown.lo) !== 0 || (hi & this.shown.hi) !== 0;
+  }
+
+  /** Which quadrangles of the view are in a group being looked at. */
+  private quadsShown(): ReadonlySet<number> | undefined {
+    const view = this.view;
+    if (!view) return undefined;
+    // Nothing filtered is the usual case, and it costs nothing to say so:
+    // the surface builder then draws every quadrangle as it always did.
+    if (this.shown.lo === 0xffffffff && this.shown.hi === 0xffffffff && this.shown.ungrouped) {
+      return undefined;
+    }
+    const kept = new Set<number>();
+    for (let q = 0; q < view.quadFaces.length; q++) {
+      if (this.inShown(view.quadGroupsLo[q], view.quadGroupsHi[q])) kept.add(q);
+    }
+    return kept;
+  }
+
   /** What the viewer is currently told to look like. */
   get display(): ViewPrefs {
     return structuredClone(this.prefs);
@@ -805,6 +858,7 @@ export class Viewer {
       internal: group === "faces" ? this.prefs.faces.internal : true,
       highlight: new Map(this.picked.map((p, n) => [p.face, n === 0 ? ANCHOR : MATE])),
       classified: this.classifiedFaces(),
+      only: this.quadsShown(),
     };
   }
 
@@ -1200,6 +1254,12 @@ export class Viewer {
     };
   }
 
+  /** How many handles are **drawn**, as against how many exist: hiding a
+   *  group leaves its handles in the scene and takes them off the screen. */
+  get nodesDrawn(): number {
+    return this.nodes.filter((m) => m.isVisible).length;
+  }
+
   /** What the geometry's three groups currently hold, for a test to read. */
   geomCount(group: GeomGroup): number {
     return this.geomMeshes[group].length;
@@ -1353,6 +1413,10 @@ export class Viewer {
         return this.classColour(this.view.nodeClassDim[index], 0, plain);
       case "id":
         return Color3.FromHexString(colourForId(this.view.names[index], FAMILY.nodes));
+      case "group":
+        return Color3.FromHexString(
+          groupColour(this.view.nodeGroupsLo[index], this.view.nodeGroupsHi[index]) ?? plain,
+        );
       default:
         return Color3.FromHexString(plain);
     }
@@ -1631,6 +1695,12 @@ export class Viewer {
       edgeClassTag: Int32Array.from(view.edgeClassTag),
       quadClassDim: Int32Array.from(view.quadClassDim),
       quadClassTag: Int32Array.from(view.quadClassTag),
+      nodeGroupsLo: Uint32Array.from(view.nodeGroupsLo),
+      nodeGroupsHi: Uint32Array.from(view.nodeGroupsHi),
+      edgeGroupsLo: Uint32Array.from(view.edgeGroupsLo),
+      edgeGroupsHi: Uint32Array.from(view.edgeGroupsHi),
+      quadGroupsLo: Uint32Array.from(view.quadGroupsLo),
+      quadGroupsHi: Uint32Array.from(view.quadGroupsHi),
     };
     this.nodes.forEach((m) => m.dispose());
     this.nodes = [];
@@ -1772,14 +1842,27 @@ export class Viewer {
     const plain = this.prefs.theme.edges;
     const how = this.prefs.edges.colouring;
     const out: Color4[][] = [];
-    for (let e = 0; e < (this.view?.edgeNames.length ?? 0); e++) {
+    for (const e of this.edgesShown()) {
       const colour =
         how === "class"
           ? this.classColour(this.view!.edgeClassDim[e], 0, plain)
           : how === "id"
             ? Color3.FromHexString(colourForId(this.view!.edgeNames[e], FAMILY.edges))
-            : Color3.FromHexString(plain);
+            : how === "group"
+              ? Color3.FromHexString(
+                  groupColour(this.view!.edgeGroupsLo[e], this.view!.edgeGroupsHi[e]) ?? plain,
+                )
+              : Color3.FromHexString(plain);
       out.push([colour.toColor4(1), colour.toColor4(1)]);
+    }
+    return out;
+  }
+
+  /** Which edges of the view are in a group being looked at, in order. */
+  private edgesShown(): number[] {
+    const out: number[] = [];
+    for (let e = 0; e < (this.view?.edgeNames.length ?? 0); e++) {
+      if (this.inShown(this.view!.edgeGroupsLo[e], this.view!.edgeGroupsHi[e])) out.push(e);
     }
     return out;
   }
@@ -1787,7 +1870,8 @@ export class Viewer {
   private segments(): Vector3[][] {
     const flat = edgeSegments(this.view!, this.prefs.edges.shrink);
     const out: Vector3[][] = [];
-    for (let s = 0; s < flat.length; s += 6) {
+    for (const e of this.edgesShown()) {
+      const s = e * 6;
       out.push([
         new Vector3(flat[s], flat[s + 1], flat[s + 2]),
         new Vector3(flat[s + 3], flat[s + 4], flat[s + 5]),
@@ -1804,7 +1888,9 @@ export class Viewer {
       // Hidden means hidden from the pointer too. A handle you cannot see
       // but can still grab is worse than one you can see: the model moves
       // and nothing on screen says what you took hold of.
-      mesh.isVisible = this.prefs.nodes.visible;
+      mesh.isVisible =
+        this.prefs.nodes.visible &&
+        this.inShown(this.view?.nodeGroupsLo[n] ?? 0, this.view?.nodeGroupsHi[n] ?? 0);
     });
   }
 
@@ -1932,7 +2018,7 @@ export class Viewer {
     const flat = edgeSegments(this.view, this.prefs.edges.shrink);
     let best: number | null = null;
     let nearest = Infinity;
-    for (let e = 0; e < this.view.edgeNames.length; e++) {
+    for (const e of this.edgesShown()) {
       const at = e * 6;
       const from = new Vector3(flat[at], flat[at + 1], flat[at + 2]);
       const to = new Vector3(flat[at + 3], flat[at + 4], flat[at + 5]);

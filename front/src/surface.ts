@@ -31,7 +31,7 @@ import { colourForId, FAMILY, hexToRgb } from "./palette";
  * blocking has taken hold of the geometry, and that is a question with
  * four answers.
  */
-export type Colouring = "uniform" | "id" | "class";
+export type Colouring = "uniform" | "id" | "class" | "group";
 
 export interface SurfaceOptions {
   /** Which name picks the colour, and which centre the shrink pulls towards. */
@@ -56,6 +56,10 @@ export interface SurfaceOptions {
    *  what you have picked is more urgent than where it belongs. Only
    *  meaningful for `by: "face"` — a block is classified on nothing. */
   classified?: ReadonlyMap<number, string>;
+  /** Which quadrangles to draw at all, by their index in the view. Left
+   *  out, every one of them is drawn; given, it is how a filter on the
+   *  groups keeps the rest of the model off the screen. */
+  only?: ReadonlySet<number>;
 }
 
 export interface SurfaceData {
@@ -90,9 +94,33 @@ const EMPTY: SurfaceData = {
  * blocks arrives twice, once per block, and it is still one face — and then
  * only the shared ones or only the unshared ones, as asked.
  */
-export function quadsToDraw(view: View, by: "face" | "block", internal: boolean): number[] {
+/**
+ * The colour of a cell by the groups it is in: the **lowest** group it
+ * belongs to, since a cell can be in several and a pixel can only be one
+ * colour. A cell in no group at all gets none, and falls back to whatever
+ * its group's own colour is.
+ *
+ * The mask arrives in two halves because the browser has no `u64` worth
+ * using; `lo` is bits 0 to 31 and `hi` the rest.
+ */
+export function groupColour(lo: number, hi: number): string | undefined {
+  if (lo === 0 && hi === 0) return undefined;
+  // `Math.log2` of the lowest set bit, which for a power of two is exact.
+  const bit = lo !== 0 ? Math.log2(lo & -lo) : 32 + Math.log2(hi & -hi);
+  return colourForId(bit, FAMILY.groups);
+}
+
+export function quadsToDraw(
+  view: View,
+  by: "face" | "block",
+  internal: boolean,
+  only?: ReadonlySet<number>,
+): number[] {
   const count = view.quadFaces.length;
-  if (by === "block") return Array.from({ length: count }, (_, q) => q);
+  const wanted = (q: number) => only === undefined || only.has(q);
+  if (by === "block") {
+    return Array.from({ length: count }, (_, q) => q).filter(wanted);
+  }
 
   const sides = new Map<number, number>();
   for (const name of view.quadFaces) sides.set(name, (sides.get(name) ?? 0) + 1);
@@ -102,6 +130,7 @@ export function quadsToDraw(view: View, by: "face" | "block", internal: boolean)
   for (let q = 0; q < count; q++) {
     const name = view.quadFaces[q];
     if (taken.has(name)) continue;
+    if (!wanted(q)) continue;
     if (!internal && (sides.get(name) ?? 0) > 1) continue;
     taken.add(name);
     kept.push(q);
@@ -148,7 +177,7 @@ export function buildSurfaces(
   view: View,
   options: SurfaceOptions,
 ): { block: number; data: SurfaceData }[] {
-  const kept = quadsToDraw(view, options.by, options.internal);
+  const kept = quadsToDraw(view, options.by, options.internal, options.only);
   const byBlock = new Map<number, number[]>();
   for (const q of kept) {
     const block = view.quadBlocks[q];
@@ -162,7 +191,7 @@ export function buildSurfaces(
 }
 
 export function buildSurface(view: View, options: SurfaceOptions): SurfaceData {
-  return buildFrom(view, options, quadsToDraw(view, options.by, options.internal));
+  return buildFrom(view, options, quadsToDraw(view, options.by, options.internal, options.only));
 }
 
 function buildFrom(view: View, options: SurfaceOptions, kept: number[]): SurfaceData {
@@ -189,13 +218,19 @@ function buildFrom(view: View, options: SurfaceOptions, kept: number[]): Surface
       options.colouring === "class" && options.by === "face"
         ? options.classified?.get(view.quadFaces[q])
         : undefined;
+    const grouped =
+      options.colouring === "group"
+        ? groupColour(view.quadGroupsLo[q], view.quadGroupsHi[q])
+        : undefined;
     const rgb = picked
       ? hexToRgb(picked)
       : classified
         ? hexToRgb(classified)
-        : options.colouring === "id"
-          ? hexToRgb(colourForId(name, dimension))
-          : uniform;
+        : grouped
+          ? hexToRgb(grouped)
+          : options.colouring === "id"
+            ? hexToRgb(colourForId(name, dimension))
+            : uniform;
 
     for (let k = 0; k < 4; k++) {
       const p = view.quads[q * 4 + k] * 3;

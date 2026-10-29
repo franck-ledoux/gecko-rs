@@ -243,6 +243,29 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
         let o = options(lua, &a, 0)?;
         Ok(with(json!({ "op": "mesh" }), &o, &["segments"]))
     })?;
+    // --- groups of blocks -------------------------------------------------
+    command(lua, &gecko, &kernel, "group", |lua, a| {
+        let o = options(lua, &a, 2)?;
+        Ok(with(
+            json!({ "op": "group", "name": at(lua, &a, 0)?, "blocks": list(lua, &a, 1)? }),
+            &o,
+            &["written"],
+        ))
+    })?;
+    command(lua, &gecko, &kernel, "ungroup", |lua, a| {
+        Ok(json!({
+            "op": "ungroup",
+            "name": at(lua, &a, 0)?,
+            "blocks": list(lua, &a, 1)?,
+        }))
+    })?;
+    command(lua, &gecko, &kernel, "rename_group", |lua, a| {
+        Ok(json!({ "op": "rename_group", "name": at(lua, &a, 0)?, "to": at(lua, &a, 1)? }))
+    })?;
+    command(lua, &gecko, &kernel, "drop_group", |lua, a| {
+        Ok(json!({ "op": "drop_group", "name": at(lua, &a, 0)? }))
+    })?;
+
     command(lua, &gecko, &kernel, "reset", |_, _| {
         Ok(json!({ "op": "reset" }))
     })?;
@@ -260,7 +283,7 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
 
     // --- the reads -------------------------------------------------------
     for kind in [
-        "nodes", "edges", "faces", "blocks", "stats", "entities", "script", "vtk",
+        "nodes", "edges", "faces", "blocks", "groups", "stats", "entities", "script", "vtk",
     ] {
         read(lua, &gecko, &kernel, kind, kind)?;
     }

@@ -27,6 +27,7 @@ import {
   SWATCHES,
   type Theme,
 } from "./theme";
+import { colourForId, FAMILY } from "./palette";
 import { actionFor, helpRows, type Action } from "./shortcuts";
 import { capture, fileName, save, saveBlob, shotName } from "./capture";
 import { Interpreter, type Answer } from "./lua";
@@ -58,6 +59,8 @@ async function boot() {
   let message = "";
   /** The components that are patches, as the last redraw found them. */
   let patchIds = new Set<number>();
+  /** The cells in no group at all, under a name no group can have. */
+  const UNGROUPED = "";
   const isPatch = (pick: { block: number }) => patchIds.has(pick.block);
   let revision = 0;
   /** The geometry this tab has drawn. Compared with the kernel's, which is
@@ -78,6 +81,9 @@ async function boot() {
 
   // --- how it looks: viewer state, never the kernel's ---------------------
   const prefs = loadPrefs();
+  /** Which groups are not being looked at. Kept in the preferences by
+   *  name, and here as a set because every cell is tested against it. */
+  const hiddenGroups = new Set<string>(prefs.hiddenGroups);
   viewer.applyPrefs(prefs);
   viewer.axes.setVisible(prefs.axes);
   /** The split, in the three places that have to agree about it. */
@@ -157,12 +163,11 @@ async function boot() {
     `<input type="range" min="${min}" max="1" step="0.01" value="${value}"` +
     ` data-test="${test}" /></label>`;
 
-  /** The uniform / id / class radios for one group, on one line.
+  /** The uniform / id / class / group radios for one group of cells.
    *
-   *  Short words on purpose: three of them have to fit across a drawer
-   *  246 pixels wide, and "by its classification" took a line of its own.
-   *  The help card carries the long form, and so does the legend under
-   *  it. */
+   *  Short words on purpose: four of them have to fit across a drawer 246
+   *  pixels wide, and "by its classification" took a line of its own. The
+   *  help card carries the long form, and so does the legend under it. */
   const modes = (group: string, now: Colouring, classified: boolean) => {
     const one = (value: Colouring, text: string) =>
       `<label class="mode"><input type="radio" name="${group}-mode" value="${value}"` +
@@ -170,6 +175,10 @@ async function boot() {
     return (
       `<div class="row modes">${one("uniform", "uniform")}${one("id", "id")}` +
       (classified ? one("class", "class") : "") +
+      // Every kind of cell can be coloured by the groups it is in: a
+      // block is in them, and a face, an edge or a node is in whatever
+      // the blocks around it are in.
+      one("group", "group") +
       `</div>`
     );
   };
@@ -203,7 +212,7 @@ async function boot() {
 
   /** Hook up one group's radios. */
   function wireModes(group: string, set: (value: Colouring) => void) {
-    for (const value of ["uniform", "id", "class"] as Colouring[]) {
+    for (const value of ["uniform", "id", "class", "group"] as Colouring[]) {
       const input = $("layers").querySelector<HTMLInputElement>(
         `[data-test="${group}-${value}"]`,
       );
@@ -354,6 +363,138 @@ async function boot() {
   drawGeometryLayers();
 
   /**
+   * The groups of blocks: one row each, and what can be done to them.
+   *
+   * The rows come from the **kernel**, which holds the groups; what is
+   * kept here is only which of them are being looked at, since that is a
+   * question about this window and not about the model.
+   *
+   * A row is a show box, the group's name — editable in place, because
+   * renaming is the one thing anybody does to a group twice — how many
+   * blocks are in it, and three buttons: put the selected blocks in, take
+   * them out, and drop the group. `written` says whether it reaches the
+   * mesh, which is a property of the group and so lives on its row.
+   */
+  function drawGroups() {
+    const all = kernel.groups();
+    const ungrouped = `<label class="check"><input type="checkbox" data-test="ungrouped-visible"` +
+      `${hiddenGroups.has(UNGROUPED) ? "" : " checked"} /> blocks in no group</label>`;
+    $("groups").innerHTML =
+      (all.length === 0
+        ? `<p class="aside">No groups yet. Select faces — each click names its block —` +
+          ` and make one below.</p>`
+        : all
+            .map((g) => {
+              const shown = !hiddenGroups.has(g.name);
+              return (
+                `<div class="group" data-group="${escaped(g.name)}">` +
+                `<label class="check"><input type="checkbox" data-test="group-shown"` +
+                `${shown ? " checked" : ""} /></label>` +
+                `<i class="swatch" style="background:${colourForId(g.bit, FAMILY.groups)}"></i>` +
+                `<input class="group-name" data-test="group-name" value="${escaped(g.name)}" />` +
+                `<span class="digest" data-test="group-blocks">${g.blocks}</span>` +
+                `<label class="check written"><input type="checkbox" data-test="group-written"` +
+                `${g.written ? " checked" : ""} title="written into the mesh" /></label>` +
+                `<button data-test="group-add" title="put the selected blocks in">+</button>` +
+                `<button data-test="group-take" title="take the selected blocks out">−</button>` +
+                `<button data-test="group-drop" title="forget this group">×</button>` +
+                `</div>`
+              );
+            })
+            .join("")) +
+      ungrouped +
+      `<div class="row new-group">` +
+      `<input id="group-new" data-test="group-new" placeholder="new group" />` +
+      `<button id="group-make" data-test="group-make">from selection</button>` +
+      `</div>`;
+
+    for (const row of $("groups").querySelectorAll<HTMLElement>(".group")) {
+      const name = row.dataset.group ?? "";
+      const find = (test: string) => row.querySelector<HTMLInputElement>(`[data-test="${test}"]`)!;
+      find("group-shown").addEventListener("change", (e) => {
+        const shown = (e.target as HTMLInputElement).checked;
+        if (shown) hiddenGroups.delete(name);
+        else hiddenGroups.add(name);
+        prefs.hiddenGroups = [...hiddenGroups];
+        savePrefs(prefs);
+        lookAtGroups();
+      });
+      find("group-name").addEventListener("change", (e) => {
+        const to = (e.target as HTMLInputElement).value.trim();
+        if (to && to !== name) void send({ op: "rename_group", name, to }).then(after);
+        else drawGroups();
+      });
+      find("group-written").addEventListener("change", (e) => {
+        // Said by making the group again under its own name: the command
+        // is create-or-find, and `written` is one of the things it says.
+        const written = (e.target as HTMLInputElement).checked;
+        void send({ op: "group", name, blocks: [], written }).then(after);
+      });
+      find("group-add").addEventListener("click", () => {
+        void send({ op: "group", name, blocks: chosenBlocks() }).then(after);
+      });
+      find("group-take").addEventListener("click", () => {
+        void send({ op: "ungroup", name, blocks: chosenBlocks() }).then(after);
+      });
+      find("group-drop").addEventListener("click", () => {
+        void send({ op: "drop_group", name }).then(after);
+      });
+    }
+    $("groups")
+      .querySelector<HTMLInputElement>('[data-test="ungrouped-visible"]')!
+      .addEventListener("change", (e) => {
+        if ((e.target as HTMLInputElement).checked) hiddenGroups.delete(UNGROUPED);
+        else hiddenGroups.add(UNGROUPED);
+        prefs.hiddenGroups = [...hiddenGroups];
+        savePrefs(prefs);
+        lookAtGroups();
+      });
+    $("group-make").addEventListener("click", () => {
+      const field = $<HTMLInputElement>("group-new");
+      const name = field.value.trim();
+      if (!name) {
+        say("a group has to be called something — type a name first");
+        return;
+      }
+      field.value = "";
+      void send({ op: "group", name, blocks: chosenBlocks() }).then(after);
+    });
+  }
+
+  /** What a command to the groups does afterwards: say how it went, and
+   *  draw the rows and the scene again. */
+  function after(reply: { message: string }) {
+    message = reply.message;
+    $("status").textContent = message;
+    void refresh();
+  }
+
+  /** The blocks of the current selection, by name and without repeats: a
+   *  click picks a face **and** the block it was on, and two faces of one
+   *  block are one block. */
+  function chosenBlocks(): number[] {
+    const seen = new Set<number>(viewer.selection.map((p) => p.block));
+    return [...seen].filter((b) => !patchIds.has(b));
+  }
+
+  /** Tell the viewer which groups are being looked at. */
+  function lookAtGroups() {
+    let lo = 0;
+    let hi = 0;
+    for (const g of kernel.groups()) {
+      if (hiddenGroups.has(g.name)) continue;
+      if (g.bit < 32) lo |= 1 << g.bit;
+      else hi |= 1 << (g.bit - 32);
+    }
+    viewer.showGroups(lo >>> 0, hi >>> 0, !hiddenGroups.has(UNGROUPED));
+  }
+
+  /** `&` and `"` in a name, which a group may have and markup may not. */
+  function escaped(text: string): string {
+    return text.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  }
+
+  /**
    * The mesh's skin, drawn on the same three terms as a geometry group.
    *
    * A band of its own rather than one more cell group: a mesh is not part
@@ -391,6 +532,7 @@ async function boot() {
     });
   }
   drawMeshLayer();
+  drawGroups();
 
   /** The panel is generated from the theme's own keys, so a colour added later
    *  needs no new markup. */
@@ -1614,6 +1756,11 @@ async function boot() {
     // rather than once a pick: it is a short list, and both the verbs and
     // the status line want it.
     patchIds = new Set(stats.patches === 0 ? [] : kernel.patches());
+    // The groups, and what of them is being looked at. The rows come from
+    // the kernel every redraw: a cut, a weld or an undo changes how many
+    // blocks are in a group without anybody touching the band.
+    drawGroups();
+    lookAtGroups();
     // Only when it has actually changed. The geometry is the big buffer and
     // the one that never moves; re-sending it because a node was dragged is
     // the whole cost this generation number exists to avoid.
@@ -2194,6 +2341,8 @@ async function boot() {
     origins: () => viewer.origins(),
     /** What is actually on screen for a node: the shape of its handle
      *  and the colour that handle is wearing. */
+    nodesDrawn: () => viewer.nodesDrawn,
+    groupsShown: () => viewer.groupsShown,
     nodeShape: (name: number) => viewer.nodeShape(name),
     /** How big the drawing settings actually made things. */
     handleAcross: (name: number) => viewer.handleAcross(name),

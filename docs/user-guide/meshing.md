@@ -102,6 +102,22 @@ SCALARS block int 1
 LOOKUP_TABLE default
 ```
 
+## Groups in the file
+
+Every hexahedron already carries the name of the block it came out of, as
+the cell variable `block`. A [group](display.md#groups-of-blocks) marked
+**written** adds one more: a variable of its own, named after the group,
+holding 1 for the cells of the blocks in it and 0 for the rest.
+
+One variable per group rather than one number per cell, because a block can
+be in several groups at once and a single column could only name one of
+them. A group that is not marked written stays out of the file: it is a way
+of looking at part of the model, not part of the model.
+
+A name VTK will not take — a space, a slash — is written with underscores
+in their place. The name in the band is the one you typed; the one in the
+file is the one a reader can parse.
+
 ## What it does not do yet
 
 Nothing fits a curved edge onto its curve *between* its ends: a classified

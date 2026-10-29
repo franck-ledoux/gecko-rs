@@ -3053,6 +3053,86 @@ test("the mesh is written out as VTK", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test("blocks are put in a group, which colours and filters what is drawn", async ({ page }) => {
+  // Groups are of blocks; a face, an edge or a node is in a group when a
+  // block it bounds is. Nothing here touches the geometry: a group is a
+  // part of the model somebody named.
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+  await openDrawer(page);
+  await openSection(page, "groups");
+  await expect(page.locator("#groups")).toContainText("No groups yet");
+
+  // One block picked — a click names the face and the block it was on —
+  // and a group made from it.
+  await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    const s = g.surface("faces");
+    g.choose({ face: s.faces[0], block: s.blocks[0] });
+  });
+  await page.locator("[data-test=group-new]").fill("fluid");
+  await page.locator("[data-test=group-make]").click();
+  await expect(page.locator("[data-test=group-name]")).toHaveValue("fluid");
+  await expect(page.locator("[data-test=group-blocks]")).toHaveText("1");
+  await expect(page.locator("#status")).toContainText("fluid");
+
+  // Everything is still drawn: a group is made shown.
+  // What is **drawn**, not what exists: hiding a group leaves the handles
+  // in the scene and takes them off the screen.
+  const drawn = () =>
+    page.evaluate(() => ({
+      nodes: (window as any).__gecko.nodesDrawn(),
+      edges: (window as any).__gecko.counts().edges,
+      quads: (window as any).__gecko.surface("faces")?.faces.length ?? 0,
+    }));
+  const whole = await drawn();
+  expect(whole.nodes).toBe(16);
+
+  // Hide it and the half of the model that is in it goes — the cells of
+  // the other block stay, which is what says the filter is per cell and
+  // not per scene.
+  await page.locator("[data-test=group-shown]").uncheck();
+  await expect
+    .poll(async () => (await drawn()).nodes)
+    .toBeLessThan(whole.nodes);
+  const left = await drawn();
+  expect(left.nodes).toBe(8);
+  expect(left.edges).toBe(12);
+  expect(left.quads).toBe(6);
+
+  // Hide the blocks in no group as well and nothing is left.
+  await page.locator("[data-test=ungrouped-visible]").uncheck();
+  await expect.poll(async () => (await drawn()).nodes).toBe(0);
+
+  // Both back, and the colouring by group gives the group's own colour to
+  // its cells and the plain one to the rest.
+  await page.locator("[data-test=group-shown]").check();
+  await page.locator("[data-test=ungrouped-visible]").check();
+  await expect.poll(async () => (await drawn()).nodes).toBe(16);
+  await openGroup(page, "nodes");
+  await page.locator('[data-test="nodes-group"]').check();
+  const tints = await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    return g.names().map((n: number) => g.nodeTint(n));
+  });
+  expect(new Set(tints as string[]).size).toBe(2);
+
+  // Renamed in place, which is the one thing anybody does to a group
+  // twice.
+  await page.locator("[data-test=group-name]").fill("water");
+  await page.locator("[data-test=group-name]").press("Enter");
+  await expect(page.locator("#status")).toContainText("water");
+
+  // And dropped: the group goes, the blocks do not.
+  await page.locator("[data-test=group-drop]").click();
+  await expect(page.locator("#groups")).toContainText("No groups yet");
+  await expect(page.locator("[data-test=blocks]")).toHaveText("2");
+  expect(errors).toEqual([]);
+});
+
 test("the handles can be put away, and the pointer lets them be", async ({ page }) => {
   // Edges, faces and blocks could each be hidden; the handles could not,
   // on the grounds that they are what you grab. A hundred blocks is a

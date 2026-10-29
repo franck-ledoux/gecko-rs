@@ -89,11 +89,14 @@ shorthand for a call with one table.
 | `gecko.mesh{ segments = 10 }`, `gecko.clear_mesh()`          |                                                                      |
 | `gecko.export_vtk(path)`                                     | meshes first if it has to                                            |
 | `gecko.undo()`, `gecko.set_history(n)`                       |                                                                      |
+| `gecko.group(name, blocks, { written = true })`              | put blocks in a group, making it if there is none of that name       |
+| `gecko.ungroup(name, blocks)`                                | take them out; the group stays                                       |
+| `gecko.rename_group(name, to)`, `gecko.drop_group(name)`     |                                                                      |
 | `gecko.reset()`                                              | an empty session: no blocks, no geometry, no mesh — one step of undo |
 
 And the reads, each a plain table: `nodes()`, `edges()`, `faces()`,
-`blocks()`, `entities()`, `stats()`, `sheet(edge)`, `chord(face, block)`,
-`vtk()`, `script()`.
+`blocks()`, `groups()`, `entities()`, `stats()`, `sheet(edge)`,
+`chord(face, block)`, `vtk()`, `script()`.
 
 ```lua
 for _, node in ipairs(gecko.nodes()) do

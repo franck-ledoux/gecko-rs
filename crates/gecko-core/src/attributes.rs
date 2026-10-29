@@ -76,6 +76,49 @@ pub struct FaceTag {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BlockTag {
     pub id: CellId,
+    /// Which groups this block is in, one bit each — so sixty-four of
+    /// them, and the session refuses the sixty-fifth rather than losing
+    /// one quietly.
+    ///
+    /// On the block and nowhere else. A face, an edge or a node is in a
+    /// group when a block it bounds is, which is **computed** rather than
+    /// marked: one place to write means no second place to forget. And
+    /// the map carries this through its own operations for free — see the
+    /// merge and the split below, which is the whole reason it lives here
+    /// rather than in a list of members kept beside the model.
+    pub groups: u64,
+}
+
+impl AttributeUpdate for BlockTag {
+    /// Two blocks becoming one. The first name survives, as everywhere
+    /// else; the groups are **both** blocks', because a block that is
+    /// part of the fluid and part of the pipe is part of both however it
+    /// came to be one block.
+    fn merge(a: Self, b: Self) -> Result<Self, AttributeError> {
+        Ok(Self {
+            id: a.id,
+            groups: a.groups | b.groups,
+        })
+    }
+
+    /// One block becoming two. The name is cleared on both sides, since
+    /// neither half may go on claiming it; the groups are **copied**, for
+    /// the reason a node's classification is: cutting a block of the fluid
+    /// in two gives two blocks of the fluid, and a cut is not a statement
+    /// about what anything is part of.
+    fn split(a: Self) -> Result<(Self, Self), AttributeError> {
+        let halved = Self {
+            id: CellId::NONE,
+            groups: a.groups,
+        };
+        Ok((halved, halved))
+    }
+}
+
+impl AttributeBind for BlockTag {
+    type StorageType = AttrSparseVec<Self>;
+    type IdentifierType = VolumeIdType;
+    const BIND_POLICY: OrbitPolicy = OrbitPolicy::Volume;
 }
 
 impl AttributeUpdate for NodeTag {
@@ -196,28 +239,3 @@ impl AttributeBind for EdgeTag {
     type IdentifierType = EdgeIdType;
     const BIND_POLICY: OrbitPolicy = OrbitPolicy::Edge;
 }
-
-/// The same rule for the cells that have only a name: keep the first on a
-/// merge, clear both on a split.
-macro_rules! named_cell {
-    ($t:ty, $id:ty, $policy:expr) => {
-        impl AttributeUpdate for $t {
-            fn merge(a: Self, _b: Self) -> Result<Self, AttributeError> {
-                Ok(a)
-            }
-
-            fn split(_: Self) -> Result<(Self, Self), AttributeError> {
-                let fresh = Self { id: CellId::NONE };
-                Ok((fresh, fresh))
-            }
-        }
-
-        impl AttributeBind for $t {
-            type StorageType = AttrSparseVec<Self>;
-            type IdentifierType = $id;
-            const BIND_POLICY: OrbitPolicy = $policy;
-        }
-    };
-}
-
-named_cell!(BlockTag, VolumeIdType, OrbitPolicy::Volume);

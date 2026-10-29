@@ -127,20 +127,21 @@ fn the_encoding_is_the_layout_a_client_will_decode() {
     let bytes = s.view_buffer();
 
     assert_eq!(&bytes[0..4], &MAGIC);
-    assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 6);
+    assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 7);
     let n_nodes = u32::from_le_bytes(bytes[32..36].try_into().unwrap()) as usize;
     let n_edges = u32::from_le_bytes(bytes[36..40].try_into().unwrap()) as usize;
     let n_quads = u32::from_le_bytes(bytes[40..44].try_into().unwrap()) as usize;
     assert_eq!((n_nodes, n_edges, n_quads), (8, 12, 6));
     // Exact length, or a client's typed-array views walk off the end.
-    // Per node: three f32 of position, one u32 of name, and three more for
-    // what it is classified on and whether it is frozen. Per edge: two
-    // node indices, a name, and two for its classification. Per
-    // quadrangle: four corner indices, the two names it is coloured by,
-    // and two for its own classification.
+    // Per node: three f32 of position, one u32 of name, three more for
+    // what it is classified on and whether it is frozen, and two for the
+    // groups it is in. Per edge: two node indices, a name, two for its
+    // classification and two for its groups. Per quadrangle: four corner
+    // indices, the two names it is coloured by, two for its own
+    // classification and two for its groups.
     assert_eq!(
         bytes.len(),
-        HEADER + n_nodes * 28 + n_edges * 20 + n_quads * 32
+        HEADER + n_nodes * 36 + n_edges * 28 + n_quads * 40
     );
     // Everything after the f64 centre is 4-aligned, so a client can make typed
     // array views over these bytes without copying them first.

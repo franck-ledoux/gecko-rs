@@ -16,11 +16,11 @@ use std::collections::HashMap;
 
 pub const MAGIC: [u8; 4] = *b"GKB1";
 /// 2 added the node names, 3 the surface, 4 the edge names, 5 what each
-/// node and edge is classified on, 6 the same for each face. The field is
-/// bumped rather than quietly reused: three independent decoders read this,
-/// and a silent change is how one of them ends up reading the wrong field
-/// as a coordinate.
-pub const VERSION: u32 = 6;
+/// node and edge is classified on, 6 the same for each face, 7 which
+/// groups each cell is in. The field is bumped rather than quietly reused:
+/// three independent decoders read this, and a silent change is how one of
+/// them ends up reading the wrong field as a coordinate.
+pub const VERSION: u32 = 7;
 /// magic + version + f64 centre + three counts.
 pub const HEADER: usize = 44;
 
@@ -70,6 +70,17 @@ pub struct ViewBuffer {
     /// shared by two blocks appears twice and says the same thing twice.
     pub quad_class_dim: Vec<i32>,
     pub quad_class_tag: Vec<i32>,
+    /// Which groups each cell is in, one bit per group — **in two halves**,
+    /// low thirty-two bits and high. A `u64` would be one number and the
+    /// browser has none: `BigInt64Array` exists, but testing a bit of it
+    /// costs an allocation apiece, and the page tests these per cell per
+    /// frame while a selection is being filtered.
+    pub node_groups_lo: Vec<u32>,
+    pub node_groups_hi: Vec<u32>,
+    pub edge_groups_lo: Vec<u32>,
+    pub edge_groups_hi: Vec<u32>,
+    pub quad_groups_lo: Vec<u32>,
+    pub quad_groups_hi: Vec<u32>,
 }
 
 impl ViewBuffer {
@@ -88,6 +99,11 @@ impl ViewBuffer {
     /// with nothing in it; then there is nothing to disagree with and the
     /// centre is chosen here.
     pub fn of(blocking: &Blocking, origin: Option<[f64; 3]>) -> ViewBuffer {
+        // Which groups each cell is in, by the blocks that bound it. Empty
+        // and free when nobody has made a group, which is most sessions.
+        let masks = blocking.group_masks();
+        let halves = |mask: u64| ((mask & 0xffff_ffff) as u32, (mask >> 32) as u32);
+
         let nodes: Vec<_> = blocking.map().iter_vertices().collect();
         let mut at: HashMap<u32, u32> = HashMap::with_capacity(nodes.len());
         let mut world = Vec::with_capacity(nodes.len() * 3);
@@ -95,6 +111,8 @@ impl ViewBuffer {
         let mut node_class_dim = Vec::with_capacity(nodes.len());
         let mut node_class_tag = Vec::with_capacity(nodes.len());
         let mut node_frozen = Vec::with_capacity(nodes.len());
+        let mut node_groups_lo = Vec::with_capacity(nodes.len());
+        let mut node_groups_hi = Vec::with_capacity(nodes.len());
         for (i, n) in nodes.iter().enumerate() {
             at.insert(*n, i as u32);
             world.extend_from_slice(&blocking.position(*n).unwrap_or([0.0; 3]));
@@ -103,6 +121,9 @@ impl ViewBuffer {
             node_class_dim.push(tag.on.map(|on| on.dim as i32).unwrap_or(-1));
             node_class_tag.push(tag.on.map(|on| on.tag).unwrap_or(0));
             node_frozen.push(u32::from(tag.frozen));
+            let (lo, hi) = halves(masks.nodes.get(n).copied().unwrap_or(0));
+            node_groups_lo.push(lo);
+            node_groups_hi.push(hi);
         }
 
         let centre = origin.unwrap_or_else(|| stable_centre(&world, None));
@@ -125,6 +146,8 @@ impl ViewBuffer {
         let mut edge_names = Vec::new();
         let mut edge_class_dim = Vec::new();
         let mut edge_class_tag = Vec::new();
+        let mut edge_groups_lo = Vec::new();
+        let mut edge_groups_hi = Vec::new();
         for e in blocking.map().iter_edges() {
             let (a, b) = blocking.edge_endpoints(e);
             if let (Some(a), Some(b)) = (at.get(&a), at.get(&b)) {
@@ -133,6 +156,9 @@ impl ViewBuffer {
                 edge_names.push(tag.id.get().unwrap_or(u32::MAX));
                 edge_class_dim.push(tag.on.map(|on| on.dim as i32).unwrap_or(-1));
                 edge_class_tag.push(tag.on.map(|on| on.tag).unwrap_or(0));
+                let (lo, hi) = halves(masks.edges.get(&e).copied().unwrap_or(0));
+                edge_groups_lo.push(lo);
+                edge_groups_hi.push(hi);
             }
         }
 
@@ -142,6 +168,8 @@ impl ViewBuffer {
         let mut quad_blocks = Vec::with_capacity(sides.len());
         let mut quad_class_dim = Vec::with_capacity(sides.len());
         let mut quad_class_tag = Vec::with_capacity(sides.len());
+        let mut quad_groups_lo = Vec::with_capacity(sides.len());
+        let mut quad_groups_hi = Vec::with_capacity(sides.len());
         for side in &sides {
             // All four or none: a quadrangle missing a corner is not a smaller
             // quadrangle, it is a hole in the index arithmetic downstream.
@@ -158,6 +186,12 @@ impl ViewBuffer {
             quad_blocks.push(side.block.get().unwrap_or(u32::MAX));
             quad_class_dim.push(side.on.map(|on| on.dim as i32).unwrap_or(-1));
             quad_class_tag.push(side.on.map(|on| on.tag).unwrap_or(0));
+            // A quadrangle is a (face, block) pair, so its groups are that
+            // block's — and the face's own mask, which is the union over
+            // both sides, would say the far block's too.
+            let (lo, hi) = halves(blocking.block_groups(side.block));
+            quad_groups_lo.push(lo);
+            quad_groups_hi.push(hi);
         }
 
         ViewBuffer {
@@ -176,6 +210,12 @@ impl ViewBuffer {
             edge_class_tag,
             quad_class_dim,
             quad_class_tag,
+            node_groups_lo,
+            node_groups_hi,
+            edge_groups_lo,
+            edge_groups_hi,
+            quad_groups_lo,
+            quad_groups_hi,
         }
     }
 
@@ -198,7 +238,10 @@ impl ViewBuffer {
                     + self.edge_class_dim.len()
                     + self.edge_class_tag.len()
                     + self.quad_class_dim.len()
-                    + self.quad_class_tag.len())
+                    + self.quad_class_tag.len()
+                    + self.node_groups_lo.len() * 2
+                    + self.edge_groups_lo.len() * 2
+                    + self.quad_groups_lo.len() * 2)
                     * 4,
         );
         out.extend_from_slice(&MAGIC);
@@ -254,6 +297,20 @@ impl ViewBuffer {
         }
         for x in &self.quad_class_tag {
             out.extend_from_slice(&x.to_le_bytes());
+        }
+        // And the groups last, for the same reason the classification came
+        // last before them.
+        for list in [
+            &self.node_groups_lo,
+            &self.node_groups_hi,
+            &self.edge_groups_lo,
+            &self.edge_groups_hi,
+            &self.quad_groups_lo,
+            &self.quad_groups_hi,
+        ] {
+            for x in list {
+                out.extend_from_slice(&x.to_le_bytes());
+            }
         }
         out
     }

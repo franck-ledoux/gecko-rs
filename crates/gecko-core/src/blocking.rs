@@ -148,6 +148,15 @@ pub struct Census {
     pub frozen: usize,
 }
 
+/// Which groups each cell of a blocking is in, by the blocks that bound
+/// it. Empty where nothing is grouped, which is the usual case.
+#[derive(Clone, Debug, Default)]
+pub struct GroupMasks {
+    pub nodes: HashMap<VertexIdType, u64>,
+    pub edges: HashMap<EdgeIdType, u64>,
+    pub faces: HashMap<FaceIdType, u64>,
+}
+
 /// A cell asking where it belongs, and everything there is to answer with.
 ///
 /// The last two fields are what makes the difference between a rule that
@@ -606,6 +615,101 @@ impl Blocking {
         out
     }
 
+    /// Every block of the structure, by name. Patches are left out: an
+    /// open sheet of faces is not a block and cannot be in a group.
+    pub fn blocks(&self) -> Vec<CellId> {
+        let mut out: Vec<CellId> = self
+            .map
+            .iter_volumes()
+            .filter(|v| self.is_block(*v))
+            .map(|v| self.block_tag(v).id)
+            .filter(|id| id.is_some())
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// Which groups a block is in.
+    pub fn block_groups(&self, block: CellId) -> u64 {
+        self.block_by_id(block)
+            .map(|v| self.block_tag(v).groups)
+            .unwrap_or(0)
+    }
+
+    /// Put blocks into a group, or take them out of it.
+    ///
+    /// By bit rather than by name: what a group is **called** is no
+    /// business of a block structure, which holds the model and not the
+    /// words for it.
+    pub fn set_in_group(
+        &mut self,
+        blocks: &[CellId],
+        bit: u8,
+        inside: bool,
+    ) -> Result<(), BlockingError> {
+        let mask = 1u64 << bit;
+        let found: Vec<VolumeIdType> = blocks
+            .iter()
+            .map(|b| {
+                self.block_by_id(*b)
+                    .filter(|v| self.is_block(*v))
+                    .ok_or(BlockingError::NoSuchBlock(*b))
+            })
+            .collect::<Result<_, _>>()?;
+        for volume in found {
+            let tag = self.block_tag(volume);
+            let groups = if inside {
+                tag.groups | mask
+            } else {
+                tag.groups & !mask
+            };
+            self.map.write_attribute(volume, BlockTag { groups, ..tag });
+        }
+        Ok(())
+    }
+
+    /// Take one group away from every block that is in it.
+    pub fn drop_group(&mut self, bit: u8) {
+        let mask = !(1u64 << bit);
+        let blocks: Vec<VolumeIdType> = self.map.iter_volumes().collect();
+        for volume in blocks {
+            let tag = self.block_tag(volume);
+            if tag.groups & !mask != 0 {
+                self.map.write_attribute(
+                    volume,
+                    BlockTag {
+                        groups: tag.groups & mask,
+                        ..tag
+                    },
+                );
+            }
+        }
+    }
+
+    /// Which groups every cell of the blocking is in.
+    ///
+    /// A face, an edge or a node is in a group when a block it bounds is
+    /// in it — the transitivity, computed here rather than marked on each
+    /// cell, so that there is one place to write and none to forget. The
+    /// walk skips blocks that are in no group at all, which is every block
+    /// of a model where nobody has made one: the whole pass then costs a
+    /// look at each volume's tag.
+    pub fn group_masks(&self) -> GroupMasks {
+        let mut out = GroupMasks::default();
+        for volume in self.map.iter_volumes() {
+            let groups = self.block_tag(volume).groups;
+            if groups == 0 {
+                continue;
+            }
+            for dart in self.map.orbit(OrbitPolicy::Volume, volume as DartIdType) {
+                *out.nodes.entry(self.map.vertex_id(dart)).or_default() |= groups;
+                *out.edges.entry(self.map.edge_id(dart)).or_default() |= groups;
+                *out.faces.entry(self.map.face_id(dart)).or_default() |= groups;
+            }
+        }
+        out
+    }
+
     /// Is this node joined by an edge to one that is on the geometry?
     ///
     /// What tells a node made **into** a classified model from one that
@@ -998,7 +1102,8 @@ impl Blocking {
             .collect();
         for b in blocks {
             let id = self.names[3].next_cell();
-            self.map.write_attribute(b, BlockTag { id });
+            let tag = self.block_tag(b);
+            self.map.write_attribute(b, BlockTag { id, ..tag });
         }
     }
 
@@ -2397,6 +2502,11 @@ impl Blocking {
             return Err(BlockingError::BrokenSheet(edge));
         }
 
+        // What the block being cut is part of, read before it becomes two.
+        // The halves keep it: cutting a block of the fluid in two gives
+        // two blocks of the fluid.
+        let groups = self.block_tag(self.map.volume_id(ring[order[0]].0)).groups;
+
         let n = order.len();
         let base = self.map.allocate_used_darts(n * 2);
         let (a, b): (Vec<_>, Vec<_>) = (
@@ -2423,11 +2533,17 @@ impl Blocking {
             self.map.set_beta::<3>(b[k], a[k]);
         }
 
-        // Both halves are new blocks; neither inherits the name.
+        // Both halves are new blocks; neither inherits the name, and both
+        // inherit the groups.
         for &d in &[a[0], b[0]] {
             let block = self.map.volume_id(d);
-            self.map
-                .write_attribute(block, BlockTag { id: CellId::NONE });
+            self.map.write_attribute(
+                block,
+                BlockTag {
+                    id: CellId::NONE,
+                    groups,
+                },
+            );
         }
         Ok(())
     }

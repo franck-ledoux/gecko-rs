@@ -339,6 +339,31 @@ kbd {
 
 #help-hint { margin: 12px 0 0; font-size: 11px; color: var(--dim); text-align: center; }
 
+/* A group of blocks: a show box, its colour, its name, how many blocks,
+   whether it is written out, and three things to do to it. The name is the
+   part that stretches, since it is the part somebody typed. */
+.group { display: flex; align-items: center; gap: 5px; margin: 4px 0; }
+.group .check { margin: 0; }
+.group .swatch { width: 10px; height: 10px; flex: none; border-radius: 3px;
+                 border: 1px solid var(--line); }
+.group .group-name { flex: 1 1 auto; min-width: 0; font-size: 12px; padding: 2px 4px;
+                     color: var(--fg); background: transparent;
+                     border: 1px solid transparent; border-radius: 4px; }
+.group .group-name:hover, .group .group-name:focus { border-color: var(--line); }
+.group .digest { flex: none; }
+.group button { flex: none; width: 20px; height: 20px; padding: 0; font-size: 12px;
+                line-height: 1; color: var(--dim); background: transparent;
+                border: 1px solid var(--line); border-radius: 4px; cursor: pointer; }
+.group button:hover { color: var(--fg); }
+.row.new-group { display: flex; gap: 5px; margin-top: 8px; }
+.row.new-group input { flex: 1 1 auto; min-width: 0; font-size: 12px; padding: 2px 4px;
+                       color: var(--fg); background: transparent;
+                       border: 1px solid var(--line); border-radius: 4px; }
+.row.new-group button { flex: none; font-size: 11px; padding: 2px 6px; color: var(--dim);
+                        background: transparent; border: 1px solid var(--line);
+                        border-radius: 4px; cursor: pointer; }
+.row.new-group button:hover { color: var(--fg); }
+
 /* The classification legend: a swatch and what it says. */
 #help-legend { display: grid; gap: 5px; }
 #help-legend .key { display: flex; align-items: center; gap: 8px;

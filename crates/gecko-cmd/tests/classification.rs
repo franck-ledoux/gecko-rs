@@ -513,11 +513,13 @@ fn the_classification_travels_in_the_view_buffer() {
     assert!(v.quad_class_dim.iter().all(|d| *d == 2));
 
     // Exact length, or a client's typed-array views walk off the end. Per
-    // node three more words than before, per edge two, per quadrangle two.
+    // node three more words than before the classification travelled and
+    // two more again for its groups, per edge two and two, per quadrangle
+    // two and two.
     let bytes = s.view_buffer();
     assert_eq!(
         bytes.len(),
-        gecko_cmd::view::HEADER + 8 * 28 + 12 * 20 + 6 * 32
+        gecko_cmd::view::HEADER + 8 * 36 + 12 * 28 + 6 * 40
     );
 }
 

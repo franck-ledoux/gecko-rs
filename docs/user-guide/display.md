@@ -62,6 +62,7 @@ or neither.
 | **uniform** | one colour for the whole group, taken from its swatch                                                                                        |
 | **id**      | a colour per cell, from its stable name                                                                                                      |
 | **class**   | a colour per kind of geometric entity, by what the cell is classified on — see [Classification](classification.md#reading-it-off-the-screen) |
+| **group**   | a colour per [group](#groups-of-blocks) it is in — the lowest one, since a cell can be in several and a pixel can be one colour              |
 | **opacity** | transparency, per group                                                                                                                      |
 | **shrink**  | pull each cell towards its own centre                                                                                                        |
 
@@ -154,6 +155,35 @@ Nothing is internal until two blocks are [glued](gluing.md).
     has nothing to separate them and the wireframe disappears into the
     surface. The surfaces are drawn with a small depth bias to stop that. If
     you ever see edges flicker in and out, that bias is the thing to look at.
+
+## Groups of blocks
+
+A **group** is a part of the model you have named: a set of blocks, and with
+them everything they are made of — a face, an edge or a node is in a group
+when a block it bounds is. A block can be in several groups at once, and
+sixty-four groups is the most a session holds.
+
+The **Groups** band has a row each: a show box, the group's colour, its
+name, how many blocks are in it, whether it is written into the mesh, and
+three buttons — put the selected blocks in, take them out, forget the
+group. Select faces first; a click names the face *and* the block it was
+on, so picking faces is how you pick blocks.
+
+|               |                                                                                                                              |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| **show**      | draw the cells of this group. A cell in several groups is drawn while any of them is shown                                   |
+| **name**      | type over it to rename; the name is what a script says and what the mesh variable is called                                  |
+| **written**   | write this group into the mesh as a variable of its own. Off makes it a way of looking at part of the model and nothing more |
+| **+** / **−** | put the selected blocks in, or take them out. The group stays either way                                                     |
+| **×**         | forget the group. The blocks stay                                                                                            |
+
+The last row, **blocks in no group**, is how you hide everything that has
+not been named yet.
+
+Forgetting a group frees its colour for the next one. Cutting a block in two
+leaves both halves in whatever it was in, and welding two blocks gives the
+result both their groups: the model carries this through its own operations
+rather than having it recomputed, so there is nothing to go stale.
 
 ## The mesh
 

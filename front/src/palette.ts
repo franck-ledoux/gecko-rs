@@ -49,6 +49,9 @@ export const FAMILY = {
   corners: 4,
   curves: 5,
   surfaces: 6,
+  /** A group's own hue, by its bit. Its own family so that group 3 and
+   *  block 3 are never the same colour. */
+  groups: 7,
 } as const;
 
 /**

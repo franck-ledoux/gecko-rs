@@ -3,6 +3,29 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
+## Unreleased
+
+- **Groups of blocks.** A group is a part of the model you have named: a set
+  of blocks, and with them everything they are made of — a face, an edge or
+  a node is in a group when a block it bounds is. A block can be in several
+  at once, and sixty-four groups is what a session holds.
+- A **Groups** band in the display drawer has a row each: show it, rename it
+  in place, put the selected blocks in or take them out, and forget it. The
+  last row is the blocks in no group, which is how the unnamed part of a
+  model is hidden.
+- A group marked **written** becomes a variable of the mesh: one cell array
+  per group, named after it, holding 1 for the cells of its blocks. One
+  array per group rather than one number per cell, because a cell can be in
+  several and a column of numbers could only name one.
+- A fourth **colouring**, `group`, for nodes, edges, faces and blocks alike.
+- Membership lives on the block itself, one bit each, so the model carries
+  it: cutting a block in two leaves both halves in whatever it was in, and
+  welding two gives the result both their groups. Nothing recomputes it and
+  nothing can go stale.
+- `gecko.group`, `gecko.ungroup`, `gecko.rename_group`, `gecko.drop_group`
+  and the `gecko.groups()` read, so a session's groups are in its script and
+  replay with it.
+
 ## 0.1.3
 
 Three things from a session with it, and one of them took the measuring.

@@ -67,6 +67,13 @@ impl WasmSession {
         env!("CARGO_PKG_VERSION").to_string()
     }
 
+    /// The groups of blocks: what each is called, whether it is written
+    /// into the mesh, and how many blocks are in it.
+    #[wasm_bindgen(js_name = groupsJson)]
+    pub fn groups_json(&self) -> String {
+        self.inner.groups_json()
+    }
+
     /// Which of the blocking's components are patches rather than blocks.
     #[wasm_bindgen(js_name = patchesJson)]
     pub fn patches_json(&self) -> String {
