@@ -309,13 +309,13 @@ test("faces and blocks are drawn, coloured and faded from the panel", async ({ p
   // One colour per face. Six faces, six colours — and the kernel was not
   // asked anything: these come off the names already in the view buffer.
   await openGroup(page, "faces");
-  await page.locator("[data-test=faces-id]").check();
+  await page.locator("[data-test=faces-mode]").selectOption("id");
   expect(await surface("faces")).toMatchObject({ quads: 6, colours: 6 });
 
   // Both at once, each with its own colouring and its own transparency.
   await page.locator("[data-test=blocks-visible]").check();
   await openGroup(page, "blocks");
-  await page.locator("[data-test=blocks-uniform]").check();
+  await page.locator("[data-test=blocks-mode]").selectOption("uniform");
   expect(await surface("blocks")).toMatchObject({ quads: 6, colours: 1 });
   expect(await surface("faces")).toMatchObject({ colours: 6 });
 
@@ -385,7 +385,7 @@ test("the display settings survive a reload", async ({ page }) => {
   await openDrawer(page);
   await page.locator("[data-test=blocks-visible]").check();
   await openGroup(page, "faces");
-  await page.locator("[data-test=faces-id]").check();
+  await page.locator("[data-test=faces-mode]").selectOption("id");
   await openGroup(page, "edges");
   await page.locator("[data-test=edges-shrink]").fill("0.8");
   await page.waitForFunction(
@@ -403,7 +403,7 @@ test("the display settings survive a reload", async ({ page }) => {
   expect(kept.edges.shrink).toBe(0.8);
   // And the controls came back showing it.
   await expect(page.locator("[data-test=blocks-visible]")).toBeChecked();
-  await expect(page.locator("[data-test=faces-id]")).toBeChecked();
+  await expect(page.locator("[data-test=faces-mode]")).toHaveValue("id");
   expect(errors).toEqual([]);
 });
 
@@ -1220,7 +1220,7 @@ test("the nearer of two translucent blocks is the one you see", async ({ page })
   // the same cell wins the blend from either side.
   const errors = await boot(page);
   await openGroup(page, "faces");
-  await page.locator("[data-test=faces-id]").check();
+  await page.locator("[data-test=faces-mode]").selectOption("id");
   await page.locator("[data-test=faces-alpha]").fill("0.6");
 
   // One cube, seen from +x: this is what that cube looks like on its own.
@@ -1490,10 +1490,10 @@ test("each geometry group is hidden, coloured and faded on its own", async ({ pa
 
   // One colour for the lot, then one per tag.
   await openGroup(page, "curves");
-  await page.locator('[data-test="curves-uniform"]').check();
+  await page.locator('[data-test="curves-mode"]').selectOption("uniform");
   const uniform = await look("curves", 11);
   expect((await look("curves", 12))!.colour).toBe(uniform!.colour);
-  await page.locator('[data-test="curves-id"]').check();
+  await page.locator('[data-test="curves-mode"]').selectOption("id");
   expect((await look("curves", 12))!.colour).not.toBe((await look("curves", 11))!.colour);
 
   // And opacity, per group.
@@ -1992,7 +1992,7 @@ test("a frozen node is a cube, and still wears what the colouring says", async (
   // the drawer, the way somebody would.
   await openDrawer(page);
   await openGroup(page, "nodes");
-  await page.locator('[data-test="nodes-class"]').check();
+  await page.locator('[data-test="nodes-mode"]').selectOption("class");
   const theme = (await page.evaluate(() => (window as any).__gecko.theme())) as {
     onCorner: string;
   };
@@ -2220,19 +2220,26 @@ test("nodes, edges and faces each take three colourings", async ({ page }) => {
   await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
   await openDrawer(page);
 
-  // Three for each of the three, and only two for blocks — a block is
-  // classified on nothing, a surface mesh having no volumes to put it on.
+  // Four for each of the three — one colour, its id, its classification,
+  // its group — and three for blocks: a block is classified on nothing, a
+  // surface mesh having no volumes to put it on.
+  const offered = (group: string) =>
+    page.locator(`[data-test="${group}-mode"] option`).evaluateAll((all) =>
+      all.map((o) => (o as HTMLOptionElement).value),
+    );
   for (const group of ["nodes", "edges", "faces"]) {
-    for (const mode of ["uniform", "id", "class"]) {
-      await expect(page.locator(`[data-test="${group}-${mode}"]`)).toHaveCount(1);
-    }
+    expect(await offered(group)).toEqual(["uniform", "id", "class", "group"]);
   }
-  await expect(page.locator('[data-test="blocks-class"]')).toHaveCount(0);
+  expect(await offered("blocks")).toEqual(["uniform", "id", "group"]);
+  // And the geometry's own groups, which are classified on nothing and in
+  // no group: a geometry is the thing a blocking is put on, not part of
+  // it.
+  expect(await offered("curves")).toEqual(["uniform", "id"]);
 
   // And choosing one is remembered, like every other thing about how it
   // looks.
   await openGroup(page, "nodes");
-  await page.locator('[data-test="nodes-class"]').check();
+  await page.locator('[data-test="nodes-mode"]').selectOption("class");
   expect(await page.evaluate(() => (window as any).__gecko.prefs().nodes.colouring)).toBe("class");
   await page.reload();
   await page.waitForSelector("body[data-ready='1']");
@@ -3113,7 +3120,7 @@ test("blocks are put in a group, which colours and filters what is drawn", async
   await page.locator("[data-test=ungrouped-visible]").check();
   await expect.poll(async () => (await drawn()).nodes).toBe(16);
   await openGroup(page, "nodes");
-  await page.locator('[data-test="nodes-group"]').check();
+  await page.locator('[data-test="nodes-mode"]').selectOption("group");
   const tints = await page.evaluate(() => {
     const g = (window as any).__gecko;
     return g.names().map((n: number) => g.nodeTint(n));
@@ -3248,7 +3255,7 @@ test("the mesh has a band of its own, and can be put away", async ({ page }) => 
   // separate.
   await openSection(page, "mesh");
   expect(await page.locator("#mesh-layer details").count()).toBe(0);
-  await expect(page.locator('[data-test="mesh-uniform"]')).toBeVisible();
+  await expect(page.locator('[data-test="mesh-mode"]')).toBeVisible();
   await expect(page.locator('[data-test="mesh-alpha"]')).toBeVisible();
   await page.locator("[data-test=mesh-visible]").uncheck();
   // Still meshed — the kernel holds it — but nothing of it is drawn.

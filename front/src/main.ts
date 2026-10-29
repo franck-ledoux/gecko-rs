@@ -163,23 +163,36 @@ async function boot() {
     `<input type="range" min="${min}" max="1" step="0.01" value="${value}"` +
     ` data-test="${test}" /></label>`;
 
-  /** The uniform / id / class / group radios for one group of cells.
+  /**
+   * How a group of cells is coloured: one line, one list.
    *
-   *  Short words on purpose: four of them have to fit across a drawer 246
-   *  pixels wide, and "by its classification" took a line of its own. The
-   *  help card carries the long form, and so does the legend under it. */
-  const modes = (group: string, now: Colouring, classified: boolean) => {
+   * A list rather than a row of radios. There are four of them for a cell
+   * of the blocking — uniform, id, classification, group — and four
+   * radios do not fit across a drawer 246 pixels wide; wrapping them onto
+   * a second line made every group of the drawer taller for the sake of
+   * one word. A list is one line whatever is in it, and it can hold the
+   * long words rather than the short ones.
+   */
+  const modes = (
+    group: string,
+    now: Colouring,
+    /** `class` is for cells of the **blocking**, which are classified on
+     *  the geometry; `group` for cells of the blocking too, since a group
+     *  is of blocks. The geometry's own groups and the mesh take
+     *  neither: a geometry is the thing a blocking is put on, not part of
+     *  it, and a mesh is what the blocking was for. */
+    offers: { classified?: boolean; grouped?: boolean } = {},
+  ) => {
     const one = (value: Colouring, text: string) =>
-      `<label class="mode"><input type="radio" name="${group}-mode" value="${value}"` +
-      ` data-test="${group}-${value}"${now === value ? " checked" : ""} />${text}</label>`;
+      `<option value="${value}"${now === value ? " selected" : ""}>${text}</option>`;
     return (
-      `<div class="row modes">${one("uniform", "uniform")}${one("id", "id")}` +
-      (classified ? one("class", "class") : "") +
-      // Every kind of cell can be coloured by the groups it is in: a
-      // block is in them, and a face, an edge or a node is in whatever
-      // the blocks around it are in.
-      one("group", "group") +
-      `</div>`
+      `<label class="row modes"><span>colour by</span>` +
+      `<select data-test="${group}-mode">` +
+      one("uniform", "one colour") +
+      one("id", "its id") +
+      (offers.classified ? one("class", "its classification") : "") +
+      (offers.grouped ? one("group", "its group") : "") +
+      `</select></label>`
     );
   };
 
@@ -210,17 +223,13 @@ async function boot() {
         `${show ? " checked" : ""} /></label>`) +
     `<span class="name">${label}</span>${inside}</summary>`;
 
-  /** Hook up one group's radios. */
+  /** Hook up one group's colour list. */
   function wireModes(group: string, set: (value: Colouring) => void) {
-    for (const value of ["uniform", "id", "class", "group"] as Colouring[]) {
-      const input = $("layers").querySelector<HTMLInputElement>(
-        `[data-test="${group}-${value}"]`,
-      );
-      input?.addEventListener("change", () => {
-        set(value);
-        redraw();
-      });
-    }
+    const list = $("layers").querySelector<HTMLSelectElement>(`[data-test="${group}-mode"]`);
+    list?.addEventListener("change", () => {
+      set(list.value as Colouring);
+      redraw();
+    });
   }
 
   function drawLayers() {
@@ -235,7 +244,7 @@ async function boot() {
             digest(layer.colouring, layer.alpha, layer.visible),
             layer.visible,
           ) +
-          modes(group, layer.colouring, classified) +
+          modes(group, layer.colouring, { classified, grouped: true }) +
           slider(`${group}-alpha`, "opacity", 0, layer.alpha) +
           slider(`${group}-shrink`, "shrink", 0.1, layer.shrink) +
           (group === "faces"
@@ -254,7 +263,7 @@ async function boot() {
         digest(prefs.edges.colouring, undefined, prefs.edges.visible),
         prefs.edges.visible,
       ) +
-      modes("edges", prefs.edges.colouring, true) +
+      modes("edges", prefs.edges.colouring, { classified: true, grouped: true }) +
       slider("edges-shrink", "shrink", 0.1, prefs.edges.shrink) +
       `</details>` +
       summary(
@@ -264,7 +273,7 @@ async function boot() {
         digest(prefs.nodes.colouring, undefined, prefs.nodes.visible),
         prefs.nodes.visible,
       ) +
-      modes("nodes", prefs.nodes.colouring, true) +
+      modes("nodes", prefs.nodes.colouring, { classified: true, grouped: true }) +
       `</details>`;
 
     for (const { group } of LAYERS) {
@@ -334,7 +343,7 @@ async function boot() {
           digest(layer.colouring, layer.alpha, layer.visible),
           layer.visible,
         ) +
-        modes(group, layer.colouring, false) +
+        modes(group, layer.colouring) +
         slider(`${group}-alpha`, "opacity", 0, layer.alpha) +
         `</details>`
       );
@@ -347,12 +356,13 @@ async function boot() {
         prefs[group].visible = (e.target as HTMLInputElement).checked;
         redraw();
       });
-      for (const value of ["uniform", "id"] as Colouring[]) {
-        find(`${group}-${value}`).addEventListener("change", () => {
-          prefs[group].colouring = value;
-          redraw();
-        });
-      }
+      const list = $("geometry").querySelector<HTMLSelectElement>(
+        `[data-test="${group}-mode"]`,
+      )!;
+      list.addEventListener("change", () => {
+        prefs[group].colouring = list.value as Colouring;
+        redraw();
+      });
       find(`${group}-alpha`).addEventListener("input", (e) => {
         prefs[group].alpha = Number((e.target as HTMLInputElement).value);
         redraw();
@@ -523,7 +533,7 @@ async function boot() {
     $("mesh-layer").innerHTML =
       `<label class="check"><input type="checkbox" data-test="mesh-visible"` +
       `${layer.visible ? " checked" : ""} /> show</label>` +
-      modes("mesh", layer.colouring, false) +
+      modes("mesh", layer.colouring) +
       slider("mesh-alpha", "opacity", 0, layer.alpha);
 
     const find = (test: string) =>
@@ -532,12 +542,11 @@ async function boot() {
       prefs.mesh.visible = (e.target as HTMLInputElement).checked;
       redraw();
     });
-    for (const value of ["uniform", "id"] as Colouring[]) {
-      find(`mesh-${value}`).addEventListener("change", () => {
-        prefs.mesh.colouring = value;
-        redraw();
-      });
-    }
+    const list = $("mesh-layer").querySelector<HTMLSelectElement>('[data-test="mesh-mode"]')!;
+    list.addEventListener("change", () => {
+      prefs.mesh.colouring = list.value as Colouring;
+      redraw();
+    });
     find("mesh-alpha").addEventListener("input", (e) => {
       prefs.mesh.alpha = Number((e.target as HTMLInputElement).value);
       redraw();

@@ -163,12 +163,16 @@ button { font: inherit; }
 .layer > summary .check { margin: 0; display: flex; }
 .layer > summary input { margin: 0; }
 .layer .check, .layer .row { margin: 3px 0; }
-/* Four of them — uniform, id, class, group — and the drawer is 246 pixels
-   wide. They wrap onto a second line rather than running off the edge:
-   dropping one of the words would cost more than a line costs. */
-.layer .row.modes { gap: 2px 0; flex-wrap: wrap; }
-.mode { flex: none; color: var(--dim); font-size: 12px; white-space: nowrap; }
-.mode + .mode { margin-left: 9px; }
+/* How a group is coloured: a label and a list on one line. A list rather
+   than a row of radios — there are four of them for a cell of the
+   blocking, and four radios do not fit across a 246-pixel drawer. */
+.layer .row.modes { align-items: center; gap: 6px; font-size: 12px; color: var(--dim); }
+.layer .row.modes select {
+  flex: 1 1 0; width: 0; min-width: 0; font: inherit; padding: 2px 4px;
+  color: var(--fg); background: var(--line); border: 1px solid var(--line);
+  border-radius: 5px; cursor: pointer;
+}
+.layer .row.modes select:hover { color: var(--accent); }
 .mode input { margin-right: 2px; }
 .slider { display: flex; align-items: center; gap: 8px; margin: 4px 0;
           font-size: 12px; color: var(--dim); }

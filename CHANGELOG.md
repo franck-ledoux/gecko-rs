@@ -17,7 +17,9 @@ the day a tag was cut.
   per group, named after it, holding 1 for the cells of its blocks. One
   array per group rather than one number per cell, because a cell can be in
   several and a column of numbers could only name one.
-- A fourth **colouring**, `group`, for nodes, edges, faces and blocks alike.
+- A fourth **colouring**, `group`, for nodes, edges, faces and blocks alike —
+  and the colourings are a list now rather than a row of boxes, since four
+  of them do not fit across the drawer.
 - Membership lives on the block itself, one bit each, so the model carries
   it: cutting a block in two leaves both halves in whatever it was in, and
   welding two gives the result both their groups. Nothing recomputes it and

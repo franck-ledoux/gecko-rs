@@ -34,7 +34,7 @@ The drawer's **Colours** section has one swatch per colourable thing —
 background, nodes, edges, faces, blocks, and the geometry's corners, curves
 and surfaces — and two presets, **Dark** and
 **Light** (`D` swaps them). The face and block swatches are what the
-**uniform** mode below uses; in **id** mode they are ignored. The light
+**one colour** mode below uses; coloured by id they are ignored. The light
 preset
 exists because "change the background" nearly always means "I need a light one
 for a figure", and setting three swatches by hand to get there is tedious.
@@ -56,17 +56,23 @@ no new markup.
 Each has its own box in the panel, and the two are independent: either, both,
 or neither.
 
-| Control     | What it does                                                                                                                                 |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| **show**    | draw this group at all                                                                                                                       |
-| **uniform** | one colour for the whole group, taken from its swatch                                                                                        |
-| **id**      | a colour per cell, from its stable name                                                                                                      |
-| **class**   | a colour per kind of geometric entity, by what the cell is classified on — see [Classification](classification.md#reading-it-off-the-screen) |
-| **group**   | a colour per [group](#groups-of-blocks) it is in — the lowest one, since a cell can be in several and a pixel can be one colour              |
-| **opacity** | transparency, per group                                                                                                                      |
-| **shrink**  | pull each cell towards its own centre                                                                                                        |
+| Control                           | What it does                                                                                                                                 |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| **show**                          | draw this group at all                                                                                                                       |
+| **colour by: one colour**         | one colour for the whole group, taken from its swatch                                                                                        |
+| **colour by: its id**             | a colour per cell, from its stable name                                                                                                      |
+| **colour by: its classification** | a colour per kind of geometric entity, by what the cell is classified on — see [Classification](classification.md#reading-it-off-the-screen) |
+| **colour by: its group**          | a colour per [group](#groups-of-blocks) it is in — the lowest one, since a cell can be in several and a pixel can be one colour              |
+| **opacity**                       | transparency, per group                                                                                                                      |
+| **shrink**                        | pull each cell towards its own centre                                                                                                        |
 
-Nodes and edges take the three colourings too, and both can be **hidden**:
+**colour by** is one list rather than a row of boxes: there are four ways to
+colour a cell of the blocking, and four boxes do not fit across the drawer.
+The geometry's own groups and the mesh offer the first two only — a
+geometry is the thing a blocking is put on rather than part of it, and a
+mesh is what the blocking was for.
+
+Nodes and edges take the same colourings, and both can be **hidden**:
 a hundred blocks is a thousand handles over the model, and looking at the
 shape of a blocking is a thing you do as much as working on it. Hidden
 handles are out of the pointer's way as well — they cannot be clicked,
@@ -200,7 +206,7 @@ drawn as.
 ## The geometry
 
 The three groups a [geometry](geometry.md) is drawn in — surfaces, curves and
-corners — take the same **show / uniform / id / opacity** controls, and no
+corners — take the same **show / colour by / opacity** controls, and no
 shrink. They are on that page rather than this one, because what the tags mean
 is the larger half of the story.
 
