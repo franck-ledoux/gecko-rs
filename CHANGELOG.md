@@ -3,7 +3,9 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
-## Unreleased
+## 0.1.4
+
+Groups of blocks, and the display settled around them.
 
 - **Groups of blocks.** A group is a part of the model you have named: a set
   of blocks, and with them everything they are made of — a face, an edge or
@@ -24,6 +26,11 @@ the day a tag was cut.
   it: cutting a block in two leaves both halves in whatever it was in, and
   welding two gives the result both their groups. Nothing recomputes it and
   nothing can go stale.
+- **The local server says how long its answers may be kept**: never for the
+  page, for ever for the bundle under `assets/`, whose name carries a hash
+  of what is in it. A reply with no freshness on it is one a browser may
+  guess about, and guessing wrong here means rebuilding and seeing the
+  application you had before.
 - A cell is drawn when **any** block it bounds is drawn, so hiding a group
   leaves the blocks beside it whole — a shared edge stays because the block
   still on screen still needs it.

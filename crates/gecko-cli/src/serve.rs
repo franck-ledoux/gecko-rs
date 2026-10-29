@@ -63,13 +63,32 @@ struct At {
 /// itself for anything else.
 ///
 /// Separate from [`start`] so it can be driven without a port, a runtime
-/// or a browser. Nothing drives it yet: this file is still the part of the
-/// binary that no test reaches, which the coverage page says out loud.
+/// or a browser, which is how `tests/serving.rs` asks it things.
 pub fn router(files: Arc<Files>) -> Router {
     Router::new()
         .route("/file", get(read).put(write))
         .fallback(get(page))
         .with_state(files)
+}
+
+/// How long an answer may be kept.
+///
+/// The page itself: **not at all**. A build gives it the same name every
+/// time, so a browser that kept the last one would go on showing the last
+/// application — and without this it may, since a reply with no freshness
+/// on it is one a browser is allowed to guess about. The port changes from
+/// run to run, which usually hides this; usually is not a guarantee, and
+/// "I rebuilt and nothing changed" is a bad half-hour.
+///
+/// Everything under `assets/`: **for ever**. Those names carry a hash of
+/// what is in them, so a name that is still being asked for is a file that
+/// has not changed.
+fn cacheable(path: &str) -> &'static str {
+    if path.starts_with("assets/") {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-cache"
+    }
 }
 
 /// The header that says this answer came from **here**.
@@ -106,12 +125,15 @@ async fn page(uri: Uri) -> Response {
     let path = if path.is_empty() { "index.html" } else { path };
     match FRONT.get_file(path) {
         Some(f) => (
-            [(
-                header::CONTENT_TYPE,
-                mime_guess::from_path(path)
-                    .first_or_octet_stream()
-                    .to_string(),
-            )],
+            [
+                (
+                    header::CONTENT_TYPE,
+                    mime_guess::from_path(path)
+                        .first_or_octet_stream()
+                        .to_string(),
+                ),
+                (header::CACHE_CONTROL, cacheable(path).to_string()),
+            ],
             f.contents(),
         )
             .into_response(),
