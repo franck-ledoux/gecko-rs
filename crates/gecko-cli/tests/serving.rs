@@ -19,8 +19,29 @@ async fn ask(path: &str) -> axum::http::Response<Body> {
         .expect("an answer")
 }
 
+async fn body(answer: axum::http::Response<Body>) -> String {
+    String::from_utf8(
+        http_body_util::BodyExt::collect(answer.into_body())
+            .await
+            .expect("a body")
+            .to_bytes()
+            .to_vec(),
+    )
+    .expect("utf-8")
+}
+
+// Whether the page is baked into this test binary depends on whether
+// `front/dist` existed when it was compiled, and that is a build product:
+// `cargo test` on its own does not make it. So the next two tests cover one
+// world each and ask which one they are in, rather than one of them failing
+// wherever the other one belongs.
+
 #[tokio::test]
 async fn the_page_is_never_kept_and_its_assets_are_kept_for_ever() {
+    if !serve::has_page() {
+        return; // The test below is the one with something to say here.
+    }
+
     // The half-hour this is here to save: rebuild, reload, and see the
     // application you had before. A build gives the page the same name
     // every time, so a browser allowed to guess about freshness may go on
@@ -39,14 +60,7 @@ async fn the_page_is_never_kept_and_its_assets_are_kept_for_ever() {
     // Whatever the bundle is called today — the name carries a hash of
     // its contents — the page says so, so the test reads it from there
     // rather than guessing.
-    let html = String::from_utf8(
-        http_body_util::BodyExt::collect(page.into_body())
-            .await
-            .expect("the page")
-            .to_bytes()
-            .to_vec(),
-    )
-    .expect("utf-8");
+    let html = body(page).await;
     let at = html.find("assets/").expect("the page loads a bundle");
     let name: String = html[at..]
         .chars()
@@ -62,6 +76,28 @@ async fn the_page_is_never_kept_and_its_assets_are_kept_for_ever() {
             .and_then(|v| v.to_str().ok()),
         Some("public, max-age=31536000, immutable"),
     );
+}
+
+#[tokio::test]
+async fn a_binary_without_the_page_says_how_to_build_it() {
+    if serve::has_page() {
+        return; // The test above is the one with something to say here.
+    }
+
+    // Not a 404: the page is not missing, it was never built. The two
+    // read the same in a browser's console and mean entirely different
+    // things to whoever has to fix it, so the answer carries the three
+    // commands that build it.
+    let page = ask("/").await;
+    assert_eq!(page.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(
+        body(page).await.contains("./build-wasm.sh"),
+        "the refusal says how to build the page"
+    );
+
+    // Anything else is a plain 404, because that one really is missing.
+    let asset = ask("/assets/whatever.js").await;
+    assert_eq!(asset.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

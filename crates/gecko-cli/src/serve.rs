@@ -26,6 +26,16 @@ const NO_BUNDLE: &str = "The page was not built into this binary. Build it with:
                          cd front && npm install && npm run build\n\n\
                          then build gecko again.";
 
+/// Whether the page was built into this binary.
+///
+/// `front/dist` is a build product, so a binary compiled without it — a
+/// `cargo test` on a fresh clone, say — carries no page, and the server
+/// answers for `/` with [`StatusCode::SERVICE_UNAVAILABLE`] and the
+/// instructions above rather than with the application.
+pub fn has_page() -> bool {
+    FRONT.get_file("index.html").is_some()
+}
+
 pub fn start(port: u16, open: bool) -> Result<(), String> {
     let files = Arc::new(Files::here().map_err(|e| e.to_string())?);
     let runtime = tokio::runtime::Builder::new_multi_thread()

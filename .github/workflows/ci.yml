@@ -239,10 +239,20 @@ jobs:
   # Waits for the repository to go public: GitHub Pages on a private repository
   # needs a paid plan, and a deploy job that always fails is noise. The
   # condition flips on its own — nothing to switch on by hand.
+  #
+  # `!cancelled()` and the explicit result, rather than letting the chain
+  # decide: a failure anywhere upstream of `docs` otherwise skips this job
+  # even when `docs` itself is green, and `docs` is written on purpose to
+  # build a site without a coverage report. What gates the publication is
+  # the one thing that matters — that the page going out passed its browser
+  # suite, which is what a green `docs` already means.
   deploy-docs:
     name: Publish the documentation
     needs: docs
-    if: github.ref == 'refs/heads/main' && !github.event.repository.private
+    if: >-
+      ${{ !cancelled() && needs.docs.result == 'success'
+      && github.ref == 'refs/heads/main'
+      && !github.event.repository.private }}
     runs-on: ubuntu-latest
     permissions:
       pages: write
