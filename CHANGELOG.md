@@ -35,6 +35,21 @@ the day a tag was cut.
   gains a slot. A layer closed over is a layer you have to cut again to get
   one.
 
+- **One layer of blocks, on its own.** `J` with a sheet lit narrows the view
+  to that layer — its blocks, faces, edges and corners and nothing else —
+  and `←` and `→` step to the layer next door; `Esc` comes back out. A face
+  in the middle of a hundred blocks cannot be clicked on through the
+  ninety-nine in front of it, and taking them off the screen is the whole of
+  the remedy, so this is a place to stand rather than a mode to be in: every
+  edit works in here exactly as it does outside, and a layer an edit takes
+  away puts you back out.
+
+  A layer is named by the **least** of its sheet's edges. It has as many
+  names as it has edges, and which one you are handed depends on where you
+  were pointing — so without that, the one beside you is not recognisable as
+  the one you came from, and the third step of a walk goes back the way it
+  came.
+
 - **A lit sheet is no longer drawn over everything.** It runs through the
   model, so a sheet at the back of a hundred blocks read exactly like one at
   the front. It is drawn with the blocking now — hidden by what is in front

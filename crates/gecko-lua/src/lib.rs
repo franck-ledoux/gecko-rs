@@ -306,6 +306,16 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
     {
         let host = Rc::clone(&kernel);
         gecko.set(
+            "sheet_cells",
+            lua.create_function(move |lua, edge: u32| {
+                answer(lua, &host.query("sheet_cells", &edge.to_string()))
+            })?,
+        )?;
+    }
+
+    {
+        let host = Rc::clone(&kernel);
+        gecko.set(
             "chord",
             lua.create_function(move |lua, (face, block): (u32, u32)| {
                 answer(lua, &host.query("chord", &json!([face, block]).to_string()))

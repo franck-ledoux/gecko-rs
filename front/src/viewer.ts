@@ -431,6 +431,17 @@ export class Viewer {
    * it behaves exactly as it did before there were any.
    */
   private shown = { lo: 0xffffffff, hi: 0xffffffff, ungrouped: true };
+  /**
+   * One layer of blocks, when the view has been narrowed to it, as the
+   * names of everything in it.
+   *
+   * A filter of its own rather than one more group: a group is something
+   * the model has and a script can name, and this is somewhere you are
+   * standing. The two are independent — a layer of a group is a perfectly
+   * good thing to be looking at — so both are asked, and a cell is drawn
+   * only if both say yes.
+   */
+  private only: { nodes: Set<number>; edges: Set<number>; blocks: Set<number> } | null = null;
 
   /** The blocking's wireframe: ribbons rather than GL lines, because a GL
    *  line is one pixel wide whatever anybody asks for. */
@@ -840,6 +851,29 @@ export class Viewer {
   }
 
   /**
+   * Narrow the view to one layer of blocks, or widen it again with `null`.
+   *
+   * The names come from the kernel, which is the only thing that knows
+   * what a layer is made of. Everything here does is believe them.
+   */
+  showOnly(cells: { nodes: number[]; edges: number[]; blocks: number[] } | null) {
+    this.only = cells && {
+      nodes: new Set(cells.nodes),
+      edges: new Set(cells.edges),
+      blocks: new Set(cells.blocks),
+    };
+    this.rebuildEdges();
+    this.rebuildSurface("faces");
+    this.rebuildSurface("blocks");
+    this.paintNodes();
+  }
+
+  /** Whether the view is narrowed to a layer, for a test and for the page. */
+  get narrowed(): boolean {
+    return this.only !== null;
+  }
+
+  /**
    * Is a cell one of the ones being looked at?
    *
    * A cell is drawn when **any** block it bounds is drawn. `loose` says
@@ -859,11 +893,12 @@ export class Viewer {
     if (!view) return undefined;
     // Nothing filtered is the usual case, and it costs nothing to say so:
     // the surface builder then draws every quadrangle as it always did.
-    if (this.shown.lo === 0xffffffff && this.shown.hi === 0xffffffff && this.shown.ungrouped) {
-      return undefined;
-    }
+    const everyGroup =
+      this.shown.lo === 0xffffffff && this.shown.hi === 0xffffffff && this.shown.ungrouped;
+    if (everyGroup && !this.only) return undefined;
     const kept = new Set<number>();
     for (let q = 0; q < view.quadFaces.length; q++) {
+      if (this.only && !this.only.blocks.has(view.quadBlocks[q])) continue;
       // A quadrangle is drawn with one block, so its own mask is the
       // whole answer: zero means that block is in no group.
       if (this.inShown(view.quadGroupsLo[q], view.quadGroupsHi[q])) kept.add(q);
@@ -1898,6 +1933,7 @@ export class Viewer {
   private edgesShown(): number[] {
     const out: number[] = [];
     for (let e = 0; e < (this.view?.edgeNames.length ?? 0); e++) {
+      if (this.only && !this.only.edges.has(this.view!.edgeNames[e])) continue;
       const loose = this.view!.edgeLoose[e] === 1;
       if (this.inShown(this.view!.edgeGroupsLo[e], this.view!.edgeGroupsHi[e], loose)) {
         out.push(e);
@@ -1929,6 +1965,7 @@ export class Viewer {
       // and nothing on screen says what you took hold of.
       mesh.isVisible =
         this.prefs.nodes.visible &&
+        (!this.only || this.only.nodes.has(this.view?.names[n] ?? -1)) &&
         this.inShown(
           this.view?.nodeGroupsLo[n] ?? 0,
           this.view?.nodeGroupsHi[n] ?? 0,

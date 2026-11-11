@@ -96,7 +96,7 @@ shorthand for a call with one table.
 
 And the reads, each a plain table: `nodes()`, `edges()`, `faces()`,
 `blocks()`, `groups()`, `entities()`, `stats()`, `sheet(edge)`,
-`chord(face, block)`, `vtk()`, `script()`.
+`sheet_cells(edge)`, `chord(face, block)`, `vtk()`, `script()`.
 
 ```lua
 for _, node in ipairs(gecko.nodes()) do

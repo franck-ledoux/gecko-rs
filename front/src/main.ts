@@ -1015,6 +1015,118 @@ async function boot() {
     );
   }
 
+  /**
+   * The layer of blocks the view has been narrowed to, while that is where
+   * you are standing.
+   *
+   * `cameFrom` is the layer stepped from and `heading` which way that step
+   * went. Together they are what makes an arrow keep going the same way: a
+   * layer has two beside it and neither is "left", so the one to step to is
+   * whichever is **not** where you came from, and the other arrow goes back
+   * to it.
+   */
+  let layer: {
+    sheet: number;
+    beside: [number | null, number | null];
+    cameFrom: number | null;
+    heading: 1 | -1;
+  } | null = null;
+
+  /**
+   * Look at the lit sheet's layer of blocks and nothing else.
+   *
+   * A place to stand rather than a mode to be in: picking, dragging and
+   * every edit work in here exactly as they do outside, and what changes is
+   * only what is on screen. Which is the point — a face in the middle of a
+   * hundred blocks cannot be clicked on through the ninety-nine in front of
+   * it, and taking them off the screen is the whole of the remedy.
+   */
+  function enterLayer() {
+    if (layer) {
+      leaveLayer();
+      return;
+    }
+    const edge = viewer.selectedEdge;
+    if (edge === null) {
+      say("light a sheet first — click an edge");
+      return;
+    }
+    standOn(edge, null, 1);
+  }
+
+  /** Narrow the view to the layer through this edge. */
+  function standOn(edge: number, cameFrom: number | null, heading: 1 | -1): boolean {
+    const cells = kernel.sheetCells(edge);
+    if (!cells.ok) {
+      say(cells.error);
+      return false;
+    }
+    // By the name the kernel gives the layer rather than by the edge that
+    // was clicked: a layer has as many names as it has edges, and stepping
+    // compares the one beside you with the one you came from.
+    layer = { sheet: cells.sheet, beside: cells.beside, cameFrom, heading };
+    viewer.showOnly(cells);
+    const ways = cells.beside.filter((b) => b !== null).length;
+    say(
+      `the layer through edge ${edge} — ${cells.blocks.length} block` +
+        `${cells.blocks.length === 1 ? "" : "s"}, ` +
+        (ways === 2 ? "one each way" : ways === 1 ? "one way on" : "nothing beside it") +
+        ", ← → to step, Esc to come back out",
+    );
+    return true;
+  }
+
+  /** Back to the whole model. */
+  function leaveLayer() {
+    if (!layer) return;
+    layer = null;
+    viewer.showOnly(null);
+    say("the whole model again");
+  }
+
+  /** Step to the layer next door, the way the arrow points. */
+  async function stepLayer(heading: 1 | -1) {
+    if (!layer) return;
+    const [first, second] = layer.beside;
+    // The one we did not arrive from, which is where carrying on leads.
+    const onward = first === layer.cameFrom ? second : first;
+    const target =
+      heading === layer.heading
+        ? onward
+        : (layer.cameFrom ?? (onward === first ? second : first));
+    if (target === null) {
+      say("no layer that way");
+      return;
+    }
+    const from = layer.sheet;
+    // The sheet comes with you: what is lit is the layer you are in, so
+    // `Del`, `N` and the segment keys go on meaning what is on screen.
+    await selectEdge(target);
+    standOn(target, from, heading);
+  }
+
+  /**
+   * The layer you are standing in, re-read after a change.
+   *
+   * An edit can take its blocks away or give them other names, and a filter
+   * made of names nothing answers to hides the model entirely. So it is
+   * asked again every redraw, and a layer that has gone puts you back out
+   * rather than leaving you looking at nothing.
+   */
+  function restandLayer() {
+    if (!layer) return;
+    const cells = kernel.sheetCells(layer.sheet);
+    if (!cells.ok || cells.blocks.length === 0) {
+      layer = null;
+      viewer.showOnly(null);
+      message = "the layer is gone — the whole model again";
+      return;
+    }
+    layer.sheet = cells.sheet;
+    layer.beside = cells.beside;
+    viewer.showOnly(cells);
+  }
+
   /** Nothing selected: no faces, no sheet. */
   /**
    * Which verbs the two selections make available.
@@ -1804,6 +1916,7 @@ async function boot() {
     // blocks are in a group without anybody touching the band.
     drawGroups();
     lookAtGroups();
+    restandLayer();
     // Only when it has actually changed. The geometry is the big buffer and
     // the one that never moves; re-sending it because a node was dragged is
     // the whole cost this generation number exists to avoid.
@@ -2101,7 +2214,13 @@ async function boot() {
     "face-on-surface": faceOnSurface,
     "remove-chord": removeChord,
     "pillow-chord": pillowChord,
-    clear: clearSelection,
+    // One "never mind", and the layer is the outer of the two things to
+    // let go of: inside one, this is the way out, and outside one it is
+    // the selection that goes.
+    clear: () => (layer ? leaveLayer() : clearSelection()),
+    layer: enterLayer,
+    "layer-on": () => stepLayer(1),
+    "layer-back": () => stepLayer(-1),
     unpick,
     recenter,
     screenshot,

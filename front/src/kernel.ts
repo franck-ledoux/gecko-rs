@@ -68,6 +68,25 @@ export type Chord =
   | { ok: true; edges: SheetEdge[]; blocks: number }
   | { ok: false; error: string };
 
+/** What one layer of blocks is made of, and the layers beside it.
+ *
+ *  A different question from `Sheet`, which says what a cut would touch.
+ *  `beside` has two entries, in no particular order, either of which may
+ *  be null where that side of the layer is the model's surface. */
+export type SheetCells =
+  | {
+      ok: true;
+      /** The edge this layer answers to — the least of its sheet's — so
+       *  that two readings of the same layer agree on which it is. */
+      sheet: number;
+      nodes: number[];
+      edges: number[];
+      faces: number[];
+      blocks: number[];
+      beside: [number | null, number | null];
+    }
+  | { ok: false; error: string };
+
 export type Sheet =
   | {
       ok: true;
@@ -119,6 +138,10 @@ export interface Kernel {
   stats(): Stats;
   /** The sheet of hexahedra through an edge. A question, not a change. */
   sheet(edge: number): Sheet;
+
+  /** What that layer is made of, and the layers lying against it — what it
+   *  takes to show one layer on its own and to step to the next. */
+  sheetCells(edge: number): SheetCells;
 
   /** The chord of blocks through a face, named as a click names it. Also a
    *  question: nothing is removed or pillowed by asking. */

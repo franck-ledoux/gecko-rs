@@ -50,6 +50,14 @@ impl WasmSession {
         self.inner.geometry_buffer()
     }
 
+    /// What the layer through an edge is made of, and the layers beside
+    /// it. A question too, and a different one: what is **there**, rather
+    /// than what a cut would touch.
+    #[wasm_bindgen(js_name = sheetCellsJson)]
+    pub fn sheet_cells_json(&self, edge: u32) -> String {
+        self.inner.sheet_cells_json(edge)
+    }
+
     /// The sheet through an edge. A question, so it has a reply of its own
     /// rather than going through `applyJson`.
     #[wasm_bindgen(js_name = sheetJson)]

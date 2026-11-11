@@ -37,6 +37,9 @@ export const ACTIONS = [
   "remove-chord",
   "pillow-chord",
   "clear",
+  "layer",
+  "layer-on",
+  "layer-back",
   "unpick",
   "recenter",
   "screenshot",
@@ -229,10 +232,25 @@ export const SHORTCUTS: readonly Shortcut[] = [
   // Edit had grown to thirteen rows, which is what sets the height of the
   // help card's tallest column.
   {
+    show: "J",
+    key: "j",
+    action: "layer",
+    does: "look at the lit sheet's layer alone",
+    group: "Select",
+  },
+  {
+    show: "→",
+    key: "arrowright",
+    action: "layer-on",
+    does: "the layer next door",
+    group: "Select",
+  },
+  { show: "←", key: "arrowleft", action: "layer-back", does: "", group: "Select" },
+  {
     show: "Esc",
     key: "escape",
     action: "clear",
-    does: "clear the selection",
+    does: "leave the layer, or clear the selection",
     group: "Select",
   },
   {

@@ -2025,6 +2025,41 @@ impl Session {
         }
     }
 
+    /// What one layer of blocks is made of, and the layers beside it.
+    ///
+    /// A different question from [`sheet_json`][Self::sheet_json], which
+    /// answers what a **cut** would touch. This one answers what is there,
+    /// so a client can show the layer on its own, and which layers it could
+    /// step to from it.
+    ///
+    /// `beside` has two entries, in no particular order, either of which
+    /// may be null where that side of the layer is the model's surface.
+    /// The one to step to is whichever is not where you came from.
+    pub fn sheet_cells_json(&self, edge: u32) -> String {
+        let edge = CellId::from_raw(edge);
+        match self.blocking.sheet_cells(edge) {
+            Ok(cells) => {
+                let names =
+                    |ids: &[CellId]| -> Vec<u32> { ids.iter().filter_map(|c| c.get()).collect() };
+                // A layer whose caps cannot be read is still a layer worth
+                // showing, so this is reported as "nowhere to step" rather
+                // than as a failure to answer.
+                let beside = self.blocking.sheets_beside(edge).unwrap_or([None, None]);
+                serde_json::json!({
+                    "ok": true,
+                    "sheet": cells.sheet.get(),
+                    "nodes": names(&cells.nodes),
+                    "edges": names(&cells.edges),
+                    "faces": names(&cells.faces),
+                    "blocks": names(&cells.blocks),
+                    "beside": beside.map(|c| c.and_then(|c| c.get())),
+                })
+                .to_string()
+            }
+            Err(e) => serde_json::json!({ "ok": false, "error": e.to_string() }).to_string(),
+        }
+    }
+
     /// The chord through a face, for the view to light up.
     ///
     /// The same shape as [`sheet_json`][Self::sheet_json], so the same

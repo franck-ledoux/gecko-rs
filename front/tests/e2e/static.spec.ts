@@ -1082,6 +1082,100 @@ test("N takes the lit sheet away and leaves the gap it was in", async ({ page })
   expect(errors).toEqual([]);
 });
 
+/** A unit cube cut into three each way, the way somebody cuts one: halve
+ *  it, then halve the half. Twenty-seven blocks, sixty-four nodes. */
+async function cutGrid(page: import("@playwright/test").Page) {
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  for (const at of [
+    [0.5, 0, 0],
+    [0, 0.5, 0],
+    [0, 0, 0.5],
+    [0.25, 0, 0],
+    [0, 0.25, 0],
+    [0, 0, 0.25],
+  ] as [number, number, number][]) {
+    await cutInHalf(page, at);
+  }
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 64);
+  await page.evaluate(() => (window as any).__gecko.settled());
+}
+
+test("J stands you in one layer, and the arrows walk the model a layer at a time", async ({
+  page,
+}) => {
+  // The complaint this answers: a face in the middle of a hundred blocks
+  // cannot be clicked on through the ninety-nine in front of it.
+  const errors = await boot(page);
+  await page.evaluate(EDGE_NEAR);
+  await cutGrid(page);
+
+  const edge = (await page.evaluate(() => edgeNear([0.125, 0, 0]))) as number;
+  await page.evaluate((e) => (window as any).__gecko.pickEdgeByName(e), edge);
+  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 16);
+
+  const drawn = () =>
+    page.evaluate(() => ({
+      nodes: (window as any).__gecko.nodesDrawn(),
+      edges: (window as any).__gecko.counts().edges,
+    }));
+  expect(await drawn()).toEqual({ nodes: 64, edges: 144 });
+
+  // One layer of nine blocks: sixteen corners on each of its two faces.
+  await page.keyboard.press("j");
+  await page.waitForFunction(() => (window as any).__gecko.message().includes("the layer through"));
+  expect(await drawn()).toEqual({ nodes: 32, edges: 64 });
+
+  // Along the model, a layer at a time, and off the end of it. Each step
+  // has to recognise the layer it came from — which is the whole of what
+  // naming a layer by the least of its edges is for.
+  const seen: string[] = [];
+  for (let step = 0; step < 3; step++) {
+    await page.keyboard.press("ArrowRight");
+    await page.evaluate(() => (window as any).__gecko.settled());
+    seen.push((await page.evaluate(() => (window as any).__gecko.message())) as string);
+    expect(await drawn(), `after ${step + 1} steps`).toEqual({ nodes: 32, edges: 64 });
+  }
+  expect(seen[2], `${seen.join(" | ")}`).toBe("no layer that way");
+  // And the three it went through are three different layers, not two of
+  // them twice: a step that forgot where it came from would bounce.
+  expect(new Set([seen[0], seen[1]]).size).toBe(2);
+
+  // Back the other way, and out.
+  await page.keyboard.press("ArrowLeft");
+  await page.evaluate(() => (window as any).__gecko.settled());
+  expect(await drawn()).toEqual({ nodes: 32, edges: 64 });
+
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => (window as any).__gecko.message().includes("whole model"));
+  expect(await drawn()).toEqual({ nodes: 64, edges: 144 });
+  expect(errors).toEqual([]);
+});
+
+test("editing from inside a layer reaches the kernel, and the layer gives way", async ({
+  page,
+}) => {
+  // A place to stand, not a mode to be in: everything still works in here.
+  const errors = await boot(page);
+  await page.evaluate(EDGE_NEAR);
+  await cutGrid(page);
+
+  const edge = (await page.evaluate(() => edgeNear([0.125, 0, 0]))) as number;
+  await page.evaluate((e) => (window as any).__gecko.pickEdgeByName(e), edge);
+  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 16);
+  await page.keyboard.press("j");
+  await page.waitForFunction(() => (window as any).__gecko.message().includes("the layer through"));
+
+  // The layer you are standing in, taken away from inside it.
+  await page.keyboard.press("n");
+  await expect(page.locator("[data-test=blocks]")).toHaveText("18");
+  // And nowhere to stand any more, so the whole model comes back rather
+  // than a filter made of names nothing answers to showing nothing at all.
+  await page.waitForFunction(() => (window as any).__gecko.message().includes("the layer is gone"));
+  expect(await page.evaluate(() => (window as any).__gecko.nodesDrawn())).toBe(48);
+  expect(errors).toEqual([]);
+});
+
 test("a sheet runs on through a glued block", async ({ page }) => {
   const errors = await boot(page);
   await page.evaluate(EDGE_NEAR);

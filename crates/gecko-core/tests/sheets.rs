@@ -596,3 +596,191 @@ mod uneven {
         assert_eq!(across, [0, 500_000, 1_000_000]);
     }
 }
+
+/// What a layer is made of, and the layers lying against it.
+///
+/// What a client needs to show one layer on its own and to walk from it to
+/// the next — neither of which is a question about a cut, which is all a
+/// sheet was ever asked before.
+mod layers {
+    use super::removal::grid;
+    use gecko_core::ids::CellId;
+    use gecko_core::{cube_corners, Blocking};
+
+    /// An edge running along `axis` whose lower end is at `at` on it.
+    fn along(b: &Blocking, axis: usize, at: f64) -> CellId {
+        b.map_edges()
+            .into_iter()
+            .find(|e| {
+                let (u, v) = b.edge_endpoints(*e);
+                let (p, q) = (b.position(u).unwrap(), b.position(v).unwrap());
+                (0..3).all(|k| {
+                    if k == axis {
+                        (p[k] - q[k]).abs() > 1e-9 && p[k].min(q[k]) == at
+                    } else {
+                        (p[k] - q[k]).abs() < 1e-9
+                    }
+                })
+            })
+            .map(|e| b.edge_tag(e).id)
+            .unwrap_or_else(|| panic!("no edge along {axis} from {at}"))
+    }
+
+    #[test]
+    fn one_block_is_a_layer_of_everything_there_is() {
+        let mut b = Blocking::new().unwrap();
+        b.add_block(cube_corners([0.0, 0.0, 0.0], 1.0)).unwrap();
+        let cells = b.sheet_cells(along(&b, 2, 0.0)).expect("a layer");
+        assert_eq!(cells.blocks.len(), 1);
+        assert_eq!(cells.nodes.len(), 8);
+        assert_eq!(cells.edges.len(), 12);
+        assert_eq!(cells.faces.len(), 6);
+    }
+
+    #[test]
+    fn a_layer_of_a_grid_is_the_nine_blocks_and_what_bounds_them() {
+        // Three by three by three, and a layer of it: nine blocks one deep.
+        // Sixteen corners on each of its two faces, and the edges and faces
+        // of the nine, each counted once however many blocks it bounds.
+        let b = grid(3);
+        let cells = b.sheet_cells(along(&b, 2, 0.0)).expect("a layer");
+        assert_eq!(cells.blocks.len(), 9);
+        assert_eq!(cells.nodes.len(), 32);
+        assert_eq!(cells.edges.len(), 64);
+        assert_eq!(cells.faces.len(), 42);
+    }
+
+    /// The edge whose middle is nearest this point — what a click is.
+    fn nearest(b: &Blocking, want: [f64; 3]) -> CellId {
+        let mut best = None;
+        let mut shortest = f64::INFINITY;
+        for e in b.map_edges() {
+            let (u, v) = b.edge_endpoints(e);
+            let (p, q) = (b.position(u).unwrap(), b.position(v).unwrap());
+            let away: f64 = (0..3)
+                .map(|k| ((p[k] + q[k]) / 2.0 - want[k]).powi(2))
+                .sum::<f64>()
+                .sqrt();
+            if away < shortest {
+                shortest = away;
+                best = Some(b.edge_tag(e).id);
+            }
+        }
+        best.expect("an edge")
+    }
+
+    /// Three by three by three, **cut** out of one block the way somebody
+    /// cuts one: halve it each way, then halve the half.
+    ///
+    /// The same shape as [`grid(3)`][grid] and not the same model. Cutting
+    /// leaves the names in whatever order the cuts made them, which is the
+    /// state every model a reader builds is in; stacked up out of cubes
+    /// they come out tidy, and tidy names hide a muddle between two ways of
+    /// naming the same layer.
+    fn cut_grid() -> Blocking {
+        let mut b = Blocking::new().expect("a blocking");
+        b.add_block(cube_corners([0.0, 0.0, 0.0], 1.0))
+            .expect("a block");
+        for want in [
+            [0.5, 0.0, 0.0],
+            [0.0, 0.5, 0.0],
+            [0.0, 0.0, 0.5],
+            [0.25, 0.0, 0.0],
+            [0.0, 0.25, 0.0],
+            [0.0, 0.0, 0.25],
+        ] {
+            let edge = nearest(&b, want);
+            b.split_sheet(edge, 0.5).expect("a cut");
+        }
+        assert_eq!(b.nb_blocks(), 27);
+        b
+    }
+
+    #[test]
+    fn a_layer_is_named_the_same_from_wherever_it_is_read() {
+        // Walking a grid layer by layer, by name alone: carry on means the
+        // one beside you that is not the one you came from, and that is
+        // only an answer if two readings of a layer agree on which it is.
+        // A layer has as many names as it has edges, and the one you get
+        // depends on where you were pointing.
+        let b = cut_grid();
+        let mut at = b
+            .sheet_cells(nearest(&b, [0.125, 0.0, 0.0]))
+            .expect("a layer")
+            .sheet;
+        let mut came_from: Option<CellId> = None;
+        let mut walked = vec![at];
+        for _ in 0..10 {
+            let beside = b.sheets_beside(at).expect("the layers beside it");
+            let onward = if beside[0] == came_from {
+                beside[1]
+            } else {
+                beside[0]
+            };
+            let Some(next) = onward else { break };
+            // The name a layer is handed on the way in is the name it
+            // answers to on its own, or the one before it will not be
+            // recognised as where you came from.
+            assert_eq!(
+                next,
+                b.sheet_cells(next).expect("a layer").sheet,
+                "a layer named one way coming in and another standing in it"
+            );
+            came_from = Some(at);
+            at = next;
+            walked.push(at);
+        }
+        assert_eq!(walked.len(), 3, "three layers, each once: {walked:?}");
+        let mut once = walked.clone();
+        once.sort_unstable();
+        once.dedup();
+        assert_eq!(once.len(), 3, "and none of them twice: {walked:?}");
+    }
+
+    #[test]
+    fn stepping_from_one_layer_to_the_next_runs_out_at_the_surface() {
+        // The bottom layer of three: one neighbor, and the model's
+        // underside the other way.
+        let b = grid(3);
+        let bottom = along(&b, 2, 0.0);
+        let beside = b.sheets_beside(bottom).expect("the layers beside it");
+        let (away, surface): (Vec<CellId>, Vec<&Option<CellId>>) = (
+            beside.iter().filter_map(|c| *c).collect(),
+            beside.iter().filter(|c| c.is_none()).collect(),
+        );
+        assert_eq!(away.len(), 1, "one way on, one way out");
+        assert_eq!(surface.len(), 1);
+
+        // On to the middle layer, which has one each way, and on again to
+        // the top, which runs out like the bottom did.
+        let middle = away[0];
+        let next = b.sheets_beside(middle).expect("the layers beside it");
+        let onward: Vec<CellId> = next.iter().filter_map(|c| *c).collect();
+        assert_eq!(onward.len(), 2, "a layer in the middle has one each way");
+        // One of them is where we came from. The other is the far side.
+        let back = b.sheet_cells(bottom).unwrap().blocks;
+        let top: Vec<CellId> = onward
+            .iter()
+            .copied()
+            .filter(|c| b.sheet_cells(*c).unwrap().blocks != back)
+            .collect();
+        assert_eq!(top.len(), 1);
+        assert_eq!(
+            b.sheets_beside(top[0])
+                .expect("the layers beside it")
+                .iter()
+                .filter(|c| c.is_none())
+                .count(),
+            1,
+            "the top layer runs out the other way"
+        );
+
+        // And the three layers are three different sets of blocks.
+        let seen: Vec<Vec<CellId>> = [bottom, middle, top[0]]
+            .iter()
+            .map(|c| b.sheet_cells(*c).unwrap().blocks)
+            .collect();
+        assert_eq!(seen[0].len(), 9);
+        assert!(seen[0] != seen[1] && seen[1] != seen[2] && seen[0] != seen[2]);
+    }
+}

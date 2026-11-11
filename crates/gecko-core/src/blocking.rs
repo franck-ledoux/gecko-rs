@@ -6,7 +6,7 @@
 //! the one thing it cannot do for us is hand out names that survive its own
 //! renumbering.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use honeycomb_core::attributes::AttributeError;
 use honeycomb_core::cmap::{
@@ -200,6 +200,28 @@ pub struct SheetEdge {
     pub edge: CellId,
     pub from: VertexIdType,
     pub to: VertexIdType,
+}
+
+/// Everything one layer of blocks is made of.
+///
+/// Not what a cut would touch — that is the sheet's edges, and
+/// [`SheetEdge`] says it — but what is **there**: the blocks the sheet runs
+/// through, and every face, edge and node that bounds one of them. What a
+/// client needs in order to show the layer and nothing else.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SheetCells {
+    /// The edge this layer answers to: the least of its sheet's edges.
+    ///
+    /// A layer has as many names as it has edges, and which one you get
+    /// depends on where you were pointing. That is no use to anything that
+    /// has to recognise a layer it has seen before — stepping from one to
+    /// the next, above all, where the one not to go back to is the one you
+    /// came from. The least is the same from wherever you read it.
+    pub sheet: CellId,
+    pub nodes: Vec<CellId>,
+    pub edges: Vec<CellId>,
+    pub faces: Vec<CellId>,
+    pub blocks: Vec<CellId>,
 }
 
 /// What a smoothing pass is asked to do.
@@ -1910,6 +1932,137 @@ impl Blocking {
         blocks.sort();
         blocks.dedup();
         blocks.len()
+    }
+
+    /// Everything the layer through an edge is made of.
+    ///
+    /// The blocks the sheet runs through, and every cell that bounds one of
+    /// them — named, so a client can say "show me these and nothing else"
+    /// in the only vocabulary it has.
+    pub fn sheet_cells(&self, edge: CellId) -> Result<SheetCells, BlockingError> {
+        let sheet = self.sheet_through(edge)?;
+        let index = self.edge_index();
+        let mut at: Vec<DartIdType> = Vec::with_capacity(sheet.len());
+        for side in &sheet {
+            at.push(
+                *index
+                    .get(&side.edge)
+                    .ok_or(BlockingError::NoSuchEdge(side.edge))? as DartIdType,
+            );
+        }
+
+        // One transaction for the whole walk: a single β lookup in this map
+        // is a transaction of its own, and that is where the time goes.
+        let found = atomically(|t| {
+            let mut blocks: BTreeSet<VolumeIdType> = BTreeSet::new();
+            for dart in &at {
+                // The orbit's own iterator holds the transaction while it
+                // runs, so the walk comes first and the questions after.
+                let mut around: Vec<DartIdType> = Vec::new();
+                for d in self.map.orbit_tx(t, OrbitPolicy::Edge, *dart) {
+                    around.push(d?);
+                }
+                for d in around {
+                    blocks.insert(self.map.volume_id_tx(t, d)?);
+                }
+            }
+            let mut nodes: BTreeSet<VertexIdType> = BTreeSet::new();
+            let mut edges: BTreeSet<EdgeIdType> = BTreeSet::new();
+            let mut faces: BTreeSet<FaceIdType> = BTreeSet::new();
+            for volume in &blocks {
+                let mut darts: Vec<DartIdType> = Vec::new();
+                for d in self
+                    .map
+                    .orbit_tx(t, OrbitPolicy::Volume, *volume as DartIdType)
+                {
+                    darts.push(d?);
+                }
+                for d in darts {
+                    nodes.insert(self.map.vertex_id_tx(t, d)?);
+                    edges.insert(self.map.edge_id_tx(t, d)?);
+                    faces.insert(self.map.face_id_tx(t, d)?);
+                }
+            }
+            Ok((nodes, edges, faces, blocks))
+        });
+
+        let (nodes, edges, faces, blocks) = found;
+        // A cell with no name is one nothing can ask for, so it is left out
+        // rather than reported as zero.
+        let named =
+            |ids: Vec<CellId>| -> Vec<CellId> { ids.into_iter().filter(|c| c.is_some()).collect() };
+        Ok(SheetCells {
+            sheet: sheet.iter().map(|s| s.edge).min().unwrap_or(edge),
+            nodes: named(nodes.iter().map(|n| self.node_tag(*n).id).collect()),
+            edges: named(edges.iter().map(|e| self.edge_tag(*e).id).collect()),
+            faces: named(faces.iter().map(|f| self.face_tag(*f).id).collect()),
+            blocks: named(blocks.iter().map(|b| self.block_tag(*b).id).collect()),
+        })
+    }
+
+    /// The two layers lying against this one, each named by an edge of its
+    /// own.
+    ///
+    /// A layer is capped at either end by a face the sheet does not cross.
+    /// Through a cap is the block next door, and the edge of **that** block
+    /// running out of the face they share names the layer it belongs to —
+    /// the one parallel to this one and touching it.
+    ///
+    /// Each is named the way [`SheetCells::sheet`] names a layer — by the
+    /// least of its own edges — because that is what makes the answer
+    /// comparable with where you came from. Named by the edge that happens
+    /// to cross the block next door, two readings of the same layer would
+    /// disagree about which layer it is.
+    ///
+    /// `None` where the cap is on the model's surface: there is no layer
+    /// that way. The two are in no particular order, and what they are good
+    /// for is stepping from one layer to the next: the one to step to is
+    /// whichever is not where you came from.
+    ///
+    /// Read from the block the named edge is in, which is the one whoever
+    /// asked was pointing at.
+    pub fn sheets_beside(&self, edge: CellId) -> Result<[Option<CellId>; 2], BlockingError> {
+        let sheet = self.sheet_through(edge)?;
+        let crossed: HashSet<CellId> = sheet.iter().map(|s| s.edge).collect();
+        let index = self.edge_index();
+        let at = *index.get(&edge).ok_or(BlockingError::NoSuchEdge(edge))? as DartIdType;
+        let volume = self.map.volume_id(at);
+
+        let caps: Vec<DartIdType> = self
+            .block_face_darts(volume)
+            .into_iter()
+            .filter(|d| {
+                self.face_darts(self.map.face_id(*d))
+                    .iter()
+                    .all(|e| !crossed.contains(&self.edge_tag(self.map.edge_id(*e)).id))
+            })
+            .collect();
+        if caps.len() != 2 {
+            return Err(BlockingError::BrokenSheet(edge));
+        }
+
+        let mut out = [None, None];
+        for (slot, cap) in out.iter_mut().zip(caps) {
+            let beyond = self.map.beta::<3>(cap);
+            if beyond == NULL_DART_ID {
+                continue;
+            }
+            // Out of the shared face and into the block beyond it: round
+            // the lateral face beside this dart by one, which is the edge
+            // that leaves the face.
+            let crossing = self.map.beta::<1>(self.map.beta::<2>(beyond));
+            let id = self.edge_tag(self.map.edge_id(crossing)).id;
+            if id.is_none() {
+                continue;
+            }
+            // A layer that cannot be read is a layer there is no stepping
+            // to, which is the same answer as a cap on the surface.
+            *slot = self
+                .sheet_through(id)
+                .ok()
+                .and_then(|sheet| sheet.iter().map(|s| s.edge).min());
+        }
+        Ok(out)
     }
 
     /// Take out the whole sheet of blocks through an edge, closing the gap.

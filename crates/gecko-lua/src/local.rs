@@ -47,6 +47,7 @@ impl Kernel for Local {
             "groups" => session.groups_json(),
             "entities" => session.entities_json(),
             "sheet" => session.sheet_json(arg.trim().parse().unwrap_or(u32::MAX)),
+            "sheet_cells" => session.sheet_cells_json(arg.trim().parse().unwrap_or(u32::MAX)),
             // Two numbers, as a JSON array: `query` carries one string, and
             // a chord is named by a face **and** the block it was clicked on.
             "chord" => {

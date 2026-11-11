@@ -148,6 +148,37 @@ is on the far side of a cap, and there is no outside to close against. That
 is checked for the whole sheet **before** anything is removed, so a refusal
 leaves the model exactly as it was rather than part-way through.
 
+## Standing in one layer
+
+`J`, with a sheet lit: the view narrows to that layer of blocks and nothing
+else — its blocks, its faces, its edges, its corners. `←` and `→` step to
+the layer next door, `Esc` comes back out.
+
+What it is for: a face in the middle of a hundred blocks cannot be clicked
+on through the ninety-nine in front of it, and taking them off the screen is
+the whole of the remedy. So it is a place to stand rather than a mode to be
+in — picking, dragging and every edit work in here exactly as they do
+outside, and what changes is only what is on screen.
+
+An edit can take the layer away, or give its cells other names. The layer is
+read again after every change, and one that has gone puts you back out
+rather than leaving you looking at nothing.
+
+!!! note "Which layer is next door, and how it knows where it came from"
+    A layer is capped at either end by a face its sheet does not cross.
+    Through a cap is the block next door, and the edge of **that** block
+    running out of the face they share names the layer it belongs to. There
+    are two such layers and neither of them is "left": the one to step to is
+    whichever is not the one you came from, and that is how an arrow keeps
+    going the same way.
+
+    Which means a layer has to be recognisable. It has as many names as it
+    has edges, and which one you are handed depends on where you were
+    pointing — so a layer is named by the **least** of its sheet's edges,
+    and two readings of the same layer agree. Named by the edge that
+    happened to cross the block next door, the third step of a walk goes
+    back the way it came.
+
 ## What a cut does to names
 
 Everything the sheet touches is replaced. Each split edge becomes two new
