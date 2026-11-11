@@ -1152,6 +1152,37 @@ test("J stands you in one layer, and the arrows walk the model a layer at a time
   expect(errors).toEqual([]);
 });
 
+test("the arrow keys do not turn the view", async ({ page }) => {
+  // Babylon hands an arc-rotate camera the arrow keys of its own accord.
+  // Nothing here asked for that, the help card does not print it, and the
+  // arrows are how you step from one layer to the next — so every step
+  // turned the view as well. The pointer moves the view, and the keys that
+  // say they do.
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // On the canvas, because that is where the camera listens: a key sent to
+  // the page at large never reaches it, and a test that did that would pass
+  // whatever the camera is wired to.
+  await page.locator("#view").focus();
+  const where = () => page.evaluate(() => (window as any).__gecko.camera());
+  const before = await where();
+  for (const key of ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"]) {
+    // Held across a few frames, which is what a real press is. The
+    // camera's own keyboard input moves the view a little on each frame it
+    // is held and nothing at all on a press that spans none, so a test
+    // that tapped the key would pass whatever the camera is wired to.
+    await page.keyboard.down(key);
+    await page.evaluate(() => (window as any).__gecko.settled());
+    await page.evaluate(() => (window as any).__gecko.settled());
+    await page.keyboard.up(key);
+  }
+  expect(await where()).toEqual(before);
+  expect(errors).toEqual([]);
+});
+
 test("editing from inside a layer reaches the kernel, and the layer gives way", async ({
   page,
 }) => {

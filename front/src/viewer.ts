@@ -262,6 +262,20 @@ export function heightAlong(
  */
 export const PASS = { geometry: 0, blocking: 1, aiming: 2 } as const;
 
+/**
+ * Take the keyboard away from a camera.
+ *
+ * The view is moved with the pointer and with the keys this application
+ * says move it — `F`, `X`, `Y`, `Z` — and with nothing else. Babylon hands
+ * an arc-rotate camera the arrow keys of its own accord, which is a binding
+ * the application never asked for and cannot see in its own table: the
+ * arrows are how you step from one layer to the next, and every step turned
+ * the view as well.
+ */
+function noKeyboard(camera: ArcRotateCamera) {
+  camera.inputs.removeByType("ArcRotateCameraKeyboardMoveInput");
+}
+
 /** How solid the preview of an extrusion is drawn. Enough to read as a
  *  volume, little enough to see the model through. */
 export const GROWN_ALPHA = 0.3;
@@ -549,6 +563,7 @@ export class Viewer {
       Vector3.Zero(),
       this.scene,
     );
+    noKeyboard(this.camera);
     // Moving the target must not re-derive the angles.
     //
     // `camera.target = …` goes through `setTarget`, which by default calls
@@ -649,6 +664,7 @@ export class Viewer {
     // Left-drag belongs to the model here — there is nothing to orbit — so
     // the only thing the camera takes is the right button, which pans.
     camera.panningSensibility = 200;
+    noKeyboard(camera);
     return camera;
   }
 

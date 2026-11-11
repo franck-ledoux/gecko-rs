@@ -35,6 +35,13 @@ the day a tag was cut.
   gains a slot. A layer closed over is a layer you have to cut again to get
   one.
 
+- **The arrow keys no longer turn the view.** Babylon hands an arc-rotate
+  camera the arrows of its own accord: a binding this application never
+  asked for, which its own table of shortcuts does not print and could not
+  have shown you. It went unnoticed until the arrows were given a job —
+  every step from one layer to the next turned the view as well. The view
+  moves with the pointer, and with the keys that say they move it.
+
 - **One layer of blocks, on its own.** `J` with a sheet lit narrows the view
   to that layer — its blocks, faces, edges and corners and nothing else —
   and `←` and `→` step to the layer next door; `Esc` comes back out. A face
