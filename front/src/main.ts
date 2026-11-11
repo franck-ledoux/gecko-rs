@@ -2512,6 +2512,7 @@ async function boot() {
     edgeRibbonWidth: () => viewer.edgeRibbonWidth,
     nodeTint: (name: number) => viewer.nodeTint(name),
     sheet: () => viewer.highlighted,
+    litDrawn: () => viewer.litDrawn,
     selectedEdge: () => viewer.selectedEdge,
     pickEdge: (x: number, y: number) => viewer.pickEdge(x, y),
     pickEdgeByName: (edge: number) => chooseEdge(edge),

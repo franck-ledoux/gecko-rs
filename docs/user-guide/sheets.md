@@ -50,6 +50,12 @@ faces it lies behind tint it. That is what tells you where it runs. Drawn
 over everything — which is what it used to be — a sheet at the back of a
 hundred blocks reads exactly like one at the front.
 
+It also stops where the picture does. A sheet runs through the whole model
+and a filter — a group hidden, or one layer being looked at — shows part of
+it; lit over the part that is off screen, it is a thread hanging in the air
+beside what you are working on. It is lit over the edges the wireframe
+draws, and nowhere else, and the marks a cut is aimed with go with it.
+
 Thick is not a line. WebGL caps `lineWidth` at one pixel whatever is asked of
 it, so the lit sheet is a ribbon built as geometry rather than a line drawn
 fatter. Its width is a share of the screen, not of the model, so a sheet

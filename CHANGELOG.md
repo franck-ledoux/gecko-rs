@@ -35,6 +35,13 @@ the day a tag was cut.
   gains a slot. A layer closed over is a layer you have to cut again to get
   one.
 
+- **A lit sheet stops where the picture does.** A sheet runs through the
+  whole model, and a filter — a group hidden, or one layer being looked at
+  — shows part of it. Lit over the part that is off screen, it was a thread
+  hanging in the air beside the thing you were working on. It is lit over
+  the edges the wireframe draws, by the same reckoning, and the marks a cut
+  is aimed with go with it.
+
 - **The arrow keys no longer turn the view.** Babylon hands an arc-rotate
   camera the arrows of its own accord: a binding this application never
   asked for, which its own table of shortcuts does not print and could not

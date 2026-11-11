@@ -1152,6 +1152,38 @@ test("J stands you in one layer, and the arrows walk the model a layer at a time
   expect(errors).toEqual([]);
 });
 
+test("a lit sheet stops at the edge of what is on screen", async ({ page }) => {
+  // A sheet runs through the whole model, and a filter shows part of it.
+  // Lit over the part that is hidden, it is a thread floating in a view
+  // whose whole point is that the rest is out of the way.
+  const errors = await boot(page);
+  await page.evaluate(EDGE_NEAR);
+  await cutGrid(page);
+
+  // Stand in the first layer across x.
+  const along = (await page.evaluate(() => edgeNear([0.125, 0, 0]))) as number;
+  await page.evaluate((e) => (window as any).__gecko.pickEdgeByName(e), along);
+  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 16);
+  await page.keyboard.press("j");
+  await page.waitForFunction(() => (window as any).__gecko.message().includes("the layer through"));
+
+  // And light a sheet that runs across it and out through the other two.
+  // Sixteen edges, at the four values of x by the four of z; the layer is
+  // two of those four values of x, so half of them are on screen.
+  const across = (await page.evaluate(() => edgeNear([0, 0.125, 0]))) as number;
+  await page.evaluate((e) => (window as any).__gecko.pickEdgeByName(e), across);
+  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 16);
+  await page.evaluate(() => (window as any).__gecko.settled());
+  expect(await page.evaluate(() => (window as any).__gecko.litDrawn())).toBe(8);
+
+  // Out again, and the rest of it comes back.
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => (window as any).__gecko.message().includes("whole model"));
+  await page.evaluate(() => (window as any).__gecko.settled());
+  expect(await page.evaluate(() => (window as any).__gecko.litDrawn())).toBe(16);
+  expect(errors).toEqual([]);
+});
+
 test("the arrow keys do not turn the view", async ({ page }) => {
   // Babylon hands an arc-rotate camera the arrow keys of its own accord.
   // Nothing here asked for that, the help card does not print it, and the
@@ -3391,6 +3423,16 @@ test("hiding a group leaves the blocks beside it whole", async ({ page }) => {
   expect(
     await page.evaluate(() => (window as any).__gecko.surface("faces").faces.length),
   ).toBe(6);
+
+  // And a sheet lit through both of them stops where the picture does. Six
+  // edges across the two blocks, of which four bound the one still on
+  // screen — the two in the seam among them, since they bound it too.
+  await page.evaluate(EDGE_NEAR);
+  const seam = (await page.evaluate(() => edgeNear([1, 0.5, 0]))) as number;
+  await page.evaluate((e) => (window as any).__gecko.pickEdgeByName(e), seam);
+  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 6);
+  await page.evaluate(() => (window as any).__gecko.settled());
+  expect(await page.evaluate(() => (window as any).__gecko.litDrawn())).toBe(4);
   expect(errors).toEqual([]);
 });
 

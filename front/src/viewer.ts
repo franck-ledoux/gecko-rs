@@ -470,6 +470,9 @@ export class Viewer {
   private aim: number | null = null;
   private aimWire?: Mesh;
   private held?: HTMLCanvasElement;
+  /** How many edges of the lit sheet are actually drawn — the kernel says
+   *  how many there are, and the filters say how many of them you see. */
+  litDrawn = 0;
   /** The edge that sheet was asked for, so a second click on it can put the
    *  sheet out again. View state, like the face selection. */
   selectedEdge: number | null = null;
@@ -856,6 +859,7 @@ export class Viewer {
   showGroups(lo: number, hi: number, ungrouped: boolean) {
     this.shown = { lo: lo >>> 0, hi: hi >>> 0, ungrouped };
     this.rebuildEdges();
+    this.rebuildHighlight();
     this.rebuildSurface("faces");
     this.rebuildSurface("blocks");
     this.paintNodes();
@@ -879,6 +883,7 @@ export class Viewer {
       blocks: new Set(cells.blocks),
     };
     this.rebuildEdges();
+    this.rebuildHighlight();
     this.rebuildSurface("faces");
     this.rebuildSurface("blocks");
     this.paintNodes();
@@ -1945,6 +1950,22 @@ export class Viewer {
     return out;
   }
 
+  /**
+   * The names of the edges the filters let through, or `null` when they let
+   * everything through.
+   *
+   * What a lit sheet and the marks along it are clipped to. A sheet runs
+   * through the whole model and a filter shows part of it, so lighting one
+   * used to draw its far half over empty space — a thread with nothing on
+   * it, in a view whose whole point is that the rest is out of the way.
+   */
+  private drawnEdgeNames(): ReadonlySet<number> | null {
+    const everyGroup =
+      this.shown.lo === 0xffffffff && this.shown.hi === 0xffffffff && this.shown.ungrouped;
+    if (everyGroup && !this.only) return null;
+    return new Set(this.edgesShown().map((e) => this.view!.edgeNames[e]));
+  }
+
   /** Which edges of the view are in a group being looked at, in order. */
   private edgesShown(): number[] {
     const out: number[] = [];
@@ -2185,7 +2206,12 @@ export class Viewer {
     this.aimWire = undefined;
     if (this.aim === null || !this.lit.length) return;
     const t = this.aim;
-    const points = this.lit.map((e) => [
+    // Only along the edges that are drawn: a mark on an edge a filter has
+    // taken off the screen is a mark floating in the air.
+    const drawn = this.drawnEdgeNames();
+    const along = drawn ? this.lit.filter((e) => drawn.has(e.id)) : this.lit;
+    if (!along.length) return;
+    const points = along.map((e) => [
       e.from[0] - this.center[0],
       e.from[1] - this.center[1],
       e.from[2] - this.center[2],
@@ -2207,13 +2233,16 @@ export class Viewer {
   private rebuildHighlight() {
     this.litWire?.dispose(false, true);
     this.litWire = undefined;
+    this.litDrawn = 0;
     this.rebuildAim();
     if (!this.view || !this.lit.length) return;
 
     const wanted = new Set(this.lit.map((e) => e.id));
     const flat = edgeSegments(this.view, this.prefs.edges.shrink);
     const lines: Vector3[][] = [];
-    for (let e = 0; e < this.view.edgeNames.length; e++) {
+    // Over the edges the wireframe draws, by the same reckoning: a sheet is
+    // lit where the model it runs through is on screen, and nowhere else.
+    for (const e of this.edgesShown()) {
       if (!wanted.has(this.view.edgeNames[e])) continue;
       const at = e * 6;
       lines.push([
@@ -2231,6 +2260,7 @@ export class Viewer {
     this.litWire.isPickable = false;
     this.litWire.layerMask = MAIN_LAYER;
     this.litWire.renderingGroupId = PASS.blocking;
+    this.litDrawn = lines.length;
     const lit = this.litWire.material as GreasedLineSimpleMaterial;
     lit.zOffset = SHEET_DEPTH_BIAS.factor;
     lit.zOffsetUnits = SHEET_DEPTH_BIAS.units;
