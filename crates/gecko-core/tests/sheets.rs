@@ -486,3 +486,90 @@ mod cut_grid {
         assert_eq!(b.nb_nodes(), 8, "one block, and no stray corners");
     }
 }
+
+/// A layer taken out of a model whose layers are nothing like each other.
+///
+/// What this is here for: the seams a removal has to close share their
+/// corners, and a corner moved by one seam changes the shape of the next.
+/// Every layer the same thickness hides that — the seams come out
+/// symmetrical whatever order they are closed in — so the model here is
+/// deliberately lopsided: a fat layer between two thin ones, crossed the
+/// other way by layers thinner than the fat one is wide.
+mod uneven {
+    use gecko_core::ids::CellId;
+    use gecko_core::{cube_corners, Blocking};
+
+    /// An edge along `axis` whose two ends sit at `low` and `high` on it.
+    fn spanning(b: &Blocking, axis: usize, low: f64, high: f64) -> Option<CellId> {
+        b.map_edges()
+            .into_iter()
+            .find(|e| {
+                let (u, v) = b.edge_endpoints(*e);
+                let (p, q) = (b.position(u).unwrap(), b.position(v).unwrap());
+                let mut at = [p[axis], q[axis]];
+                at.sort_by(f64::total_cmp);
+                (at[0] - low).abs() < 1e-9
+                    && (at[1] - high).abs() < 1e-9
+                    && (0..3).all(|k| k == axis || (p[k] - q[k]).abs() < 1e-9)
+            })
+            .map(|e| b.edge_tag(e).id)
+    }
+
+    /// Cut the layer between `low` and `high` so that a new plane lands at
+    /// `want`.
+    ///
+    /// Which end of the sheet `t` is measured from is the map's business, so
+    /// the cut is tried one way and, if the plane came out at the other end,
+    /// taken back and tried the other. That keeps the test about the shape
+    /// it wants rather than about the parameter's direction, which
+    /// [`super`] already covers.
+    fn cut(b: &mut Blocking, axis: usize, low: f64, high: f64, want: f64) {
+        let t = (want - low) / (high - low);
+        let keep = b.snapshot().expect("a copy");
+        let edge = spanning(b, axis, low, high).expect("a layer to cut");
+        b.split_sheet(edge, t).expect("a cut");
+        if spanning(b, axis, low, want).is_none() {
+            *b = keep;
+            let edge = spanning(b, axis, low, high).expect("a layer to cut");
+            b.split_sheet(edge, 1.0 - t).expect("a cut");
+        }
+        assert!(
+            spanning(b, axis, low, want).is_some(),
+            "no plane at {want} on axis {axis}"
+        );
+    }
+
+    /// Three layers across x — 0.2 wide, 0.6, then 0.2 — and four across y,
+    /// of 0.1, 0.1, 0.1 and 0.7. Twelve blocks, one deep in z.
+    fn lopsided() -> Blocking {
+        let mut b = Blocking::new().expect("a blocking");
+        b.add_block(cube_corners([0.0, 0.0, 0.0], 1.0))
+            .expect("a block");
+        cut(&mut b, 0, 0.0, 1.0, 0.2);
+        cut(&mut b, 0, 0.2, 1.0, 0.8);
+        cut(&mut b, 1, 0.0, 1.0, 0.1);
+        cut(&mut b, 1, 0.1, 1.0, 0.2);
+        cut(&mut b, 1, 0.2, 1.0, 0.3);
+        assert_eq!(b.nb_blocks(), 12);
+        b
+    }
+
+    #[test]
+    fn the_fat_layer_comes_out_and_the_seam_lands_in_the_middle() {
+        let mut b = lopsided();
+        let edge = spanning(&b, 0, 0.2, 0.8).expect("the fat layer");
+        b.remove_sheet(edge).expect("the layer comes out");
+        assert_eq!(b.nb_blocks(), 8, "four blocks of the layer gone");
+
+        // The two walls the layer was between, at x = 0.2 and x = 0.8, are
+        // now one wall half way. Nothing else moved.
+        let mut across: Vec<i64> = b
+            .map_vertices()
+            .into_iter()
+            .map(|v| (b.position(v).unwrap()[0] * 1e6).round() as i64)
+            .collect();
+        across.sort_unstable();
+        across.dedup();
+        assert_eq!(across, [0, 500_000, 1_000_000]);
+    }
+}

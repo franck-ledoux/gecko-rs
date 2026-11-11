@@ -1993,20 +1993,6 @@ impl Blocking {
                     return Err(BlockingError::BrokenSheet(edge));
                 }
             }
-            // The sew will refuse a pair that does not run opposite ways,
-            // and by then the layer is gone and the model has a hole in
-            // it. Same test, asked while there is still nothing to undo.
-            let direction = |d: DartIdType| {
-                let at = self.position(self.map.vertex_id(d)).unwrap_or([0.0; 3]);
-                let to = self
-                    .position(self.map.vertex_id(self.map.beta::<1>(d)))
-                    .unwrap_or([0.0; 3]);
-                [0, 1, 2].map(|k| to[k] - at[k])
-            };
-            let (a, c) = (direction(above), direction(below));
-            if (0..3).map(|k| a[k] * c[k]).sum::<f64>() >= 0.0 {
-                return Err(BlockingError::BrokenSheet(edge));
-            }
             rejoin.push((above, below));
         }
 
@@ -2015,12 +2001,96 @@ impl Blocking {
         }
         // The darts belong to the blocks that stayed, so they outlived the
         // layer that was between them.
+        self.settle_seams(&rejoin);
         for (above, below) in rejoin {
             self.map.sew::<3>(above, below)?;
         }
 
         self.assign_missing_ids();
         Ok(())
+    }
+
+    /// Put every pair of nodes the seams are about to merge where the
+    /// merge would leave them: half way.
+    ///
+    /// A sew merges as it goes, so a corner two seams share has already
+    /// moved by the time the second one is asked — and the map's own sew
+    /// measures the two faces before it joins them, to refuse a pair that
+    /// does not run opposite ways. A seam it would have taken on its own
+    /// therefore gets refused for where its neighbor left it, and by then
+    /// the layer is gone and the model has a hole in it.
+    ///
+    /// Settled first, the two faces of a seam coincide exactly, and no
+    /// later seam can pull them apart: a corner belongs to both seams and
+    /// is already where both want it, or it belongs to one and nothing
+    /// else touches it. What each seam does no longer depends on what the
+    /// one before it did.
+    ///
+    /// Nowhere does this decide **which** face meets which — that is read
+    /// off the map above, and is the whole reason a removal works on a
+    /// model however distorted. It is the same step `glue_onto` takes
+    /// before its own sew.
+    fn settle_seams(&mut self, seams: &[(DartIdType, DartIdType)]) {
+        // Which node meets which, walked the way the sew walks it: down
+        // one face by β₁ and the other by β₀, pairing the node ahead of
+        // the dart on one side with the node behind it on the other.
+        let pairs: Vec<(VertexIdType, VertexIdType)> = atomically(|t| {
+            let mut out = Vec::with_capacity(seams.len() * 4);
+            for (above, below) in seams {
+                let (mut l, mut r) = (*above, *below);
+                for _ in 0..4 {
+                    let ahead = self.map.beta_tx::<1>(t, l)?;
+                    out.push((
+                        self.map.vertex_id_tx(t, ahead)?,
+                        self.map.vertex_id_tx(t, r)?,
+                    ));
+                    l = ahead;
+                    r = self.map.beta_tx::<0>(t, r)?;
+                }
+            }
+            Ok(out)
+        });
+
+        // A node may be in several pairs — a corner where four seams meet
+        // is in four of them — so the pairs are grouped before anything is
+        // averaged. Otherwise the answer would depend on the order again,
+        // which is the thing being fixed.
+        fn root(parent: &HashMap<VertexIdType, VertexIdType>, mut v: VertexIdType) -> VertexIdType {
+            while let Some(&up) = parent.get(&v) {
+                if up == v {
+                    break;
+                }
+                v = up;
+            }
+            v
+        }
+        let mut parent: HashMap<VertexIdType, VertexIdType> = HashMap::new();
+        for (a, b) in &pairs {
+            for v in [a, b] {
+                parent.entry(*v).or_insert(*v);
+            }
+            let (ra, rb) = (root(&parent, *a), root(&parent, *b));
+            if ra != rb {
+                parent.insert(rb, ra);
+            }
+        }
+        let mut together: BTreeMap<VertexIdType, Vec<VertexIdType>> = BTreeMap::new();
+        for v in parent.keys() {
+            together.entry(root(&parent, *v)).or_default().push(*v);
+        }
+
+        for (_, mut nodes) in together {
+            nodes.sort_unstable();
+            let known: Vec<[f64; 3]> = nodes.iter().filter_map(|v| self.position(*v)).collect();
+            if known.is_empty() {
+                continue;
+            }
+            let share = known.len() as f64;
+            let at = [0, 1, 2].map(|k| known.iter().map(|p| p[k]).sum::<f64>() / share);
+            for v in nodes {
+                self.map.write_vertex(v, (at[0], at[1], at[2]));
+            }
+        }
     }
 
     /// One dart per face of a block, on that block's own side.

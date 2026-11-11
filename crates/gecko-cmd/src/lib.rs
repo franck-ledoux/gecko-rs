@@ -607,19 +607,33 @@ impl Session {
         // nothing is not a step back either. Copying the structure costs
         // about what one refresh of the view costs, which is the right price
         // for being able to take a thing back.
-        let before = (self.steps > 0).then(|| self.capture()).transpose()?;
+        //
+        // Taken even with the history switched off, and that is not the
+        // same thing: the setting says how many states are **kept**, and
+        // this one is held for the length of one command. It is what puts
+        // the model back when the command fails. An operation that gives up
+        // half way — a layer removed and a seam left unsewn — would
+        // otherwise leave the model with a hole in it and the reply saying
+        // nothing happened.
+        let before = self.capture()?;
         // Where the nodes end, so that the ones the command is about to
         // make can be told from the ones it renames.
         let mark = self.blocking.corner_mark();
         // Kept before the command is consumed, and trimmed: a geometry
         // command carries the whole file, and the journal wants the name.
         let written = trim(command.clone());
-        let mut outcome = self.run(command)?;
+        let mut outcome = match self.run(command) {
+            Ok(outcome) => outcome,
+            Err(e) => {
+                self.restore(before);
+                return Err(e);
+            }
+        };
         outcome.script = Some(script::line(&written));
         self.journal.push(written);
         if outcome.view_changed {
-            if let Some(state) = before {
-                self.push(state);
+            if self.steps > 0 {
+                self.push(before);
             }
             self.settle_origin();
             // The nodes this command made, onto the model if they are on
@@ -657,29 +671,13 @@ impl Session {
         })
     }
 
-    fn push(&mut self, state: State) {
-        self.past.push_back(state);
-        while self.past.len() > self.steps {
-            self.past.pop_front();
-        }
-    }
-
-    /// Put the last state back.
+    /// Put a captured state back, whole.
     ///
     /// Nothing is settled afterwards. The state was settled when it was
     /// taken, and running the classification over it again would be a
-    /// chance for it to come out differently — which is the one thing an
-    /// undo must not do.
-    fn undo(&mut self) -> Result<Outcome, SessionError> {
-        let Some(state) = self.past.pop_back() else {
-            return Ok(Outcome {
-                script: None,
-                message: "nothing to undo".to_string(),
-                view_changed: false,
-            });
-        };
+    /// chance for it to come out differently.
+    fn restore(&mut self, state: State) {
         let was = self.geometry.as_ref().map(Arc::as_ptr);
-        self.drop_mesh();
         self.blocking = state.blocking;
         self.geometry = state.geometry;
         self.composites = state.composites;
@@ -692,6 +690,26 @@ impl Session {
         if was != self.geometry.as_ref().map(Arc::as_ptr) {
             self.geometry_generation += 1;
         }
+    }
+
+    fn push(&mut self, state: State) {
+        self.past.push_back(state);
+        while self.past.len() > self.steps {
+            self.past.pop_front();
+        }
+    }
+
+    /// Put the last state back.
+    fn undo(&mut self) -> Result<Outcome, SessionError> {
+        let Some(state) = self.past.pop_back() else {
+            return Ok(Outcome {
+                script: None,
+                message: "nothing to undo".to_string(),
+                view_changed: false,
+            });
+        };
+        self.drop_mesh();
+        self.restore(state);
         Ok(Outcome {
             script: None,
             message: format!(
