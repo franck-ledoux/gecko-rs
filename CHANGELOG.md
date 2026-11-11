@@ -71,6 +71,32 @@ the day a tag was cut.
   camera, because its lines are edges of the model drawn a second time and
   the depth test between two things at the same depth decides nothing.
 
+- **Shaded hollows.** A switch in the drawer's **Colors** section shades each
+  pixel of a surface by how enclosed it is — ambient occlusion, computed in
+  screen space — so a pocket, a notch or a re-entrant corner reads as one.
+  It makes the faces opaque while it is on and hands the transparency back
+  when it goes off: there is nothing to shade on a surface you can see
+  through.
+
+  Its reach is a share of the model's own diagonal rather than a fixed
+  distance, which is what lets it read the same on a unit cube and on a part
+  in millimetres. The wireframe and the node handles are kept out of it: left
+  in, a line lying along an edge of the model shades the faces either side of
+  it, and on a grid of twenty-seven blocks that alone darkens three quarters
+  as many pixels again.
+
+- **A second light, from one side.** A hemispheric light shades a surface by
+  how far it faces *up*, and the four walls of a block all face sideways — so
+  they came out exactly the same color and a block read as a flat outline
+  with a lid. A dim directional light, fixed in the world rather than carried
+  by the camera, is what makes the corner between two walls visible.
+
+- **The surfaces' normals point out of the model.** They are computed from
+  the winding of the kernel's quadrangles, which points in. Nothing had ever
+  read them — a two-sided material flips a back-facing normal before it
+  lights it — until the shading above read them out of a geometry buffer,
+  pointed its hemisphere into the solid, and found the solid everywhere.
+
 ## 0.1.4
 
 Groups of blocks, the display settled around them, and editing that keeps

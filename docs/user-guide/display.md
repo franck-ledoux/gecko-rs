@@ -51,6 +51,36 @@ no new markup.
     The flip side: clearing site data forgets them, and they do not follow you
     to another machine.
 
+## Shaded hollows
+
+**Shaded hollows**, in the **Colors** section, shades each pixel of a surface
+by how enclosed it is: the inside of a pocket, a notch or a re-entrant corner
+goes darker than an open wall. It is
+[screen-space ambient occlusion](https://en.wikipedia.org/wiki/Screen_space_ambient_occlusion),
+the algorithm Babylon ships, and it is for looking at a shape — reading the
+form of a blocking, or taking a figure — rather than for editing.
+
+**It opens the faces as it goes on, and hands the transparency back when it
+goes off.** The two are one setting because one is useless without the other:
+there is nothing to shade on a surface you can see through. Opaque faces are
+also not what you want while working, since the wireframe and the handles are
+*inside* the model, which is why this is a switch rather than the default.
+
+Two things are worth knowing about how it behaves:
+
+- **It is measured against the model, not against the drawing of it.** The
+  wireframe and the node handles are kept out of the shading. Left in, each
+  line lying along an edge of the model shades the faces either side of it,
+  and the model comes out sooty along every edge.
+- **Its reach follows the model.** How far it looks around a pixel is a share
+  of the model's own diagonal, worked out afresh whenever the model changes
+  shape — so it reads the same on a unit cube and on a part in millimetres.
+  Fixed distances, which is what the algorithm takes, either find nothing or
+  black the picture out.
+
+It needs multiple render targets. On a browser without them the switch says
+so and comes straight back off.
+
 ## Faces and blocks
 
 Each has its own box in the panel, and the two are independent: either, both,

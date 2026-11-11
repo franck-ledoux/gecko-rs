@@ -15,6 +15,7 @@ import { ArcRotateCamera } from "@babylonjs/core/Cameras/arcRotateCamera";
 import { Camera } from "@babylonjs/core/Cameras/camera";
 import { Viewport } from "@babylonjs/core/Maths/math.viewport";
 import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight";
+import { DirectionalLight } from "@babylonjs/core/Lights/directionalLight";
 import { Matrix, Vector2, Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { Animation } from "@babylonjs/core/Animations/animation";
 import { CubicEase, EasingFunction } from "@babylonjs/core/Animations/easing";
@@ -51,6 +52,7 @@ import {
   GEOM_GROUPS,
   SURFACE,
 } from "./geometry";
+import { Occlusion } from "./occlusion";
 import { AxisGizmo, MAIN_LAYER, orientationFor } from "./axes";
 import type { Axis } from "./axes";
 import {
@@ -79,6 +81,9 @@ import {
 
 /** The two groups drawn from the same quadrangles. */
 export type Group = "faces" | "blocks";
+
+/** Both of them, for the few things that treat them alike. */
+const GROUPS: readonly Group[] = ["faces", "blocks"];
 
 /** What the mouse is aimed at: the block structure, or the geometry. */
 export type Picking = "blocks" | "geometry";
@@ -411,6 +416,52 @@ function glide(target: object, property: string, from: number | Vector3, to: num
 function normalsFor(data: SurfaceData): number[] {
   const normals: number[] = [];
   VertexData.ComputeNormals(data.positions, Array.from(data.indices), normals);
+  return outward(data.positions, normals);
+}
+
+/**
+ * Turn a surface's normals to face out of it.
+ *
+ * `ComputeNormals` reads the winding, and the winding of a block's quads
+ * comes from the kernel's darts: consistent, and pointing **in**. Nothing
+ * ever noticed, because a two-sided material flips the normal of a
+ * back-facing fragment before it lights it, and these surfaces are drawn
+ * two-sided so that a translucent shell shows more than its silhouette.
+ *
+ * The ambient occlusion did notice. It reads the normals out of a geometry
+ * buffer, where nothing flips anything, and a hemisphere pointed into the
+ * solid finds the solid: every pixel came back fully occluded and the model
+ * went black. That was the whole of that bug.
+ *
+ * By vote against the surface's own middle rather than by negating what the
+ * kernel sends: this runs over the mesh's skin too, which is wound the other
+ * way, and a rule that says "the kernel means the opposite" would be wrong
+ * the moment either of them changed. A closed surface — which is what a
+ * block and a skin both are — answers it unambiguously.
+ */
+function outward(positions: ArrayLike<number>, normals: number[]): number[] {
+  const count = normals.length / 3;
+  if (count === 0) return normals;
+  let cx = 0;
+  let cy = 0;
+  let cz = 0;
+  for (let i = 0; i < count; i++) {
+    cx += positions[3 * i];
+    cy += positions[3 * i + 1];
+    cz += positions[3 * i + 2];
+  }
+  cx /= count;
+  cy /= count;
+  cz /= count;
+  let vote = 0;
+  for (let i = 0; i < count; i++) {
+    vote +=
+      (positions[3 * i] - cx) * normals[3 * i] +
+      (positions[3 * i + 1] - cy) * normals[3 * i + 1] +
+      (positions[3 * i + 2] - cz) * normals[3 * i + 2];
+  }
+  if (vote >= 0) return normals;
+  for (let i = 0; i < normals.length; i++) normals[i] = -normals[i];
   return normals;
 }
 
@@ -542,6 +593,8 @@ export class Viewer {
    *  leaves the seam where it is — so the two are drawn differently. */
   private picked: Pick[] = [];
   readonly axes: AxisGizmo;
+  /** The ambient occlusion, switched on and off by the preferences. */
+  private readonly occlusion: Occlusion;
   /** One camera per pane. The 3-D one is [`camera`](Viewer.camera); the
    *  other three look down an axis and are orthographic. */
   private readonly panes: Record<Pane, ArcRotateCamera>;
@@ -589,6 +642,21 @@ export class Viewer {
     // turned away from it would otherwise be a silhouette with no color left
     // to read — which defeats coloring by name.
     light.groundColor = new Color3(0.42, 0.42, 0.46);
+    // A second light, from over your left shoulder and fixed in the world.
+    //
+    // One hemispheric light shades a surface by which way it faces *up*, so
+    // the four walls of a block come out the same color and the block reads
+    // as a flat outline. A directional light breaks that: two faces meeting
+    // at a corner take different amounts of it, which is what makes the
+    // corner visible. Fixed rather than carried by the camera, because a
+    // light that follows you lights every face the same from every side and
+    // gives the shape back up. Dim: this is a depth cue laid over the
+    // coloring, not a second coloring.
+    const sun = new DirectionalLight("sun", new Vector3(-0.55, -1, -0.4), this.scene);
+    sun.intensity = 0.45;
+    // Colors here carry a meaning — a classification, a group, an id — and a
+    // highlight is a white patch across one that says nothing.
+    sun.specular = Color3.Black();
 
     this.panes = {
       "3d": this.camera,
@@ -605,6 +673,13 @@ export class Viewer {
       this.rescaleHandles(camera as ArcRotateCamera);
     });
     this.scene.onBeforeRenderObservable.add(() => this.fitPickTolerance());
+    this.occlusion = new Occlusion(this.scene, this.camera);
+    // Per frame, because the surfaces are built afresh by every edit and a
+    // list that still names a disposed mesh is a crash inside a frame. It
+    // walks the meshes and stops at the comparison when nothing moved.
+    this.scene.onBeforeRenderObservable.add(() => {
+      if (this.occlusion.on) this.occlusion.shade(this.shadedMeshes());
+    });
     this.axes = new AxisGizmo(this.scene, this.camera);
     this.layOut();
     // Rendering leaves `activeCamera` set to whichever camera went last — the
@@ -848,6 +923,46 @@ export class Viewer {
     this.rebuildSurface("blocks");
     this.rebuildGeometry();
     this.rebuildMesh();
+    this.refreshOcclusion();
+  }
+
+  /**
+   * The occlusion, in step with the preferences and with the model.
+   *
+   * One call rather than three, and run after every rebuild: the shading is
+   * a function of what is on screen and of how big it is, and both of those
+   * change under it.
+   */
+  private refreshOcclusion() {
+    this.occlusion.set(this.prefs.ao);
+    if (!this.occlusion.on) return;
+    this.occlusion.tune(this.modelBounds());
+    this.occlusion.shade(this.shadedMeshes());
+  }
+
+  /**
+   * What the shading is computed from: the surfaces, and nothing with a
+   * width of its own.
+   *
+   * Named one by one rather than taken as everything-but, so that a mesh
+   * added here next year is left out until somebody decides it belongs —
+   * which is the safe way round. Measured on a model of twenty-seven
+   * blocks, letting the wireframe and the handles in raises the shaded
+   * pixels by three quarters: a line lying along an edge of the model is
+   * an occluder of the faces either side of it, and it does not belong to
+   * the model any more than a label does.
+   */
+  private shadedMeshes(): Mesh[] {
+    const shaded: Mesh[] = [];
+    for (const group of GROUPS) {
+      for (const slot of this.surfaces[group]) shaded.push(slot.mesh);
+    }
+    // The geometry's patches and the mesh's skin are surfaces too, and a
+    // model classified onto a loaded geometry is exactly the picture this
+    // is meant to help read.
+    shaded.push(...this.geomMeshes.surfaces);
+    if (this.meshSkin) shaded.push(this.meshSkin);
+    return shaded;
   }
 
   /**
@@ -887,6 +1002,19 @@ export class Viewer {
     this.rebuildSurface("faces");
     this.rebuildSurface("blocks");
     this.paintNodes();
+  }
+
+  /** What the shading is computed from, by name, for a test: the rule that
+   *  keeps the wireframe and the handles out of it is worth stating
+   *  exactly rather than inferring from how dark the picture came out. */
+  get shadedNames(): string[] {
+    return this.shadedMeshes().map((m) => m.name);
+  }
+
+  /** Whether the hollows are actually being shaded. Not the same as the
+   *  preference: an engine that cannot do it says no. */
+  get occluding(): boolean {
+    return this.occlusion.on;
   }
 
   /** Whether the view is narrowed to a layer, for a test and for the page. */

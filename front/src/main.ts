@@ -12,6 +12,7 @@ import type { Stats } from "./kernel";
 import { initKernel, WasmKernel } from "./kernel-wasm";
 import { Viewer, type Group, type Pick } from "./viewer";
 import {
+  DEFAULTS,
   isLight,
   loadPrefs,
   savePrefs,
@@ -123,6 +124,51 @@ async function boot() {
       say(group, digest(prefs[group].coloring, prefs[group].alpha, prefs[group].visible));
     }
     say("mesh", digest(prefs.mesh.coloring, prefs.mesh.alpha, prefs.mesh.visible));
+  }
+
+  /** The opacity the occlusion took away, to be handed back when it goes
+   *  off. Not remembered between sessions: a reload with the occlusion on
+   *  has nothing to put back but the default, which is where everyone
+   *  started anyway. */
+  let translucent: { faces: number; blocks: number } | null = null;
+
+  /**
+   * Shade the surfaces by how enclosed they are — and make them opaque.
+   *
+   * The two go together because one is useless without the other: ambient
+   * occlusion shades a surface, and a surface you can see straight through
+   * has nothing to shade. Leaving the opacity to the user would mean a
+   * switch that visibly does nothing until a second slider is found, which
+   * is not a setting anybody would trust. Turning it off hands the
+   * transparency back, so the switch is a round trip rather than something
+   * done to your settings.
+   */
+  function setOcclusion(on: boolean) {
+    if (on === prefs.ao) return;
+    if (on) {
+      translucent = { faces: prefs.faces.alpha, blocks: prefs.blocks.alpha };
+      prefs.faces.alpha = 1;
+      prefs.blocks.alpha = 1;
+    } else {
+      const was = translucent ?? { faces: DEFAULTS.faces.alpha, blocks: DEFAULTS.blocks.alpha };
+      prefs.faces.alpha = was.faces;
+      prefs.blocks.alpha = was.blocks;
+      translucent = null;
+    }
+    prefs.ao = on;
+    redraw();
+    // The two alpha sliders moved under the user; the drawer has to agree.
+    drawLayers();
+    $<HTMLInputElement>("show-ao").checked = prefs.ao;
+    // Asked for and refused: an engine without multiple render targets
+    // cannot do it, and saying nothing would leave a ticked box and a flat
+    // picture to explain each other.
+    if (on && !viewer.occluding) {
+      setOcclusion(false);
+      say("this browser cannot shade hollows");
+      return;
+    }
+    say(on ? "hollows shaded, faces opaque" : "hollows plain again");
   }
 
   function setTheme(theme: Theme) {
@@ -573,6 +619,10 @@ async function boot() {
   }
   drawSwatches();
 
+  $<HTMLInputElement>("show-ao").checked = prefs.ao;
+  $("show-ao").addEventListener("change", (e) => {
+    setOcclusion((e.target as HTMLInputElement).checked);
+  });
   $<HTMLInputElement>("show-axes").checked = prefs.axes;
   $("show-axes").addEventListener("change", (e) => {
     prefs.axes = (e.target as HTMLInputElement).checked;
@@ -2513,6 +2563,8 @@ async function boot() {
     nodeTint: (name: number) => viewer.nodeTint(name),
     sheet: () => viewer.highlighted,
     litDrawn: () => viewer.litDrawn,
+    occluding: () => viewer.occluding,
+    shadedNames: () => viewer.shadedNames,
     selectedEdge: () => viewer.selectedEdge,
     pickEdge: (x: number, y: number) => viewer.pickEdge(x, y),
     pickEdgeByName: (edge: number) => chooseEdge(edge),

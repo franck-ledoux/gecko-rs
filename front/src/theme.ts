@@ -201,6 +201,10 @@ export interface ViewPrefs {
   hiddenGroups: string[];
   /** Whether the window is split into four views. */
   quad: boolean;
+  /** Whether the surfaces are shaded by how enclosed each pixel is —
+   *  ambient occlusion — which also puts them at full opacity, there being
+   *  nothing to shade on a surface you can see through. */
+  ao: boolean;
   /** How a saved picture comes out. */
   shot: { scale: number; transparent: boolean };
   /** How many steps back the kernel is asked to keep. Kept here with the
@@ -254,6 +258,10 @@ export const DEFAULTS: ViewPrefs = {
   // One view. The split is for placing corners, which is a thing you do
   // for a while and then stop doing.
   quad: false,
+  // Off. It needs opaque faces to show anything, and opaque faces are not
+  // what you want while editing: the wireframe and the handles are inside.
+  // It is for looking at a shape, and for a figure.
+  ao: false,
   // Twice the canvas, which is what a figure in a paper wants. The
   // background is kept by default: transparency is for dropping a figure
   // onto a page of unknown color, and surprises anyone not expecting it.
@@ -347,6 +355,7 @@ export function loadPrefs(): ViewPrefs {
         : [],
       chrome: typeof stored.chrome === "boolean" ? stored.chrome : DEFAULTS.chrome,
       quad: typeof stored.quad === "boolean" ? stored.quad : DEFAULTS.quad,
+      ao: typeof stored.ao === "boolean" ? stored.ao : DEFAULTS.ao,
       shot: {
         // One of the offered sizes, not whatever is in storage: a scale of
         // 40 is a request for a gigapixel the browser will refuse to make.

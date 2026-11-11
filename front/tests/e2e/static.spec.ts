@@ -4027,3 +4027,277 @@ test("R smooths the blocking, by what the sliders say", async ({ page }) => {
   expect(back, "the node should be back at (1, 1, 1)").toBeDefined();
   expect(errors).toEqual([]);
 });
+
+/**
+ * Three blocks in an L, which is the smallest thing with a corner that
+ * shades: two walls meeting at 270 degrees. A cube on its own is convex all
+ * over and ambient occlusion has nothing to say about it.
+ */
+async function anLShape(page: import("@playwright/test").Page) {
+  for (const origin of [
+    [0, 0, 0],
+    [1, 0, 0],
+    [0, 1, 0],
+  ]) {
+    await page.evaluate(
+      (at) => (window as any).__gecko.apply({ op: "create_cube", origin: at, size: 1 }),
+      origin,
+    );
+  }
+  await page.evaluate(() => (window as any).__gecko.refresh());
+  await page.evaluate(() => (window as any).__gecko.run("recenter"));
+  await page.evaluate(() => (window as any).__gecko.settled());
+}
+
+/** The drawer, open at the fold the shading's switch lives in. */
+async function openShading(page: import("@playwright/test").Page) {
+  await openDrawer(page);
+  await page.locator("#sec-colors").evaluate((d) => ((d as HTMLDetailsElement).open = true));
+  await expect(page.locator("#show-ao")).toBeVisible();
+}
+
+/**
+ * What switching the shading on does to the picture, with the opacity held
+ * still either side so that the shading is the only difference.
+ */
+async function shadingDiff(page: import("@playwright/test").Page) {
+  return (await page.evaluate(async () => {
+    const g = (window as any).__gecko;
+    const view = document.querySelector("#view") as HTMLCanvasElement;
+    const frame = () =>
+      new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const grab = () => {
+      const flat = document.createElement("canvas");
+      flat.width = view.width;
+      flat.height = view.height;
+      flat.getContext("2d")!.drawImage(view, 0, 0);
+      return flat.getContext("2d")!.getImageData(0, 0, view.width, view.height).data;
+    };
+    /**
+     * A picture that has stopped changing.
+     *
+     * Switching the shading on builds a post-process pipeline, and the
+     * frames before its shaders are compiled come out of the combine black.
+     * Reading one of those would measure the compile rather than the
+     * shading, so this waits for two frames that agree.
+     */
+    const read = async () => {
+      let last = grab();
+      for (let i = 0; i < 60; i++) {
+        await frame();
+        const now = grab();
+        let moved = 0;
+        for (let p = 0; p < now.length; p += 4) moved += Math.abs(now[p] - last[p]);
+        last = now;
+        if (moved / (now.length / 4) < 0.5) return now;
+      }
+      return last;
+    };
+    const box = document.getElementById("show-ao") as HTMLInputElement;
+    if (box.checked) box.click();
+    // Opaque before the first reading, so that turning the shading on moves
+    // nothing but the shading: it opens the faces too, and a comparison
+    // across that would only be measuring the transparency.
+    const slider = document.querySelector('input[data-test="faces-alpha"]') as HTMLInputElement;
+    slider.value = "1";
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+    const plain = await read();
+    box.click();
+    const shaded = await read();
+
+    let lit = 0;
+    let darkened = 0;
+    let untouched = 0;
+    let deepest = 0;
+    for (let i = 0; i < plain.length; i += 4) {
+      const before = (plain[i] + plain[i + 1] + plain[i + 2]) / 3;
+      // The background, which has no surface in it to shade.
+      if (before <= 30) continue;
+      lit++;
+      const drop = before - (shaded[i] + shaded[i + 1] + shaded[i + 2]) / 3;
+      if (drop > 8) darkened++;
+      if (Math.abs(drop) <= 2) untouched++;
+      if (drop > deepest) deepest = drop;
+    }
+    return { lit, darkened, untouched, deepest, on: g.occluding() };
+  })) as { lit: number; darkened: number; untouched: number; deepest: number; on: boolean };
+}
+
+test("shading the hollows darkens the corner and leaves the open faces alone", async ({
+  page,
+}) => {
+  // Two bugs met here, and this one test holds both down.
+  //
+  // The surfaces' normals come off the winding of the kernel's quads, which
+  // points **into** the block. Nothing had ever read them — a two-sided
+  // material flips a back-facing normal before lighting it — so the mistake
+  // sat there until the occlusion read them out of a geometry buffer, where
+  // nothing flips anything, pointed its hemisphere into the solid and found
+  // the solid everywhere. The whole model went dark by a quarter.
+  //
+  // And the wireframe and the handles must stay out of that buffer. They
+  // are geometry like anything else, and a line lying along an edge of the
+  // model occludes the faces either side of it: soot along every edge, a
+  // ring round every handle. Both faults darken nearly every lit pixel,
+  // which is what `untouched` is here to refuse.
+  const errors = await boot(page);
+  await anLShape(page);
+
+  const diff = await shadingDiff(page);
+  const where = JSON.stringify(diff);
+  expect(diff.on, where).toBe(true);
+  // It does something: the inside of the corner goes down a long way.
+  expect(diff.deepest, where).toBeGreaterThan(20);
+  expect(diff.darkened, where).toBeGreaterThan(500);
+  // And it does not do it everywhere. Most of what is on screen is flat
+  // wall facing open air, which is exactly what ambient occlusion leaves
+  // alone.
+  expect(diff.untouched / diff.lit, where).toBeGreaterThan(0.5);
+  expect(errors).toEqual([]);
+});
+
+test("the shading opens the faces, and closing it hands the transparency back", async ({
+  page,
+}) => {
+  // The switch is two things at once because one is useless without the
+  // other: there is nothing to shade on a surface you can see through. It
+  // has to be a round trip, though — a setting that quietly keeps your
+  // faces opaque after you turned it off is a setting nobody trusts.
+  const errors = await boot(page);
+  await anLShape(page);
+  await openShading(page);
+
+  const alpha = () =>
+    page.evaluate(() => (window as any).__gecko.display().faces.alpha) as Promise<number>;
+  const before = await alpha();
+  expect(before).toBeLessThan(1);
+
+  await page.locator("#show-ao").click();
+  await expect(page.locator("#status")).toContainText("hollows shaded");
+  expect(await alpha()).toBe(1);
+  expect(await page.evaluate(() => (window as any).__gecko.occluding())).toBe(true);
+
+  await page.locator("#show-ao").click();
+  await expect(page.locator("#status")).toContainText("hollows plain");
+  expect(await alpha()).toBe(before);
+  expect(await page.evaluate(() => (window as any).__gecko.occluding())).toBe(false);
+  expect(errors).toEqual([]);
+});
+
+test("the triad is still drawn while the hollows are shaded", async ({ page }) => {
+  // The pipeline is given the geometry buffer rather than left to take a
+  // prepass, which is scene-wide: it rode over the corner camera's own
+  // viewport and left the corner empty.
+  const errors = await boot(page);
+  await anLShape(page);
+  await openShading(page);
+  await page.locator("#show-ao").click();
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // The X arm is red and nothing else in the scene is.
+  const red = await page.evaluate(() => {
+    const view = document.querySelector("#view") as HTMLCanvasElement;
+    const flat = document.createElement("canvas");
+    flat.width = view.width;
+    flat.height = view.height;
+    flat.getContext("2d")!.drawImage(view, 0, 0);
+    const p = flat.getContext("2d")!.getImageData(0, 0, view.width, view.height).data;
+    let n = 0;
+    for (let i = 0; i < p.length; i += 4) {
+      if (p[i] > 150 && p[i + 1] < 90 && p[i + 2] < 90) n++;
+    }
+    return n;
+  });
+  expect(red).toBeGreaterThan(20);
+  expect(errors).toEqual([]);
+});
+
+test("the wireframe and the handles are kept out of the shading", async ({ page }) => {
+  // The occlusion is computed from a buffer of its own, and what goes into
+  // that buffer is what counts as *the model*. A greased line lying along an
+  // edge is not the model — it is a drawing of one — and left in, it shades
+  // the faces either side of it: on a grid of twenty-seven blocks it raises
+  // the shaded pixels by three quarters, soot along every edge.
+  const errors = await boot(page);
+  await page.evaluate(EDGE_NEAR);
+  await cutGrid(page);
+  await openShading(page);
+  await page.locator("#show-ao").click();
+  expect(await page.evaluate(() => (window as any).__gecko.occluding())).toBe(true);
+
+  const shaded = (await page.evaluate(() =>
+    (window as any).__gecko.shadedNames(),
+  )) as string[];
+  // Everything in it is a surface, one mesh per block.
+  expect(shaded.length).toBeGreaterThan(20);
+  expect(shaded.every((name) => /^(faces|blocks)-\d+$/.test(name)), shaded.join(" ")).toBe(
+    true,
+  );
+  // And the two things that would spoil it are not.
+  expect(shaded).not.toContain("edges");
+  expect(shaded.filter((name) => name.startsWith("node"))).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+test("two walls of a block that face different ways are drawn different shades", async ({
+  page,
+}) => {
+  // Under a single hemispheric light a surface is shaded by how far it
+  // faces *up*, and the four walls of a block all face sideways — so they
+  // came out the same color exactly, and a block read as a flat outline
+  // with a lid. The second light comes from one side, which is what makes
+  // a corner between two walls visible at all.
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  const shades = (await page.evaluate(() => {
+    const el = (key: string) =>
+      document.getElementById(key) ?? document.querySelector(`[data-test="${key}"]`);
+    // The faces alone: a wireframe and a handle have colors of their own,
+    // and this is counting the colors of the surfaces.
+    for (const key of ["edges-visible", "nodes-visible"]) {
+      const box = el(key) as HTMLInputElement;
+      if (box.checked) box.click();
+    }
+    const slider = el("faces-alpha") as HTMLInputElement;
+    slider.value = "1";
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+    return new Promise<number[]>((resolve) =>
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          const view = document.querySelector("#view") as HTMLCanvasElement;
+          const flat = document.createElement("canvas");
+          flat.width = view.width;
+          flat.height = view.height;
+          flat.getContext("2d")!.drawImage(view, 0, 0);
+          const p = flat.getContext("2d")!.getImageData(0, 0, view.width, view.height).data;
+          const tally = new Map<number, number>();
+          let lit = 0;
+          for (let i = 0; i < p.length; i += 4) {
+            const lum = (p[i] + p[i + 1] + p[i + 2]) / 3;
+            if (lum <= 30) continue;
+            lit++;
+            const bucket = Math.round(lum / 4);
+            tally.set(bucket, (tally.get(bucket) ?? 0) + 1);
+          }
+          // A flat face is one exact color, so each one is a bucket of its
+          // own; what is left over is the anti-aliasing along the edges,
+          // which never adds up to a fiftieth of the model.
+          resolve(
+            [...tally.entries()]
+              .filter(([, n]) => n > lit / 50)
+              .map(([bucket]) => bucket * 4)
+              .sort((a, b) => a - b),
+          );
+        }),
+      ),
+    );
+  })) as number[];
+
+  // Three faces of the cube are on screen, and all three are told apart:
+  // the lid, and two walls that no longer match.
+  expect(shades.length, shades.join(" ")).toBeGreaterThanOrEqual(3);
+  expect(errors).toEqual([]);
+});
