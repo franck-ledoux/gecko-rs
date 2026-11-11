@@ -104,7 +104,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     show: "O",
     key: "o",
     action: "open",
-    does: "open a geometry (.msh), or replay a script (.lua)",
+    does: "open a .msh, or replay a .lua",
     group: "Edit",
   },
   {
@@ -118,7 +118,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     show: "B",
     key: "b",
     action: "box",
-    does: "box the selected surfaces, or the whole geometry",
+    does: "box the surfaces, or the whole geometry",
     group: "Geometry",
   },
   { show: "G", key: "g", action: "glue", does: "glue the two selected faces", group: "Edit" },
@@ -126,7 +126,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     show: "Del",
     key: "delete",
     action: "remove",
-    does: "remove the selected block, or the lit sheet",
+    does: "remove the block, or the lit sheet",
     group: "Edit",
   },
   { show: "⌫", key: "backspace", action: "remove", does: "", group: "Edit" },
@@ -134,7 +134,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     show: "N",
     key: "n",
     action: "slot",
-    does: "remove the lit sheet, gap left open",
+    does: "take the sheet out, gap left open",
     group: "Edit",
   },
   { show: "P", key: "p", action: "pillow", does: "pillow the selected faces", group: "Edit" },
@@ -142,7 +142,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     show: "R",
     key: "r",
     action: "smooth",
-    does: "smooth the blocking, as far as the geometry allows",
+    does: "smooth, as the geometry allows",
     group: "Edit",
   },
   {
@@ -150,7 +150,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     key: "delete",
     shift: true,
     action: "remove-chord",
-    does: "remove the whole chord through that face",
+    does: "remove the chord through that face",
     group: "Edit",
   },
   { show: "⇧⌫", key: "backspace", shift: true, action: "remove-chord", does: "", group: "Edit" },
@@ -173,14 +173,14 @@ export const SHORTCUTS: readonly Shortcut[] = [
     show: "A",
     key: "a",
     action: "attach",
-    does: "put the selected nodes on the selected entity",
+    does: "put the selected nodes on that entity",
     group: "Geometry",
   },
   {
     show: "Q",
     key: "q",
     action: "face-on-surface",
-    does: "lay a quadrangle on the selected surface",
+    does: "lay a quadrangle on the surface",
     group: "Edit",
   },
   {
@@ -209,7 +209,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     show: "E",
     key: "e",
     action: "mesh",
-    does: "discretise every block, or take the mesh away again",
+    does: "discretise every block, or undo that",
     group: "Mesh",
   },
   {
@@ -224,10 +224,10 @@ export const SHORTCUTS: readonly Shortcut[] = [
     show: "=",
     key: "=",
     action: "finer",
-    does: "one more segment along the lit sheet",
+    does: "a segment more or fewer",
     group: "Mesh",
   },
-  { show: "-", key: "-", action: "coarser", does: "one fewer", group: "Mesh" },
+  { show: "-", key: "-", action: "coarser", does: "", group: "Mesh" },
   // A group of their own, small as it is: letting go is not editing, and
   // Edit had grown to thirteen rows, which is what sets the height of the
   // help card's tallest column.
@@ -263,15 +263,18 @@ export const SHORTCUTS: readonly Shortcut[] = [
   },
 
   { show: "F", key: "f", action: "recenter", does: "frame everything", group: "View" },
-  { show: "X", key: "x", action: "axis-x", does: "look down X", group: "View" },
-  { show: "Y", key: "y", action: "axis-y", does: "look down Y", group: "View" },
-  { show: "Z", key: "z", action: "axis-z", does: "look down Z", group: "View" },
+  // One row for the three. Three lines saying the same thing with a
+  // different letter in it are three lines nobody reads, and the card is
+  // read at the size of the smallest window it has to fit in.
+  { show: "X", key: "x", action: "axis-x", does: "look down X, Y or Z", group: "View" },
+  { show: "Y", key: "y", action: "axis-y", does: "", group: "View" },
+  { show: "Z", key: "z", action: "axis-z", does: "", group: "View" },
   {
     show: "⇧X",
     key: "x",
     shift: true,
     action: "axis--x",
-    does: "look down −X, and so for Y and Z",
+    does: "look down −X, −Y or −Z",
     group: "View",
   },
   { show: "⇧Y", key: "y", shift: true, action: "axis--y", does: "", group: "View" },

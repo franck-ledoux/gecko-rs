@@ -332,12 +332,18 @@ kbd {
 @media (max-height: 780px) {
   #help-card { padding: 14px 20px; }
   #help-who { margin-bottom: 6px; }
-  #help-groups > * { margin-bottom: 7px; }
+  #help-groups > * { margin-bottom: 5px; }
   /* The row gap, which is the lever with the most rows behind it: the
      tallest column has twenty of them, so a pixel here is twenty off the
      card. */
-  #help-card dl { gap: 2px 12px; }
-  #help-card dd { font-size: 11px; }
+  #help-card dl { gap: 1px 12px; }
+  /* And the leading, which is the lever with the most *lines* behind it.
+     A column here is about a hundred pixels wide, so nearly every
+     description wraps onto two or three lines, and the card has three
+     times as many lines as it has rows. Taking the leading from the
+     browser's default to 1.3 is fifty pixels off the card and reads no
+     tighter at this size; the keys keep their own spacing. */
+  #help-card dd { font-size: 11px; line-height: 1.3; }
   #help-card h2 { margin-bottom: 3px; }
   #help-hint { margin-top: 6px; }
   #help-legend { gap: 4px; }

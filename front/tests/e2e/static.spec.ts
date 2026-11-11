@@ -3942,14 +3942,18 @@ for (const [width, height] of [
     // And with room to spare, which the card's own height cannot show
     // because it shrinks to its contents: the measure has to be against
     // the window. The same words come out taller on another machine's
-    // font engine — the first cut of this fitted here and wanted
-    // twenty-five pixels more on the runner — so the margin is the thing
-    // to assert. `56` is the breathing room the card leaves round itself;
-    // the rest is for whatever sets the type differently.
+    // font engine, so the margin is the thing to assert. `56` is the
+    // breathing room the card leaves round itself; the rest is for
+    // whatever sets the type differently.
+    //
+    // That cushion was 24 pixels and it was not enough. A card fitted to
+    // three pixels here wanted 654 on the runner where this machine said
+    // 617 — a sixteenth taller, not a rounding — and the release stopped
+    // on it. Doubled, which covers that measured difference twice over.
     expect(
       fits.wants,
       `the card's ${fits.wants}px in a ${fits.window}px window`,
-    ).toBeLessThanOrEqual(fits.window - 56 - 24);
+    ).toBeLessThanOrEqual(fits.window - 56 - 48);
     expect(errors).toEqual([]);
   });
 }
