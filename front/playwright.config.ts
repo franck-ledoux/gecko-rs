@@ -36,7 +36,21 @@ export default defineConfig({
    */
   workers: collecting ? 1 : 2,
   retries: collecting ? 1 : 0,
-  timeout: collecting ? 120_000 : 30_000,
+  /**
+   * A minute a test, which is four times the slowest one here.
+   *
+   * It was thirty seconds, and thirty seconds is not the margin it sounds
+   * like: the two slowest tests take nine on this machine, and both of them
+   * spend it on round trips rather than on work — sixty wheel notches, one
+   * message each, while a software-rendered browser draws a frame between
+   * them. A shared runner is several times slower at exactly that, and one
+   * of the two timed out there while passing everywhere else, with nothing
+   * wrong in it.
+   *
+   * A passing suite takes no longer for this. Only a test that is genuinely
+   * stuck waits, and that one was never going to be reported quickly.
+   */
+  timeout: collecting ? 120_000 : 60_000,
   // Merges what each worker collected, and does nothing at all unless
   // `GECKO_COVERAGE` is set.
   globalTeardown: "./tests/e2e/coverage-teardown.ts",
