@@ -1047,6 +1047,29 @@ mod sheet_removal {
     }
 
     #[test]
+    fn the_gap_is_left_open_when_the_command_says_so_and_the_script_says_which() {
+        let mut s = three_slabs();
+        let edge = between(&s, 1.0, 2.0);
+        let raw = s.apply_json(&format!(
+            r#"{{"op":"remove_sheet","edge":{edge},"close":false}}"#
+        ));
+        let reply: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(reply["ok"], true, "{raw}");
+
+        // Two slabs that do not meet: sixteen corners, not twelve.
+        let stats: serde_json::Value = serde_json::from_str(&s.stats_json()).unwrap();
+        assert_eq!(stats["blocks"], 2);
+        assert_eq!(stats["nodes"], 16);
+
+        // And the line written down has to say which of the two it was, or
+        // replaying the session closes a slot somebody wanted.
+        assert_eq!(
+            reply["outcome"]["script"],
+            format!("gecko.remove_sheet({edge}, false)")
+        );
+    }
+
+    #[test]
     fn a_name_no_edge_answers_to_is_reported_and_changes_nothing() {
         let mut s = three_slabs();
         let before = s.view_buffer();
@@ -1062,7 +1085,7 @@ mod sheet_removal {
         let build = || {
             let mut s = three_slabs();
             let edge = between(&s, 1.0, 2.0);
-            s.apply(Command::RemoveSheet { edge }).unwrap();
+            s.apply(Command::RemoveSheet { edge, close: true }).unwrap();
             s
         };
         assert_eq!(build().view_buffer(), build().view_buffer());

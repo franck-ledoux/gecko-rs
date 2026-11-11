@@ -185,6 +185,23 @@ export const CLOSEST_APPROACH = 0.35;
 export const SURFACE_DEPTH_BIAS = { factor: 1, units: 4 };
 
 /**
+ * Depth bias pulling the lit sheet towards the camera, so it wins against
+ * the wireframe it runs along, now that the two are drawn in the same pass.
+ *
+ * A lit sheet's lines **are** edges of the model, drawn a second time in
+ * another color, so the two sit at exactly the same depth and the test
+ * between them decides nothing: the sheet comes out in pieces, whichever
+ * way the arithmetic happens to fall along each line. Pulled forward by a
+ * hair it wins wherever the two coincide, and still loses to anything
+ * genuinely in front of it — which is the whole reason for giving it the
+ * depth buffer at all.
+ *
+ * Twice what pushes the surfaces back, and the other way: the sheet has to
+ * beat the wireframe, which the surfaces are already losing to.
+ */
+export const SHEET_DEPTH_BIAS = { factor: -1, units: -8 };
+
+/**
  * The shortest extrusion the pointer can ask for, as a share of the face it
  * grows from.
  *
@@ -231,12 +248,19 @@ export function heightAlong(
  * passes settles it — the geometry first, the blocking over it — and the
  * passes share one depth buffer, so what is genuinely in front still wins.
  *
- * The last two are over everything on purpose: a lit sheet runs *through*
- * the model and an extrusion preview is half inside the block it grows
- * from, and both are things being shown to you rather than things that are
- * there.
+ * A lit sheet is drawn *with* the blocking rather than over it. It had a
+ * pass of its own above everything once, on the grounds that it is a thing
+ * being shown to you rather than a thing that is there — but it runs
+ * **through** the model, and a sheet at the back of a hundred blocks then
+ * reads exactly like one at the front. In the blocking's own pass it is
+ * hidden by what is in front of it and tinted by the faces it lies behind,
+ * which is what tells you where it runs.
+ *
+ * The last pass alone is over everything, on purpose: an extrusion preview
+ * is half inside the block it grows from, and is a thing being shown to you
+ * rather than a thing that is there.
  */
-export const PASS = { geometry: 0, blocking: 1, sheet: 2, aiming: 3 } as const;
+export const PASS = { geometry: 0, blocking: 1, aiming: 2 } as const;
 
 /** How solid the preview of an extrusion is drawn. Enough to read as a
  *  volume, little enough to see the model through. */
@@ -580,8 +604,8 @@ export class Viewer {
     // did not land on a handle.
     // The blocking's pass keeps the depth the geometry's left behind, so
     // the two are ordered without either being declared always in front.
-    // The two passes above it do clear, which is what puts them over
-    // everything.
+    // The pass above it does clear, which is what puts an extrusion
+    // preview over everything.
     this.scene.setRenderingAutoClearDepthStencil(PASS.blocking, false, false, false);
     this.setPicking("blocks");
     this.applyPrefs(this.prefs);
@@ -2153,7 +2177,10 @@ export class Viewer {
     );
     this.litWire.isPickable = false;
     this.litWire.layerMask = MAIN_LAYER;
-    this.litWire.renderingGroupId = PASS.sheet;
+    this.litWire.renderingGroupId = PASS.blocking;
+    const lit = this.litWire.material as GreasedLineSimpleMaterial;
+    lit.zOffset = SHEET_DEPTH_BIAS.factor;
+    lit.zOffsetUnits = SHEET_DEPTH_BIAS.units;
   }
 
   /**

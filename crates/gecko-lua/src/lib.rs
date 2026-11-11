@@ -185,7 +185,13 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
         }))
     })?;
     command(lua, &gecko, &kernel, "remove_sheet", |lua, a| {
-        Ok(json!({ "op": "remove_sheet", "edge": at(lua, &a, 0)? }))
+        let mut out = json!({ "op": "remove_sheet", "edge": at(lua, &a, 0)? });
+        // `gecko.remove_sheet(e, false)` leaves the gap open. Left out, the
+        // gap closes, which is what every script written so far says.
+        if let Json::Bool(close) = at(lua, &a, 1)? {
+            out["close"] = json!(close);
+        }
+        Ok(out)
     })?;
     command(lua, &gecko, &kernel, "set_segments", |lua, a| {
         Ok(json!({

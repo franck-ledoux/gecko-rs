@@ -100,9 +100,19 @@ edge pulls towards its own midpoint, leaving a gap at each corner.
 
     The geometry and the blocking are drawn in separate passes now — the
     geometry first — which settles it. They share one depth buffer, so
-    what is genuinely in front still wins. A lit sheet and an extrusion
-    preview are drawn over everything, on purpose: both run through the
-    model rather than sitting in it.
+    what is genuinely in front still wins. An extrusion preview is drawn
+    over everything, on purpose: it is half inside the block it grows
+    from, and is a thing being shown to you rather than a thing that is
+    there.
+
+    A lit sheet was drawn over everything too, for the same reason, and
+    that was wrong. It runs **through** the model, and one at the back of
+    a hundred blocks then read exactly like one at the front. It is drawn
+    with the blocking now: hidden by what is in front of it, tinted by the
+    faces it lies behind, which is what tells you where it runs. It is
+    pulled a hair towards the camera in depth, because its lines *are*
+    edges of the model drawn a second time and the depth test between two
+    things at the same depth decides nothing.
 
     Within one pass the per-mesh guess is still a guess. Two translucent
     things of about the same size in about the same place cannot be sorted

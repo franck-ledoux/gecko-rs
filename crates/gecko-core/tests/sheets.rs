@@ -262,6 +262,29 @@ mod removal {
     }
 
     #[test]
+    fn taking_out_the_middle_and_leaving_the_gap_moves_nothing() {
+        let mut b = three_slabs();
+        assert_eq!(cells(&b), (16, 28, 16, 3));
+
+        b.remove_sheet_leaving_a_gap(across(&b, 1.0, 2.0))
+            .expect("an interior sheet");
+
+        // Two slabs, and this time nothing meets: two separate blocks, each
+        // with its own eight corners and six faces.
+        assert_eq!(cells(&b), (16, 24, 12, 2));
+        // The two walls are where they were, at z = 1 and z = 2. The other
+        // removal would have brought both to 1.5.
+        let heights: Vec<f64> = b.nodes().map(|(_, p)| p[2]).collect();
+        for (z, many) in [(0.0, 4), (1.0, 4), (2.0, 4), (3.0, 4)] {
+            assert_eq!(
+                heights.iter().filter(|h| (**h - z).abs() < 1e-9).count(),
+                many,
+                "at z = {z}: {heights:?}"
+            );
+        }
+    }
+
+    #[test]
     fn taking_out_a_sheet_at_the_surface_just_loses_it() {
         let mut b = three_slabs();
         // The bottom slab: one cap is the model's underside, with nothing

@@ -44,9 +44,11 @@ each being the thing you had to aim at to hit it. Lines are one pixel wide, so
 an edge is picked within a few pixels of one, a tolerance kept constant on
 screen however far away you are.
 
-The sheet is drawn **thickened**, and over everything else rather than behind
-the surfaces. A sheet runs *through* the model, and where it comes out the
-far side is the part worth seeing.
+The sheet is drawn **thickened**, and with the blocking rather than over it:
+a sheet runs *through* the model, so what is in front of it hides it and the
+faces it lies behind tint it. That is what tells you where it runs. Drawn
+over everything — which is what it used to be — a sheet at the back of a
+hundred blocks reads exactly like one at the front.
 
 Thick is not a line. WebGL caps `lineWidth` at one pixel whatever is asked of
 it, so the lit sheet is a ribbon built as geometry rather than a line drawn
@@ -111,16 +113,35 @@ Which face meets which is a question about the map, not about where
 anything is. From a dart of one cap, crossing into the lateral face beside
 it and out the far side lands on the cap at the other end, on the matching
 edge; the β₃ of both is the pair the neighbors are sewn along, read before
-the layer goes. Nothing is positioned by hand either: sewing merges two
-vertices by averaging them, so the seam finds the middle of its own accord.
+the layer goes.
 
-Matching the faces by **where they were** instead is what the first version
-did, and it failed on anything bigger than one block in a layer: the caps
-of neighboring blocks share their corners, so closing the first pair moved
-the corners the next pair was to be found by. It failed after the blocks
-were already gone, too, which left a hole.
+The seam is then **settled before it is sewn**: every pair of nodes the
+sews will merge is read off the map, grouped — a corner where four seams
+meet is in four pairs — and each group written to its own average. The two
+faces of a seam coincide exactly after that, and what one seam does no
+longer depends on what the one before it did.
+
+Letting the sews do that positioning is what the earlier versions did, and
+it is what left holes. A sew merges as it goes, so a corner two seams share
+has already moved when the second one is asked; measure the two faces then
+— as the map does before it joins them — and a seam that was fine when it
+was read is refused for where its neighbor left it. By then the layer is
+gone. Measuring them earlier instead only moves the disagreement: the
+answer was read before the move and acted on after it.
 
 From a script, `gecko.remove_sheet(edge)`.
+
+## Leaving the gap
+
+`N`, with a sheet lit, or `gecko.remove_sheet(edge, false)`: the layer goes
+and **nothing closes behind it**. The two walls it was between stay exactly
+where they are, unglued, and the model keeps its shape and gains a slot —
+which is where a crack, a seal or a second part goes. A layer closed over
+is a layer you have to cut again to get one.
+
+It also asks less of the sheet, since nothing has to meet anything: the
+caps are counted, to say that the sheet really is a layer, and what lies
+behind them is not looked at at all.
 
 A sheet that comes back round onto itself is refused: one of its own blocks
 is on the far side of a cap, and there is no outside to close against. That

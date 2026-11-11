@@ -1925,13 +1925,35 @@ impl Blocking {
     /// darts the neighbors will have to be sewn along — read before the
     /// layer goes, since they are what the layer was holding together.
     ///
-    /// Nothing is moved by hand either. Sewing merges the two vertices by
-    /// averaging them, so the seam lands half way between the caps of its
-    /// own accord, and the gap closes from both sides.
+    /// Nothing is moved by hand either. The seam is settled before it is
+    /// sewn — see [`settle_seams`][Self::settle_seams] — so it lands half
+    /// way between the caps, and the gap closes from both sides.
     ///
     /// A cap with nothing behind it is a cap on the model's surface; there
     /// is nothing to close against, so the model simply loses that layer.
     pub fn remove_sheet(&mut self, edge: CellId) -> Result<(), BlockingError> {
+        self.take_sheet(edge, true)
+    }
+
+    /// Take out the whole sheet of blocks through an edge and **leave the
+    /// gap open**.
+    ///
+    /// The two walls the layer was between stay exactly where they are,
+    /// unglued, and the model has a slot through it. That is the whole
+    /// difference, and it is sometimes the point: a slot is where a crack,
+    /// a seal or a second part goes, and a layer closed over is a layer you
+    /// have to cut again to get one.
+    ///
+    /// It also asks less of the sheet, since nothing has to meet anything:
+    /// the caps are counted, to say that the sheet really is a layer, and
+    /// what lies behind them is not looked at at all.
+    pub fn remove_sheet_leaving_a_gap(&mut self, edge: CellId) -> Result<(), BlockingError> {
+        self.take_sheet(edge, false)
+    }
+
+    /// Both removals. `close` says whether what the layer was holding
+    /// apart is sewn together behind it.
+    fn take_sheet(&mut self, edge: CellId, close: bool) -> Result<(), BlockingError> {
         let sheet = self.sheet_through(edge)?;
 
         // Which blocks the sheet runs through, and which of their edges it
@@ -1974,6 +1996,9 @@ impl Blocking {
                 .collect();
             if caps.len() != 2 {
                 return Err(BlockingError::BrokenSheet(edge));
+            }
+            if !close {
+                continue;
             }
 
             // One dart of one cap, and the dart it answers to on the other.

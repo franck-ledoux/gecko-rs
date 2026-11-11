@@ -1008,6 +1008,80 @@ test("a lit sheet is the same thickness however far away it is", async ({ page }
   expect(errors).toEqual([]);
 });
 
+/** Cut the model in half along `axis`, once, wherever the first edge runs. */
+async function cutInHalf(page: import("@playwright/test").Page, at: [number, number, number]) {
+  const edge = (await page.evaluate((w) => edgeNear(w), at)) as number;
+  await page.evaluate(async (e) => {
+    const g = (window as any).__gecko;
+    await g.apply({ op: "split_sheet", edge: e, at: 0.5 });
+    await g.refresh();
+  }, edge);
+}
+
+test("a lit sheet is hidden by the model it runs through", async ({ page }) => {
+  // It used to be drawn over everything, on the grounds that a lit sheet is
+  // a thing being shown to you rather than a thing that is there. But it
+  // runs *through* the model, and one at the back of a hundred blocks then
+  // reads exactly like one at the front.
+  const errors = await boot(page);
+  await page.evaluate(EDGE_NEAR);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+
+  // In two each way, so the sheet has edges with blocks in front of them.
+  await cutInHalf(page, [0.5, 0, 0]);
+  await cutInHalf(page, [0, 0.5, 0]);
+  await cutInHalf(page, [0, 0, 0.5]);
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 27);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  const edge = (await page.evaluate(() => edgeNear([0, 0.25, 0]))) as number;
+  await page.evaluate((e) => (window as any).__gecko.pickEdgeByName(e), edge);
+  await page.waitForFunction(() => (window as any).__gecko.sheet().length > 0);
+  await page.evaluate(() => (window as any).__gecko.settled());
+  const through = await litPixels(page);
+  expect(through, "the sheet is drawn at all").toBeGreaterThan(100);
+
+  // The same sheet with the faces taken away: nothing in front of it now,
+  // so every edge of it comes out at its own color. Drawn over everything,
+  // the two counts would be the same number.
+  await page.keyboard.press("1");
+  await page.waitForFunction(() => !(window as any).__gecko.prefs().faces.visible);
+  await page.evaluate(() => (window as any).__gecko.settled());
+  const bare = await litPixels(page);
+
+  expect(bare, `through ${through}, bare ${bare}`).toBeGreaterThan(through * 1.1);
+  expect(errors).toEqual([]);
+});
+
+test("N takes the lit sheet away and leaves the gap it was in", async ({ page }) => {
+  // Del closes behind itself, which is what you want nine times in ten.
+  // This is the other one: the two walls stay where they are, so the model
+  // keeps its shape and gains a slot.
+  const errors = await boot(page);
+  await page.evaluate(EDGE_NEAR);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await cutInHalf(page, [0.5, 0, 0]);
+  await cutInHalf(page, [0.75, 0, 0]);
+  await expect(page.locator("[data-test=blocks]")).toHaveText("3");
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // The middle layer, the thin one between x = 0.5 and x = 0.75.
+  const edge = (await page.evaluate(() => edgeNear([0.625, 0, 0]))) as number;
+  await page.evaluate((e) => (window as any).__gecko.pickEdgeByName(e), edge);
+  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 4);
+
+  await page.keyboard.press("n");
+  await expect(page.locator("[data-test=blocks]")).toHaveText("2");
+  // Sixteen, not twelve: the two that are left do not meet.
+  await expect(page.locator("[data-test=nodes]")).toHaveText("16");
+  await page.waitForFunction(() =>
+    (window as any).__gecko.message().includes("gap left open"),
+  );
+  expect(errors).toEqual([]);
+});
+
 test("a sheet runs on through a glued block", async ({ page }) => {
   const errors = await boot(page);
   await page.evaluate(EDGE_NEAR);

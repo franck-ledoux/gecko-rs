@@ -1552,6 +1552,28 @@ async function boot() {
   }
 
   /**
+   * Take out the lit sheet and leave the gap it was in.
+   *
+   * The other removal closes behind itself, which is what you want nine
+   * times in ten and is what Del does. This one leaves the two walls the
+   * layer was between exactly where they are: the model keeps its shape
+   * and gains a slot, which is where a crack, a seal or a second part
+   * goes. A layer closed over is a layer you have to cut again to get one.
+   */
+  async function slotSheet() {
+    const edge = viewer.selectedEdge;
+    if (edge === null) {
+      say("light a sheet first — click an edge");
+      return;
+    }
+    const reply = await send({ op: "remove_sheet", edge, close: false });
+    clearSelection();
+    message = reply.message;
+    // Not framed: taking something away is no reason to move the camera.
+    await refresh();
+  }
+
+  /**
    * Open a gmsh surface mesh as the geometry.
    *
    * The file is read **here** and its contents go into the command. A
@@ -2073,6 +2095,7 @@ async function boot() {
     unclassify: unclassifyNode,
     glue: glueSelection,
     remove: removeSelection,
+    slot: slotSheet,
     pillow: pillowSelection,
     smooth,
     "face-on-surface": faceOnSurface,

@@ -3,6 +3,45 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
+## 0.1.5
+
+- **Taking a sheet out could leave a hole.** Reported of a model built by
+  cutting: one layer of sixteen could not be removed, and the refusal cost
+  seven blocks.
+
+  Closing a seam merges pairs of nodes by averaging them, so a corner two
+  seams share had already moved when the second seam was asked — and the
+  map measures the two faces before it joins them, to refuse a pair that
+  does not run opposite ways. The pair at fault passed that test at -0.0123
+  when it was read and failed it at +0.0028 once its neighbor had pulled
+  its corners half way. By then the layer was gone.
+
+  The seam is settled **before** the first sew now rather than by the sews:
+  every pair of nodes they will merge is read off the map, grouped, and each
+  group written to its own average. The two faces of a seam then coincide
+  exactly and no later seam can pull them apart. The measurement that stood
+  in for this is gone with it — which face meets which is read off the map,
+  as it always should have been.
+
+- **A command that fails leaves the model alone.** The state before it was
+  already copied for the undo; it is copied even with the history switched
+  off, and put back when the command gives up. An operation that stops half
+  way would otherwise leave the model with a hole in it and the reply saying
+  nothing happened.
+
+- **A sheet can be taken out without closing behind it.** `N` with a sheet
+  lit, or `gecko.remove_sheet(edge, false)`: the two walls the layer was
+  between stay where they are, unglued, so the model keeps its shape and
+  gains a slot. A layer closed over is a layer you have to cut again to get
+  one.
+
+- **A lit sheet is no longer drawn over everything.** It runs through the
+  model, so a sheet at the back of a hundred blocks read exactly like one at
+  the front. It is drawn with the blocking now — hidden by what is in front
+  of it, tinted by the faces it lies behind — and pulled a hair towards the
+  camera, because its lines are edges of the model drawn a second time and
+  the depth test between two things at the same depth decides nothing.
+
 ## 0.1.4
 
 Groups of blocks, the display settled around them, and editing that keeps

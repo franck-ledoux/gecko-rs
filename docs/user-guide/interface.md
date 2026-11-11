@@ -53,6 +53,7 @@ cannot disagree with the release it was built from.
 | `G`         | glue the two selected faces                          |
 | `Del` `⌫`   | remove: a block, a face of a patch, or a lit sheet   |
 | `⇧Del` `⇧⌫` | remove the whole chord through that face             |
+| `N`         | remove the lit sheet and leave the gap open          |
 | `P`         | pillow the selected faces                            |
 | `R`         | smooth the blocking, as far as the geometry allows   |
 | `⇧P`        | o-grid all along that chord                          |

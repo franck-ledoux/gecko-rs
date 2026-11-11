@@ -110,6 +110,11 @@ fn default_segments() -> u32 {
     SEGMENTS
 }
 
+/// A removal closes the gap behind it unless it is told not to.
+fn closing() -> bool {
+    true
+}
+
 /// A geometric entity, as a command names one.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Spot {
@@ -214,6 +219,12 @@ pub enum Command {
     /// other, with the seam half way between.
     RemoveSheet {
         edge: u32,
+        /// Whether to close the gap behind the layer. Left out, it closes.
+        ///
+        /// `false` leaves the two walls the layer was between where they
+        /// are, unglued: the model keeps its shape and gains a slot.
+        #[serde(default = "closing")]
+        close: bool,
     },
     /// Take out the whole chord of blocks through a face.
     ///
@@ -941,13 +952,19 @@ impl Session {
                     view_changed: true,
                 })
             }
-            Command::RemoveSheet { edge } => {
+            Command::RemoveSheet { edge, close } => {
                 let edge = CellId::from_raw(edge);
-                self.blocking.remove_sheet(edge)?;
+                if close {
+                    self.blocking.remove_sheet(edge)?;
+                } else {
+                    self.blocking.remove_sheet_leaving_a_gap(edge)?;
+                }
                 Ok(Outcome {
                     script: None,
                     message: format!(
-                        "sheet through {edge:?} removed — {} nodes, {} edges, {} faces, {} blocks",
+                        "sheet through {edge:?} removed{} — \
+                         {} nodes, {} edges, {} faces, {} blocks",
+                        if close { "" } else { ", gap left open" },
                         self.blocking.nb_nodes(),
                         self.blocking.nb_edges(),
                         self.blocking.nb_faces(),

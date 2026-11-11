@@ -88,7 +88,13 @@ pub fn line(command: &Command) -> String {
             tolerance,
         } => format!("gecko.pillow_chord({face}, {block}, {{ tolerance = {tolerance} }})"),
         Command::RemoveBlock { block } => format!("gecko.remove_block({block})"),
-        Command::RemoveSheet { edge } => format!("gecko.remove_sheet({edge})"),
+        Command::RemoveSheet { edge, close } => {
+            if *close {
+                format!("gecko.remove_sheet({edge})")
+            } else {
+                format!("gecko.remove_sheet({edge}, false)")
+            }
+        }
         Command::SplitSheet { edge, at } => {
             format!("gecko.split_sheet({edge}, {})", number(*at))
         }
