@@ -76,9 +76,21 @@ jobs:
 
       - name: Install the browser Playwright drives
         working-directory: front
+        # The browser comes from Playwright's own download. `--with-deps`
+        # is an `apt-get` on top of it, for fonts and X libraries that the
+        # runner image already carries — and twice in a row it has failed
+        # outright, unable to resolve Ubuntu's mirrors, with no incident
+        # declared anywhere. That is eleven minutes of machine time thrown
+        # away over fonts.
+        #
+        # So ask for them, and carry on without them when apt cannot be
+        # reached. Nothing is papered over: a dependency that is genuinely
+        # missing stops the browser from starting, which fails the next
+        # step loudly.
         run: |
           npm ci
-          npx playwright install --with-deps chromium
+          npx playwright install --with-deps chromium \
+            || npx playwright install chromium
 
       - name: Everything
         # The same script a developer runs. What passes locally passes here.
