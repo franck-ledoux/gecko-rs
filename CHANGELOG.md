@@ -5,6 +5,9 @@ the day a tag was cut.
 
 ## 0.1.5
 
+A sheet that comes out without leaving a hole, one layer of blocks to stand
+in and walk, and a model whose shape can be read rather than inferred.
+
 - **Taking a sheet out could leave a hole.** Reported of a model built by
   cutting: one layer of sixteen could not be removed, and the refusal cost
   seven blocks.
