@@ -21,6 +21,15 @@
  * rejects, so the lines and handles come through at full brightness while the
  * faces behind them are shaded off the surfaces alone.
  *
+ * **Only opaque surfaces can be shaded at all.** The buffer holds one depth
+ * and one normal per pixel, and a translucent surface puts several surfaces
+ * on one pixel — so what lands there is whichever of them was drawn last,
+ * which for blended surfaces is not even the nearest one. Half the model
+ * then reads its shading off a face pointing away from the camera and comes
+ * out black. Transparent meshes are kept out of the buffer for that reason:
+ * where you can see through the model the shading does nothing, which is the
+ * honest answer rather than a wrong one.
+ *
  * **The prepass is not an option.** Given the choice the pipeline takes a
  * scene-wide prepass, which rides over the corner triad's camera and its
  * viewport and leaves the corner empty — and a prepass has no render list,
@@ -121,6 +130,10 @@ export class Occlusion {
     // The bilateral blur, which keeps the shading off the far side of an
     // edge instead of smearing it across.
     this.pipe.expensiveBlur = true;
+    // Opaque surfaces only — see the head of this file. One pixel, one
+    // surface: that is the whole of what this algorithm can read.
+    const buffer = this.scene.geometryBufferRenderer;
+    if (buffer) buffer.renderTransparentMeshes = false;
     return true;
   }
 

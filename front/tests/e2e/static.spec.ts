@@ -4301,3 +4301,148 @@ test("two walls of a block that face different ways are drawn different shades",
   expect(shades.length, shades.join(" ")).toBeGreaterThanOrEqual(3);
   expect(errors).toEqual([]);
 });
+
+test("the shading does nothing at all where you can see through the model", async ({
+  page,
+}) => {
+  // The switch opens the faces, but the opacity slider is still yours, and
+  // turning it back down while the shading is on used to put pitch black
+  // patches across half the model. One pixel of the buffer holds one depth
+  // and one normal; a translucent face puts several surfaces on that pixel
+  // and what lands there is whichever was drawn last — for blended
+  // surfaces, not even the nearest. Half the model then read its shading
+  // off a face pointing away from the camera, and a hemisphere aimed into
+  // the solid finds the solid.
+  const errors = await boot(page);
+  await anLShape(page);
+  await openShading(page);
+  await page.locator("#show-ao").click();
+  expect(await page.evaluate(() => (window as any).__gecko.occluding())).toBe(true);
+
+  const diff = await translucentDiff(page);
+  const where = JSON.stringify(diff);
+  // Seen through, the picture is the same whether the shading is on or off.
+  expect(diff.untouched / diff.lit, where).toBeGreaterThan(0.95);
+  expect(diff.blackened, where).toBe(0);
+  expect(errors).toEqual([]);
+});
+
+/**
+ * What the shading does to a picture whose faces are **not** opaque: it
+ * should do nothing, and the measure of nothing is that no lit pixel goes
+ * dark.
+ */
+async function translucentDiff(page: import("@playwright/test").Page) {
+  return (await page.evaluate(async () => {
+    const view = document.querySelector("#view") as HTMLCanvasElement;
+    const frame = () =>
+      new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const grab = () => {
+      const flat = document.createElement("canvas");
+      flat.width = view.width;
+      flat.height = view.height;
+      flat.getContext("2d")!.drawImage(view, 0, 0);
+      return flat.getContext("2d")!.getImageData(0, 0, view.width, view.height).data;
+    };
+    const read = async () => {
+      let last = grab();
+      for (let i = 0; i < 60; i++) {
+        await frame();
+        const now = grab();
+        let moved = 0;
+        for (let p = 0; p < now.length; p += 4) moved += Math.abs(now[p] - last[p]);
+        last = now;
+        if (moved / (now.length / 4) < 0.5) return now;
+      }
+      return last;
+    };
+    const slider = document.querySelector('input[data-test="faces-alpha"]') as HTMLInputElement;
+    const box = document.getElementById("show-ao") as HTMLInputElement;
+    // Half open, with the shading on — the state somebody reaches by pulling
+    // the slider back down after switching it on.
+    slider.value = "0.5";
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+    const shaded = await read();
+    box.click();
+    slider.value = "0.5";
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+    const plain = await read();
+
+    let lit = 0;
+    let untouched = 0;
+    let blackened = 0;
+    for (let i = 0; i < plain.length; i += 4) {
+      const before = (plain[i] + plain[i + 1] + plain[i + 2]) / 3;
+      if (before <= 30) continue;
+      lit++;
+      const after = (shaded[i] + shaded[i + 1] + shaded[i + 2]) / 3;
+      if (Math.abs(before - after) <= 2) untouched++;
+      // A lit pixel that went out altogether: the fault this refuses.
+      if (before > 50 && after < 12) blackened++;
+    }
+    return { lit, untouched, blackened };
+  })) as { lit: number; untouched: number; blackened: number };
+}
+
+/** The pixels the aiming mark covers — the pink one, as against the sheet's
+ *  gold. */
+async function aimPixels(page: import("@playwright/test").Page) {
+  return page.evaluate(() => {
+    const view = document.querySelector("#view") as HTMLCanvasElement;
+    const flat = document.createElement("canvas");
+    flat.width = view.width;
+    flat.height = view.height;
+    flat.getContext("2d")!.drawImage(view, 0, 0);
+    const p = flat.getContext("2d")!.getImageData(0, 0, view.width, view.height).data;
+    let n = 0;
+    for (let i = 0; i < p.length; i += 4) {
+      if (p[i] > 190 && p[i + 1] > 40 && p[i + 1] < 130 && p[i + 2] > 60 && p[i + 2] < 170) n++;
+    }
+    return n;
+  });
+}
+
+test("the mark a cut is aimed with is hidden by the model too", async ({ page }) => {
+  // The sheet stopped being drawn over everything, and the mark along it
+  // did not: the red showing where the cut lands came out in front of the
+  // blocks it runs behind, so a cut at the back read as loudly as one at
+  // the front — on every edge of the sheet at once, which is a lot of red
+  // in the wrong place.
+  const errors = await boot(page);
+  await page.evaluate(EDGE_NEAR);
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  // In two each way, so the sheet has edges with blocks in front of them.
+  await cutInHalf(page, [0.5, 0, 0]);
+  await cutInHalf(page, [0, 0.5, 0]);
+  await cutInHalf(page, [0, 0, 0.5]);
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 27);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  const edge = (await page.evaluate(() => edgeNear([0, 0.25, 0]))) as number;
+  const at = (await page.evaluate((e) => (window as any).__gecko.edgeScreen(e), edge)) as [
+    number,
+    number,
+  ];
+  const box = (await page.locator("#view").boundingBox())!;
+  await page.mouse.move(box.x + at[0], box.y + at[1]);
+  await page.mouse.down();
+  await page.waitForFunction(() => (window as any).__gecko.sheet().length > 0);
+  for (let i = 1; i <= 5; i++) await page.mouse.move(box.x + at[0], box.y + at[1] - i * 10);
+  await page.waitForFunction(() => (window as any).__gecko.aimedAt() !== null);
+  await page.evaluate(() => (window as any).__gecko.settled());
+  const through = await aimPixels(page);
+  expect(through, "the mark is drawn at all").toBeGreaterThan(100);
+
+  // The faces away, with the pointer still down so the aim is untouched:
+  // nothing in front of the mark now. Drawn over everything, the two
+  // counts would be the same number.
+  await page.evaluate(() => (window as any).__gecko.run("faces"));
+  await page.waitForFunction(() => !(window as any).__gecko.prefs().faces.visible);
+  await page.evaluate(() => (window as any).__gecko.settled());
+  const bare = await aimPixels(page);
+  await page.mouse.up();
+
+  expect(bare, `through ${through}, bare ${bare}`).toBeGreaterThan(through * 1.1);
+  expect(errors).toEqual([]);
+});

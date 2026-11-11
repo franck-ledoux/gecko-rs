@@ -80,10 +80,20 @@ the day a tag was cut.
 
   Its reach is a share of the model's own diagonal rather than a fixed
   distance, which is what lets it read the same on a unit cube and on a part
-  in millimetres. The wireframe and the node handles are kept out of it: left
+  in millimetres. Below full opacity it does nothing at all: the buffer
+  it reads holds one depth and one normal per pixel, and a surface you can
+  see through puts several surfaces on that pixel. The wireframe and the node handles are kept out of it: left
   in, a line lying along an edge of the model shades the faces either side of
   it, and on a grid of twenty-seven blocks that alone darkens three quarters
   as many pixels again.
+
+- **The mark a cut is aimed with is hidden by the model too.** The lit
+  sheet stopped being drawn over everything in this version; the mark along
+  it did not. It is drawn on every edge of the sheet at once, so a cut aimed
+  at the far side of the model came out in front of the blocks it runs
+  behind — a lot of red in the wrong place. It is drawn with the blocking
+  now, a little in front of the sheet it lies along, which it has to win
+  against: the two are the same edges at the same depth.
 
 - **A second light, from one side.** A hemispheric light shades a surface by
   how far it faces *up*, and the four walls of a block all face sideways — so

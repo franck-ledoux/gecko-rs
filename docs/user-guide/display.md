@@ -78,6 +78,15 @@ Two things are worth knowing about how it behaves:
   Fixed distances, which is what the algorithm takes, either find nothing or
   black the picture out.
 
+**Below full opacity it does nothing at all.** The slider is still yours
+while the shading is on, and pulling it back down fades the shading out
+rather than shading a translucent model: the buffer the algorithm reads
+holds one depth and one normal per pixel, and a surface you can see through
+puts several surfaces on that pixel. Nothing says which of them the pixel
+*is*. Doing it anyway reads half the model off a face pointing away from the
+camera and blacks it out, so transparent surfaces are kept out of the buffer
+and the shading quietly stops where you can see through.
+
 It needs multiple render targets. On a browser without them the switch says
 so and comes straight back off.
 
@@ -143,6 +152,13 @@ edge pulls towards its own midpoint, leaving a gap at each corner.
     pulled a hair towards the camera in depth, because its lines *are*
     edges of the model drawn a second time and the depth test between two
     things at the same depth decides nothing.
+
+    The mark a cut is aimed with goes the same way. It is drawn along the
+    sheet's own edges, on every edge at once, so over everything it said a
+    cut lands at the back of the model as loudly as at the front — and
+    that is a lot of red in the wrong place. It is pulled twice as far
+    towards the camera as the sheet, which it has to win against: the two
+    are the same edges at the same depth.
 
     Within one pass the per-mesh guess is still a guess. Two translucent
     things of about the same size in about the same place cannot be sorted

@@ -206,6 +206,13 @@ export const SURFACE_DEPTH_BIAS = { factor: 1, units: 4 };
  */
 export const SHEET_DEPTH_BIAS = { factor: -1, units: -8 };
 
+/** And the aiming mark a hair in front of the lit sheet, which it is drawn
+ *  along and has to win against: the two are the same edges at the same
+ *  depth, and a depth test between two things at the same depth settles
+ *  nothing. Twice the sheet's bias rather than a nudge, so that what
+ *  separates them is not of the same size as the slack in the comparison. */
+export const AIM_DEPTH_BIAS = { factor: -1, units: -16 };
+
 /**
  * The shortest extrusion the pointer can ask for, as a share of the face it
  * grows from.
@@ -260,6 +267,10 @@ export function heightAlong(
  * reads exactly like one at the front. In the blocking's own pass it is
  * hidden by what is in front of it and tinted by the faces it lies behind,
  * which is what tells you where it runs.
+ *
+ * The mark a cut is aimed with goes the same way, and for the same reason:
+ * it is drawn along the sheet's own edges, so a mark over everything says a
+ * cut lands on the far side of the model as loudly as on the near side.
  *
  * The last pass alone is over everything, on purpose: an extrusion preview
  * is half inside the block it grows from, and is a thing being shown to you
@@ -2355,7 +2366,13 @@ export class Viewer {
     );
     this.aimWire.isPickable = false;
     this.aimWire.layerMask = MAIN_LAYER;
-    this.aimWire.renderingGroupId = PASS.aiming;
+    // With the blocking, like the sheet it is drawn along: the mark runs
+    // through the model with the sheet, and over everything it says a cut
+    // lands at the back as loudly as at the front.
+    this.aimWire.renderingGroupId = PASS.blocking;
+    const aim = this.aimWire.material as GreasedLineSimpleMaterial;
+    aim.zOffset = AIM_DEPTH_BIAS.factor;
+    aim.zOffsetUnits = AIM_DEPTH_BIAS.units;
   }
 
   private rebuildHighlight() {

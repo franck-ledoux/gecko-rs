@@ -56,6 +56,10 @@ it; lit over the part that is off screen, it is a thread hanging in the air
 beside what you are working on. It is lit over the edges the wireframe
 draws, and nowhere else, and the marks a cut is aimed with go with it.
 
+The marks go with it for depth, too: they are drawn with the blocking, a
+little in front of the sheet they lie along, so a cut aimed at the far side
+of the model reads as the far side.
+
 Thick is not a line. WebGL caps `lineWidth` at one pixel whatever is asked of
 it, so the lit sheet is a ribbon built as geometry rather than a line drawn
 fatter. Its width is a share of the screen, not of the model, so a sheet
