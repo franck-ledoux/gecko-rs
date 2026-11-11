@@ -35,7 +35,21 @@ export default defineConfig({
    * reading counters and resolving source maps is heavier still.
    */
   workers: collecting ? 1 : 2,
-  retries: collecting ? 1 : 0,
+  /**
+   * One retry on a runner, none here.
+   *
+   * Not to make a flaky suite look green: a retried test is reported as
+   * flaky, its trace from the first attempt is kept, and it is a thing to
+   * go and fix. It is about what a single blip costs. On a shared runner
+   * the suite is several times slower than it is here, apt falls over, a
+   * worker stalls — and today every one of those costs a push, a wait of
+   * twenty minutes and a re-run started by hand. Rerunning the one test
+   * that fell over costs seconds.
+   *
+   * None locally, on purpose. A flake you can see in front of you is a
+   * flake you fix.
+   */
+  retries: collecting || process.env.CI ? 1 : 0,
   /**
    * A minute a test, which is four times the slowest one here.
    *

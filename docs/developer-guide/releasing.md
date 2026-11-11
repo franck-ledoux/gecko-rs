@@ -21,8 +21,11 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-Nothing else triggers it. Pushing to `main` runs the tests and publishes the
-site; pushing a `v*` tag is what builds the binaries.
+Pushing to `main` runs the tests and publishes the site. Pushing a `v*` tag
+does two things at once: it builds the binaries, and it is the run that
+measures the page's coverage and republishes the site carrying it — that
+measurement is a release-time one, for the minutes it costs. Nothing else
+triggers either.
 
 ## What the workflow does
 

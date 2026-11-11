@@ -92,8 +92,20 @@ The last one needs artefacts the others do not; see [Building](building.md).
 Two numbers, not one: a Rust kernel and a TypeScript interface are measured by
 different machinery and read by different people, and an average of the two
 would describe neither. The floors live at the top of `./coverage`, which is
-also what CI runs — one half per job — so there is one place to read them and
-one place to change them.
+also what CI runs, so there is one place to read them and one place to change
+them.
+
+**The two halves are measured on different clocks**, and the reason is what
+each one costs. The kernel's half is forty seconds, and runs on every push.
+The page's half runs the browser suite a second time with the collector on —
+eight minutes and forty-five seconds, beside the eight and a half the plain
+run takes — so it runs **at a release**, on the tag, and not on every commit.
+Half the machine time of the project went on a figure nobody reads per commit.
+
+What that costs: a fall in the page's coverage is caught at the tag rather
+than at the commit that caused it. The floor still refuses it, and still
+before anything is published. Run `./coverage page` yourself when you have
+moved a lot of interface.
 
 |            | measured by                                              | reaches                                                     |
 | ---------- | -------------------------------------------------------- | ----------------------------------------------------------- |

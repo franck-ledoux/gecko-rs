@@ -11,8 +11,13 @@
 #   ./coverage page       the page only
 #   ./coverage … --check  the floors and the badge, and no HTML
 #
-# CI runs this very script, one half per job, so the floors live in one place
-# and what passes here passes there.
+# CI runs this very script, so the floors live in one place and what passes
+# here passes there. The two halves run on different clocks there, and the
+# reason is what each costs: the kernel's is forty seconds and runs on every
+# push; the page's runs the browser suite a second time with the collector
+# on — as long again as the plain run — so it runs at a release, on the tag.
+# A fall in the page's figure is caught there rather than at the commit that
+# caused it, and still before anything is published.
 #
 # What is **not** measured, said plainly:
 #
