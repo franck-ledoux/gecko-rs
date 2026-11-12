@@ -5,6 +5,25 @@ the day a tag was cut.
 
 ## 0.1.6
 
+- **A face of the boundary came out pitch black under the shading.**
+  Reported with a script of seven lines: one quadrangle of the outside,
+  black, where everything round it was shaded properly.
+
+  A face shared by two blocks is drawn once, under one of them, so a block
+  can end up contributing a **single** face to what is drawn, its
+  neighbours having claimed the other five. The normals were turned
+  outward by asking the drawn quadrangles which way was out — and a lone
+  flat quadrangle cannot answer that: its own middle lies in its own
+  plane, so the question came out exactly zero and the kernel's winding,
+  which points into the block, was kept. A hemisphere aimed into the solid
+  finds the solid.
+
+  The block's own center answers it, and the surface builder has had it
+  all along — it is what a shrink pulls towards, computed from all six of
+  a block's faces whether they are drawn or not. Each quadrangle is now
+  turned to face away from that, one at a time, so there is no vote left
+  to be ambiguous.
+
 - **The shaded hollows are no longer wrong when the window is split.**
   Reported of the four-view split: no shading in the X, Y and Z panes, and
   the 3-D one wrong. It was wrong because the shading is computed over the

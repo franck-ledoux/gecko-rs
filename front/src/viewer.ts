@@ -424,58 +424,6 @@ function glide(target: object, property: string, from: number | Vector3, to: num
   for (const a of running?.getAnimations() ?? []) a.animation.setEasingFunction(ease);
 }
 
-function normalsFor(data: SurfaceData): number[] {
-  const normals: number[] = [];
-  VertexData.ComputeNormals(data.positions, Array.from(data.indices), normals);
-  return outward(data.positions, normals);
-}
-
-/**
- * Turn a surface's normals to face out of it.
- *
- * `ComputeNormals` reads the winding, and the winding of a block's quads
- * comes from the kernel's darts: consistent, and pointing **in**. Nothing
- * ever noticed, because a two-sided material flips the normal of a
- * back-facing fragment before it lights it, and these surfaces are drawn
- * two-sided so that a translucent shell shows more than its silhouette.
- *
- * The ambient occlusion did notice. It reads the normals out of a geometry
- * buffer, where nothing flips anything, and a hemisphere pointed into the
- * solid finds the solid: every pixel came back fully occluded and the model
- * went black. That was the whole of that bug.
- *
- * By vote against the surface's own middle rather than by negating what the
- * kernel sends: this runs over the mesh's skin too, which is wound the other
- * way, and a rule that says "the kernel means the opposite" would be wrong
- * the moment either of them changed. A closed surface — which is what a
- * block and a skin both are — answers it unambiguously.
- */
-function outward(positions: ArrayLike<number>, normals: number[]): number[] {
-  const count = normals.length / 3;
-  if (count === 0) return normals;
-  let cx = 0;
-  let cy = 0;
-  let cz = 0;
-  for (let i = 0; i < count; i++) {
-    cx += positions[3 * i];
-    cy += positions[3 * i + 1];
-    cz += positions[3 * i + 2];
-  }
-  cx /= count;
-  cy /= count;
-  cz /= count;
-  let vote = 0;
-  for (let i = 0; i < count; i++) {
-    vote +=
-      (positions[3 * i] - cx) * normals[3 * i] +
-      (positions[3 * i + 1] - cy) * normals[3 * i + 1] +
-      (positions[3 * i + 2] - cz) * normals[3 * i + 2];
-  }
-  if (vote >= 0) return normals;
-  for (let i = 0; i < normals.length; i++) normals[i] = -normals[i];
-  return normals;
-}
-
 /*
  * Render pixels to the CSS pixels a pointer event speaks — applied by
  * `nodeScreen`, `faceScreen` and `AxisGizmo.axisScreen`.
@@ -1201,7 +1149,7 @@ export class Viewer {
         slot.data = data;
         slot.mesh.updateVerticesData(VertexBuffer.PositionKind, data.positions);
         slot.mesh.updateVerticesData(VertexBuffer.ColorKind, data.colors);
-        slot.mesh.updateVerticesData(VertexBuffer.NormalKind, normalsFor(data));
+        slot.mesh.updateVerticesData(VertexBuffer.NormalKind, data.normals);
         (slot.mesh.material as StandardMaterial).alpha = layer.alpha;
       });
       return;
@@ -1220,7 +1168,7 @@ export class Viewer {
     vertices.positions = data.positions;
     vertices.indices = data.indices;
     vertices.colors = data.colors;
-    vertices.normals = normalsFor(data);
+    vertices.normals = data.normals;
     // Updatable: everything above depends on it.
     vertices.applyToMesh(mesh, true);
 
@@ -1578,7 +1526,7 @@ export class Viewer {
     vertices.positions = data.positions;
     vertices.indices = data.indices;
     vertices.colors = data.colors;
-    vertices.normals = normalsFor(data);
+    vertices.normals = data.normals;
     vertices.applyToMesh(skin, false);
     const material = new StandardMaterial("meshMat", this.scene);
     material.specularColor = Color3.Black();

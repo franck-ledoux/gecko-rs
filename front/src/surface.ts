@@ -77,6 +77,18 @@ export interface SurfaceData {
   faces: Uint32Array;
   /** The block each drawn quadrangle belongs to. */
   blocks: Uint32Array;
+  /** Three per vertex, pointing **out of the block** the quadrangle
+   *  bounds.
+   *
+   *  Worked out here rather than left to the renderer, because here is the
+   *  only place that knows which way is out. The winding alone does not:
+   *  it is the kernel's, it points into the block, and a reader who only
+   *  has the drawn quadrangles cannot tell — a block contributes as few as
+   *  one face to what is drawn, its neighbours having claimed the rest,
+   *  and a single flat quadrangle says nothing about which side of it is
+   *  solid. The block's own center does say, and `centers` has it from
+   *  all six faces whether they are drawn or not. */
+  normals: Float32Array;
 }
 
 const EMPTY: SurfaceData = {
@@ -85,6 +97,7 @@ const EMPTY: SurfaceData = {
   colors: new Float32Array(0),
   faces: new Uint32Array(0),
   blocks: new Uint32Array(0),
+  normals: new Float32Array(0),
 };
 
 /**
@@ -200,6 +213,10 @@ function buildFrom(view: View, options: SurfaceOptions, kept: number[]): Surface
   const names = options.by === "face" ? view.quadFaces : view.quadBlocks;
   const dimension = options.by === "face" ? FAMILY.faces : FAMILY.blocks;
   const middle = centers(view, options.by);
+  // The block's own center, whichever group this is: the shrink pulls a
+  // face towards the face's middle, and a face's middle is **in** the
+  // face — no use at all for telling which side of it is solid.
+  const solid = options.by === "block" ? middle : centers(view, "block");
   const uniform = hexToRgb(options.uniform);
 
   const positions = new Float32Array(kept.length * 12);
@@ -207,6 +224,7 @@ function buildFrom(view: View, options: SurfaceOptions, kept: number[]): Surface
   const indices = new Uint32Array(kept.length * 6);
   const faces = new Uint32Array(kept.length);
   const blocks = new Uint32Array(kept.length);
+  const normals = new Float32Array(kept.length * 12);
 
   kept.forEach((q, i) => {
     const name = names[q];
@@ -248,9 +266,59 @@ function buildFrom(view: View, options: SurfaceOptions, kept: number[]): Surface
     // Two triangles, keeping the quadrangle's outward winding.
     const base = i * 4;
     indices.set([base, base + 1, base + 2, base, base + 2, base + 3], i * 6);
+
+    // And the normal, turned to face out of the block.
+    //
+    // One per quadrangle rather than one per corner averaged over the
+    // faces that meet there: a block is a box with creases, and a corner
+    // shared by three faces has three normals, not one. The vertices are
+    // not shared here, which is what makes that possible.
+    const at = i * 12;
+    const n = facing(positions, at, solid.get(view.quadBlocks[q]));
+    for (let k = 0; k < 4; k++) {
+      normals[at + k * 3] = n[0];
+      normals[at + k * 3 + 1] = n[1];
+      normals[at + k * 3 + 2] = n[2];
+    }
   });
 
-  return { positions, indices, colors, faces, blocks };
+  return { positions, indices, colors, faces, blocks, normals };
+}
+
+/**
+ * One quadrangle's normal, pointing away from `inside`.
+ *
+ * The cross product of its first two edges gives the plane; which of the
+ * two ways along it is the outside is the one question the quadrangle
+ * cannot answer alone, and `inside` answers it. Without a point known to
+ * be in the solid there is nothing to compare against: a flat quadrangle
+ * is the same flat quadrangle from either side, and a block that
+ * contributes one face to the drawing is exactly that case.
+ */
+function facing(
+  positions: Float32Array,
+  at: number,
+  inside: readonly [number, number, number] | undefined,
+): [number, number, number] {
+  const p = (k: number, axis: number) => positions[at + k * 3 + axis];
+  const u = [p(1, 0) - p(0, 0), p(1, 1) - p(0, 1), p(1, 2) - p(0, 2)];
+  const v = [p(3, 0) - p(0, 0), p(3, 1) - p(0, 1), p(3, 2) - p(0, 2)];
+  let n: [number, number, number] = [
+    u[1] * v[2] - u[2] * v[1],
+    u[2] * v[0] - u[0] * v[2],
+    u[0] * v[1] - u[1] * v[0],
+  ];
+  const length = Math.hypot(n[0], n[1], n[2]);
+  // A quadrangle with no area has no normal. Zero rather than a guess:
+  // nothing is drawn of it to shade.
+  if (!length) return [0, 0, 0];
+  n = [n[0] / length, n[1] / length, n[2] / length];
+  if (!inside) return n;
+  const away =
+    (p(0, 0) - inside[0]) * n[0] +
+    (p(0, 1) - inside[1]) * n[1] +
+    (p(0, 2) - inside[2]) * n[2];
+  return away < 0 ? [-n[0], -n[1], -n[2]] : n;
 }
 
 /**
@@ -295,7 +363,27 @@ export function buildMesh(
   const positions = new Float32Array(n * 12);
   const colors = new Float32Array(n * 16);
   const indices = new Uint32Array(n * 6);
+  const normals = new Float32Array(n * 12);
   const uniform = hexToRgb(options.uniform);
+
+  // The middle of the skin, to turn its normals outward against.
+  //
+  // The skin is a closed surface, so its own middle is inside it, and that
+  // is all the question needs — there are no block centers to be had here,
+  // the skin being the outside of the whole mesh rather than a box. A
+  // deeply folded one could have a face whose middle is on the wrong side
+  // of that point; nothing but the shading reads these, and the shading
+  // would be a shade out on that face.
+  const inside: [number, number, number] = [0, 0, 0];
+  for (let i = 0; i < mesh.positions.length; i += 3) {
+    inside[0] += mesh.positions[i];
+    inside[1] += mesh.positions[i + 1];
+    inside[2] += mesh.positions[i + 2];
+  }
+  const count = mesh.positions.length / 3 || 1;
+  inside[0] /= count;
+  inside[1] /= count;
+  inside[2] /= count;
 
   for (let q = 0; q < n; q++) {
     const rgb =
@@ -311,8 +399,22 @@ export function buildMesh(
     }
     const base = q * 4;
     indices.set([base, base + 1, base + 2, base, base + 2, base + 3], q * 6);
+    const at = q * 12;
+    const normal = facing(positions, at, inside);
+    for (let k = 0; k < 4; k++) {
+      normals[at + k * 3] = normal[0];
+      normals[at + k * 3 + 1] = normal[1];
+      normals[at + k * 3 + 2] = normal[2];
+    }
   }
-  return { positions, indices, colors, faces: new Uint32Array(n), blocks: mesh.blocks };
+  return {
+    positions,
+    indices,
+    colors,
+    faces: new Uint32Array(n),
+    blocks: mesh.blocks,
+    normals,
+  };
 }
 
 /**

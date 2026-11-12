@@ -4512,3 +4512,88 @@ test("the hollows wait for a single view, and four views are all drawn", async (
   await expect(page.locator("#status")).toContainText("hollows shaded");
   expect(errors).toEqual([]);
 });
+
+/** The picture once it has stopped changing, as a count of its pixels by
+ *  how dark they are. Switching the shading on builds a pipeline, and the
+ *  frames before its shaders are compiled come out of the combine black. */
+async function darkPixels(page: import("@playwright/test").Page) {
+  return (await page.evaluate(async () => {
+    const view = document.querySelector("#view") as HTMLCanvasElement;
+    const frame = () =>
+      new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const grab = () => {
+      const flat = document.createElement("canvas");
+      flat.width = view.width;
+      flat.height = view.height;
+      flat.getContext("2d")!.drawImage(view, 0, 0);
+      return flat.getContext("2d")!.getImageData(0, 0, view.width, view.height).data;
+    };
+    let last = grab();
+    for (let i = 0; i < 60; i++) {
+      await frame();
+      const now = grab();
+      let moved = 0;
+      for (let p = 0; p < now.length; p += 4) moved += Math.abs(now[p] - last[p]);
+      last = now;
+      if (moved / (now.length / 4) < 0.5) break;
+    }
+    let blacker = 0;
+    let lit = 0;
+    for (let i = 0; i < last.length; i += 4) {
+      const lum = (last[i] + last[i + 1] + last[i + 2]) / 3;
+      // The background is around 23. Below ten is blacker than the window
+      // itself, which nothing in a shaded model should be.
+      if (lum < 10) blacker++;
+      if (lum > 40) lit++;
+    }
+    return { blacker, lit };
+  })) as { blacker: number; lit: number };
+}
+
+test("a block that lends its faces to its neighbours is still shaded the right way out", async ({
+  page,
+}) => {
+  // Reported with this script: one face of the boundary came out pitch
+  // black under the shading.
+  //
+  // A face shared by two blocks is drawn once, under one of them, and a
+  // block can end up contributing a single face to what is drawn — its
+  // neighbours having claimed the other five. The normals were turned
+  // outward by asking the drawn quadrangles which way was out, and a lone
+  // flat quadrangle cannot answer: its own middle lies in its own plane,
+  // so the question came out exactly zero and the kernel's winding, which
+  // points into the block, was kept. A hemisphere aimed into the solid
+  // finds the solid.
+  //
+  // The block's own center answers it, and the surface builder has that
+  // from all six of its faces whether they are drawn or not.
+  const errors = await boot(page);
+  await page.locator("#msh").setInputFiles({
+    name: "boundary.lua",
+    mimeType: "text/plain",
+    buffer: Buffer.from(
+      [
+        "gecko.create_cube{ origin = {0, 0, 0}, size = 1 }",
+        "gecko.extrude_face(4, 0, 0.4182381969483314)",
+        "gecko.extrude_face(0, 0, 0.4151222583184677)",
+        "gecko.split_sheet(18, 0.4839949382283461)",
+        "gecko.split_sheet(47, 0.263662443881934)",
+        "gecko.split_sheet(19, 0.28041743818831727)",
+        "gecko.split_sheet(99, 0.5251268070619435)",
+      ].join("\n"),
+    ),
+  });
+  await expect(page.locator("[data-test=blocks]")).toHaveText("21");
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // Through the element rather than the drawer: replaying a script opens
+  // the console over it, and this test is not about where the switch is.
+  await page.evaluate(() => (document.getElementById("show-ao") as HTMLInputElement).click());
+  await page.waitForFunction(() => (window as any).__gecko.occluding());
+
+  const shaded = await darkPixels(page);
+  expect(shaded.lit, JSON.stringify(shaded)).toBeGreaterThan(10000);
+  // Not one pixel blacker than the window it is drawn in.
+  expect(shaded.blacker, JSON.stringify(shaded)).toBe(0);
+  expect(errors).toEqual([]);
+});
