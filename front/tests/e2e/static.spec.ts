@@ -4450,3 +4450,65 @@ test("the mark a cut is aimed with is hidden by the model too", async ({ page })
   expect(bare, `through ${through}, bare ${bare}`).toBeGreaterThan(through * 1.1);
   expect(errors).toEqual([]);
 });
+
+test("the hollows wait for a single view, and four views are all drawn", async ({ page }) => {
+  // The shading belongs to one camera, and a camera drawing into a corner
+  // of the canvas is more than the pipeline can follow: in four views it
+  // was not merely missing from the three orthographic panes, it was
+  // *wrong* in the 3-D one — the occlusion of the model landed in the
+  // empty space beside it, because the pipeline shades the whole canvas
+  // while that camera owns a quarter of it.
+  //
+  // Both ways out were tried and measured. Attached to all four cameras,
+  // each pane's output wipes the one before it and the window goes black —
+  // which is what the second half of this test refuses. Told to respect
+  // the viewports, every pane draws itself at a quarter size in a corner.
+  // So the shading waits, and the preference is left alone.
+  const errors = await boot(page);
+  await anLShape(page);
+  await openShading(page);
+  await page.locator("#show-ao").click();
+  expect(await page.evaluate(() => (window as any).__gecko.occluding())).toBe(true);
+
+  // Through the action rather than the key: the switch was just clicked,
+  // so the keyboard belongs to the drawer.
+  await page.evaluate(() => (window as any).__gecko.run("quad"));
+  await page.waitForFunction(() => (window as any).__gecko.prefs().quad);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // Nothing is shaded...
+  expect(await page.evaluate(() => (window as any).__gecko.occluding())).toBe(false);
+  await expect(page.locator("#status")).toContainText("hollows plain here");
+  // ...and nothing about what you asked for has been thrown away: the
+  // faces are still opaque and the switch is still on.
+  expect(await page.evaluate(() => (window as any).__gecko.prefs().ao)).toBe(true);
+  expect(await page.evaluate(() => (window as any).__gecko.display().faces.alpha)).toBe(1);
+
+  // And all four panes have something in them.
+  const quadrants = (await page.evaluate(() => {
+    const view = document.querySelector("#view") as HTMLCanvasElement;
+    const flat = document.createElement("canvas");
+    flat.width = view.width;
+    flat.height = view.height;
+    flat.getContext("2d")!.drawImage(view, 0, 0);
+    const p = flat.getContext("2d")!.getImageData(0, 0, view.width, view.height).data;
+    const lit = [0, 0, 0, 0];
+    for (let y = 0; y < view.height; y++) {
+      for (let x = 0; x < view.width; x++) {
+        const i = (y * view.width + x) * 4;
+        if ((p[i] + p[i + 1] + p[i + 2]) / 3 <= 40) continue;
+        lit[(y < view.height / 2 ? 0 : 2) + (x < view.width / 2 ? 0 : 1)]++;
+      }
+    }
+    return lit;
+  })) as number[];
+  expect(Math.min(...quadrants), quadrants.join(" ")).toBeGreaterThan(1000);
+
+  // Back to one view, and it comes back by itself: it was waiting, not
+  // switched off.
+  await page.evaluate(() => (window as any).__gecko.run("quad"));
+  await page.waitForFunction(() => !(window as any).__gecko.prefs().quad);
+  expect(await page.evaluate(() => (window as any).__gecko.occluding())).toBe(true);
+  await expect(page.locator("#status")).toContainText("hollows shaded");
+  expect(errors).toEqual([]);
+});

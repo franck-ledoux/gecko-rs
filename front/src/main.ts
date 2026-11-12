@@ -160,6 +160,14 @@ async function boot() {
     // The two alpha sliders moved under the user; the drawer has to agree.
     drawLayers();
     $<HTMLInputElement>("show-ao").checked = prefs.ao;
+    // Asked for in four views, where it cannot be had: the preference is
+    // kept — the faces are opaque and the shading is waiting — rather than
+    // refused, because what you asked for is what you will see the moment
+    // the window is one view again.
+    if (on && prefs.quad) {
+      say("faces opaque — the hollows are shaded in a single view");
+      return;
+    }
     // Asked for and refused: an engine without multiple render targets
     // cannot do it, and saying nothing would leave a ticked box and a flat
     // picture to explain each other.
@@ -2301,7 +2309,11 @@ async function boot() {
       prefs.quad = !prefs.quad;
       showQuad();
       savePrefs(prefs);
-      say(prefs.quad ? "split into four views" : "one view");
+      // The shading is one camera's, so four views do without it. Said,
+      // because a setting that stops working without a word is a fault
+      // report waiting to be written.
+      const shading = prefs.ao ? (prefs.quad ? ", hollows plain here" : ", hollows shaded") : "";
+      say((prefs.quad ? "split into four views" : "one view") + shading);
     },
     triad: () => {
       prefs.axes = !prefs.axes;

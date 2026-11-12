@@ -87,6 +87,16 @@ puts several surfaces on that pixel. Nothing says which of them the pixel
 camera and blacks it out, so transparent surfaces are kept out of the buffer
 and the shading quietly stops where you can see through.
 
+**It waits while the window is split.** The shading belongs to one camera,
+and a camera drawing into a corner of the canvas is more than the algorithm
+can follow: in [four views](#four-views) it was not merely missing from the
+three orthographic panes, it was *wrong* in the 3-D one — the occlusion of
+the model landed in the empty space beside it. Attaching it to all four
+cameras instead makes each pane wipe the one before it and the window goes
+black; telling it to respect the panes makes each one draw itself at a
+quarter size in a corner. So in four views the faces stay as the switch left
+them, the switch stays on, and the shading comes back with the single view.
+
 It needs multiple render targets. On a browser without them the switch says
 so and comes straight back off.
 

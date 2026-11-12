@@ -762,6 +762,9 @@ export class Viewer {
     if (this.quad === quad) return;
     this.quad = quad;
     if (!quad) this.hovered = "3d";
+    // Before the layout: splitting takes the shading away and joining
+    // gives it back, and either way it is this that decides.
+    this.refreshOcclusion();
     this.layOut();
     this.frameAll(true);
   }
@@ -945,7 +948,19 @@ export class Viewer {
    * change under it.
    */
   private refreshOcclusion() {
-    this.occlusion.set(this.prefs.ao);
+    // **Not while the window is split.** The shading is one camera's, and
+    // in four views it is not merely absent from the three orthographic
+    // panes — it is wrong in the 3-D one, because the pipeline shades the
+    // whole canvas while that camera owns a quarter of it, and the
+    // occlusion of the model lands in the empty space beside it.
+    //
+    // Neither way out works, and both were tried: attached to all four
+    // cameras, each pane's output wipes the one before it and the window
+    // goes black; told to respect the viewports, every pane draws itself
+    // at a quarter size in a corner. So the shading waits for a single
+    // view. The preference is untouched — the faces stay as the switch
+    // left them, and the shading comes back when the window does.
+    this.occlusion.set(this.prefs.ao && !this.quad);
     if (!this.occlusion.on) return;
     this.occlusion.tune(this.modelBounds());
     this.occlusion.shade(this.shadedMeshes());

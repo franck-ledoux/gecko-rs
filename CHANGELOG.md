@@ -3,6 +3,23 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
+## 0.1.6
+
+- **The shaded hollows are no longer wrong when the window is split.**
+  Reported of the four-view split: no shading in the X, Y and Z panes, and
+  the 3-D one wrong. It was wrong because the shading is computed over the
+  whole canvas while that camera owns a quarter of it, so the occlusion of
+  the model was drawn in the empty space beside it.
+
+  Neither way round works, and both were measured: attached to all four
+  cameras, each pane's output wipes the one before it and the window goes
+  black; told to respect the panes, every one of them draws itself at a
+  quarter size in a corner. The shading waits for a single view now. The
+  switch stays on and the faces stay opaque while you are in four views —
+  what you asked for is what you get back the moment the window is one
+  again — and the readout says so rather than leaving a ticked box and a
+  flat picture to explain each other.
+
 ## 0.1.5
 
 A sheet that comes out without leaving a hole, one layer of blocks to stand

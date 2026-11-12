@@ -30,6 +30,14 @@
  * where you can see through the model the shading does nothing, which is the
  * honest answer rather than a wrong one.
  *
+ * **One view at a time.** The pipeline belongs to a camera, and a camera
+ * drawing into a corner of the canvas is more than it can follow: attached
+ * to all four panes, each one's output wipes the last and the window goes
+ * black; told to respect the viewports instead, every pane draws itself a
+ * quarter of its own size in a corner. Measured, both of them. So the
+ * caller is expected not to ask for this while the window is split — see
+ * `Viewer.refreshOcclusion`, which is where that is decided.
+ *
  * **The prepass is not an option.** Given the choice the pipeline takes a
  * scene-wide prepass, which rides over the corner triad's camera and its
  * viewport and leaves the corner empty — and a prepass has no render list,
