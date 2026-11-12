@@ -5,6 +5,9 @@ the day a tag was cut.
 
 ## 0.1.6
 
+Two faults in the shaded hollows that 0.1.5 shipped: a face of the boundary
+drawn black, and four views that drew it in the wrong place.
+
 - **A face of the boundary came out pitch black under the shading.**
   Reported with a script of seven lines: one quadrangle of the outside,
   black, where everything round it was shaded properly.
