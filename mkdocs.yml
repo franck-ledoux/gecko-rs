@@ -66,6 +66,7 @@ nav:
       - Scripting: user-guide/scripting.md
   - Developer Guide:
       - Architecture: developer-guide/architecture.md
+      - The cellular structure: developer-guide/cellular.md
       - Building: developer-guide/building.md
       - Testing: developer-guide/testing.md
       - Releasing: developer-guide/releasing.md

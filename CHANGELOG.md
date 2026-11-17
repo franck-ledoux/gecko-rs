@@ -3,6 +3,49 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
+## 0.2.0
+
+In progress. The block structure stops being a combinatorial map and becomes
+an explicit complex of cells, and the mesher stops holding the mesh it
+writes. [The design note](developer-guide/cellular.md) says why, with the
+measurements that decided it.
+
+- **The mesher no longer keeps a table the size of the mesh it builds.**
+  Every mesh node used to be an entry in a `HashMap<Site, u32>`, which is
+  what made two blocks share the nodes on the face between them. It was also
+  the one table here that grows with the mesh rather than with the blocking:
+  measured at a hundred million cells it is gigabytes, and it is why a mesh
+  that size could not be built in a tab at all.
+
+  A node's number is arithmetic now. Each cell of the blocking owns a
+  contiguous run of numbers — one for a corner, `n - 1` along an edge,
+  `(na-1)(nb-1)` across a face, `(ni-1)(nj-1)(nk-1)` through a block — and the
+  runs are laid end to end. Two blocks sharing a face reach the same number
+  for a shared point without consulting anything, because they reach the same
+  cell and count inside it the same way. The tables that remain are sized by
+  the blocking: a hundred thousand entries to number a billion nodes.
+
+  Measured on 64 blocks, at ten and at twenty segments an axis:
+
+  |        | held      | at the peak    |
+  | ------ | --------- | -------------- |
+  | before | 86 B/cell | **139 B/cell** |
+  | after  | 62 B/cell | **62 B/cell**  |
+
+  The peak and what is held are now the same number, the transient table
+  having gone. Extrapolated to a hundred million cells, 13.8 GB of peak
+  becomes 6.2 GB — still too much to hold, which the streaming mesher is
+  for, but no longer twice too much before it starts.
+
+  The file is unchanged, byte for byte: the numbering was deliberately laid
+  out in the order the three passes already placed their points in, so
+  `agree.lua` passes on the digests it always had.
+
+  Each face's lattice and each block's frame are also worked out once and
+  kept, rather than asked for again by the pass that follows — six walks of
+  the map per block, for lattices that cannot change while a mesh is being
+  built.
+
 ## 0.1.6
 
 Two faults in the shaded hollows that 0.1.5 shipped: a face of the boundary

@@ -292,28 +292,101 @@ const CORNER_AT: [[u32; 3]; 8] = [
     [0, 1, 1],
 ];
 
-/// The points, and which cell of the blocking each of them belongs to.
+/// Where each cell of the blocking's run of mesh nodes begins.
+///
+/// This used to be a `HashMap<Site, u32>`: one entry per **mesh** node, which
+/// made it the one table in the mesher that grows with the mesh rather than
+/// with the blocking. At a hundred million cells that is gigabytes of hash
+/// table, and it is the reason a mesh that size cannot be built in a tab at
+/// all.
+///
+/// A node's number is arithmetic instead. Every cell owns a contiguous run —
+/// one number for a corner, `n - 1` along an edge, `(na-1)(nb-1)` across a
+/// face, `(ni-1)(nj-1)(nk-1)` through a block — and the runs are laid end to
+/// end, in the order the walks of [`Blocking::mesh`] take them, so the
+/// numbering is reproducible.
+///
+/// Two blocks sharing a face reach the same number for a shared point without
+/// consulting anything: they reach the same **cell**, and they count inside it
+/// the same way, because a face's lattice is the face's own and not either
+/// block's. That is the same argument that made the sharing work before, with
+/// the lookup taken out of it.
+///
+/// These tables are sized by the **blocking** — a hundred thousand entries to
+/// number a billion nodes exactly.
 #[derive(Default)]
+struct Numbering {
+    corners: HashMap<CellId, u32>,
+    along: HashMap<CellId, u32>,
+    /// Where a face's run starts, and its **last** extent, which is the
+    /// stride: the face pass walks `a` outermost, so a point's number runs
+    /// fastest in `b`.
+    across: HashMap<CellId, (u32, u32)>,
+    /// The same through a block, which needs two strides.
+    through: HashMap<CellId, (u32, u32, u32)>,
+    total: usize,
+}
+
+impl Numbering {
+    /// The number of this site's point.
+    ///
+    /// Total rather than partial: every site of every cell has a number
+    /// before a single point is placed, which is what lets the three passes
+    /// below write into one array instead of appending to it.
+    fn at(&self, site: Site) -> u32 {
+        match site {
+            Site::Node(n) => self.corners[&n],
+            Site::Edge(e, i) => self.along[&e] + i - 1,
+            Site::Face(f, a, b) => {
+                let (at, nb) = self.across[&f];
+                at + (a - 1) * (nb - 1) + (b - 1)
+            }
+            Site::Inside(c, i, j, k) => {
+                let (at, ni, nj) = self.through[&c];
+                at + ((k - 1) * (nj - 1) + (j - 1)) * (ni - 1) + (i - 1)
+            }
+        }
+    }
+}
+
+/// The points, in the order the numbering gives them.
 struct Table {
     points: Vec<[f64; 3]>,
-    sites: HashMap<Site, u32>,
+    number: Numbering,
 }
 
 impl Table {
-    /// The index of this site's point, placing it if it is new.
-    ///
-    /// First come wins: two blocks that both work out where a face's
-    /// interior point goes arrive at the same place by the same formula,
-    /// and the second one's answer is thrown away rather than averaged in.
-    fn put(&mut self, site: Site, at: [f64; 3]) -> u32 {
-        *self.sites.entry(site).or_insert_with(|| {
-            self.points.push(at);
-            (self.points.len() - 1) as u32
-        })
+    fn new(number: Numbering) -> Self {
+        // Not-a-number rather than nought, so that reading a point nothing
+        // has placed is a fault that shows itself rather than a point at the
+        // origin that quietly drags a cell through it.
+        let points = vec![[f64::NAN; 3]; number.total];
+        Table { points, number }
     }
 
-    fn get(&self, site: Site) -> Option<u32> {
-        self.sites.get(&site).copied()
+    /// Place this site's point, and say where it went.
+    fn put(&mut self, site: Site, at: [f64; 3]) -> u32 {
+        let i = self.number.at(site);
+        // What "first come wins" used to guard: each site is placed by
+        // exactly one of the three passes, exactly once. The old table threw
+        // a second answer away in silence; this says so.
+        debug_assert!(
+            self.points[i as usize][0].is_nan(),
+            "two points placed for one site"
+        );
+        self.points[i as usize] = at;
+        i
+    }
+
+    fn get(&self, site: Site) -> u32 {
+        self.number.at(site)
+    }
+
+    /// The point itself, which must have been placed by an earlier pass.
+    fn point(&self, site: Site) -> [f64; 3] {
+        let at = self.points[self.number.at(site) as usize];
+        debug_assert!(!at[0].is_nan(), "a point no pass has placed");
+        at
     }
 }
 
@@ -342,10 +415,54 @@ impl Blocking {
     /// already lie on their surfaces.
     pub fn mesh(&self, default: u32, project: impl Fn(On, [f64; 3]) -> Option<[f64; 3]>) -> Mesh {
         let segments = self.segments_by_sheet(default.max(1));
-        let mut table = Table::default();
         let at = |v: VertexIdType| self.position(v).unwrap_or([0.0; 3]);
         let name = |v: VertexIdType| self.node_tag(v).id;
         let cuts = |e: EdgeIdType| *segments.get(&self.edge_tag(e).id).unwrap_or(&default);
+
+        // Each block and each face's lattice, worked out once. Both the face
+        // pass and the block pass need them, and both used to ask for them
+        // again: six fresh walks of the map per block for lattices that do
+        // not change while a mesh is being built.
+        let frames = self.hexes();
+        let faces = self.map_faces();
+        let quads: HashMap<CellId, Quad> = faces
+            .iter()
+            .map(|f| {
+                let quad = self.quad(*f, &segments);
+                (quad.face, quad)
+            })
+            .collect();
+
+        // Then every cell's run of node numbers, laid end to end. Walked in
+        // the map's own order rather than a hash map's, so that two hosts
+        // meshing the same blocking number it the same way.
+        let mut number = Numbering::default();
+        let mut next: u32 = 0;
+        for v in self.map_vertices() {
+            number.corners.insert(name(v), next);
+            next += 1;
+        }
+        for e in self.map_edges() {
+            number.along.insert(self.edge_tag(e).id, next);
+            next += cuts(e) - 1;
+        }
+        for f in &faces {
+            let named = self.face_tag(*f).id;
+            let (na, nb) = quads[&named].extents;
+            number.across.insert(named, (next, nb));
+            next += (na - 1) * (nb - 1);
+        }
+        for frame in &frames {
+            let n = [
+                cuts(frame.edges[0]),
+                cuts(frame.edges[3]),
+                cuts(frame.edges[8]),
+            ];
+            number.through.insert(frame.block, (next, n[0], n[1]));
+            next += (n[0] - 1) * (n[1] - 1) * (n[2] - 1);
+        }
+        number.total = next as usize;
+        let mut table = Table::new(number);
 
         // --- the corners of the blocking ---------------------------------
         for v in self.map_vertices() {
@@ -378,29 +495,23 @@ impl Blocking {
         // One lattice per **face**, in the face's own cycle, rather than
         // one per block: that is what makes two blocks share these points
         // instead of each placing its own on top of the other's.
-        for f in self.map_faces() {
-            let quad = self.quad(f, &segments);
+        for f in &faces {
+            let tag = self.face_tag(*f);
+            let quad = &quads[&tag.id];
             let (na, nb) = quad.extents;
-            let tag = self.face_tag(f);
             for a in 1..na {
                 for b in 1..nb {
                     let (u, v) = (f64::from(a) / f64::from(na), f64::from(b) / f64::from(nb));
-                    let side = |t: &Table, site: Site| {
-                        t.points[t.get(site).expect("a side point") as usize]
-                    };
+                    let side = |site: Site| table.point(site);
                     let mut point = [0.0; 3];
-                    add(&mut point, side(&table, quad.site(0, b)), 1.0 - u);
-                    add(&mut point, side(&table, quad.site(na, b)), u);
-                    add(&mut point, side(&table, quad.site(a, 0)), 1.0 - v);
-                    add(&mut point, side(&table, quad.site(a, nb)), v);
-                    add(
-                        &mut point,
-                        side(&table, quad.site(0, 0)),
-                        -(1.0 - u) * (1.0 - v),
-                    );
-                    add(&mut point, side(&table, quad.site(na, 0)), -u * (1.0 - v));
-                    add(&mut point, side(&table, quad.site(0, nb)), -(1.0 - u) * v);
-                    add(&mut point, side(&table, quad.site(na, nb)), -u * v);
+                    add(&mut point, side(quad.site(0, b)), 1.0 - u);
+                    add(&mut point, side(quad.site(na, b)), u);
+                    add(&mut point, side(quad.site(a, 0)), 1.0 - v);
+                    add(&mut point, side(quad.site(a, nb)), v);
+                    add(&mut point, side(quad.site(0, 0)), -(1.0 - u) * (1.0 - v));
+                    add(&mut point, side(quad.site(na, 0)), -u * (1.0 - v));
+                    add(&mut point, side(quad.site(0, nb)), -(1.0 - u) * v);
+                    add(&mut point, side(quad.site(na, nb)), -u * v);
                     if let Some(on) = tag.on {
                         if let Some(onto) = project(on, point) {
                             point = onto;
@@ -414,7 +525,7 @@ impl Blocking {
         // --- and through each block ---------------------------------------
         let mut hexes = Vec::new();
         let mut blocks = Vec::new();
-        for hex in self.hexes() {
+        for hex in &frames {
             // The three directions of the block, each the number its own
             // sheet carries: edge 0 runs along i, edge 3 along j, edge 8
             // up k.
@@ -427,7 +538,7 @@ impl Blocking {
             // the block's. Nothing is placed here: this is where the
             // sharing happens, and all of it has been placed already.
             for (slot, corners) in crate::blocking::HEX_FACES.iter().enumerate() {
-                let quad = self.quad(hex.faces[slot], &segments);
+                let quad = &quads[&self.face_tag(hex.faces[slot]).id];
                 let mine = corners.map(|c| name(hex.corners[c]));
                 // Where the face's own four corners sit on the block's
                 // lattice, from the corner table rather than from any
@@ -449,8 +560,7 @@ impl Blocking {
                             (at0[k] as i64 + d1 + d3) as u32
                         });
                         let site = quad.of(mine[0], mine[1], mine[3], p, q);
-                        grid[index(ijk[0], ijk[1], ijk[2])] =
-                            table.get(site).expect("a point of the face");
+                        grid[index(ijk[0], ijk[1], ijk[2])] = table.get(site);
                     }
                 }
             }
