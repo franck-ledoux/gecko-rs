@@ -25,7 +25,7 @@ use gecko_geom::{BoundsError, Composites, Geometry, Model};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub use view::{GeometryBuffer, MeshBuffer, ViewBuffer};
+pub use view::{GeometryBuffer, MeshBuffer, NodeBuffer, ViewBuffer};
 
 #[derive(Debug, Error)]
 pub enum SessionError {

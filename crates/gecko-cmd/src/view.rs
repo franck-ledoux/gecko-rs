@@ -396,6 +396,137 @@ pub fn center_of(lo: [f64; 3], hi: [f64; 3], previous: Option<[f64; 3]>) -> [f64
     }
 }
 
+/// The nodes alone, for the one thing that changes nothing else.
+///
+/// Moving a node moves a node. It does not make or unmake a cell, so the
+/// edges, the quadrangles, their names, their classifications and their
+/// groups are all exactly what they were — and those are the whole expense
+/// of a view: at five hundred blocks, `block_faces` alone is 45 of the 75
+/// milliseconds it takes to put one together, and the browser spends as much
+/// again rebuilding every mesh from it.
+///
+/// So this carries what a move **can** change and nothing else: where each
+/// node is, and what it is classified on, which the session may settle onto
+/// the geometry on the way past. A tenth of the bytes, and a twentieth of the
+/// time.
+///
+/// The names come with it so that the page can check, before it believes a
+/// word of this, that it is looking at the same nodes in the same order. If
+/// they do not match it asks for the whole view instead, which is the right
+/// answer to a topology that moved under it.
+pub struct NodeBuffer {
+    pub center: [f64; 3],
+    /// Three f32 per node, relative to `center`.
+    pub positions: Vec<f32>,
+    pub names: Vec<u32>,
+    pub class_dim: Vec<i32>,
+    pub class_tag: Vec<i32>,
+    pub frozen: Vec<u32>,
+    pub groups_lo: Vec<u32>,
+    pub groups_hi: Vec<u32>,
+    pub loose: Vec<u32>,
+}
+
+pub const NODES_MAGIC: [u8; 4] = *b"GKN1";
+
+/// magic + version + f64 center + one count.
+const NODES_HEADER: usize = 4 + 4 + 24 + 4;
+const NODES_VERSION: u32 = 1;
+
+impl NodeBuffer {
+    pub fn of(blocking: &Blocking, origin: Option<[f64; 3]>) -> NodeBuffer {
+        let masks = blocking.group_masks();
+        let halves = |mask: u64| ((mask & 0xffff_ffff) as u32, (mask >> 32) as u32);
+
+        let nodes: Vec<(CellId, [f64; 3], Option<On>, bool)> = blocking.nodes_in_full().collect();
+        let mut world = Vec::with_capacity(nodes.len() * 3);
+        let mut names = Vec::with_capacity(nodes.len());
+        let mut class_dim = Vec::with_capacity(nodes.len());
+        let mut class_tag = Vec::with_capacity(nodes.len());
+        let mut frozen = Vec::with_capacity(nodes.len());
+        let mut groups_lo = Vec::with_capacity(nodes.len());
+        let mut groups_hi = Vec::with_capacity(nodes.len());
+        let mut loose = Vec::with_capacity(nodes.len());
+        for (n, place, on, is_frozen) in &nodes {
+            world.extend_from_slice(place);
+            names.push(n.get().unwrap_or(u32::MAX));
+            class_dim.push(on.map(|on| on.dim as i32).unwrap_or(-1));
+            class_tag.push(on.map(|on| on.tag).unwrap_or(0));
+            frozen.push(u32::from(*is_frozen));
+            let (lo, hi) = halves(masks.nodes.get(n).copied().unwrap_or(0));
+            groups_lo.push(lo);
+            groups_hi.push(hi);
+            loose.push(u32::from(masks.loose_nodes.contains(n)));
+        }
+
+        // The session's own origin, exactly as the whole view takes it: a
+        // center chosen here would put these nodes an origin-shift away from
+        // the quadrangles the page is still holding.
+        let center = origin.unwrap_or_else(|| stable_center(&world, None));
+        let positions = world
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .flat_map(|p| {
+                [
+                    (p[0] - center[0]) as f32,
+                    (p[1] - center[1]) as f32,
+                    (p[2] - center[2]) as f32,
+                ]
+            })
+            .collect();
+
+        NodeBuffer {
+            center,
+            positions,
+            names,
+            class_dim,
+            class_tag,
+            frozen,
+            groups_lo,
+            groups_hi,
+            loose,
+        }
+    }
+
+    /// Ten numbers a node, in the order the view buffer lists the same ones.
+    pub fn bytes(&self) -> Vec<u8> {
+        let count = self.names.len();
+        let mut out = Vec::with_capacity(NODES_HEADER + count * 40);
+        out.extend_from_slice(&NODES_MAGIC);
+        out.extend_from_slice(&NODES_VERSION.to_le_bytes());
+        for c in self.center {
+            out.extend_from_slice(&c.to_le_bytes());
+        }
+        out.extend_from_slice(&(count as u32).to_le_bytes());
+        for x in &self.positions {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        for x in &self.names {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        for x in &self.class_dim {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        for x in &self.class_tag {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        for x in &self.frozen {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        for x in &self.groups_lo {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        for x in &self.groups_hi {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        for x in &self.loose {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        out
+    }
+}
+
 pub const GEOMETRY_MAGIC: [u8; 4] = *b"GKG1";
 pub const GEOMETRY_VERSION: u32 = 1;
 /// magic + version + f64 center + four counts.
