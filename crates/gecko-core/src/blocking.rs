@@ -362,13 +362,17 @@ pub fn across(
 pub struct BlockFace {
     pub face: CellId,
     pub block: CellId,
-    /// Which groups the block is in, and whether it is a block at all
-    /// rather than a patch. Carried here for the same reason `on` is:
-    /// everything that draws a surface walks this list, and a lookup per
-    /// entry turns a walk of the model into a walk of the model squared.
-    /// It cost three seconds at a hundred and twenty-five blocks.
+    /// Which groups the block is in. Carried here for the same reason `on`
+    /// is: everything that draws a surface walks this list, and a lookup per
+    /// entry turns a walk of the model into a walk of the model squared. It
+    /// cost three seconds at a hundred and twenty-five blocks.
+    ///
+    /// Whether the block is a block at all rather than a patch is **not**
+    /// here, and deliberately: it is a question about the shell closing, so
+    /// it costs a walk of the volume, and only the face listing ever asks
+    /// it — once for the model, out of [`Blocking::patches`], rather than
+    /// once per side on every redraw.
     pub groups: u64,
-    pub patch: bool,
     pub nodes: [CellId; 4],
     /// What the face is classified on. Carried here rather than looked up
     /// by name: everything that draws a surface walks this list, and a
@@ -3950,10 +3954,12 @@ impl Blocking {
     /// is at these four corners — and the whole map is a thousand times
     /// the work for it.
     fn faces_of_volume(&self, volume: VolumeIdType) -> Vec<BlockFace> {
-        let block = self.block_tag_of(volume).id;
-        // One transaction for the lot: every β lookup and every cell name
-        // this map hands out is a transaction of its own otherwise.
-        let sides: Vec<(FaceIdType, [VertexIdType; 4])> = atomically(|t| {
+        let tag = self.block_tag_of(volume);
+        let (block, groups) = (tag.id, tag.groups);
+        // One transaction for the lot: every β lookup, every cell name and
+        // every attribute this map hands out is a transaction of its own
+        // otherwise.
+        atomically(|t| {
             // The first dart of each face **on this block's side**.
             // `face_id` alone would not do: it is the smallest dart of the
             // whole face orbit, which once β₃ is set may well be the other
@@ -3987,24 +3993,30 @@ impl Blocking {
             // Sorted, so the order cannot depend on how the orbit happened
             // to be walked. Both modes ship these bytes and compare them.
             out.sort_by_key(|(face, _)| *face);
-            Ok(out)
-        });
-        let groups = self.block_tag_of(volume).groups;
-        let patch = !self.is_block_of(volume);
-        sides
-            .into_iter()
-            .map(|(face, nodes)| {
-                let tag = self.face_tag_of(face);
-                BlockFace {
+
+            // The names, read **inside the same transaction**. Asked for
+            // afterwards they are one transaction apiece, and at five
+            // hundred blocks that is thirty thousand of them for a redraw:
+            // measured at ten milliseconds a frame, which is a tenth of the
+            // budget for a gesture that has to keep up with a pointer.
+            let mut sides = Vec::with_capacity(out.len());
+            for (face, nodes) in out {
+                let tag: FaceTag = self.map.read_attribute_tx(t, face)?.unwrap_or_default();
+                let mut named = [CellId::NONE; 4];
+                for (slot, node) in named.iter_mut().zip(nodes) {
+                    let at: NodeTag = self.map.read_attribute_tx(t, node)?.unwrap_or_default();
+                    *slot = at.id;
+                }
+                sides.push(BlockFace {
                     face: tag.id,
                     block,
                     groups,
-                    patch,
-                    nodes: nodes.map(|n| self.node_tag_of(n).id),
+                    nodes: named,
                     on: tag.on,
-                }
-            })
-            .collect()
+                });
+            }
+            Ok(sides)
+        })
     }
 
     // --- reading ----------------------------------------------------------

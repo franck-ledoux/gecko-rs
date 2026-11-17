@@ -14,7 +14,7 @@ pub mod script;
 pub mod view;
 pub mod vtk;
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 use crate::groups::{GroupError, Groups};
@@ -1945,6 +1945,12 @@ impl Session {
     ///
     /// A face already glued is listed once per block, as the surface is.
     pub fn faces_json(&self) -> String {
+        // Both of these are read once for the model rather than once per
+        // entry. The list has six entries a block, so asking per entry is a
+        // walk of the model squared — which is what it used to be, by a
+        // field the block faces carried to avoid exactly that.
+        let patches: HashSet<CellId> = self.blocking.patches().into_iter().collect();
+        let at: HashMap<CellId, [f64; 3]> = self.blocking.nodes().collect();
         let faces: Vec<_> = self
             .blocking
             .block_faces()
@@ -1952,7 +1958,7 @@ impl Session {
             .map(|side| {
                 let mut center = [0.0; 3];
                 for node in side.nodes {
-                    let p = self.blocking.position(node).unwrap_or([0.0; 3]);
+                    let p = at.get(&node).copied().unwrap_or([0.0; 3]);
                     for k in 0..3 {
                         center[k] += p[k] / 4.0;
                     }
@@ -1964,11 +1970,7 @@ impl Session {
                     // face on its own, and what can be done with it is not
                     // the same. The caller should not have to work it out
                     // from the shape of the answer.
-                    //
-                    // By the volume the side carries rather than by name:
-                    // a name is found by scanning every volume, and this
-                    // list has six entries a block.
-                    "patch": side.patch,
+                    "patch": patches.contains(&side.block),
                     "center": center,
                     "on": side.on.map(spot_json),
                 })

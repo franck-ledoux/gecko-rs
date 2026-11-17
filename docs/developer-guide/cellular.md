@@ -82,6 +82,12 @@ VTK file handed over as one `Uint8Array` in the same linear memory.
    creation. See the trap below.
 1. **General polyhedra and T-junctions are out of scope**, deliberately, and
    the cost of reopening that door is stated below.
+1. **Mesh node numbers stay `u32`.** Which puts a ceiling on the whole
+   pipeline at 4 294 967 295 nodes — a little over four billion, so a few
+   hundred million cells has room and a few billion does not. Said here so
+   that the day it bites, it is a decision being revisited and not a surprise:
+   going to `u64` would cross `Mesh`, the VTK output, the file writers and the
+   wasm façade, which is why it is not being paid for in advance.
 
 ## The structure
 
