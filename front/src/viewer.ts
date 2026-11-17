@@ -583,6 +583,20 @@ export class Viewer {
      *  whose other side is the block. */
     bothWays: boolean;
   };
+  /** A face being **slid** rather than grown: which nodes move, where each
+   *  of them started, and the line they move along.
+   *
+   *  Its own state and not a flag on `growing`, because the two are
+   *  different gestures that happen to be aimed the same way: one makes a
+   *  block and previews a ghost of it, the other moves corners the model
+   *  already has and previews by moving them. */
+  private sliding?: {
+    nodes: number[];
+    from: Vector3[];
+    center: Vector3;
+    normal: Vector3;
+    by: number;
+  };
   private grownWire?: GreasedLineMesh;
   private grownBox?: Mesh;
   private grown: number | null = null;
@@ -1320,6 +1334,118 @@ export class Viewer {
     this.grown = null;
     this.showGrown();
     return true;
+  }
+
+  /**
+   * Begin sliding these faces along the first one's normal.
+   *
+   * A **translation**, which is why one normal serves them all: the nodes
+   * a face shares with another selected face would otherwise have two
+   * places to go, and a drag is one gesture with one direction in it.
+   *
+   * Previewed by moving the nodes in the working copy, exactly as dragging
+   * a handle does — so what you see while you aim is the model with the
+   * face where you are putting it, rather than a ghost of something else.
+   */
+  beginSlide(along: Pick, picks: readonly Pick[]): boolean {
+    const view = this.view;
+    if (!view) return false;
+    const lead = this.quadOf(along);
+    if (lead === null) return false;
+    const corners = [0, 1, 2, 3].map((k) =>
+      this.point(view.quads[lead * 4 + k]),
+    );
+    const normal = quadNormal(corners);
+    if (normal.length() < 1e-12) return false;
+
+    // Every node of every selected face, once. A node on two of them moves
+    // with both, which is what makes a crease travel as one piece.
+    const nodes: number[] = [];
+    for (const pick of picks.some((p) => p.face === along.face)
+      ? picks
+      : [along]) {
+      const quad = this.quadOf(pick);
+      if (quad === null) continue;
+      for (let k = 0; k < 4; k++) {
+        const node = view.quads[quad * 4 + k];
+        if (!nodes.includes(node)) nodes.push(node);
+      }
+    }
+    if (!nodes.length) return false;
+
+    this.sliding = {
+      nodes,
+      from: nodes.map((n) => this.point(n)),
+      center: corners
+        .reduce((at, p) => at.addInPlace(p), new Vector3(0, 0, 0))
+        .scale(0.25),
+      normal: normal.normalize(),
+      by: 0,
+    };
+    return true;
+  }
+
+  /** How far the pointer is asking the faces to slide, and the model moved
+   *  to match. Signed: a face of a block may be pushed in as well as out. */
+  aimSlide(x: number, y: number): number | null {
+    const slide = this.sliding;
+    if (!slide) return null;
+    const ray = this.scene.createPickingRay(
+      x,
+      y,
+      Matrix.Identity(),
+      this.cameraFor(x, y),
+    );
+    const towards = ray.direction.normalizeToNew();
+    const asked = heightAlong(
+      [ray.origin.x, ray.origin.y, ray.origin.z],
+      [towards.x, towards.y, towards.z],
+      [slide.center.x, slide.center.y, slide.center.z],
+      [slide.normal.x, slide.normal.y, slide.normal.z],
+    );
+    // Looking straight down the line: hold what we had rather than jump to
+    // whatever a near-singular division produced.
+    if (asked === null) return slide.by;
+    slide.by = asked;
+    slide.nodes.forEach((node, i) => {
+      this.place(node, slide.from[i].add(slide.normal.scale(asked)));
+    });
+    this.redrawAround(slide.nodes);
+    return asked;
+  }
+
+  /**
+   * Let go, and say what to tell the kernel: the nodes that moved, the first
+   * one's new place, and the rest to be carried by the same offset.
+   *
+   * Nothing is put back. The working copy stays where the pointer left it,
+   * and the kernel's answer arrives over the top of it — which is what makes
+   * the model stop still rather than snap back and then forward again.
+   */
+  endSlide(): {
+    node: number;
+    to: [number, number, number];
+    carrying: number[];
+  } | null {
+    const slide = this.sliding;
+    this.sliding = undefined;
+    if (!slide || !this.view) return null;
+    const names = slide.nodes.map((n) => this.view!.names[n]);
+    const at = slide.from[0].add(slide.normal.scale(slide.by));
+    return {
+      node: names[0],
+      to: [at.x + this.center[0], at.y + this.center[1], at.z + this.center[2]],
+      carrying: names.slice(1),
+    };
+  }
+
+  /** Put the slid nodes back where they were, for a gesture given up on. */
+  cancelSlide() {
+    const slide = this.sliding;
+    this.sliding = undefined;
+    if (!slide) return;
+    slide.nodes.forEach((node, i) => this.place(node, slide.from[i]));
+    this.redrawAround(slide.nodes);
   }
 
   /** How far the pointer is asking for, and the preview to match. */
@@ -2263,12 +2389,21 @@ export class Viewer {
     return true;
   }
 
-  /** Move a node in the working copy, without redrawing anything yet. */
+  /** Move a node in the working copy, without redrawing anything yet.
+   *
+   *  The handle comes along. When a handle is being dragged it is already
+   *  where this puts it — Babylon moved it, and the position written back
+   *  is the one read off it — but a gesture that moves nodes *without*
+   *  dragging their handles, as sliding a face does, would otherwise leave
+   *  them behind, and the model would be right while the thing you grab
+   *  was somewhere else. */
   private place(index: number, to: Vector3) {
     if (!this.view) return;
     this.view.positions[index * 3] = to.x;
     this.view.positions[index * 3 + 1] = to.y;
     this.view.positions[index * 3 + 2] = to.z;
+    const handle = this.nodes[index];
+    if (handle) handle.position.copyFrom(to);
   }
 
   /**

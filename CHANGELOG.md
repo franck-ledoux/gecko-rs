@@ -32,6 +32,26 @@ measurements that decided it.
   what makes them an oracle for the structure to come rather than a description
   of the one being replaced. The mesh file is unchanged byte for byte.
 
+- **A selected face can be slid instead of grown from.** Hold `⌥` and drag
+  it: the corners move, and no block is built.
+
+  `⇧` was the obvious modifier and is the wrong one — it bands, and held
+  over a face it lights that face's chord. `⌥` is free by construction here:
+  the shortcut table refuses every press that carries it.
+
+  A slide is a **translation**, which is why one normal serves however many
+  faces are selected: a node two selected faces share would otherwise have
+  two places to go, and a drag is one gesture with one direction in it. It
+  is previewed by moving the nodes in the working copy, as dragging a handle
+  is, so what you aim at is the model with the face where you are putting
+  it rather than a ghost of something else — and it is committed as one
+  `move_node` carrying the rest, so one gesture is one step of undo and each
+  corner still does what its own classification allows.
+
+  A drag may also now begin from **any** of the selected faces rather than
+  the first: several are selected precisely so one gesture can act on all of
+  them, and which one the pointer is over is not a choice anybody made.
+
 - **The mesher no longer keeps a table the size of the mesh it builds.**
   Every mesh node used to be an entry in a `HashMap<Site, u32>`, which is
   what made two blocks share the nodes on the face between them. It was also

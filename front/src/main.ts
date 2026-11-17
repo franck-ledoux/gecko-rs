@@ -933,6 +933,7 @@ async function boot() {
       e.button !== 0 ||
       aiming !== null ||
       growing ||
+      sliding ||
       viewer.aimedAtGeometry ||
       lasso
     )
@@ -941,15 +942,26 @@ async function boot() {
     if (viewer.pickNode(e.offsetX, e.offsetY) !== null) return;
     if (viewer.pickEdge(e.offsetX, e.offsetY) !== null) return;
     const surface = viewer.pickSurface(e.offsetX, e.offsetY);
-    const [first] = viewer.selection;
-    if (
-      !surface ||
-      !first ||
-      first.face !== surface.face ||
-      first.block !== surface.block
-    ) {
+    const picked = viewer.selection;
+    // Any of the selected faces, not only the first: several are selected
+    // precisely so that one gesture can act on all of them, and which one
+    // the pointer happens to be over is not a choice anybody made.
+    const on = surface
+      ? picked.find((p) => p.face === surface.face && p.block === surface.block)
+      : undefined;
+    if (!surface || !on) return;
+
+    // ⌥ slides the faces instead of growing from them. The modifier is free
+    // by construction — the shortcut table refuses every press that has it —
+    // where ⇧ is not: ⇧ bands, and ⇧ over a face lights its chord.
+    if (e.altKey) {
+      if (!viewer.beginSlide(on, picked)) return;
+      sliding = true;
+      canvas.setPointerCapture(e.pointerId);
+      viewer.suspendCamera();
       return;
     }
+
     // A face of an open sheet may be dragged either way: it has no
     // inside, and which way it is wound is not something the screen says.
     if (!viewer.beginExtrusion(surface, isPatch(surface))) return;
@@ -985,6 +997,8 @@ async function boot() {
    * would otherwise leave it held for ever.
    */
   let banding = false;
+  /** Whether a drag is sliding faces rather than growing a block from one. */
+  let sliding = false;
   window.addEventListener("keydown", (e) => {
     if (e.key.toLowerCase() === LASSO_KEY) banding = true;
     if (e.key === "Shift") showChord(true);
@@ -997,6 +1011,13 @@ async function boot() {
   // a chord still lit over a model nobody is looking at is a lie.
   window.addEventListener("blur", () => {
     banding = false;
+    // A gesture whose pointer events will never arrive is a model left
+    // where the last frame put it, with nothing on its way to settle it.
+    if (sliding) {
+      sliding = false;
+      viewer.cancelSlide();
+      viewer.resumeCamera();
+    }
     showChord(false);
   });
 
@@ -1008,6 +1029,10 @@ async function boot() {
       if (height !== null)
         say(`extruding ${height.toFixed(2)} — let go to build`);
     }
+    if (sliding) {
+      const by = viewer.aimSlide(e.offsetX, e.offsetY);
+      if (by !== null) say(`sliding ${by.toFixed(2)} — let go to move`);
+    }
   });
 
   canvas.addEventListener("pointerup", (e) => {
@@ -1015,6 +1040,21 @@ async function boot() {
     const [x, y] = pressedAt;
     pressedAt = undefined;
     const moved = Math.hypot(e.offsetX - x, e.offsetY - y) > CLICK_SLOP;
+
+    if (sliding) {
+      canvas.releasePointerCapture(e.pointerId);
+      viewer.resumeCamera();
+      sliding = false;
+      // Pressed and let go on the spot is a click, not a move — and a
+      // click with ⌥ down is still a click.
+      if (!moved) {
+        viewer.cancelSlide();
+        return;
+      }
+      const slide = viewer.endSlide();
+      if (slide) void slideFaces(slide);
+      return;
+    }
 
     if (growing) {
       canvas.releasePointerCapture(e.pointerId);
@@ -1086,6 +1126,32 @@ async function boot() {
     );
     viewer.aimCut(t);
     say(`cut at ${t.toFixed(2)} — let go to cut`);
+  }
+
+  /**
+   * Move the faces that were slid, as one command and one step of undo.
+   *
+   * A move and not a rebuild: `move_node` carries the rest by the offset
+   * the first one asked for, which is exactly a translation — and each node
+   * still does with it what its own classification allows, so a corner on a
+   * curve slides along that curve and a frozen one stays.
+   */
+  async function slideFaces(slide: {
+    node: number;
+    to: [number, number, number];
+    carrying: number[];
+  }) {
+    const reply = await send({
+      op: "move_node",
+      node: slide.node,
+      to: slide.to,
+      carrying: slide.carrying,
+      snap: prefs.box.snap,
+    });
+    message = reply.message;
+    // The faces are where they were put, so the selection still means
+    // something: a slide can be followed by another.
+    if (!(await refreshNodes())) await refresh();
   }
 
   async function extrude(from: Pick, height: number) {
