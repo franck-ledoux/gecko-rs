@@ -10,7 +10,7 @@
 //! jitter and z-fighting. Rebasing costs nothing and cannot be retrofitted
 //! cheaply once a client assumes absolute coordinates.
 
-use gecko_core::{Blocking, Mesh};
+use gecko_core::{Blocking, CellId, Mesh, On};
 use gecko_geom::Geometry;
 use std::collections::HashMap;
 
@@ -115,8 +115,8 @@ impl ViewBuffer {
         let masks = blocking.group_masks();
         let halves = |mask: u64| ((mask & 0xffff_ffff) as u32, (mask >> 32) as u32);
 
-        let nodes = blocking.map_vertices();
-        let mut at: HashMap<u32, u32> = HashMap::with_capacity(nodes.len());
+        let nodes: Vec<(CellId, [f64; 3], Option<On>, bool)> = blocking.nodes_in_full().collect();
+        let mut at: HashMap<CellId, u32> = HashMap::with_capacity(nodes.len());
         let mut world = Vec::with_capacity(nodes.len() * 3);
         let mut names = Vec::with_capacity(nodes.len());
         let mut node_class_dim = Vec::with_capacity(nodes.len());
@@ -125,14 +125,13 @@ impl ViewBuffer {
         let mut node_groups_lo = Vec::with_capacity(nodes.len());
         let mut node_groups_hi = Vec::with_capacity(nodes.len());
         let mut node_loose = Vec::with_capacity(nodes.len());
-        for (i, n) in nodes.iter().enumerate() {
+        for (i, (n, place, on, frozen)) in nodes.iter().enumerate() {
             at.insert(*n, i as u32);
-            world.extend_from_slice(&blocking.position(*n).unwrap_or([0.0; 3]));
-            let tag = blocking.node_tag(*n);
-            names.push(tag.id.get().unwrap_or(u32::MAX));
-            node_class_dim.push(tag.on.map(|on| on.dim as i32).unwrap_or(-1));
-            node_class_tag.push(tag.on.map(|on| on.tag).unwrap_or(0));
-            node_frozen.push(u32::from(tag.frozen));
+            world.extend_from_slice(place);
+            names.push(n.get().unwrap_or(u32::MAX));
+            node_class_dim.push(on.map(|on| on.dim as i32).unwrap_or(-1));
+            node_class_tag.push(on.map(|on| on.tag).unwrap_or(0));
+            node_frozen.push(u32::from(*frozen));
             let (lo, hi) = halves(masks.nodes.get(n).copied().unwrap_or(0));
             node_groups_lo.push(lo);
             node_groups_hi.push(hi);
@@ -162,14 +161,12 @@ impl ViewBuffer {
         let mut edge_groups_lo = Vec::new();
         let mut edge_groups_hi = Vec::new();
         let mut edge_loose = Vec::new();
-        for e in blocking.map_edges() {
-            let (a, b) = blocking.edge_endpoints(e);
-            if let (Some(a), Some(b)) = (at.get(&a), at.get(&b)) {
-                let tag = blocking.edge_tag(e);
+        for (e, [from, to], _, on) in blocking.edges_in_full() {
+            if let (Some(a), Some(b)) = (at.get(&from), at.get(&to)) {
                 edges.extend_from_slice(&[*a, *b]);
-                edge_names.push(tag.id.get().unwrap_or(u32::MAX));
-                edge_class_dim.push(tag.on.map(|on| on.dim as i32).unwrap_or(-1));
-                edge_class_tag.push(tag.on.map(|on| on.tag).unwrap_or(0));
+                edge_names.push(e.get().unwrap_or(u32::MAX));
+                edge_class_dim.push(on.map(|on| on.dim as i32).unwrap_or(-1));
+                edge_class_tag.push(on.map(|on| on.tag).unwrap_or(0));
                 let (lo, hi) = halves(masks.edges.get(&e).copied().unwrap_or(0));
                 edge_groups_lo.push(lo);
                 edge_groups_hi.push(hi);
@@ -203,11 +200,10 @@ impl ViewBuffer {
             quad_class_tag.push(side.on.map(|on| on.tag).unwrap_or(0));
             // A quadrangle is a (face, block) pair, so its groups are that
             // block's — and the face's own mask, which is the union over
-            // both sides, would say the far block's too. By the volume the
-            // side already carries: asking for it by name is a scan of
-            // every volume, and once per quadrangle that is the whole walk
-            // squared.
-            let (lo, hi) = halves(blocking.block_tag(side.volume).groups);
+            // both sides, would say the far block's too. Read off the side,
+            // which carries it: asking for it by name per quadrangle would
+            // be the whole walk squared.
+            let (lo, hi) = halves(side.groups);
             quad_groups_lo.push(lo);
             quad_groups_hi.push(hi);
         }

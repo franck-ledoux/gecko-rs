@@ -182,16 +182,15 @@ fn a_name_is_found_again_after_the_map_has_been_rearranged() {
 
     // Every name that is still there answers, and with the right cell.
     for node in &kept {
-        let found = b.node_by_id(*node).expect("still there");
-        assert_eq!(b.node_tag(found).id, *node, "a hint gave the wrong cell");
+        assert!(b.position(*node).is_some(), "{node:?} is still there");
     }
     // And the ones that went answer with nothing rather than with whatever
     // now sits where they used to.
     let gone: Vec<CellId> = nodes.into_iter().filter(|n| !kept.contains(n)).collect();
     assert_eq!(gone.len(), 8);
     for node in gone {
-        assert!(b.node_by_id(node).is_none(), "{node:?} is gone");
+        assert!(b.position(node).is_none(), "{node:?} is gone");
     }
-    assert!(b.block_by_id(first).is_none());
-    assert!(b.block_by_id(second).is_some());
+    assert!(!b.blocks().contains(&first), "the first is gone");
+    assert!(b.blocks().contains(&second), "the second is not");
 }

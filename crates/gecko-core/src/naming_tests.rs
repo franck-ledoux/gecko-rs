@@ -1,3 +1,7 @@
+//! Moved in from `tests/` for 0.2.0: these are about the **representation**,
+//! not about the blocking's behaviour, so they reach for the map's own terms
+//! and they go when it does. See `docs/developer-guide/cellular.md`.
+
 //! Names, and the walks that hand them out.
 //!
 //! Every cell of a blocking carries a [`CellId`] — the name a script says —
@@ -10,14 +14,14 @@
 //! that names only what it touched has to have touched everything that was
 //! left unnamed.
 
-use gecko_core::ids::CellId;
-use gecko_core::{cube_corners, Blocking};
+use crate::ids::CellId;
+use crate::{cube_corners, Blocking};
 use std::collections::HashMap;
 
 /// Glue every pair of faces that sit on the same four corners.
 fn weld_everything(b: &mut Blocking) {
     let sides = b.block_faces();
-    let key = |s: &gecko_core::BlockFace| {
+    let key = |s: &crate::BlockFace| {
         let mut at = [0.0; 3];
         for node in s.nodes {
             let p = b.position(node).unwrap();
@@ -111,14 +115,22 @@ fn a_pillow_leaves_nothing_without_a_name() {
         ids.into_iter().filter(|c| named(*c).is_none()).count()
     };
     assert_eq!(
-        nameless(b.map_vertices(), &|v| b.node_tag(v).id),
+        nameless(b.map_vertices(), &|v| b.node_tag_of(v).id),
         0,
         "nodes"
     );
-    assert_eq!(nameless(b.map_edges(), &|e| b.edge_tag(e).id), 0, "edges");
-    assert_eq!(nameless(b.map_faces(), &|f| b.face_tag(f).id), 0, "faces");
     assert_eq!(
-        nameless(b.map_volumes(), &|v| b.block_tag(v).id),
+        nameless(b.map_edges(), &|e| b.edge_tag_of(e).id),
+        0,
+        "edges"
+    );
+    assert_eq!(
+        nameless(b.map_faces(), &|f| b.face_tag_of(f).id),
+        0,
+        "faces"
+    );
+    assert_eq!(
+        nameless(b.map_volumes(), &|v| b.block_tag_of(v).id),
         0,
         "blocks"
     );

@@ -260,7 +260,7 @@ fn the_node_left_on_the_surface_keeps_what_the_node_that_moved_was_on() {
         .find(|(_, p)| p[2] > 0.5)
         .expect("a node of the top face")
         .0;
-    let was = b.position(b.node_by_id(corner).unwrap()).unwrap();
+    let was = b.position(corner).unwrap();
     b.set_node_class(corner, Some(On { dim: 1, tag: 7 }))
         .unwrap();
     b.set_frozen(corner, true).unwrap();

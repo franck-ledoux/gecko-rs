@@ -8,6 +8,11 @@
 //! and those are what let a block structure follow a geometry rather than
 //! merely sit near it.
 
+#[cfg(test)]
+mod hexahedron_tests;
+#[cfg(test)]
+mod naming_tests;
+
 pub mod attributes;
 pub mod blocking;
 pub mod ids;

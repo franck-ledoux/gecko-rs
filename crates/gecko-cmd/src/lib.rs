@@ -864,8 +864,7 @@ impl Session {
                 // shortfall rather than by the gesture.
                 let was = self
                     .blocking
-                    .node_by_id(node)
-                    .and_then(|v| self.blocking.position(v))
+                    .position(node)
                     .ok_or(BlockingError::NoSuchNode(node))?;
                 let by = [to[0] - was[0], to[1] - was[1], to[2] - was[2]];
 
@@ -888,11 +887,7 @@ impl Session {
                         held += 1;
                         continue;
                     }
-                    let Some(at) = self
-                        .blocking
-                        .node_by_id(*other)
-                        .and_then(|v| self.blocking.position(v))
-                    else {
+                    let Some(at) = self.blocking.position(*other) else {
                         continue;
                     };
                     self.move_node(*other, [at[0] + by[0], at[1] + by[1], at[2] + by[2]], snap)?;
@@ -1475,7 +1470,7 @@ impl Session {
     fn named_blocks(&self, blocks: &[u32]) -> Result<Vec<CellId>, SessionError> {
         let names: Vec<CellId> = blocks.iter().copied().map(CellId::from_raw).collect();
         for block in &names {
-            if !self.blocking.named_is_block(*block) {
+            if !self.blocking.is_block(*block) {
                 return Err(BlockingError::NoSuchBlock(*block).into());
             }
         }
@@ -1488,7 +1483,7 @@ impl Session {
         }
         let names: Vec<CellId> = nodes.iter().copied().map(CellId::from_raw).collect();
         for node in &names {
-            if self.blocking.node_by_id(*node).is_none() {
+            if self.blocking.position(*node).is_none() {
                 return Err(BlockingError::NoSuchNode(*node).into());
             }
         }
@@ -1716,10 +1711,9 @@ impl Session {
             return Ok(());
         };
         let model = Model::new(geometry, &self.composites);
-        let Some(vertex) = self.blocking.node_by_id(node) else {
+        let Some(at) = self.blocking.position(node) else {
             return Ok(());
         };
-        let at = self.blocking.position(vertex).unwrap_or([0.0; 3]);
         if let Some(onto) = model.project(on.dim, on.tag, at) {
             self.blocking.set_position(node, onto)?;
         }
@@ -1974,7 +1968,7 @@ impl Session {
                     // By the volume the side carries rather than by name:
                     // a name is found by scanning every volume, and this
                     // list has six entries a block.
-                    "patch": !self.blocking.is_block(side.volume),
+                    "patch": side.patch,
                     "center": center,
                     "on": side.on.map(spot_json),
                 })

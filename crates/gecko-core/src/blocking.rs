@@ -19,6 +19,17 @@ use thiserror::Error;
 use crate::attributes::{BlockTag, EdgeTag, FaceTag, NodeTag, On};
 use crate::ids::{CellId, CornerKey, Counter};
 
+/// One block, as the mesher needs it: its eight corners in VTK order, and
+/// the cells of the blocking they bound. All by name.
+pub struct Hex {
+    pub block: CellId,
+    pub corners: [CellId; 8],
+    /// In [`HEX_EDGES`] order.
+    pub edges: [CellId; 12],
+    /// In [`HEX_FACES`] order.
+    pub faces: [CellId; 6],
+}
+
 /// The six faces of a hexahedron, each listed anticlockwise **seen from
 /// outside**, over corners in the usual VTK/Gmsh order.
 ///
@@ -153,8 +164,8 @@ pub struct Census {
 /// it. Empty where nothing is grouped, which is the usual case.
 #[derive(Clone, Debug, Default)]
 pub struct GroupMasks {
-    pub nodes: HashMap<VertexIdType, u64>,
-    pub edges: HashMap<EdgeIdType, u64>,
+    pub nodes: HashMap<CellId, u64>,
+    pub edges: HashMap<CellId, u64>,
     /// Cells that bound a block in **no** group, as well as whatever else
     /// they bound.
     ///
@@ -168,8 +179,8 @@ pub struct GroupMasks {
     ///
     /// Only filled when something is grouped: where nothing is, every
     /// cell's mask is zero and that says it already.
-    pub loose_nodes: HashSet<VertexIdType>,
-    pub loose_edges: HashSet<EdgeIdType>,
+    pub loose_nodes: HashSet<CellId>,
+    pub loose_edges: HashSet<CellId>,
 }
 
 /// A cell asking where it belongs, and everything there is to answer with.
@@ -198,8 +209,8 @@ pub struct Settling<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SheetEdge {
     pub edge: CellId,
-    pub from: VertexIdType,
-    pub to: VertexIdType,
+    pub from: CellId,
+    pub to: CellId,
 }
 
 /// Everything one layer of blocks is made of.
@@ -248,6 +259,23 @@ pub const HEX_CORNER_EDGES: [[usize; 3]; 8] = [
     [4, 6, 1],
     [5, 7, 2],
     [6, 4, 3],
+];
+
+/// The twelve edges of a hexahedron, as pairs of corners, in the order the
+/// VTK ordering implies: the bottom ring, the top ring, then the uprights.
+pub const HEX_EDGES: [[usize; 2]; 12] = [
+    [0, 1],
+    [1, 2],
+    [2, 3],
+    [3, 0],
+    [4, 5],
+    [5, 6],
+    [6, 7],
+    [7, 4],
+    [0, 4],
+    [1, 5],
+    [2, 6],
+    [3, 7],
 ];
 
 /// How square a corner is: the volume the three edges leaving it span, over
@@ -334,13 +362,14 @@ pub fn across(
 pub struct BlockFace {
     pub face: CellId,
     pub block: CellId,
-    /// The block's volume in the map, for the same reason `on` is here:
-    /// everything that draws a surface walks this list, and finding a
-    /// block by name is a scan of every volume — so asking per entry
-    /// turns a walk of the model into a walk of the model squared. It
-    /// cost three seconds at a hundred and twenty-five blocks.
-    pub volume: VolumeIdType,
-    pub nodes: [VertexIdType; 4],
+    /// Which groups the block is in, and whether it is a block at all
+    /// rather than a patch. Carried here for the same reason `on` is:
+    /// everything that draws a surface walks this list, and a lookup per
+    /// entry turns a walk of the model into a walk of the model squared.
+    /// It cost three seconds at a hundred and twenty-five blocks.
+    pub groups: u64,
+    pub patch: bool,
+    pub nodes: [CellId; 4],
     /// What the face is classified on. Carried here rather than looked up
     /// by name: everything that draws a surface walks this list, and a
     /// lookup per entry is a scan of the whole map per entry.
@@ -352,9 +381,9 @@ pub enum BlockingError {
     #[error("could not build the map: {0}")]
     Build(String),
     #[error("could not link darts: {0}")]
-    Link(#[from] LinkError),
+    Link(String),
     #[error("attribute error: {0}")]
-    Attribute(#[from] AttributeError),
+    Attribute(String),
     #[error("no node is named {0:?}")]
     NoSuchNode(CellId),
     #[error("no face is named {0:?}")]
@@ -364,11 +393,11 @@ pub enum BlockingError {
     #[error("face {0:?} is already glued to another block")]
     AlreadyGlued(CellId),
     #[error("could not glue: {0}")]
-    Sew(#[from] SewError),
+    Sew(String),
     #[error("no block is named {0:?}")]
     NoSuchBlock(CellId),
     #[error("could not free dart {0}")]
-    Release(DartIdType),
+    Release(u32),
     #[error("no edge is named {0:?}")]
     NoSuchEdge(CellId),
     #[error("the sheet through edge {0:?} meets itself the wrong way round")]
@@ -402,6 +431,27 @@ pub enum BlockingError {
     Frozen(CellId),
     #[error("nodes {0:?} and {1:?} are both frozen, and not in the same place")]
     FrozenApart(CellId, CellId),
+}
+
+/// The map's own failures, as words. Carrying the types themselves would put
+/// honeycomb in the signature of everything that can fail, which is the one
+/// thing this layer is for keeping out.
+impl From<LinkError> for BlockingError {
+    fn from(e: LinkError) -> Self {
+        BlockingError::Link(e.to_string())
+    }
+}
+
+impl From<AttributeError> for BlockingError {
+    fn from(e: AttributeError) -> Self {
+        BlockingError::Attribute(e.to_string())
+    }
+}
+
+impl From<SewError> for BlockingError {
+    fn from(e: SewError) -> Self {
+        BlockingError::Sew(e.to_string())
+    }
 }
 
 impl From<DartReleaseError> for BlockingError {
@@ -576,16 +626,16 @@ impl Blocking {
             if let Some(at) = self.map.read_vertex(v) {
                 copy.map.write_vertex(v, at);
             }
-            copy.map.write_attribute(v, self.node_tag(v));
+            copy.map.write_attribute(v, self.node_tag_of(v));
         }
         for e in self.map_edges() {
-            copy.map.write_attribute(e, self.edge_tag(e));
+            copy.map.write_attribute(e, self.edge_tag_of(e));
         }
         for f in self.map_faces() {
-            copy.map.write_attribute(f, self.face_tag(f));
+            copy.map.write_attribute(f, self.face_tag_of(f));
         }
         for b in self.map_volumes() {
-            copy.map.write_attribute(b, self.block_tag(b));
+            copy.map.write_attribute(b, self.block_tag_of(b));
         }
 
         copy.names = self.names.clone();
@@ -617,7 +667,7 @@ impl Blocking {
     /// That is not a trick played on the map; it is what the map already
     /// says. A connected component of faces **is** a volume orbit, which is
     /// why it has a name of its own without anybody keeping a list, and why
-    /// [`is_block`][Self::is_block] can tell the two apart by asking whether
+    /// [`is_block`][Self::is_block_of] can tell the two apart by asking whether
     /// the shell closes.
     ///
     /// The corners are taken anticlockwise seen from the side the face
@@ -645,7 +695,7 @@ impl Blocking {
             );
         }
         self.assign_missing_ids();
-        Ok(self.face_tag(self.map.face_id(base)).id)
+        Ok(self.face_tag_of(self.map.face_id(base)).id)
     }
 
     /// A face's four corners and four edges, in the order β₁ walks them.
@@ -657,8 +707,8 @@ impl Blocking {
         let f = self.face_by_id(face)?;
         let darts = self.face_darts(f);
         Some((
-            darts.map(|d| self.node_tag(self.map.vertex_id(d)).id),
-            darts.map(|d| self.edge_tag(self.map.edge_id(d)).id),
+            darts.map(|d| self.node_tag_of(self.map.vertex_id(d)).id),
+            darts.map(|d| self.edge_tag_of(self.map.edge_id(d)).id),
         ))
     }
 
@@ -683,12 +733,12 @@ impl Blocking {
             .map_vertices()
             .into_iter()
             .filter(|v| {
-                self.node_tag(*v)
+                self.node_tag_of(*v)
                     .corner_key
                     .get()
                     .is_some_and(|key| key >= mark)
             })
-            .map(|v| self.node_tag(v).id)
+            .map(|v| self.node_tag_of(v).id)
             .filter(|id| id.is_some())
             .collect();
         // By name, so that two hosts walking the same model reach the same
@@ -703,8 +753,8 @@ impl Blocking {
         let mut out: Vec<CellId> = self
             .map_volumes()
             .into_iter()
-            .filter(|v| self.is_block(*v))
-            .map(|v| self.block_tag(v).id)
+            .filter(|v| self.is_block_of(*v))
+            .map(|v| self.block_tag_of(v).id)
             .filter(|id| id.is_some())
             .collect();
         out.sort();
@@ -714,7 +764,7 @@ impl Blocking {
     /// Which groups a block is in.
     pub fn block_groups(&self, block: CellId) -> u64 {
         self.block_by_id(block)
-            .map(|v| self.block_tag(v).groups)
+            .map(|v| self.block_tag_of(v).groups)
             .unwrap_or(0)
     }
 
@@ -723,10 +773,10 @@ impl Blocking {
     pub fn counted_in_groups(&self) -> [usize; 64] {
         let mut out = [0usize; 64];
         for volume in self.map_volumes() {
-            if !self.is_block(volume) {
+            if !self.is_block_of(volume) {
                 continue;
             }
-            let groups = self.block_tag(volume).groups;
+            let groups = self.block_tag_of(volume).groups;
             for (bit, count) in out.iter_mut().enumerate() {
                 if groups & (1u64 << bit) != 0 {
                     *count += 1;
@@ -752,12 +802,12 @@ impl Blocking {
             .iter()
             .map(|b| {
                 self.block_by_id(*b)
-                    .filter(|v| self.is_block(*v))
+                    .filter(|v| self.is_block_of(*v))
                     .ok_or(BlockingError::NoSuchBlock(*b))
             })
             .collect::<Result<_, _>>()?;
         for volume in found {
-            let tag = self.block_tag(volume);
+            let tag = self.block_tag_of(volume);
             let groups = if inside {
                 tag.groups | mask
             } else {
@@ -773,7 +823,7 @@ impl Blocking {
         let mask = !(1u64 << bit);
         let blocks: Vec<VolumeIdType> = self.map_volumes();
         for volume in blocks {
-            let tag = self.block_tag(volume);
+            let tag = self.block_tag_of(volume);
             if tag.groups & !mask != 0 {
                 self.map.write_attribute(
                     volume,
@@ -798,14 +848,16 @@ impl Blocking {
         let mut out = GroupMasks::default();
         let mut grouped = false;
         for volume in self.map_volumes() {
-            let groups = self.block_tag(volume).groups;
+            let groups = self.block_tag_of(volume).groups;
             if groups == 0 {
                 continue;
             }
             grouped = true;
             for dart in self.map.orbit(OrbitPolicy::Volume, volume as DartIdType) {
-                *out.nodes.entry(self.map.vertex_id(dart)).or_default() |= groups;
-                *out.edges.entry(self.map.edge_id(dart)).or_default() |= groups;
+                let node = self.node_tag_of(self.map.vertex_id(dart)).id;
+                let edge = self.edge_tag_of(self.map.edge_id(dart)).id;
+                *out.nodes.entry(node).or_default() |= groups;
+                *out.edges.entry(edge).or_default() |= groups;
             }
         }
         // A second pass, and only when there is something to tell apart:
@@ -814,12 +866,14 @@ impl Blocking {
         // the group did, taking a side off the block left behind.
         if grouped {
             for volume in self.map_volumes() {
-                if self.block_tag(volume).groups != 0 {
+                if self.block_tag_of(volume).groups != 0 {
                     continue;
                 }
                 for dart in self.map.orbit(OrbitPolicy::Volume, volume as DartIdType) {
-                    out.loose_nodes.insert(self.map.vertex_id(dart));
-                    out.loose_edges.insert(self.map.edge_id(dart));
+                    out.loose_nodes
+                        .insert(self.node_tag_of(self.map.vertex_id(dart)).id);
+                    out.loose_edges
+                        .insert(self.edge_tag_of(self.map.edge_id(dart)).id);
                 }
             }
         }
@@ -834,9 +888,9 @@ impl Blocking {
         let Some(vertex) = self.node_by_id(node) else {
             return false;
         };
-        self.neighbors(vertex)
+        self.neighbors_of(vertex)
             .into_iter()
-            .any(|other| self.node_tag(other).on.is_some())
+            .any(|other| self.node_tag_of(other).on.is_some())
     }
 
     /// Move the nodes towards the middle of their neighbors, as far as
@@ -892,16 +946,16 @@ impl Blocking {
         let mut movable: Vec<(CellId, VertexIdType)> = self
             .map_vertices()
             .into_iter()
-            .map(|v| (self.node_tag(v).id, v))
+            .map(|v| (self.node_tag_of(v).id, v))
             .filter(|(name, v)| {
-                let tag = self.node_tag(*v);
+                let tag = self.node_tag_of(*v);
                 !tag.frozen
                     && !held.contains(name)
                     // A point is a point: a node on a geometric corner has
                     // one place to be.
                     && tag.on.is_none_or(|on| on.dim > 0)
                     // And the pair above: free inside, held on the boundary.
-                    && (tag.on.is_some() || !self.on_the_surface(*v))
+                    && (tag.on.is_some() || !self.on_the_surface_of(*v))
             })
             .collect();
         movable.sort_by_key(|(name, _)| *name);
@@ -909,14 +963,14 @@ impl Blocking {
         let mut furthest = 0.0f64;
         for _ in 0..how.rounds {
             for &(_, v) in &movable {
-                let ring = self.neighbors(v);
+                let ring = self.neighbors_of(v);
                 if ring.is_empty() {
                     continue;
                 }
-                let from = self.position(v).unwrap_or([0.0; 3]);
+                let from = self.position_of(v).unwrap_or([0.0; 3]);
                 let mut middle = [0.0; 3];
                 for other in &ring {
-                    let p = self.position(*other).unwrap_or([0.0; 3]);
+                    let p = self.position_of(*other).unwrap_or([0.0; 3]);
                     for k in 0..3 {
                         middle[k] += p[k] / ring.len() as f64;
                     }
@@ -924,7 +978,7 @@ impl Blocking {
                 let mut to = [0, 1, 2].map(|k| from[k] + (middle[k] - from[k]) * share);
                 // Back onto whatever it follows, before anybody judges it:
                 // the point to weigh is the one the node would end up at.
-                if let Some(on) = self.node_tag(v).on {
+                if let Some(on) = self.node_tag_of(v).on {
                     if let Some(onto) = project(on, to) {
                         to = onto;
                     }
@@ -969,8 +1023,8 @@ impl Blocking {
         blocks.sort_unstable();
         blocks.dedup();
         for volume in blocks {
-            if let Some(corners) = self.hex_corners(volume) {
-                let at = corners.map(|c| self.position(c).unwrap_or([0.0; 3]));
+            if let Some(corners) = self.hex_corners_of(volume) {
+                let at = corners.map(|c| self.position_of(c).unwrap_or([0.0; 3]));
                 for (corner, sides) in HEX_CORNER_EDGES.iter().enumerate() {
                     worst = worst.min(scaled_jacobian(at[corner], sides.map(|s| at[s])));
                 }
@@ -986,11 +1040,11 @@ impl Blocking {
         faces.sort_unstable();
         faces.dedup();
         for face in faces {
-            if self.is_block(self.map.volume_id(face as DartIdType)) {
+            if self.is_block_of(self.map.volume_id(face as DartIdType)) {
                 continue;
             }
             let corners = self.face_corners(face);
-            let at = corners.map(|c| self.position(c).unwrap_or([0.0; 3]));
+            let at = corners.map(|c| self.position_of(c).unwrap_or([0.0; 3]));
             for k in 0..4 {
                 worst = worst.min(flatness(at[k], at[(k + 3) % 4], at[(k + 1) % 4]));
             }
@@ -1012,8 +1066,8 @@ impl Blocking {
     ///
     /// Nothing for a patch: the walk crosses β₂ to find the corner above
     /// one of its own, and an open sheet has none.
-    pub fn hex_corners(&self, volume: VolumeIdType) -> Option<[VertexIdType; 8]> {
-        if !self.is_block(volume) {
+    fn hex_corners_of(&self, volume: VolumeIdType) -> Option<[VertexIdType; 8]> {
+        if !self.is_block_of(volume) {
             return None;
         }
         let mut ring = [volume as DartIdType; 4];
@@ -1040,7 +1094,7 @@ impl Blocking {
     /// What a Laplacian averages. Read off the vertex's own orbit, so a
     /// node shared by several blocks has each of its neighbors once
     /// however many blocks it is shared by.
-    pub fn neighbors(&self, node: VertexIdType) -> Vec<VertexIdType> {
+    fn neighbors_of(&self, node: VertexIdType) -> Vec<VertexIdType> {
         let mut out: Vec<VertexIdType> = self
             .map
             .orbit(OrbitPolicy::Vertex, node as DartIdType)
@@ -1063,7 +1117,7 @@ impl Blocking {
     ///
     /// Every node of a patch is one, which is the right answer: an open
     /// sheet of faces is all boundary.
-    pub fn on_the_surface(&self, node: VertexIdType) -> bool {
+    fn on_the_surface_of(&self, node: VertexIdType) -> bool {
         self.map
             .orbit(OrbitPolicy::Vertex, node as DartIdType)
             .any(|d| self.map.beta::<3>(d) == NULL_DART_ID)
@@ -1079,23 +1133,18 @@ impl Blocking {
     ///
     /// Six faces welded into a closed box therefore *are* a block, which is
     /// the right answer rather than a loophole.
-    pub fn is_block(&self, volume: VolumeIdType) -> bool {
+    pub(crate) fn is_block_of(&self, volume: VolumeIdType) -> bool {
         self.map
             .orbit(OrbitPolicy::Volume, volume as DartIdType)
             .all(|d| self.map.beta::<2>(d) != NULL_DART_ID)
-    }
-
-    /// The same, by name.
-    pub fn named_is_block(&self, block: CellId) -> bool {
-        self.block_by_id(block).is_some_and(|v| self.is_block(v))
     }
 
     /// Every patch: the connected components of faces that are not blocks.
     pub fn patches(&self) -> Vec<CellId> {
         self.map_volumes()
             .into_iter()
-            .filter(|v| !self.is_block(*v))
-            .map(|v| self.block_tag(v).id)
+            .filter(|v| !self.is_block_of(*v))
+            .map(|v| self.block_tag_of(v).id)
             .collect()
     }
 
@@ -1167,7 +1216,7 @@ impl Blocking {
 
         // Only the new block can be unnamed: nothing else was touched.
         self.name_cells_near(OrbitPolicy::Volume, base);
-        Ok((self.block_tag(self.map.volume_id(base)).id, base))
+        Ok((self.block_tag_of(self.map.volume_id(base)).id, base))
     }
 
     /// Hand a name to every cell that does not have one.
@@ -1239,10 +1288,10 @@ impl Blocking {
         };
         let nodes: Vec<_> = every_node
             .into_iter()
-            .filter(|v| self.node_tag(*v).id.is_none())
+            .filter(|v| self.node_tag_of(*v).id.is_none())
             .collect();
         for v in nodes {
-            let tag = self.node_tag(v);
+            let tag = self.node_tag_of(v);
             let id = self.names[0].next_cell();
             self.map.write_attribute(v, NodeTag { id, ..tag });
             self.seen.nodes.insert(id, v);
@@ -1250,10 +1299,10 @@ impl Blocking {
 
         let edges: Vec<_> = every_edge
             .into_iter()
-            .filter(|e| self.edge_tag(*e).id.is_none())
+            .filter(|e| self.edge_tag_of(*e).id.is_none())
             .collect();
         for e in edges {
-            let tag = self.edge_tag(e);
+            let tag = self.edge_tag_of(e);
             let id = self.names[1].next_cell();
             // `..tag`, not a fresh one: naming a cell must not quietly undo
             // what it was classified on.
@@ -1263,10 +1312,10 @@ impl Blocking {
 
         let faces: Vec<_> = every_face
             .into_iter()
-            .filter(|f| self.face_tag(*f).id.is_none())
+            .filter(|f| self.face_tag_of(*f).id.is_none())
             .collect();
         for f in faces {
-            let tag = self.face_tag(f);
+            let tag = self.face_tag_of(f);
             let id = self.names[2].next_cell();
             self.map.write_attribute(f, FaceTag { id, ..tag });
             self.seen.faces.insert(id, f);
@@ -1274,11 +1323,11 @@ impl Blocking {
 
         let blocks: Vec<_> = every_block
             .into_iter()
-            .filter(|b| self.block_tag(*b).id.is_none())
+            .filter(|b| self.block_tag_of(*b).id.is_none())
             .collect();
         for b in blocks {
             let id = self.names[3].next_cell();
-            let tag = self.block_tag(b);
+            let tag = self.block_tag_of(b);
             self.map.write_attribute(b, BlockTag { id, ..tag });
             self.seen.blocks.insert(id, b);
         }
@@ -1296,7 +1345,7 @@ impl Blocking {
         // A frozen node does not move for anybody. Refused rather than
         // silently ignored: a caller that asked for a move and got nothing
         // back would go on believing it happened.
-        if self.node_tag(vertex).frozen {
+        if self.node_tag_of(vertex).frozen {
             return Err(BlockingError::Frozen(node));
         }
         self.map.write_vertex(vertex, (to[0], to[1], to[2]));
@@ -1305,7 +1354,7 @@ impl Blocking {
 
     /// Where a node is classified, if anywhere.
     pub fn node_class(&self, node: CellId) -> Option<On> {
-        self.node_by_id(node).and_then(|v| self.node_tag(v).on)
+        self.node_by_id(node).and_then(|v| self.node_tag_of(v).on)
     }
 
     /// Put a node on a geometric entity, or take it off one.
@@ -1320,7 +1369,7 @@ impl Blocking {
 
     pub fn is_frozen(&self, node: CellId) -> bool {
         self.node_by_id(node)
-            .map(|v| self.node_tag(v).frozen)
+            .map(|v| self.node_tag_of(v).frozen)
             .unwrap_or(false)
     }
 
@@ -1336,7 +1385,7 @@ impl Blocking {
         let vertex = self
             .node_by_id(node)
             .ok_or(BlockingError::NoSuchNode(node))?;
-        let mut tag = self.node_tag(vertex);
+        let mut tag = self.node_tag_of(vertex);
         change(&mut tag);
         self.map.write_attribute(vertex, tag);
         Ok(())
@@ -1344,7 +1393,7 @@ impl Blocking {
 
     /// Where an edge is classified, if anywhere.
     pub fn edge_class(&self, edge: CellId) -> Option<On> {
-        self.edge_by_id(edge).and_then(|e| self.edge_tag(e).on)
+        self.edge_by_id(edge).and_then(|e| self.edge_tag_of(e).on)
     }
 
     /// Put an edge on a geometric entity, or take it off one.
@@ -1356,14 +1405,14 @@ impl Blocking {
         let id = self
             .edge_by_id(edge)
             .ok_or(BlockingError::NoSuchEdge(edge))?;
-        let tag = self.edge_tag(id);
+        let tag = self.edge_tag_of(id);
         self.map.write_attribute(id, EdgeTag { on, ..tag });
         Ok(())
     }
 
     /// Where a face is classified, if anywhere.
     pub fn face_class(&self, face: CellId) -> Option<On> {
-        self.face_by_id(face).and_then(|f| self.face_tag(f).on)
+        self.face_by_id(face).and_then(|f| self.face_tag_of(f).on)
     }
 
     /// Put a face on a geometric entity, or take it off one. Inferred from
@@ -1372,7 +1421,7 @@ impl Blocking {
         let id = self
             .face_by_id(face)
             .ok_or(BlockingError::NoSuchFace(face))?;
-        let tag = self.face_tag(id);
+        let tag = self.face_tag_of(id);
         self.map.write_attribute(id, FaceTag { on, ..tag });
         Ok(())
     }
@@ -1382,8 +1431,8 @@ impl Blocking {
         self.map_faces().into_iter().map(move |f| {
             let edges = self
                 .face_darts(f)
-                .map(|d| self.edge_tag(self.map.edge_id(d)).id);
-            (self.face_tag(f).id, edges)
+                .map(|d| self.edge_tag_of(self.map.edge_id(d)).id);
+            (self.face_tag_of(f).id, edges)
         })
     }
 
@@ -1391,9 +1440,14 @@ impl Blocking {
     /// classified on.
     pub fn edges(&self) -> impl Iterator<Item = (CellId, CellId, CellId, Option<On>)> + '_ {
         self.map_edges().into_iter().map(move |e| {
-            let (a, b) = self.edge_endpoints(e);
-            let tag = self.edge_tag(e);
-            (tag.id, self.node_tag(a).id, self.node_tag(b).id, tag.on)
+            let (a, b) = self.edge_endpoints_of(e);
+            let tag = self.edge_tag_of(e);
+            (
+                tag.id,
+                self.node_tag_of(a).id,
+                self.node_tag_of(b).id,
+                tag.on,
+            )
         })
     }
 
@@ -1406,10 +1460,10 @@ impl Blocking {
     /// six seconds on sixty-four blocks.
     pub fn nodes_in_full(&self) -> impl Iterator<Item = (CellId, [f64; 3], Option<On>, bool)> + '_ {
         self.map_vertices().into_iter().map(move |v| {
-            let tag = self.node_tag(v);
+            let tag = self.node_tag_of(v);
             (
                 tag.id,
-                self.position(v).unwrap_or([0.0; 3]),
+                self.position_of(v).unwrap_or([0.0; 3]),
                 tag.on,
                 tag.frozen,
             )
@@ -1429,21 +1483,21 @@ impl Blocking {
     pub fn census(&self) -> Census {
         let mut out = Census::default();
         for v in self.map_vertices() {
-            let tag = self.node_tag(v);
+            let tag = self.node_tag_of(v);
             out.nodes += 1;
             out.classified_nodes += usize::from(tag.on.is_some());
             out.frozen += usize::from(tag.frozen);
         }
         for e in self.map_edges() {
             out.edges += 1;
-            out.classified_edges += usize::from(self.edge_tag(e).on.is_some());
+            out.classified_edges += usize::from(self.edge_tag_of(e).on.is_some());
         }
         for f in self.map_faces() {
             out.faces += 1;
-            out.classified_faces += usize::from(self.face_tag(f).on.is_some());
+            out.classified_faces += usize::from(self.face_tag_of(f).on.is_some());
         }
         for v in self.map_volumes() {
-            if self.is_block(v) {
+            if self.is_block_of(v) {
                 out.blocks += 1;
             } else {
                 out.patches += 1;
@@ -1506,17 +1560,17 @@ impl Blocking {
             .map_vertices()
             .into_iter()
             .filter(|v| {
-                let tag = self.node_tag(*v);
+                let tag = self.node_tag_of(*v);
                 !tag.frozen && which(&tag)
             })
             .map(|v| {
-                let at = self.position(v).unwrap_or([0.0; 3]);
-                let on = pick(self.node_tag(v).on, at);
+                let at = self.position_of(v).unwrap_or([0.0; 3]);
+                let on = pick(self.node_tag_of(v).on, at);
                 (v, on, on.and_then(|on| project(on, at)))
             })
             .collect();
         for (v, on, onto) in found {
-            let tag = self.node_tag(v);
+            let tag = self.node_tag_of(v);
             self.map.write_attribute(v, NodeTag { on, ..tag });
             if let Some(p) = onto {
                 self.map.write_vertex(v, (p[0], p[1], p[2]));
@@ -1543,9 +1597,9 @@ impl Blocking {
             .map_edges()
             .into_iter()
             .map(|e| {
-                let (a, b) = self.edge_endpoints(e);
-                let already = self.edge_tag(e).on;
-                let on = match (self.node_tag(a).on, self.node_tag(b).on) {
+                let (a, b) = self.edge_endpoints_of(e);
+                let already = self.edge_tag_of(e).on;
+                let on = match (self.node_tag_of(a).on, self.node_tag_of(b).on) {
                     // An edge is never pinned to a point, which would
                     // over-constrain it.
                     (Some(x), Some(y)) => settle(Settling {
@@ -1587,7 +1641,7 @@ impl Blocking {
             })
             .collect();
         for (e, on) in edges {
-            let tag = self.edge_tag(e);
+            let tag = self.edge_tag_of(e);
             self.map.write_attribute(e, EdgeTag { on, ..tag });
         }
 
@@ -1598,10 +1652,10 @@ impl Blocking {
                 let darts = self.face_darts(f);
                 let edges: Vec<Option<On>> = darts
                     .iter()
-                    .map(|d| self.edge_tag(self.map.edge_id(*d)).on)
+                    .map(|d| self.edge_tag_of(self.map.edge_id(*d)).on)
                     .collect();
                 let corners = darts.map(|d| self.map.vertex_id(d));
-                let already = self.face_tag(f).on;
+                let already = self.face_tag_of(f).on;
                 let middle = self.middle(&corners);
                 let known: Vec<On> = edges.iter().flatten().copied().collect();
                 let on = if known.len() == edges.len() {
@@ -1631,7 +1685,7 @@ impl Blocking {
             })
             .collect();
         for (f, on) in faces {
-            let tag = self.face_tag(f);
+            let tag = self.face_tag_of(f);
             self.map.write_attribute(f, FaceTag { on, ..tag });
         }
     }
@@ -1645,11 +1699,11 @@ impl Blocking {
     /// again.
     pub fn unclassify_cells(&mut self) {
         for e in self.map_edges() {
-            let tag = self.edge_tag(e);
+            let tag = self.edge_tag_of(e);
             self.map.write_attribute(e, EdgeTag { on: None, ..tag });
         }
         for f in self.map_faces() {
-            let tag = self.face_tag(f);
+            let tag = self.face_tag_of(f);
             self.map.write_attribute(f, FaceTag { on: None, ..tag });
         }
     }
@@ -1657,7 +1711,7 @@ impl Blocking {
     fn middle(&self, nodes: &[VertexIdType]) -> [f64; 3] {
         let mut at = [0.0; 3];
         for n in nodes {
-            let p = self.position(*n).unwrap_or([0.0; 3]);
+            let p = self.position_of(*n).unwrap_or([0.0; 3]);
             for k in 0..3 {
                 at[k] += p[k] / nodes.len() as f64;
             }
@@ -1670,25 +1724,28 @@ impl Blocking {
     /// A scan. An index would have to be invalidated by every topological
     /// change, and getting that wrong is silent; at this size the scan is not
     /// worth the hazard. It goes here when it starts to matter.
-    pub fn node_by_id(&self, node: CellId) -> Option<VertexIdType> {
+    fn node_by_id(&self, node: CellId) -> Option<VertexIdType> {
         if node.is_none() {
             return None;
         }
         if let Some(v) = self.seen.nodes.get(&node) {
-            if self.node_tag(*v).id == node {
+            if self.node_tag_of(*v).id == node {
                 return Some(*v);
             }
         }
         self.map_vertices()
             .into_iter()
-            .find(|v| self.node_tag(*v).id == node)
+            .find(|v| self.node_tag_of(*v).id == node)
     }
 
     /// Every node, by stable name and position.
     pub fn nodes(&self) -> impl Iterator<Item = (CellId, [f64; 3])> + '_ {
-        self.map_vertices()
-            .into_iter()
-            .map(move |v| (self.node_tag(v).id, self.position(v).unwrap_or([0.0; 3])))
+        self.map_vertices().into_iter().map(move |v| {
+            (
+                self.node_tag_of(v).id,
+                self.position_of(v).unwrap_or([0.0; 3]),
+            )
+        })
     }
 
     /// Two faces that may legally be glued to each other: both exist, they
@@ -1759,7 +1816,7 @@ impl Blocking {
         let (a, b) = self.two_free_faces(first, second)?;
         let (da, db) = (self.face_darts(a), self.face_darts(b));
         let corner = |d: DartIdType| {
-            self.position(self.map.vertex_id(d))
+            self.position_of(self.map.vertex_id(d))
                 .unwrap_or([f64::NAN; 3])
         };
         let (pa, pb) = (da.map(corner), db.map(corner));
@@ -1790,7 +1847,7 @@ impl Blocking {
                 self.map.vertex_id(da[i]),
                 self.map.vertex_id(db[(turn + 4 - i) % 4]),
             );
-            let (ta, tb) = (self.node_tag(here), self.node_tag(there));
+            let (ta, tb) = (self.node_tag_of(here), self.node_tag_of(there));
             let (qa, qb) = (pa[i], pb[(turn + 4 - i) % 4]);
 
             // Where this corner is heading, as far as can be said before the
@@ -1859,7 +1916,7 @@ impl Blocking {
         // a glue. What this operation decided is written over it.
         for (i, w) in welds.iter().enumerate() {
             let v = self.map.vertex_id(da[i]);
-            let mut tag = self.node_tag(v);
+            let mut tag = self.node_tag_of(v);
             tag.on = w.on;
             tag.frozen = w.frozen;
             self.map.write_attribute(v, tag);
@@ -1890,7 +1947,7 @@ impl Blocking {
         let (a, b) = self.two_free_faces(first, second)?;
         let (da, db) = (self.face_darts(a), self.face_darts(b));
         let corner = |d: DartIdType| {
-            self.position(self.map.vertex_id(d))
+            self.position_of(self.map.vertex_id(d))
                 .unwrap_or([f64::NAN; 3])
         };
         let (pa, pb) = (da.map(corner), db.map(corner));
@@ -1993,10 +2050,10 @@ impl Blocking {
             |ids: Vec<CellId>| -> Vec<CellId> { ids.into_iter().filter(|c| c.is_some()).collect() };
         Ok(SheetCells {
             sheet: sheet.iter().map(|s| s.edge).min().unwrap_or(edge),
-            nodes: named(nodes.iter().map(|n| self.node_tag(*n).id).collect()),
-            edges: named(edges.iter().map(|e| self.edge_tag(*e).id).collect()),
-            faces: named(faces.iter().map(|f| self.face_tag(*f).id).collect()),
-            blocks: named(blocks.iter().map(|b| self.block_tag(*b).id).collect()),
+            nodes: named(nodes.iter().map(|n| self.node_tag_of(*n).id).collect()),
+            edges: named(edges.iter().map(|e| self.edge_tag_of(*e).id).collect()),
+            faces: named(faces.iter().map(|f| self.face_tag_of(*f).id).collect()),
+            blocks: named(blocks.iter().map(|b| self.block_tag_of(*b).id).collect()),
         })
     }
 
@@ -2034,7 +2091,7 @@ impl Blocking {
             .filter(|d| {
                 self.face_darts(self.map.face_id(*d))
                     .iter()
-                    .all(|e| !crossed.contains(&self.edge_tag(self.map.edge_id(*e)).id))
+                    .all(|e| !crossed.contains(&self.edge_tag_of(self.map.edge_id(*e)).id))
             })
             .collect();
         if caps.len() != 2 {
@@ -2051,7 +2108,7 @@ impl Blocking {
             // the lateral face beside this dart by one, which is the edge
             // that leaves the face.
             let crossing = self.map.beta::<1>(self.map.beta::<2>(beyond));
-            let id = self.edge_tag(self.map.edge_id(crossing)).id;
+            let id = self.edge_tag_of(self.map.edge_id(crossing)).id;
             if id.is_none() {
                 continue;
             }
@@ -2144,7 +2201,7 @@ impl Blocking {
                 .filter(|d| {
                     self.face_darts(self.map.face_id(*d))
                         .iter()
-                        .all(|e| !crossed.contains(&self.edge_tag(self.map.edge_id(*e)).id))
+                        .all(|e| !crossed.contains(&self.edge_tag_of(self.map.edge_id(*e)).id))
                 })
                 .collect();
             if caps.len() != 2 {
@@ -2259,7 +2316,7 @@ impl Blocking {
 
         for (_, mut nodes) in together {
             nodes.sort_unstable();
-            let known: Vec<[f64; 3]> = nodes.iter().filter_map(|v| self.position(*v)).collect();
+            let known: Vec<[f64; 3]> = nodes.iter().filter_map(|v| self.position_of(*v)).collect();
             if known.is_empty() {
                 continue;
             }
@@ -2377,7 +2434,7 @@ impl Blocking {
             .face_by_id(face)
             .ok_or(BlockingError::NoSuchFace(face))?;
         let volume = self.map.volume_id(f as DartIdType);
-        if self.is_block(volume) {
+        if self.is_block_of(volume) {
             return Err(BlockingError::NotAPatch(face));
         }
 
@@ -2403,18 +2460,18 @@ impl Blocking {
 
     /// The block a stable name currently stands for. A scan, for the same
     /// reason [`node_by_id`][Self::node_by_id] is one.
-    pub fn block_by_id(&self, block: CellId) -> Option<VolumeIdType> {
+    fn block_by_id(&self, block: CellId) -> Option<VolumeIdType> {
         if block.is_none() {
             return None;
         }
         if let Some(v) = self.seen.blocks.get(&block) {
-            if self.block_tag(*v).id == block {
+            if self.block_tag_of(*v).id == block {
                 return Some(*v);
             }
         }
         self.map_volumes()
             .into_iter()
-            .find(|v| self.block_tag(*v).id == block)
+            .find(|v| self.block_tag_of(*v).id == block)
     }
 
     /// Every edge of the sheet through this one, oriented to agree with it.
@@ -2432,12 +2489,19 @@ impl Blocking {
         let start = self
             .edge_by_id(edge)
             .ok_or(BlockingError::NoSuchEdge(edge))?;
-        let (from, to) = self.edge_endpoints(start);
+        let (from, to) = self.edge_endpoints_of(start);
 
         // Keyed by name and walked in order, so the answer does not depend on
         // the order a hash map happened to hand things back in.
         let mut found: BTreeMap<CellId, SheetEdge> = BTreeMap::new();
-        found.insert(edge, SheetEdge { edge, from, to });
+        found.insert(
+            edge,
+            SheetEdge {
+                edge,
+                from: self.node_tag_of(from).id,
+                to: self.node_tag_of(to).id,
+            },
+        );
         let mut pending = vec![(start, from, to)];
 
         while let Some((current, from, to)) = pending.pop() {
@@ -2449,9 +2513,11 @@ impl Blocking {
                 let Some(next) = self.edge_between(face, next_from, next_to) else {
                     continue;
                 };
-                let name = self.edge_tag(next).id;
+                let name = self.edge_tag_of(next).id;
+                let (named_from, named_to) =
+                    (self.node_tag_of(next_from).id, self.node_tag_of(next_to).id);
                 if let Some(seen) = found.get(&name) {
-                    if (seen.from, seen.to) != (next_from, next_to) {
+                    if (seen.from, seen.to) != (named_from, named_to) {
                         return Err(BlockingError::TangledSheet(edge));
                     }
                     continue;
@@ -2460,8 +2526,8 @@ impl Blocking {
                     name,
                     SheetEdge {
                         edge: name,
-                        from: next_from,
-                        to: next_to,
+                        from: named_from,
+                        to: named_to,
                     },
                 );
                 pending.push((next, next_from, next_to));
@@ -2512,7 +2578,7 @@ impl Blocking {
         let start = self.side_dart(face, block)?;
         // A chord steps out of a block through the face opposite, which an
         // open sheet of faces does not have: it would walk out of the map.
-        if !self.named_is_block(block) {
+        if !self.is_block(block) {
             return Err(BlockingError::NotABlock(block));
         }
 
@@ -2523,10 +2589,10 @@ impl Blocking {
             let out = self.across_the_block(d);
             (
                 ChordBlock {
-                    block: self.block_tag(self.map.volume_id(d)).id,
+                    block: self.block_tag_of(self.map.volume_id(d)).id,
                     through: [
-                        self.face_tag(self.map.face_id(d)).id,
-                        self.face_tag(self.map.face_id(out)).id,
+                        self.face_tag_of(self.map.face_id(d)).id,
+                        self.face_tag_of(self.map.face_id(out)).id,
                     ],
                 },
                 out,
@@ -2582,22 +2648,23 @@ impl Blocking {
     /// faces' outlines — a ladder of slices through the blocking, which is
     /// exactly what a removal would take out. Consecutive blocks share a
     /// face, so each edge comes back once.
-    pub fn chord_wire(&self, chord: &[ChordBlock]) -> Vec<(CellId, VertexIdType, VertexIdType)> {
-        let mut out: Vec<(CellId, VertexIdType, VertexIdType)> = Vec::new();
+    pub fn chord_wire(&self, chord: &[ChordBlock]) -> Vec<(CellId, CellId, CellId)> {
+        let mut out: Vec<(CellId, CellId, CellId)> = Vec::new();
         for step in chord {
             for name in step.through {
                 let Some(face) = self.face_by_id(name) else {
                     continue;
                 };
                 for dart in self.face_darts(face) {
-                    let edge = self.edge_tag(self.map.edge_id(dart)).id;
+                    let edge = self.edge_tag_of(self.map.edge_id(dart)).id;
                     if out.iter().any(|(seen, ..)| *seen == edge) {
                         continue;
                     }
                     out.push((
                         edge,
-                        self.map.vertex_id(dart),
-                        self.map.vertex_id(self.map.beta::<1>(dart)),
+                        self.node_tag_of(self.map.vertex_id(dart)).id,
+                        self.node_tag_of(self.map.vertex_id(self.map.beta::<1>(dart)))
+                            .id,
                     ));
                 }
             }
@@ -2740,7 +2807,7 @@ impl Blocking {
         // The two halves could be left to the inference — their ends now
         // agree about the same entity, so it would reach the same answer
         // — but there is no reason to make them wait for it.
-        let parent = self.edge_tag(self.map.edge_id(darts[0]));
+        let parent = self.edge_tag_of(self.map.edge_id(darts[0]));
         let was = parent.on;
         let middle = self.map.vertex_id(fresh[&darts[0]]);
         self.map.write_vertex(middle, (at[0], at[1], at[2]));
@@ -2787,7 +2854,10 @@ impl Blocking {
             return Err(BlockingError::BadParameter(t));
         }
         let sheet = self.sheet_through(edge)?;
-        let from_nodes: HashSet<VertexIdType> = sheet.iter().map(|s| s.from).collect();
+        let from_nodes: HashSet<VertexIdType> = sheet
+            .iter()
+            .filter_map(|s| self.node_by_id(s.from))
+            .collect();
 
         // --- the edges ------------------------------------------------
         // Splitting one edge leaves the others' identifiers alone — their
@@ -2848,7 +2918,7 @@ impl Blocking {
             // β₁ cycle in two already made two faces, welded to each other
             // along the new edge by the β₂ the cut itself set. In two
             // dimensions the cut is finished when the faces are.
-            if self.is_block(volume) {
+            if self.is_block_of(volume) {
                 self.insert_cut_face(&ring, edge)?;
             }
         }
@@ -2859,7 +2929,7 @@ impl Blocking {
         for &(u, v) in &cuts {
             for x in [u, v] {
                 let face = self.map.face_id(x);
-                let on = self.face_tag(face).on;
+                let on = self.face_tag_of(face).on;
                 self.map.write_attribute(
                     face,
                     FaceTag {
@@ -2876,7 +2946,7 @@ impl Blocking {
         // still sitting on the straight line between the ends of the edge
         // it came from — and only the caller knows where the geometry
         // says it should be instead.
-        let mut made: Vec<CellId> = fresh.iter().map(|v| self.node_tag(*v).id).collect();
+        let mut made: Vec<CellId> = fresh.iter().map(|v| self.node_tag_of(*v).id).collect();
         made.sort();
         Ok(made)
     }
@@ -2920,7 +2990,9 @@ impl Blocking {
         // What the block being cut is part of, read before it becomes two.
         // The halves keep it: cutting a block of the fluid in two gives
         // two blocks of the fluid.
-        let groups = self.block_tag(self.map.volume_id(ring[order[0]].0)).groups;
+        let groups = self
+            .block_tag_of(self.map.volume_id(ring[order[0]].0))
+            .groups;
 
         let n = order.len();
         let base = self.map.allocate_used_darts(n * 2);
@@ -3007,7 +3079,7 @@ impl Blocking {
             .face_by_id(face)
             .ok_or(BlockingError::NoSuchFace(face))?;
         let volume = self.map.volume_id(start as DartIdType);
-        if self.is_block(volume) {
+        if self.is_block_of(volume) {
             return Err(BlockingError::NotAPatch(face));
         }
 
@@ -3035,10 +3107,11 @@ impl Blocking {
                 let darts = self.face_darts(f);
                 Side {
                     darts,
-                    points: darts.map(|d| self.position(self.map.vertex_id(d)).unwrap_or([0.0; 3])),
-                    nodes: darts.map(|d| self.node_tag(self.map.vertex_id(d))),
-                    edges: darts.map(|d| self.edge_tag(self.map.edge_id(d))),
-                    on: self.face_tag(f).on,
+                    points: darts
+                        .map(|d| self.position_of(self.map.vertex_id(d)).unwrap_or([0.0; 3])),
+                    nodes: darts.map(|d| self.node_tag_of(self.map.vertex_id(d))),
+                    edges: darts.map(|d| self.edge_tag_of(self.map.edge_id(d))),
+                    on: self.face_tag_of(f).on,
                 }
             })
             .collect();
@@ -3120,7 +3193,7 @@ impl Blocking {
         // What the sheet was on, handed to the faces that took its place.
         for (side, &(_, first)) in sides.iter().zip(&raised) {
             let bottom = self.map.face_id(first);
-            let tag = self.face_tag(bottom);
+            let tag = self.face_tag_of(bottom);
             self.map
                 .write_attribute(bottom, FaceTag { on: side.on, ..tag });
             let darts = self.face_darts(bottom);
@@ -3131,7 +3204,7 @@ impl Blocking {
                 // of the sheet's corners that was.
                 let was = corner_at[[0, 3, 2, 1][slot]];
                 let vertex = self.map.vertex_id(d);
-                let node = self.node_tag(vertex);
+                let node = self.node_tag_of(vertex);
                 self.map.write_attribute(
                     vertex,
                     NodeTag {
@@ -3143,7 +3216,7 @@ impl Blocking {
                 // The edge of the bottom face leaving this corner is the
                 // one the patch's face entered it by.
                 let edge = self.map.edge_id(d);
-                let tag = self.edge_tag(edge);
+                let tag = self.edge_tag_of(edge);
                 let from = side.edges[edge_at(([0, 3, 2, 1][slot] + 3) % 4)];
                 self.map.write_attribute(
                     edge,
@@ -3189,7 +3262,7 @@ impl Blocking {
             .iter()
             .position(|face| want.iter().all(|c| face.contains(c)))
             .expect("every edge of a hexahedron is on two side faces");
-        self.face_tag(self.map.face_id(first + 4 * found as DartIdType))
+        self.face_tag_of(self.map.face_id(first + 4 * found as DartIdType))
             .id
     }
 
@@ -3262,7 +3335,7 @@ impl Blocking {
         let (grown, first) = self.build_block(corners)?;
         // Which face to weld is known because we built the block: it is the
         // one the first dart is on. Nothing is searched for by position.
-        let against = self.face_tag(self.map.face_id(first)).id;
+        let against = self.face_tag_of(self.map.face_id(first)).id;
         self.glue_onto(face, against)?;
         Ok(grown)
     }
@@ -3311,7 +3384,10 @@ impl Blocking {
         // below makes it: this one is only about a block that exists and is
         // an open sheet.
         for &(_, block) in patch {
-            if self.block_by_id(block).is_some_and(|v| !self.is_block(v)) {
+            if self
+                .block_by_id(block)
+                .is_some_and(|v| !self.is_block_of(v))
+            {
                 return Err(BlockingError::NotABlock(block));
             }
         }
@@ -3393,7 +3469,10 @@ impl Blocking {
                 }
             }
             for node in side.nodes {
-                let entry = facing.entry(node).or_insert((Vec::new(), f64::INFINITY));
+                let Some(vertex) = self.node_by_id(node) else {
+                    continue;
+                };
+                let entry = facing.entry(vertex).or_insert((Vec::new(), f64::INFINITY));
                 entry.0.push(plan.inward);
                 entry.1 = entry.1.min(plan.depth);
             }
@@ -3409,8 +3488,12 @@ impl Blocking {
         let was: Vec<([f64; 3], Option<On>, bool)> = facing
             .keys()
             .map(|node| {
-                let tag = self.node_tag(*node);
-                (self.position(*node).unwrap_or([0.0; 3]), tag.on, tag.frozen)
+                let tag = self.node_tag_of(*node);
+                (
+                    self.position_of(*node).unwrap_or([0.0; 3]),
+                    tag.on,
+                    tag.frozen,
+                )
             })
             .collect();
 
@@ -3421,12 +3504,12 @@ impl Blocking {
         // was. A node sliding along the rim of the patch is the case.
         let followed: HashMap<VertexIdType, Option<On>> = facing
             .keys()
-            .map(|node| (*node, self.node_tag(*node).on))
+            .map(|node| (*node, self.node_tag_of(*node).on))
             .collect();
 
         let mut moved: HashMap<VertexIdType, [f64; 3]> = HashMap::new();
         for (node, (inward, depth)) in &facing {
-            let from = self.position(*node).unwrap_or([0.0; 3]);
+            let from = self.position_of(*node).unwrap_or([0.0; 3]);
             let step = mitre(inward, *depth);
             moved.insert(*node, [0, 1, 2].map(|k| from[k] + step[k]));
         }
@@ -3437,7 +3520,7 @@ impl Blocking {
             // business of the copy the layer leaves on the surface, and a
             // node pinned to a curve it is no longer anywhere near drags
             // the mesh out through the boundary when it is projected.
-            let tag = self.node_tag(*node);
+            let tag = self.node_tag_of(*node);
             self.map.write_attribute(
                 *node,
                 NodeTag {
@@ -3455,7 +3538,11 @@ impl Blocking {
         }
         let mut layers: Vec<Layer> = Vec::new();
         for (plan, side) in plans.iter().zip(&near) {
-            let shrunk = side.nodes.map(|n| moved[&n]);
+            let shrunk = side.nodes.map(|n| {
+                self.node_by_id(n)
+                    .and_then(|v| moved.get(&v).copied())
+                    .unwrap_or([0.0; 3])
+            });
             // `add_block` wants the far face first, wound so that its own
             // normal points away from the block. The patch face is wound
             // away from **its** block, which is the other way round, and
@@ -3475,7 +3562,7 @@ impl Blocking {
                     continue;
                 };
                 let vertex = self.map.vertex_id(corner_dart(base, c));
-                let tag = self.node_tag(vertex);
+                let tag = self.node_tag_of(vertex);
                 self.map.write_attribute(
                     vertex,
                     NodeTag {
@@ -3551,12 +3638,12 @@ impl Blocking {
         // only the caller holds the triangles that say so.
         let mut drawn: Vec<(CellId, Option<On>)> = Vec::new();
         for v in self.map_vertices() {
-            let at = self.position(v).unwrap_or([0.0; 3]);
+            let at = self.position_of(v).unwrap_or([0.0; 3]);
             let Some((from, _)) = moved.iter().find(|(_, to)| same_point(**to, at)) else {
                 continue;
             };
             drawn.push((
-                self.node_tag(v).id,
+                self.node_tag_of(v).id,
                 followed.get(from).copied().unwrap_or(None),
             ));
         }
@@ -3613,7 +3700,7 @@ impl Blocking {
     /// from that one block rather than from every face in the map.
     fn side_of(&self, block: CellId, points: &[[f64; 3]; 4]) -> Option<BlockFace> {
         let volume = self.block_by_id(block)?;
-        self.side_at(&self.faces_of(volume), block, points)
+        self.side_at(&self.faces_of_volume(volume), block, points)
     }
 
     /// Every β₁ cycle in the map: one per face side.
@@ -3678,7 +3765,7 @@ impl Blocking {
         // where it is — and nothing about its two ends would say so: both
         // of them are on the boundary of the face, which the face shares
         // with whatever else that boundary bounds.
-        let was = self.face_tag(self.map.face_id(cycle[0])).on;
+        let was = self.face_tag_of(self.map.face_id(cycle[0])).on;
 
         let base = self.map.allocate_used_darts(2);
         let (u, v) = (base, base + 1);
@@ -3727,7 +3814,7 @@ impl Blocking {
             .sheet_through(edge)?
             .iter()
             .filter_map(|s| index.get(&s.edge))
-            .map(|e| self.edge_tag(*e).segments)
+            .map(|e| self.edge_tag_of(*e).segments)
             .max()
             .unwrap_or(0))
     }
@@ -3743,7 +3830,7 @@ impl Blocking {
             let Some(e) = index.get(&side.edge) else {
                 continue;
             };
-            let tag = self.edge_tag(*e);
+            let tag = self.edge_tag_of(*e);
             self.map.write_attribute(*e, EdgeTag { segments, ..tag });
         }
         Ok(())
@@ -3774,7 +3861,7 @@ impl Blocking {
         to: VertexIdType,
     ) -> Option<EdgeIdType> {
         self.face_darts(face).into_iter().find_map(|d| {
-            let (a, b) = self.edge_endpoints(self.map.edge_id(d));
+            let (a, b) = self.edge_endpoints_of(self.map.edge_id(d));
             ((a, b) == (from, to) || (a, b) == (to, from)).then(|| self.map.edge_id(d))
         })
     }
@@ -3789,24 +3876,24 @@ impl Blocking {
     fn edge_index(&self) -> HashMap<CellId, EdgeIdType> {
         self.map_edges()
             .into_iter()
-            .map(|e| (self.edge_tag(e).id, e))
+            .map(|e| (self.edge_tag_of(e).id, e))
             .collect()
     }
 
     /// The edge a stable name currently stands for. A scan, for the same
     /// reason [`node_by_id`][Self::node_by_id] is one.
-    pub fn edge_by_id(&self, edge: CellId) -> Option<EdgeIdType> {
+    fn edge_by_id(&self, edge: CellId) -> Option<EdgeIdType> {
         if edge.is_none() {
             return None;
         }
         if let Some(e) = self.seen.edges.get(&edge) {
-            if self.edge_tag(*e).id == edge {
+            if self.edge_tag_of(*e).id == edge {
                 return Some(*e);
             }
         }
         self.map_edges()
             .into_iter()
-            .find(|e| self.edge_tag(*e).id == edge)
+            .find(|e| self.edge_tag_of(*e).id == edge)
     }
 
     /// The four darts of a face, in the order β₁ walks them.
@@ -3827,18 +3914,18 @@ impl Blocking {
 
     /// The face a stable name currently stands for. A scan, for the same
     /// reason [`node_by_id`][Self::node_by_id] is one.
-    pub fn face_by_id(&self, face: CellId) -> Option<FaceIdType> {
+    fn face_by_id(&self, face: CellId) -> Option<FaceIdType> {
         if face.is_none() {
             return None;
         }
         if let Some(f) = self.seen.faces.get(&face) {
-            if self.face_tag(*f).id == face {
+            if self.face_tag_of(*f).id == face {
                 return Some(*f);
             }
         }
         self.map_faces()
             .into_iter()
-            .find(|f| self.face_tag(*f).id == face)
+            .find(|f| self.face_tag_of(*f).id == face)
     }
 
     /// Every face of every block.
@@ -3852,7 +3939,7 @@ impl Blocking {
     pub fn block_faces(&self) -> Vec<BlockFace> {
         self.map_volumes()
             .into_iter()
-            .flat_map(|volume| self.faces_of(volume))
+            .flat_map(|volume| self.faces_of_volume(volume))
             .collect()
     }
 
@@ -3862,8 +3949,8 @@ impl Blocking {
     /// Asking about one block is the common case — which face of this one
     /// is at these four corners — and the whole map is a thousand times
     /// the work for it.
-    pub fn faces_of(&self, volume: VolumeIdType) -> Vec<BlockFace> {
-        let block = self.block_tag(volume).id;
+    fn faces_of_volume(&self, volume: VolumeIdType) -> Vec<BlockFace> {
+        let block = self.block_tag_of(volume).id;
         // One transaction for the lot: every β lookup and every cell name
         // this map hands out is a transaction of its own otherwise.
         let sides: Vec<(FaceIdType, [VertexIdType; 4])> = atomically(|t| {
@@ -3902,15 +3989,18 @@ impl Blocking {
             out.sort_by_key(|(face, _)| *face);
             Ok(out)
         });
+        let groups = self.block_tag_of(volume).groups;
+        let patch = !self.is_block_of(volume);
         sides
             .into_iter()
             .map(|(face, nodes)| {
-                let tag = self.face_tag(face);
+                let tag = self.face_tag_of(face);
                 BlockFace {
                     face: tag.id,
                     block,
-                    volume,
-                    nodes,
+                    groups,
+                    patch,
+                    nodes: nodes.map(|n| self.node_tag_of(n).id),
                     on: tag.on,
                 }
             })
@@ -3919,9 +4009,228 @@ impl Blocking {
 
     // --- reading ----------------------------------------------------------
 
-    /// The map itself. Topological questions belong to it, not here.
-    pub fn map(&self) -> &CMap3<f64> {
+    /// Every block as a hexahedron: its corners in VTK order, and the cells
+    /// that bound it.
+    ///
+    /// The frame is recovered from the map rather than remembered from the
+    /// construction, because by now the block may have been cut, glued and
+    /// cut again. Any face may serve as the bottom one: the result is the
+    /// same hexahedron seen from another of its corners, and a rotation of
+    /// a hexahedron is still that hexahedron.
+    pub fn hexes(&self) -> Vec<Hex> {
+        let map = &self.map;
+        let mut out = Vec::new();
+        for volume in self.map_volumes() {
+            // Blocks only. A patch — an open sheet of faces on its way to
+            // being extruded — has no inside to fill, and the walk below
+            // would step off the end of it: finding the corner above one of
+            // its own means crossing β₂, which is null at a boundary.
+            if !self.is_block_of(volume) {
+                continue;
+            }
+            // A face of this block, and the four darts round it. Every face
+            // of a block is wound anticlockwise **seen from outside**, so
+            // this cycle plays the part of `HEX_FACES[0]`, which is the
+            // bottom face read [0, 3, 2, 1].
+            let d0 = volume;
+            let mut ring = [d0; 4];
+            for k in 1..4 {
+                ring[k] = map.beta::<1>(ring[k - 1]);
+            }
+            // The corner above each of them: across the edge into the side
+            // face, then one step on, which lands on the upright.
+            let up = ring.map(|d| map.beta::<1>(map.beta::<2>(d)));
+
+            let at = |d| map.vertex_id(d);
+            let end = |d| map.vertex_id(map.beta::<1>(d));
+            let corners = [
+                at(ring[0]),
+                at(ring[3]),
+                at(ring[2]),
+                at(ring[1]),
+                end(up[0]),
+                end(up[3]),
+                end(up[2]),
+                end(up[1]),
+            ];
+
+            // The edges and faces by the corners they join, which needs no
+            // orientation reasoning at all: both lists are short, and the
+            // map says which cell has which corners.
+            let darts = self.orbit(OrbitPolicy::Volume, volume);
+            let mut edges = [0; 12];
+            for (slot, [a, b]) in HEX_EDGES.iter().enumerate() {
+                let (p, q) = (corners[*a], corners[*b]);
+                edges[slot] = darts
+                    .iter()
+                    .map(|d| map.edge_id(*d))
+                    .find(|e| {
+                        let (x, y) = self.edge_endpoints_of(*e);
+                        (x == p && y == q) || (x == q && y == p)
+                    })
+                    .expect("every edge of a hexahedron is one of its edges");
+            }
+            let mut faces = [0; 6];
+            for (slot, four) in HEX_FACES.iter().enumerate() {
+                let want: Vec<VertexIdType> = {
+                    let mut v: Vec<_> = four.iter().map(|c| corners[*c]).collect();
+                    v.sort_unstable();
+                    v
+                };
+                faces[slot] = darts
+                    .iter()
+                    .map(|d| map.face_id(*d))
+                    .find(|f| {
+                        let mut v: Vec<_> = self
+                            .orbit(OrbitPolicy::Custom(&[1]), *f)
+                            .iter()
+                            .map(|d| map.vertex_id(*d))
+                            .collect();
+                        v.sort_unstable();
+                        v == want
+                    })
+                    .expect("every face of a hexahedron is one of its faces");
+            }
+
+            out.push(Hex {
+                block: self.block_tag_of(volume).id,
+                corners: corners.map(|v| self.node_tag_of(v).id),
+                edges: edges.map(|e| self.edge_tag_of(e).id),
+                faces: faces.map(|f| self.face_tag_of(f).id),
+            });
+        }
+        out
+    }
+
+    // --- the map's own language -------------------------------------------
+    //
+    // `pub(crate)` and not a line more. These are the representation's own
+    // terms: a cell named by the smallest dart of its orbit, which every edit
+    // rewrites. Nothing outside this crate can see them, and the only things
+    // inside it that use them are the tests that are about the representation
+    // and will go with it.
+
+    /// The map itself, for the tests that are about the map.
+    #[cfg(test)]
+    pub(crate) fn map(&self) -> &CMap3<f64> {
         &self.map
+    }
+
+    // --- reading, by name -------------------------------------------------
+    //
+    // Everything a caller can reach speaks [`CellId`] and nothing else. The
+    // map's own identifiers do not leave this file, for two reasons: they are
+    // derived from orbits, so every edit rewrites them and a caller holding
+    // one would be holding a cell it did not mean; and keeping them in is
+    // what lets the representation underneath be replaced without a line
+    // changing anywhere above.
+
+    /// Every node, by name.
+    pub fn node_names(&self) -> Vec<CellId> {
+        self.map_vertices()
+            .into_iter()
+            .map(|v| self.node_tag_of(v).id)
+            .filter(|id| id.is_some())
+            .collect()
+    }
+
+    /// Every edge, by name.
+    pub fn edge_names(&self) -> Vec<CellId> {
+        self.map_edges()
+            .into_iter()
+            .map(|e| self.edge_tag_of(e).id)
+            .filter(|id| id.is_some())
+            .collect()
+    }
+
+    /// Every face, by name.
+    pub fn face_names(&self) -> Vec<CellId> {
+        self.map_faces()
+            .into_iter()
+            .map(|f| self.face_tag_of(f).id)
+            .filter(|id| id.is_some())
+            .collect()
+    }
+
+    /// Every component, by name: a block or a patch, which
+    /// [`is_block`][Self::is_block] tells apart.
+    pub fn component_names(&self) -> Vec<CellId> {
+        self.map_volumes()
+            .into_iter()
+            .map(|v| self.block_tag_of(v).id)
+            .filter(|id| id.is_some())
+            .collect()
+    }
+
+    /// Where a node is.
+    pub fn position(&self, node: CellId) -> Option<[f64; 3]> {
+        self.node_by_id(node).and_then(|v| self.position_of(v))
+    }
+
+    /// The two nodes an edge joins, by name.
+    pub fn edge_ends(&self, edge: CellId) -> Option<(CellId, CellId)> {
+        let e = self.edge_by_id(edge)?;
+        let (from, to) = self.edge_endpoints_of(e);
+        Some((self.node_tag_of(from).id, self.node_tag_of(to).id))
+    }
+
+    /// A block's eight corners, by name, in VTK order.
+    pub fn hex_corners(&self, block: CellId) -> Option<[CellId; 8]> {
+        let v = self.block_by_id(block)?;
+        self.hex_corners_of(v)
+            .map(|c| c.map(|n| self.node_tag_of(n).id))
+    }
+
+    /// The nodes an edge joins this one to.
+    pub fn neighbors(&self, node: CellId) -> Vec<CellId> {
+        let Some(v) = self.node_by_id(node) else {
+            return Vec::new();
+        };
+        self.neighbors_of(v)
+            .into_iter()
+            .map(|n| self.node_tag_of(n).id)
+            .collect()
+    }
+
+    /// Whether a node is on the outside of the blocking.
+    pub fn on_the_surface(&self, node: CellId) -> bool {
+        self.node_by_id(node)
+            .is_some_and(|v| self.on_the_surface_of(v))
+    }
+
+    /// Whether this component is a **block** — a shell that closes — rather
+    /// than a **patch**, an open sheet of faces.
+    pub fn is_block(&self, block: CellId) -> bool {
+        self.block_by_id(block).is_some_and(|v| self.is_block_of(v))
+    }
+
+    /// Every face of one block, each with the four nodes that block sees it
+    /// by.
+    pub fn faces_of(&self, block: CellId) -> Vec<BlockFace> {
+        self.block_by_id(block)
+            .map(|v| self.faces_of_volume(v))
+            .unwrap_or_default()
+    }
+
+    /// Every edge, with its two ends, how many segments it carries, and what
+    /// it is classified on.
+    ///
+    /// In bulk, because everything that wants one edge's details wants them
+    /// all: a name resolved one at a time is a search of the map per name,
+    /// where this is one walk for the lot.
+    pub fn edges_in_full(
+        &self,
+    ) -> impl Iterator<Item = (CellId, [CellId; 2], u32, Option<On>)> + '_ {
+        self.map_edges().into_iter().map(move |e| {
+            let tag = self.edge_tag_of(e);
+            let (from, to) = self.edge_endpoints_of(e);
+            (
+                tag.id,
+                [self.node_tag_of(from).id, self.node_tag_of(to).id],
+                tag.segments,
+                tag.on,
+            )
+        })
     }
 
     /// Every cell of one dimension, each named by the dart the map names it
@@ -3959,38 +4268,38 @@ impl Blocking {
     }
 
     /// The map's vertices, as [`CMap3::iter_vertices`] names them.
-    pub fn map_vertices(&self) -> Vec<VertexIdType> {
+    pub(crate) fn map_vertices(&self) -> Vec<VertexIdType> {
         self.cells(OrbitPolicy::Vertex)
     }
 
     /// The map's edges, as [`CMap3::iter_edges`] names them.
-    pub fn map_edges(&self) -> Vec<EdgeIdType> {
+    pub(crate) fn map_edges(&self) -> Vec<EdgeIdType> {
         self.cells(OrbitPolicy::Edge)
     }
 
     /// The map's faces, as [`CMap3::iter_faces`] names them.
-    pub fn map_faces(&self) -> Vec<FaceIdType> {
+    pub(crate) fn map_faces(&self) -> Vec<FaceIdType> {
         self.cells(OrbitPolicy::Face)
     }
 
     /// The map's volumes, as [`CMap3::iter_volumes`] names them.
-    pub fn map_volumes(&self) -> Vec<VolumeIdType> {
+    pub(crate) fn map_volumes(&self) -> Vec<VolumeIdType> {
         self.cells(OrbitPolicy::Volume)
     }
 
-    pub fn node_tag(&self, node: VertexIdType) -> NodeTag {
+    pub(crate) fn node_tag_of(&self, node: VertexIdType) -> NodeTag {
         self.map.read_attribute(node).unwrap_or_default()
     }
 
-    pub fn edge_tag(&self, edge: EdgeIdType) -> EdgeTag {
+    pub(crate) fn edge_tag_of(&self, edge: EdgeIdType) -> EdgeTag {
         self.map.read_attribute(edge).unwrap_or_default()
     }
 
-    pub fn face_tag(&self, face: FaceIdType) -> FaceTag {
+    pub(crate) fn face_tag_of(&self, face: FaceIdType) -> FaceTag {
         self.map.read_attribute(face).unwrap_or_default()
     }
 
-    pub fn block_tag(&self, block: VolumeIdType) -> BlockTag {
+    pub(crate) fn block_tag_of(&self, block: VolumeIdType) -> BlockTag {
         self.map.read_attribute(block).unwrap_or_default()
     }
 
@@ -3998,7 +4307,7 @@ impl Blocking {
     ///
     /// An edge is named by one of its darts; that dart starts at one end, and
     /// β₁ takes it to the other.
-    pub fn edge_endpoints(&self, edge: EdgeIdType) -> (VertexIdType, VertexIdType) {
+    pub(crate) fn edge_endpoints_of(&self, edge: EdgeIdType) -> (VertexIdType, VertexIdType) {
         let dart = edge as DartIdType;
         (
             self.map.vertex_id(dart),
@@ -4006,7 +4315,7 @@ impl Blocking {
         )
     }
 
-    pub fn position(&self, node: VertexIdType) -> Option<[f64; 3]> {
+    pub(crate) fn position_of(&self, node: VertexIdType) -> Option<[f64; 3]> {
         self.map.read_vertex(node).map(|v| [v.0, v.1, v.2])
     }
 
@@ -4026,7 +4335,7 @@ impl Blocking {
     pub fn nb_blocks(&self) -> usize {
         self.map_volumes()
             .into_iter()
-            .filter(|v| self.is_block(*v))
+            .filter(|v| self.is_block_of(*v))
             .count()
     }
 
@@ -4035,12 +4344,12 @@ impl Blocking {
     pub fn nb_patches(&self) -> usize {
         self.map_volumes()
             .into_iter()
-            .filter(|v| !self.is_block(*v))
+            .filter(|v| !self.is_block_of(*v))
             .count()
     }
 
     /// Darts of the orbit a cell stands for.
-    pub fn orbit(&self, policy: OrbitPolicy, dart: DartIdType) -> Vec<DartIdType> {
+    pub(crate) fn orbit(&self, policy: OrbitPolicy, dart: DartIdType) -> Vec<DartIdType> {
         self.map.orbit(policy, dart).collect()
     }
 
@@ -4092,8 +4401,8 @@ mod surgery {
                 };
                 assert_eq!(back, d, "β{i} is not an involution at {d}");
                 // And it joins the same two nodes, the other way round.
-                let (u, v) = b.edge_endpoints(b.map.edge_id(d));
-                let (x, y) = b.edge_endpoints(b.map.edge_id(partner));
+                let (u, v) = b.edge_endpoints_of(b.map.edge_id(d));
+                let (x, y) = b.edge_endpoints_of(b.map.edge_id(partner));
                 assert_eq!((u, v), (x, y), "β{i} at {d} joins a different edge");
             }
         }
@@ -4103,8 +4412,8 @@ mod surgery {
     fn splitting_an_edge_adds_a_node_and_an_edge() {
         let mut b = cube();
         let edge = b.map.iter_edges().next().unwrap();
-        let (u, v) = b.edge_endpoints(edge);
-        let (p, q) = (b.position(u).unwrap(), b.position(v).unwrap());
+        let (u, v) = b.edge_endpoints_of(edge);
+        let (p, q) = (b.position_of(u).unwrap(), b.position_of(v).unwrap());
         let middle = [0, 1, 2].map(|k| (p[k] + q[k]) / 2.0);
 
         b.split_edge(edge, middle).unwrap();
@@ -4135,8 +4444,8 @@ mod surgery {
             .collect();
         assert_eq!(before, vec![4, 4]);
 
-        let (u, v) = b.edge_endpoints(edge);
-        let (p, q) = (b.position(u).unwrap(), b.position(v).unwrap());
+        let (u, v) = b.edge_endpoints_of(edge);
+        let (p, q) = (b.position_of(u).unwrap(), b.position_of(v).unwrap());
         b.split_edge(edge, [0, 1, 2].map(|k| (p[k] + q[k]) / 2.0))
             .unwrap();
         b.assign_missing_ids();
@@ -4154,9 +4463,9 @@ mod surgery {
     fn both_halves_come_out_unnamed_and_are_then_named_afresh() {
         let mut b = cube();
         let edge = b.map.iter_edges().next().unwrap();
-        let was = b.edge_tag(edge).id;
-        let (u, v) = b.edge_endpoints(edge);
-        let (p, q) = (b.position(u).unwrap(), b.position(v).unwrap());
+        let was = b.edge_tag_of(edge).id;
+        let (u, v) = b.edge_endpoints_of(edge);
+        let (p, q) = (b.position_of(u).unwrap(), b.position_of(v).unwrap());
 
         b.split_edge(edge, [0, 1, 2].map(|k| (p[k] + q[k]) / 2.0))
             .unwrap();
@@ -4164,7 +4473,7 @@ mod surgery {
 
         // What comes out of a split is two new cells, not one of them
         // inheriting the name.
-        let names: Vec<_> = b.map.iter_edges().map(|e| b.edge_tag(e).id).collect();
+        let names: Vec<_> = b.map.iter_edges().map(|e| b.edge_tag_of(e).id).collect();
         assert!(!names.contains(&was), "the old name survived the split");
         assert!(names.iter().all(|n| n.is_some()));
     }
@@ -4197,10 +4506,10 @@ mod surgery {
             .map
             .iter_edges()
             .find(|e| {
-                let (u, v) = b.edge_endpoints(*e);
+                let (u, v) = b.edge_endpoints_of(*e);
                 [u, v]
                     .iter()
-                    .all(|n| (b.position(*n).unwrap()[0] - 1.0).abs() < 1e-9)
+                    .all(|n| (b.position_of(*n).unwrap()[0] - 1.0).abs() < 1e-9)
             })
             .expect("an edge in the seam");
         assert_eq!(
@@ -4208,8 +4517,8 @@ mod surgery {
             4
         );
 
-        let (u, v) = b.edge_endpoints(shared);
-        let (p, q) = (b.position(u).unwrap(), b.position(v).unwrap());
+        let (u, v) = b.edge_endpoints_of(shared);
+        let (p, q) = (b.position_of(u).unwrap(), b.position_of(v).unwrap());
         b.split_edge(shared, [0, 1, 2].map(|k| (p[k] + q[k]) / 2.0))
             .unwrap();
         b.assign_missing_ids();
@@ -4239,8 +4548,8 @@ mod cutting {
         b.map
             .iter_edges()
             .find(|e| {
-                let (u, v) = b.edge_endpoints(*e);
-                let (p, q) = (b.position(u).unwrap(), b.position(v).unwrap());
+                let (u, v) = b.edge_endpoints_of(*e);
+                let (p, q) = (b.position_of(u).unwrap(), b.position_of(v).unwrap());
                 (0..3).all(|k| {
                     if k == axis {
                         (p[k] - q[k]).abs() > 0.5
@@ -4249,7 +4558,7 @@ mod cutting {
                     }
                 })
             })
-            .map(|e| b.edge_tag(e).id)
+            .map(|e| b.edge_tag_of(e).id)
             .expect("an edge along that axis")
     }
 
@@ -4343,10 +4652,10 @@ mod cutting {
     #[test]
     fn every_name_in_the_cut_is_fresh_and_nothing_is_left_unnamed() {
         let mut b = cube();
-        let before: Vec<CellId> = b.map.iter_faces().map(|f| b.face_tag(f).id).collect();
+        let before: Vec<CellId> = b.map.iter_faces().map(|f| b.face_tag_of(f).id).collect();
         b.split_sheet(along(&b, 2), 0.5).unwrap();
 
-        let after: Vec<CellId> = b.map.iter_faces().map(|f| b.face_tag(f).id).collect();
+        let after: Vec<CellId> = b.map.iter_faces().map(|f| b.face_tag_of(f).id).collect();
         assert!(after.iter().all(|n| n.is_some()), "a face came out unnamed");
         // The four faces the sheet crossed are gone, replaced by eight new
         // ones plus the cut face; the two it did not touch keep their names.

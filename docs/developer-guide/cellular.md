@@ -172,11 +172,11 @@ declare what it made, because the arena notes it rather than the operation.
 
 ## The hexahedron's tables
 
-`HEX_FACES` and `HEX_CORNER_EDGES` already exist. Three more, all derivable
+`HEX_FACES`, `HEX_CORNER_EDGES` and `HEX_EDGES` already exist — the last was
+in the mesher and has moved in beside the other two. Two more, both derivable
 from `HEX_FACES` and therefore asserted at compile time rather than trusted:
 
 ```rust
-const HEX_EDGES: [[u8; 2]; 12];   // base, top, uprights
 const FACE_EDGES: [[u8; 4]; 6];   // each face's four edges, in HEX_FACES order
 const OPPOSITE: [u8; 6] = [1, 0, 4, 5, 2, 3];
 const FACE_AXIS: [u8; 6] = [2, 2, 1, 0, 1, 0];
@@ -327,6 +327,41 @@ side, as the extrusion height already does.
 `attributes.rs` does not disappear: `AttributeUpdate::merge` and `split` stop
 being callbacks the map invokes at moments nobody chose, and become explicit
 code at each operation. Clearer, and more lines. That is not sold as a gain.
+
+## Step nought, done
+
+Before any of it, the boundary. `honeycomb` is reachable from nowhere but the
+file that owns the representation:
+
+|                                          | mentions of a dart type                                                  |
+| ---------------------------------------- | ------------------------------------------------------------------------ |
+| `blocking.rs`                            | 190 — the engine                                                         |
+| `attributes.rs`                          | 10 — the trait impls honeycomb asks for                                  |
+| `hexahedron_tests.rs`, `naming_tests.rs` | moved in from `tests/`: they are about the representation and go with it |
+| everything else                          | **none**                                                                 |
+
+**No public signature mentions a map identifier.** What changed:
+
+- the accessors that spoke the map's language are `pub(crate)` and suffixed
+  `_of`; the names they occupied — `position`, `edge_ends`, `hex_corners`,
+  `neighbors`, `on_the_surface`, `is_block`, `faces_of` — now take a `CellId`,
+  and `node_names`, `edge_names`, `face_names`, `component_names` and
+  `edges_in_full` list cells by name;
+- `map()` and `orbit()` are behind `#[cfg(test)]`;
+- `Hex` and `HEX_EDGES` moved into `blocking.rs`, `Hex` by name, so the mesher
+  no longer walks betas to recover a frame — it reads `block.nodes`;
+- `BlockFace` gave up the volume it carried for speed and carries the two
+  answers that were asked of it instead, `groups` and `patch`;
+- `SheetEdge`, `GroupMasks` and `Unmet` are keyed by name;
+- `BlockingError` carries the map's failures **as words** rather than as its
+  types, so honeycomb is not in the signature of everything that can fail;
+- the two test files that are about the map moved into `src/` as `#[cfg(test)]`
+  modules, which is where something needing private access belongs.
+
+The rest of the suite — some three thousand lines — now speaks only of named
+cells. That is what makes it an oracle for the steps below, rather than a
+description of the thing being replaced. And the mesh file is unchanged byte
+for byte: `agree.lua` keeps the digests it had.
 
 ## The order of work
 

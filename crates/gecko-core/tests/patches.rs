@@ -36,7 +36,7 @@ fn a_face_on_its_own_is_a_patch_and_not_a_block() {
     assert_eq!(b.nb_blocks(), 0);
     assert_eq!(b.nb_patches(), 1);
     assert_eq!(b.patches().len(), 1);
-    assert!(!b.named_is_block(b.patches()[0]));
+    assert!(!b.is_block(b.patches()[0]));
 
     let seen = b.census();
     assert_eq!((seen.faces, seen.blocks, seen.patches), (1, 0, 1));
@@ -140,14 +140,12 @@ fn cutting_a_free_quadrangle_leaves_two_faces_in_one_patch() {
     let mut b = Blocking::new().unwrap();
     b.add_face(SQUARE).unwrap();
     let along_x = b
-        .map()
-        .iter_edges()
-        .map(|e| (e, b.edge_endpoints(e)))
-        .find(|(_, (u, v))| {
+        .edges_in_full()
+        .find(|(_, [u, v], ..)| {
             let (p, q) = (b.position(*u).unwrap(), b.position(*v).unwrap());
             (p[1] - q[1]).abs() < 1e-9 && p[1].abs() < 1e-9
         })
-        .map(|(e, _)| b.edge_tag(e).id)
+        .map(|(e, ..)| e)
         .expect("the side at y = 0");
 
     b.split_sheet(along_x, 0.5).expect("a sheet of one face");
@@ -171,14 +169,12 @@ fn a_face_of_a_patch_can_be_taken_away() {
     let mut b = Blocking::new().unwrap();
     b.add_face(SQUARE).unwrap();
     let along_x = b
-        .map()
-        .iter_edges()
-        .map(|e| (e, b.edge_endpoints(e)))
-        .find(|(_, (u, v))| {
+        .edges_in_full()
+        .find(|(_, [u, v], ..)| {
             let (p, q) = (b.position(*u).unwrap(), b.position(*v).unwrap());
             (p[1] - q[1]).abs() < 1e-9 && p[1].abs() < 1e-9
         })
-        .map(|(e, _)| b.edge_tag(e).id)
+        .map(|(e, ..)| e)
         .expect("the side at y = 0");
     b.split_sheet(along_x, 0.5).unwrap();
     assert_eq!((b.nb_faces(), b.nb_nodes(), b.nb_edges()), (2, 6, 7));
@@ -229,14 +225,12 @@ fn two_faces() -> Blocking {
     let mut b = Blocking::new().unwrap();
     b.add_face(SQUARE).unwrap();
     let along_x = b
-        .map()
-        .iter_edges()
-        .map(|e| (e, b.edge_endpoints(e)))
-        .find(|(_, (u, v))| {
+        .edges_in_full()
+        .find(|(_, [u, v], ..)| {
             let (p, q) = (b.position(*u).unwrap(), b.position(*v).unwrap());
             (p[1] - q[1]).abs() < 1e-9 && p[1].abs() < 1e-9
         })
-        .map(|(e, _)| b.edge_tag(e).id)
+        .map(|(e, ..)| e)
         .expect("the side at y = 0");
     b.split_sheet(along_x, 0.5).unwrap();
     b
@@ -336,7 +330,7 @@ fn a_fold_in_the_patch_does_not_pull_the_blocks_apart() {
         .collect();
     assert_eq!(ridge.len(), 2, "the two ends of the cut");
     for node in &ridge {
-        let at = b.node_by_id(*node).and_then(|v| b.position(v)).unwrap();
+        let at = b.position(*node).unwrap();
         b.set_position(*node, [at[0], at[1], 0.5]).unwrap();
     }
 
@@ -478,10 +472,7 @@ fn going_the_other_way_carries_the_classification_too() {
     b.set_edge_class(edges[1], Some(On { dim: 1, tag: 11 }))
         .unwrap();
     b.set_face_class(face, Some(On { dim: 2, tag: 7 })).unwrap();
-    let pinned = b
-        .node_by_id(corners[1])
-        .and_then(|v| b.position(v))
-        .unwrap();
+    let pinned = b.position(corners[1]).unwrap();
 
     b.extrude_patch(face, -1.0).expect("the other way");
 
@@ -501,9 +492,8 @@ fn going_the_other_way_carries_the_classification_too() {
         "and the face kept its surface"
     );
     assert_eq!(
-        b.map()
-            .iter_edges()
-            .filter(|e| b.edge_tag(*e).on == Some(On { dim: 1, tag: 11 }))
+        b.edges_in_full()
+            .filter(|(.., on)| *on == Some(On { dim: 1, tag: 11 }))
             .count(),
         1,
         "and the edge kept its curve"

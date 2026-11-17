@@ -1,7 +1,7 @@
 //! Discretising a block structure.
 
 use gecko_core::blocking::HEX_FACES;
-use gecko_core::{cube_corners, Blocking};
+use gecko_core::{cube_corners, Blocking, CellId};
 
 fn cube() -> Blocking {
     let mut b = Blocking::new().unwrap();
@@ -52,7 +52,7 @@ fn a_block_comes_back_as_a_hexahedron_the_right_way_round() {
 
     // And the cells it names really are its cells.
     assert_eq!(hex.edges.len(), 12);
-    let once = |mut v: Vec<u32>| {
+    let once = |mut v: Vec<CellId>| {
         let before = v.len();
         v.sort_unstable();
         v.dedup();
@@ -217,7 +217,7 @@ fn a_cell_on_a_curve_takes_the_mesh_with_it() {
     let edge = b
         .edges()
         .find(|(_, a, c, _)| {
-            let ends = [*a, *c].map(|n| b.position(b.node_by_id(n).unwrap()).unwrap());
+            let ends = [*a, *c].map(|n| b.position(n).unwrap());
             ends.iter().all(|p| p[0] == 1.0 && p[2] == 0.0)
         })
         .expect("the edge at x = 1, z = 0")

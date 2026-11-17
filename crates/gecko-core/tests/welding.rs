@@ -66,9 +66,7 @@ fn nodes_at_x(b: &Blocking, x: f64) -> usize {
 
 /// Where the node that started at `was` has ended up.
 fn moved_to(b: &Blocking, name: CellId) -> [f64; 3] {
-    b.node_by_id(name)
-        .and_then(|v| b.position(v))
-        .expect("the node is still there")
+    b.position(name).expect("the node is still there")
 }
 
 #[test]

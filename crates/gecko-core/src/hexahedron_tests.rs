@@ -1,3 +1,7 @@
+//! Moved in from `tests/` for 0.2.0: these are about the **representation**,
+//! not about the blocking's behaviour, so they reach for the map's own terms
+//! and they go when it does. See `docs/developer-guide/cellular.md`.
+
 //! One block, built from eight points.
 //!
 //! The counts are the easy part. What these tests are really for is the two
@@ -5,9 +9,9 @@
 //! at every dimension an existence of its own, and that the names we hang on
 //! those cells mean what they say.
 
-use gecko_core::attributes::{EdgeTag, FaceTag, NodeTag, On};
-use gecko_core::ids::{CellId, CornerKey};
-use gecko_core::{Blocking, HEX_FACES};
+use crate::attributes::{EdgeTag, FaceTag, NodeTag, On};
+use crate::ids::{CellId, CornerKey};
+use crate::{Blocking, HEX_FACES};
 use honeycomb_core::attributes::AttributeUpdate;
 use honeycomb_core::cmap::{OrbitPolicy, NULL_DART_ID};
 
@@ -74,7 +78,7 @@ fn the_corner_points_come_back_where_they_were_put() {
     let mut found: Vec<[f64; 3]> = b
         .map()
         .iter_vertices()
-        .map(|v| b.position(v).expect("every node has a position"))
+        .map(|v| b.position_of(v).expect("every node has a position"))
         .collect();
     found.sort_by(|a, c| a.partial_cmp(c).unwrap());
     let mut expected = UNIT_CUBE;
@@ -110,10 +114,18 @@ fn the_outward_face_convention_is_what_lets_beta2_sew() {
 fn every_cell_is_named_and_no_name_is_shared() {
     let b = one_block();
 
-    let node_ids: Vec<_> = b.map().iter_vertices().map(|v| b.node_tag(v).id).collect();
-    let edge_ids: Vec<_> = b.map().iter_edges().map(|e| b.edge_tag(e).id).collect();
-    let face_ids: Vec<_> = b.map().iter_faces().map(|f| b.face_tag(f).id).collect();
-    let block_ids: Vec<_> = b.map().iter_volumes().map(|x| b.block_tag(x).id).collect();
+    let node_ids: Vec<_> = b
+        .map()
+        .iter_vertices()
+        .map(|v| b.node_tag_of(v).id)
+        .collect();
+    let edge_ids: Vec<_> = b.map().iter_edges().map(|e| b.edge_tag_of(e).id).collect();
+    let face_ids: Vec<_> = b.map().iter_faces().map(|f| b.face_tag_of(f).id).collect();
+    let block_ids: Vec<_> = b
+        .map()
+        .iter_volumes()
+        .map(|x| b.block_tag_of(x).id)
+        .collect();
 
     for ids in [&node_ids, &edge_ids, &face_ids, &block_ids] {
         assert!(ids.iter().all(|i| i.is_some()), "an unnamed cell: {ids:?}");
@@ -128,7 +140,7 @@ fn every_cell_is_named_and_no_name_is_shared() {
     let mut keys: Vec<CornerKey> = b
         .map()
         .iter_vertices()
-        .map(|v| b.node_tag(v).corner_key)
+        .map(|v| b.node_tag_of(v).corner_key)
         .collect();
     assert!(keys.iter().all(|k| k.is_some()));
     keys.sort();
@@ -140,14 +152,22 @@ fn every_cell_is_named_and_no_name_is_shared() {
 fn names_are_never_reused_between_blocks() {
     let mut b = Blocking::new().unwrap();
     b.add_block(UNIT_CUBE).unwrap();
-    let first: Vec<CellId> = b.map().iter_vertices().map(|v| b.node_tag(v).id).collect();
+    let first: Vec<CellId> = b
+        .map()
+        .iter_vertices()
+        .map(|v| b.node_tag_of(v).id)
+        .collect();
 
     let shifted = UNIT_CUBE.map(|p| [p[0] + 5.0, p[1], p[2]]);
     b.add_block(shifted).unwrap();
 
     assert_eq!(b.nb_blocks(), 2);
     assert_eq!(b.nb_nodes(), 16);
-    let all: Vec<CellId> = b.map().iter_vertices().map(|v| b.node_tag(v).id).collect();
+    let all: Vec<CellId> = b
+        .map()
+        .iter_vertices()
+        .map(|v| b.node_tag_of(v).id)
+        .collect();
     let mut unique = all.clone();
     unique.sort();
     unique.dedup();
@@ -236,7 +256,7 @@ fn splitting_a_node_clears_the_name_and_keeps_the_corner() {
     let mut b = one_block();
     b.assign_missing_ids();
     let v = b.map().iter_vertices().next().unwrap();
-    let original = b.node_tag(v);
+    let original = b.node_tag_of(v);
     assert!(original.id.is_some() && original.corner_key.is_some());
 
     let (left, right) = NodeTag::split(original).unwrap();
@@ -250,7 +270,7 @@ fn splitting_a_node_clears_the_name_and_keeps_the_corner() {
     // Same for the cells that carry only a name: a split leaves both sides
     // unnamed, for `assign_missing_ids` to deal with.
     let f = b.map().iter_faces().next().unwrap();
-    let named = b.face_tag(f);
+    let named = b.face_tag_of(f);
     assert!(named.id.is_some());
     let (l, r) = FaceTag::split(named).unwrap();
     assert!(l.id.is_none() && r.id.is_none());
@@ -318,7 +338,7 @@ mod faces_for_display {
     #[test]
     fn two_blocks_hand_over_both_surfaces() {
         let mut b = one_block();
-        b.add_block(gecko_core::cube_corners([4.0, 0.0, 0.0], 1.0))
+        b.add_block(crate::cube_corners([4.0, 0.0, 0.0], 1.0))
             .expect("a second hexahedron");
         let faces = b.block_faces();
 

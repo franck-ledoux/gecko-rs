@@ -10,6 +10,28 @@ an explicit complex of cells, and the mesher stops holding the mesh it
 writes. [The design note](developer-guide/cellular.md) says why, with the
 measurements that decided it.
 
+- **The combinatorial map is reachable from nowhere but the one file that owns
+  it.** Not a change to what the program does: a change to what the rest of it
+  is allowed to know, and the precondition for replacing the representation
+  without touching anything above it.
+
+  `honeycomb` now appears in `blocking.rs`, in the trait implementations
+  `attributes.rs` owes it, and in the two test files that are **about** the
+  representation and have moved into `src/` to say so. Nowhere else, and **no
+  public signature mentions a map identifier**. The accessors that spoke the
+  map's language are `pub(crate)` and suffixed `_of`; the names they occupied
+  take a `CellId`, and cells are listed by name. `Hex` moved in beside the
+  tables it reads, so the mesher no longer walks beta functions to recover a
+  hexahedron's frame — it reads the block's own corners. `BlockFace` gave up
+  the volume identifier it carried for speed and carries the two answers that
+  were asked of it instead. `BlockingError` reports the map's failures as words
+  rather than as its types, so honeycomb is not in the signature of everything
+  that can fail.
+
+  The three thousand lines of tests now speak only of named cells, which is
+  what makes them an oracle for the structure to come rather than a description
+  of the one being replaced. The mesh file is unchanged byte for byte.
+
 - **The mesher no longer keeps a table the size of the mesh it builds.**
   Every mesh node used to be an entry in a `HashMap<Site, u32>`, which is
   what made two blocks share the nodes on the face between them. It was also

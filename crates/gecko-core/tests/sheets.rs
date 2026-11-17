@@ -43,10 +43,8 @@ fn glued() -> Blocking {
 
 /// The name of an edge whose two ends differ only along this axis.
 fn edge_along(b: &Blocking, axis: usize, at: [f64; 3]) -> CellId {
-    b.map()
-        .iter_edges()
-        .map(|e| (e, b.edge_endpoints(e)))
-        .map(|(e, (u, v))| (e, b.position(u).unwrap(), b.position(v).unwrap()))
+    b.edges_in_full()
+        .map(|(e, [u, v], ..)| (e, b.position(u).unwrap(), b.position(v).unwrap()))
         .find(|(_, p, q)| {
             (0..3).all(|k| {
                 if k == axis {
@@ -56,7 +54,7 @@ fn edge_along(b: &Blocking, axis: usize, at: [f64; 3]) -> CellId {
                 }
             })
         })
-        .map(|(e, _, _)| b.edge_tag(e).id)
+        .map(|(e, _, _)| e)
         .expect("an edge along that axis")
 }
 
@@ -225,16 +223,14 @@ mod removal {
 
     /// An edge running across the slab between these two heights.
     fn across(b: &Blocking, low: f64, high: f64) -> CellId {
-        b.map()
-            .iter_edges()
-            .map(|e| (e, b.edge_endpoints(e)))
-            .find(|(_, (u, v))| {
+        b.edges_in_full()
+            .find(|(_, [u, v], ..)| {
                 let (p, q) = (b.position(*u).unwrap(), b.position(*v).unwrap());
                 let mut z = [p[2], q[2]];
                 z.sort_by(f64::total_cmp);
                 (z[0] - low).abs() < 1e-9 && (z[1] - high).abs() < 1e-9
             })
-            .map(|(e, _)| b.edge_tag(e).id)
+            .map(|(e, ..)| e)
             .unwrap_or_else(|| panic!("an edge from {low} to {high}"))
     }
 
@@ -420,10 +416,8 @@ mod peeling {
 
     /// Any edge whose sheet runs between these two heights along an axis.
     fn spanning(b: &Blocking, axis: usize, low: f64, high: f64) -> Option<CellId> {
-        b.map()
-            .iter_edges()
-            .map(|e| (e, b.edge_endpoints(e)))
-            .find(|(_, (u, v))| {
+        b.edges_in_full()
+            .find(|(_, [u, v], ..)| {
                 let (p, q) = (b.position(*u).unwrap(), b.position(*v).unwrap());
                 let mut at = [p[axis], q[axis]];
                 at.sort_by(f64::total_cmp);
@@ -431,7 +425,7 @@ mod peeling {
                     && (at[1] - high).abs() < 1e-9
                     && (0..3).all(|k| k == axis || (p[k] - q[k]).abs() < 1e-9)
             })
-            .map(|(e, _)| b.edge_tag(e).id)
+            .map(|(e, ..)| e)
     }
 
     #[test]
@@ -471,11 +465,9 @@ mod cut_grid {
 
     /// An edge running along this axis, anywhere in the model.
     fn along(b: &Blocking, axis: usize) -> CellId {
-        b.map()
-            .iter_edges()
-            .find(|e| {
-                let (u, v) = b.edge_endpoints(*e);
-                let (p, q) = (b.position(u).unwrap(), b.position(v).unwrap());
+        b.edges_in_full()
+            .find(|(_, [u, v], ..)| {
+                let (p, q) = (b.position(*u).unwrap(), b.position(*v).unwrap());
                 (0..3).all(|k| {
                     if k == axis {
                         (p[k] - q[k]).abs() > 1e-9
@@ -484,7 +476,7 @@ mod cut_grid {
                     }
                 })
             })
-            .map(|e| b.edge_tag(e).id)
+            .map(|(e, ..)| e)
             .expect("an edge along that axis")
     }
 
@@ -524,18 +516,16 @@ mod uneven {
 
     /// An edge along `axis` whose two ends sit at `low` and `high` on it.
     fn spanning(b: &Blocking, axis: usize, low: f64, high: f64) -> Option<CellId> {
-        b.map_edges()
-            .into_iter()
-            .find(|e| {
-                let (u, v) = b.edge_endpoints(*e);
-                let (p, q) = (b.position(u).unwrap(), b.position(v).unwrap());
+        b.edges_in_full()
+            .find(|(_, [u, v], ..)| {
+                let (p, q) = (b.position(*u).unwrap(), b.position(*v).unwrap());
                 let mut at = [p[axis], q[axis]];
                 at.sort_by(f64::total_cmp);
                 (at[0] - low).abs() < 1e-9
                     && (at[1] - high).abs() < 1e-9
                     && (0..3).all(|k| k == axis || (p[k] - q[k]).abs() < 1e-9)
             })
-            .map(|e| b.edge_tag(e).id)
+            .map(|(e, ..)| e)
     }
 
     /// Cut the layer between `low` and `high` so that a new plane lands at
@@ -587,9 +577,8 @@ mod uneven {
         // The two walls the layer was between, at x = 0.2 and x = 0.8, are
         // now one wall half way. Nothing else moved.
         let mut across: Vec<i64> = b
-            .map_vertices()
-            .into_iter()
-            .map(|v| (b.position(v).unwrap()[0] * 1e6).round() as i64)
+            .nodes()
+            .map(|(_, at)| (at[0] * 1e6).round() as i64)
             .collect();
         across.sort_unstable();
         across.dedup();
@@ -609,11 +598,9 @@ mod layers {
 
     /// An edge running along `axis` whose lower end is at `at` on it.
     fn along(b: &Blocking, axis: usize, at: f64) -> CellId {
-        b.map_edges()
-            .into_iter()
-            .find(|e| {
-                let (u, v) = b.edge_endpoints(*e);
-                let (p, q) = (b.position(u).unwrap(), b.position(v).unwrap());
+        b.edges_in_full()
+            .find(|(_, [u, v], ..)| {
+                let (p, q) = (b.position(*u).unwrap(), b.position(*v).unwrap());
                 (0..3).all(|k| {
                     if k == axis {
                         (p[k] - q[k]).abs() > 1e-9 && p[k].min(q[k]) == at
@@ -622,7 +609,7 @@ mod layers {
                     }
                 })
             })
-            .map(|e| b.edge_tag(e).id)
+            .map(|(e, ..)| e)
             .unwrap_or_else(|| panic!("no edge along {axis} from {at}"))
     }
 
@@ -654,8 +641,7 @@ mod layers {
     fn nearest(b: &Blocking, want: [f64; 3]) -> CellId {
         let mut best = None;
         let mut shortest = f64::INFINITY;
-        for e in b.map_edges() {
-            let (u, v) = b.edge_endpoints(e);
+        for (e, [u, v], ..) in b.edges_in_full() {
             let (p, q) = (b.position(u).unwrap(), b.position(v).unwrap());
             let away: f64 = (0..3)
                 .map(|k| ((p[k] + q[k]) / 2.0 - want[k]).powi(2))
@@ -663,7 +649,7 @@ mod layers {
                 .sqrt();
             if away < shortest {
                 shortest = away;
-                best = Some(b.edge_tag(e).id);
+                best = Some(e);
             }
         }
         best.expect("an edge")

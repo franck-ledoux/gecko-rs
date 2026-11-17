@@ -53,18 +53,19 @@ fn every_node_answers_to_its_name_and_no_two_share_a_cell() {
     let names: Vec<CellId> = b.nodes().map(|(id, _)| id).collect();
     assert_eq!(names.len(), 8);
 
-    let mut cells: Vec<_> = names
+    let mut places: Vec<[i64; 3]> = names
         .iter()
-        .map(|id| b.node_by_id(*id).expect("a named node resolves"))
+        .map(|id| b.position(*id).expect("a named node resolves"))
+        .map(|at| at.map(|x| (x * 1e9).round() as i64))
         .collect();
-    cells.sort_unstable();
-    cells.dedup();
-    assert_eq!(cells.len(), 8, "two names resolved to one cell");
+    places.sort_unstable();
+    places.dedup();
+    assert_eq!(places.len(), 8, "two names resolved to one cell");
 
     // An unnamed or unknown name is a question with the answer "no such cell",
     // not an error.
-    assert!(b.node_by_id(CellId::NONE).is_none());
-    assert!(b.node_by_id(CellId::from_raw(9999)).is_none());
+    assert!(b.position(CellId::NONE).is_none());
+    assert!(b.position(CellId::from_raw(9999)).is_none());
 }
 
 #[test]
@@ -92,7 +93,7 @@ fn moving_a_node_moves_exactly_that_one() {
         (8, 12, 6, 1)
     );
     assert!(
-        b.node_by_id(target).is_some(),
+        b.position(target).is_some(),
         "the name did not survive the move"
     );
 }
@@ -125,7 +126,7 @@ fn two_cubes_keep_their_names_and_their_nodes_apart() {
 
     // The first cube's names still resolve, and to the same places.
     for id in &first {
-        assert!(b.node_by_id(*id).is_some(), "{id:?} was lost");
+        assert!(b.position(*id).is_some(), "{id:?} was lost");
     }
     let target = first[0];
     let before = b.nodes().find(|(i, _)| *i == target).unwrap().1;
@@ -160,14 +161,11 @@ fn a_frozen_node_does_not_move_for_anybody() {
     );
     // Refused, not quietly ignored: a caller told nothing would go on
     // believing the move happened.
-    assert_eq!(b.position(b.node_by_id(node).unwrap()), Some(before));
+    assert_eq!(b.position(node), Some(before));
 
     b.set_frozen(node, false).unwrap();
     b.set_position(node, [9.0, 9.0, 9.0]).expect("thawed");
-    assert_eq!(
-        b.position(b.node_by_id(node).unwrap()),
-        Some([9.0, 9.0, 9.0])
-    );
+    assert_eq!(b.position(node), Some([9.0, 9.0, 9.0]));
 
     // And the freeze is independent of the classification: one says where
     // a node may go, the other says whether it may go at all.

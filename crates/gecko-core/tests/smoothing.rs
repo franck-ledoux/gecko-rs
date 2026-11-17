@@ -78,9 +78,7 @@ fn node_at(b: &Blocking, p: [f64; 3]) -> CellId {
 }
 
 fn at(b: &Blocking, node: CellId) -> [f64; 3] {
-    b.node_by_id(node)
-        .and_then(|v| b.position(v))
-        .expect("the node is there")
+    b.position(node).expect("the node is there")
 }
 
 /// The worst corner of the whole blocking, by the same measure smoothing

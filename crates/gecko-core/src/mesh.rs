@@ -39,8 +39,6 @@
 
 use std::collections::HashMap;
 
-use honeycomb_core::cmap::{EdgeIdType, FaceIdType, OrbitPolicy, VertexIdType};
-
 use crate::attributes::On;
 use crate::blocking::Blocking;
 use crate::ids::CellId;
@@ -72,34 +70,6 @@ enum Site {
     /// An interior point of a face, on the face's own lattice.
     Face(CellId, u32, u32),
     Inside(CellId, u32, u32, u32),
-}
-
-/// The twelve edges of a hexahedron, as pairs of corners, in the order the
-/// VTK ordering implies: the bottom ring, the top ring, then the uprights.
-pub const HEX_EDGES: [[usize; 2]; 12] = [
-    [0, 1],
-    [1, 2],
-    [2, 3],
-    [3, 0],
-    [4, 5],
-    [5, 6],
-    [6, 7],
-    [7, 4],
-    [0, 4],
-    [1, 5],
-    [2, 6],
-    [3, 7],
-];
-
-/// One block, as the mesher needs it: its eight corners in VTK order, and
-/// the cells of the blocking they bound.
-pub struct Hex {
-    pub block: CellId,
-    pub corners: [VertexIdType; 8],
-    /// In [`HEX_EDGES`] order.
-    pub edges: [EdgeIdType; 12],
-    /// In [`crate::blocking::HEX_FACES`] order.
-    pub faces: [FaceIdType; 6],
 }
 
 impl Mesh {
@@ -151,99 +121,6 @@ impl Mesh {
 }
 
 impl Blocking {
-    /// Every block as a hexahedron: its corners in VTK order, and the cells
-    /// that bound it.
-    ///
-    /// The frame is recovered from the map rather than remembered from the
-    /// construction, because by now the block may have been cut, glued and
-    /// cut again. Any face may serve as the bottom one: the result is the
-    /// same hexahedron seen from another of its corners, and a rotation of
-    /// a hexahedron is still that hexahedron.
-    pub fn hexes(&self) -> Vec<Hex> {
-        let map = self.map();
-        let mut out = Vec::new();
-        for volume in self.map_volumes() {
-            // Blocks only. A patch — an open sheet of faces on its way to
-            // being extruded — has no inside to fill, and the walk below
-            // would step off the end of it: finding the corner above one of
-            // its own means crossing β₂, which is null at a boundary.
-            if !self.is_block(volume) {
-                continue;
-            }
-            // A face of this block, and the four darts round it. Every face
-            // of a block is wound anticlockwise **seen from outside**, so
-            // this cycle plays the part of `HEX_FACES[0]`, which is the
-            // bottom face read [0, 3, 2, 1].
-            let d0 = volume;
-            let mut ring = [d0; 4];
-            for k in 1..4 {
-                ring[k] = map.beta::<1>(ring[k - 1]);
-            }
-            // The corner above each of them: across the edge into the side
-            // face, then one step on, which lands on the upright.
-            let up = ring.map(|d| map.beta::<1>(map.beta::<2>(d)));
-
-            let at = |d| map.vertex_id(d);
-            let end = |d| map.vertex_id(map.beta::<1>(d));
-            let corners = [
-                at(ring[0]),
-                at(ring[3]),
-                at(ring[2]),
-                at(ring[1]),
-                end(up[0]),
-                end(up[3]),
-                end(up[2]),
-                end(up[1]),
-            ];
-
-            // The edges and faces by the corners they join, which needs no
-            // orientation reasoning at all: both lists are short, and the
-            // map says which cell has which corners.
-            let darts = self.orbit(OrbitPolicy::Volume, volume);
-            let mut edges = [0; 12];
-            for (slot, [a, b]) in HEX_EDGES.iter().enumerate() {
-                let (p, q) = (corners[*a], corners[*b]);
-                edges[slot] = darts
-                    .iter()
-                    .map(|d| map.edge_id(*d))
-                    .find(|e| {
-                        let (x, y) = self.edge_endpoints(*e);
-                        (x == p && y == q) || (x == q && y == p)
-                    })
-                    .expect("every edge of a hexahedron is one of its edges");
-            }
-            let mut faces = [0; 6];
-            for (slot, four) in crate::blocking::HEX_FACES.iter().enumerate() {
-                let want: Vec<VertexIdType> = {
-                    let mut v: Vec<_> = four.iter().map(|c| corners[*c]).collect();
-                    v.sort_unstable();
-                    v
-                };
-                faces[slot] = darts
-                    .iter()
-                    .map(|d| map.face_id(*d))
-                    .find(|f| {
-                        let mut v: Vec<_> = self
-                            .orbit(OrbitPolicy::Custom(&[1]), *f)
-                            .iter()
-                            .map(|d| map.vertex_id(*d))
-                            .collect();
-                        v.sort_unstable();
-                        v == want
-                    })
-                    .expect("every face of a hexahedron is one of its faces");
-            }
-
-            out.push(Hex {
-                block: self.block_tag(volume).id,
-                corners,
-                edges,
-                faces,
-            });
-        }
-        out
-    }
-
     /// How many segments every edge is divided into, resolved sheet by
     /// sheet so that the answer is the same all the way along each one.
     ///
@@ -251,9 +128,12 @@ impl Blocking {
     /// expensive part, and a sheet answers for every edge on it at once.
     pub fn segments_by_sheet(&self, default: u32) -> HashMap<CellId, u32> {
         let mut out: HashMap<CellId, u32> = HashMap::new();
-        for e in self.map_edges() {
-            let name = self.edge_tag(e).id;
-            if out.contains_key(&name) || name.is_none() {
+        let asked: HashMap<CellId, u32> = self
+            .edges_in_full()
+            .map(|(edge, _, segments, _)| (edge, segments))
+            .collect();
+        for name in self.edge_names() {
+            if out.contains_key(&name) {
                 continue;
             }
             let Ok(sheet) = self.sheet_through(name) else {
@@ -263,8 +143,7 @@ impl Blocking {
             let index = sheet.iter().map(|s| s.edge).collect::<Vec<_>>();
             let most = index
                 .iter()
-                .filter_map(|n| self.edge_by_id(*n))
-                .map(|e| self.edge_tag(e).segments)
+                .filter_map(|n| asked.get(n).copied())
                 .max()
                 .unwrap_or(0);
             let n = if most == 0 { default } else { most };
@@ -415,22 +294,25 @@ impl Blocking {
     /// already lie on their surfaces.
     pub fn mesh(&self, default: u32, project: impl Fn(On, [f64; 3]) -> Option<[f64; 3]>) -> Mesh {
         let segments = self.segments_by_sheet(default.max(1));
-        let at = |v: VertexIdType| self.position(v).unwrap_or([0.0; 3]);
-        let name = |v: VertexIdType| self.node_tag(v).id;
-        let cuts = |e: EdgeIdType| *segments.get(&self.edge_tag(e).id).unwrap_or(&default);
+        let cuts = |edge: CellId| *segments.get(&edge).unwrap_or(&default);
+        // Every node's place, in one walk. Asked for one at a time it would
+        // be a search of the map per node. Kept as a list as well as a
+        // lookup, because the numbering below has to be laid out in an order
+        // that does not depend on a hash: two hosts meshing the same blocking
+        // must number it the same way.
+        let nodes: Vec<(CellId, [f64; 3])> = self.nodes().collect();
+        let at: HashMap<CellId, [f64; 3]> = nodes.iter().copied().collect();
+        let along: Vec<(CellId, [CellId; 2], u32, Option<On>)> = self.edges_in_full().collect();
 
         // Each block and each face's lattice, worked out once. Both the face
         // pass and the block pass need them, and both used to ask for them
         // again: six fresh walks of the map per block for lattices that do
         // not change while a mesh is being built.
         let frames = self.hexes();
-        let faces = self.map_faces();
+        let faces = self.face_names();
         let quads: HashMap<CellId, Quad> = faces
             .iter()
-            .map(|f| {
-                let quad = self.quad(*f, &segments);
-                (quad.face, quad)
-            })
+            .map(|f| (*f, self.quad(*f, &segments)))
             .collect();
 
         // Then every cell's run of node numbers, laid end to end. Walked in
@@ -438,18 +320,17 @@ impl Blocking {
         // meshing the same blocking number it the same way.
         let mut number = Numbering::default();
         let mut next: u32 = 0;
-        for v in self.map_vertices() {
-            number.corners.insert(name(v), next);
+        for (node, _) in &nodes {
+            number.corners.insert(*node, next);
             next += 1;
         }
-        for e in self.map_edges() {
-            number.along.insert(self.edge_tag(e).id, next);
-            next += cuts(e) - 1;
+        for (edge, ..) in &along {
+            number.along.insert(*edge, next);
+            next += cuts(*edge) - 1;
         }
         for f in &faces {
-            let named = self.face_tag(*f).id;
-            let (na, nb) = quads[&named].extents;
-            number.across.insert(named, (next, nb));
+            let (na, nb) = quads[f].extents;
+            number.across.insert(*f, (next, nb));
             next += (na - 1) * (nb - 1);
         }
         for frame in &frames {
@@ -465,24 +346,22 @@ impl Blocking {
         let mut table = Table::new(number);
 
         // --- the corners of the blocking ---------------------------------
-        for v in self.map_vertices() {
-            table.put(Site::Node(name(v)), at(v));
+        for (node, place) in &nodes {
+            table.put(Site::Node(*node), *place);
         }
 
         // --- along each edge ---------------------------------------------
-        for e in self.map_edges() {
-            let tag = self.edge_tag(e);
-            let n = cuts(e);
-            let (from, to) = self.edge_endpoints(e);
-            let (p, q) = (at(from), at(to));
+        for (edge, [from, to], _, on) in &along {
+            let n = cuts(*edge);
+            let (p, q) = (at[from], at[to]);
             for i in 1..n {
                 let mut point = lerp(p, q, f64::from(i) / f64::from(n));
-                if let Some(on) = tag.on {
-                    if let Some(onto) = project(on, point) {
+                if let Some(on) = on {
+                    if let Some(onto) = project(*on, point) {
                         point = onto;
                     }
                 }
-                table.put(Site::Edge(tag.id, i), point);
+                table.put(Site::Edge(*edge, i), point);
             }
         }
 
@@ -496,8 +375,8 @@ impl Blocking {
         // one per block: that is what makes two blocks share these points
         // instead of each placing its own on top of the other's.
         for f in &faces {
-            let tag = self.face_tag(*f);
-            let quad = &quads[&tag.id];
+            let on = self.face_class(*f);
+            let quad = &quads[f];
             let (na, nb) = quad.extents;
             for a in 1..na {
                 for b in 1..nb {
@@ -512,12 +391,12 @@ impl Blocking {
                     add(&mut point, side(quad.site(na, 0)), -u * (1.0 - v));
                     add(&mut point, side(quad.site(0, nb)), -(1.0 - u) * v);
                     add(&mut point, side(quad.site(na, nb)), -u * v);
-                    if let Some(on) = tag.on {
+                    if let Some(on) = on {
                         if let Some(onto) = project(on, point) {
                             point = onto;
                         }
                     }
-                    table.put(Site::Face(tag.id, a, b), point);
+                    table.put(Site::Face(*f, a, b), point);
                 }
             }
         }
@@ -538,8 +417,8 @@ impl Blocking {
             // the block's. Nothing is placed here: this is where the
             // sharing happens, and all of it has been placed already.
             for (slot, corners) in crate::blocking::HEX_FACES.iter().enumerate() {
-                let quad = &quads[&self.face_tag(hex.faces[slot]).id];
-                let mine = corners.map(|c| name(hex.corners[c]));
+                let quad = &quads[&hex.faces[slot]];
+                let mine = corners.map(|c| hex.corners[c]);
                 // Where the face's own four corners sit on the block's
                 // lattice, from the corner table rather than from any
                 // reasoning about which face this is.
@@ -641,25 +520,18 @@ impl Blocking {
     }
 
     /// One face of the blocking, as a lattice.
-    fn quad(&self, f: FaceIdType, segments: &HashMap<CellId, u32>) -> Quad {
-        let map = self.map();
-        let mut darts = [f; 4];
-        for k in 1..4 {
-            darts[k] = map.beta::<1>(darts[k - 1]);
-        }
-        let corners = darts.map(|d| self.node_tag(map.vertex_id(d)).id);
-        let edges = darts.map(|d| {
-            let e = map.edge_id(d);
-            let tag = self.edge_tag(e);
-            let n = *segments.get(&tag.id).unwrap_or(&1);
+    fn quad(&self, face: CellId, segments: &HashMap<CellId, u32>) -> Quad {
+        let (corners, sides) = self.face_cells(face).expect("a face of the blocking");
+        let edges = sides.map(|edge| {
+            let n = *segments.get(&edge).unwrap_or(&1);
             // Which end the chain along it was counted from, by name.
-            let (from, _) = self.edge_endpoints(e);
-            (tag.id, self.node_tag(from).id, n)
+            let (from, _) = self.edge_ends(edge).expect("a side of a face");
+            (edge, from, n)
         });
         debug_assert_eq!(edges[0].2, edges[2].2, "a face's opposite sides disagree");
         debug_assert_eq!(edges[1].2, edges[3].2, "a face's opposite sides disagree");
         Quad {
-            face: self.face_tag(f).id,
+            face,
             corners,
             edges,
             extents: (edges[0].2, edges[1].2),
