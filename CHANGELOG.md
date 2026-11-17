@@ -32,23 +32,6 @@ measurements that decided it.
   what makes them an oracle for the structure to come rather than a description
   of the one being replaced. The mesh file is unchanged byte for byte.
 
-- **The band catches faces as well as handles.** `⇧W`-drag, where `W`-drag
-  still catches nodes.
-
-  One rule, at whatever dimension is asked for: **a cell is caught when all
-  of its corners are.** You enclose what you want and you get exactly what is
-  enclosed — no guess about which of the four things under the pointer was
-  meant, and no quarrel with depth, which the band goes on ignoring as it
-  always did for nodes. A face put away by a filter or by a hidden group is
-  not caught, on the same terms as a hidden handle.
-
-  Blocks come with it and needed nothing: a selection of faces already names
-  the blocks they bound, which is what grouping has always read.
-
-  Which dimension a band is after is decided when it starts, not when it
-  ends: a modifier let go mid-drag would otherwise change what the gesture
-  meant under the pointer.
-
 - **The mesher no longer keeps a table the size of the mesh it builds.**
   Every mesh node used to be an entry in a `HashMap<Site, u32>`, which is
   what made two blocks share the nodes on the face between them. It was also

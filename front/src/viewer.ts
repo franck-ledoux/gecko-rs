@@ -79,7 +79,6 @@ import {
   buildMesh,
   buildSurfaces,
   buildSurfacesOf,
-  quadsToDraw,
   edgeSegments,
   groupColor,
   meshEdges,
@@ -2495,73 +2494,13 @@ export class Viewer {
    * you are after are the four at the bottom.
    */
   nodesInRect(x0: number, y0: number, x1: number, y1: number): number[] {
-    const caught = this.caughtBy(x0, y0, x1, y1);
-    const out: number[] = [];
-    for (const i of caught) {
-      const name = this.nodes[i]?.metadata.name as number | undefined;
-      if (name !== undefined) out.push(name);
-    }
-    return out;
-  }
-
-  /**
-   * Every face of a block, both named, whose four corners fall inside a
-   * rectangle on screen.
-   *
-   * The band's one rule, at the next dimension up: **a cell is caught when
-   * all of its corners are.** You enclose what you want and you get exactly
-   * what is enclosed — no guess about which of the four things under the
-   * pointer you meant, and no quarrel with depth, which the band ignores
-   * here as it does for nodes.
-   *
-   * Only the quadrangles that are actually drawn, so a face put away by a
-   * filter or by a group being hidden is not caught by a band either. A face
-   * between two blocks is drawn once per block, so it is offered once per
-   * block whose corners are all in — which is the right answer for the verbs
-   * that take a side rather than a face.
-   */
-  facesInRect(x0: number, y0: number, x1: number, y1: number): Pick[] {
-    const view = this.view;
-    if (!view || !this.layerOf("faces").visible) return [];
-    const caught = this.caughtBy(x0, y0, x1, y1);
-    if (!caught.size) return [];
-    const options = this.surfaceOptions("faces");
-    const out: Pick[] = [];
-    for (const q of quadsToDraw(
-      view,
-      options.by,
-      options.internal,
-      options.only,
-    )) {
-      let all = true;
-      for (let k = 0; k < 4 && all; k++)
-        all = caught.has(view.quads[q * 4 + k]);
-      if (all) out.push({ face: view.quadFaces[q], block: view.quadBlocks[q] });
-    }
-    return out;
-  }
-
-  /**
-   * The nodes a rectangle encloses, by their place in the view's arrays.
-   *
-   * Projected one by one rather than picked: a pick asks what is in front,
-   * and a lasso means *everything in there*, including the handles on the
-   * far side of the model. Which is what you want when the four corners
-   * you are after are the four at the bottom.
-   */
-  private caughtBy(
-    x0: number,
-    y0: number,
-    x1: number,
-    y1: number,
-  ): Set<number> {
     const [left, right] = x0 < x1 ? [x0, x1] : [x1, x0];
     const [top, bottom] = y0 < y1 ? [y0, y1] : [y1, y0];
     // Through the camera of the pane the band was **begun** in. The pointer
     // may wander into another pane while it is drawn — the rectangle is
     // anchored where it started, and so is what it means.
     const pane = this.paneFor(x0, y0);
-    const out = new Set<number>();
+    const out: number[] = [];
     for (const mesh of this.nodes) {
       // Hidden handles are not caught by a band either: what the band is
       // for is picking what you can see.
@@ -2569,7 +2508,7 @@ export class Viewer {
       const at = this.toScreen(mesh.position, pane);
       if (!at) continue;
       if (at[0] >= left && at[0] <= right && at[1] >= top && at[1] <= bottom) {
-        out.add(mesh.metadata.index as number);
+        out.push(mesh.metadata.name as number);
       }
     }
     return out;
