@@ -136,7 +136,8 @@ export function quadsToDraw(
   }
 
   const sides = new Map<number, number>();
-  for (const name of view.quadFaces) sides.set(name, (sides.get(name) ?? 0) + 1);
+  for (const name of view.quadFaces)
+    sides.set(name, (sides.get(name) ?? 0) + 1);
 
   const kept: number[] = [];
   const taken = new Set<number>();
@@ -152,7 +153,10 @@ export function quadsToDraw(
 }
 
 /** The center each quadrangle shrinks towards. */
-function centers(view: View, by: "face" | "block"): Map<number, [number, number, number]> {
+function centers(
+  view: View,
+  by: "face" | "block",
+): Map<number, [number, number, number]> {
   const names = by === "face" ? view.quadFaces : view.quadBlocks;
   const sums = new Map<number, [number, number, number, number]>();
   for (let q = 0; q < names.length; q++) {
@@ -186,6 +190,31 @@ function centers(view: View, by: "face" | "block"): Map<number, [number, number,
  * at the cost of a draw call each — which is the trade to revisit when
  * there are thousands of them, not now.
  */
+/**
+ * The two sets of centers every quadrangle is placed against: the one its
+ * group shrinks towards, and the block's own, which says which side of it is
+ * solid.
+ *
+ * Worked out **once for the model**. They used to be worked out inside the
+ * per-block build, which meant a walk of every quadrangle in the model for
+ * each block in it: at two hundred blocks that was already most of a redraw,
+ * and it grew as the square. Measured at 0.71 ms a block over ninety blocks
+ * and 1.28 over two hundred — the bend in that curve is this call.
+ */
+interface Middles {
+  middle: Map<number, [number, number, number]>;
+  solid: Map<number, [number, number, number]>;
+}
+
+function middlesOf(view: View, by: "face" | "block"): Middles {
+  const middle = centers(view, by);
+  // The block's own center, whichever group this is: the shrink pulls a
+  // face towards the face's middle, and a face's middle is **in** the
+  // face — no use at all for telling which side of it is solid.
+  const solid = by === "block" ? middle : centers(view, "block");
+  return { middle, solid };
+}
+
 export function buildSurfaces(
   view: View,
   options: SurfaceOptions,
@@ -198,25 +227,70 @@ export function buildSurfaces(
     if (already) already.push(q);
     else byBlock.set(block, [q]);
   }
+  const middles = middlesOf(view, options.by);
   return [...byBlock.entries()]
     .sort((a, b) => a[0] - b[0])
-    .map(([block, quads]) => ({ block, data: buildFrom(view, options, quads) }));
+    .map(([block, quads]) => ({
+      block,
+      data: buildFrom(view, options, quads, middles),
+    }));
+}
+
+/**
+ * The same, for a few blocks only.
+ *
+ * What a drag redraws: the node that moved is a corner of at most a handful
+ * of blocks, and the rest of the model is where it was. The centers and the
+ * list of quadrangles to draw are still worked out for the whole model —
+ * both are a single pass and neither allocates per block — but the buffers,
+ * which are the expensive part, are built for the blocks that asked.
+ */
+export function buildSurfacesOf(
+  view: View,
+  options: SurfaceOptions,
+  which: Set<number>,
+): Map<number, SurfaceData> {
+  const out = new Map<number, SurfaceData>();
+  if (!which.size) return out;
+  const byBlock = new Map<number, number[]>();
+  for (const q of quadsToDraw(
+    view,
+    options.by,
+    options.internal,
+    options.only,
+  )) {
+    const block = view.quadBlocks[q];
+    if (!which.has(block)) continue;
+    const already = byBlock.get(block);
+    if (already) already.push(q);
+    else byBlock.set(block, [q]);
+  }
+  const middles = middlesOf(view, options.by);
+  for (const [block, quads] of byBlock) {
+    out.set(block, buildFrom(view, options, quads, middles));
+  }
+  return out;
 }
 
 export function buildSurface(view: View, options: SurfaceOptions): SurfaceData {
-  return buildFrom(view, options, quadsToDraw(view, options.by, options.internal, options.only));
+  return buildFrom(
+    view,
+    options,
+    quadsToDraw(view, options.by, options.internal, options.only),
+    middlesOf(view, options.by),
+  );
 }
 
-function buildFrom(view: View, options: SurfaceOptions, kept: number[]): SurfaceData {
+function buildFrom(
+  view: View,
+  options: SurfaceOptions,
+  kept: number[],
+  { middle, solid }: Middles,
+): SurfaceData {
   if (!kept.length) return EMPTY;
 
   const names = options.by === "face" ? view.quadFaces : view.quadBlocks;
   const dimension = options.by === "face" ? FAMILY.faces : FAMILY.blocks;
-  const middle = centers(view, options.by);
-  // The block's own center, whichever group this is: the shrink pulls a
-  // face towards the face's middle, and a face's middle is **in** the
-  // face — no use at all for telling which side of it is solid.
-  const solid = options.by === "block" ? middle : centers(view, "block");
   const uniform = hexToRgb(options.uniform);
 
   const positions = new Float32Array(kept.length * 12);
@@ -254,7 +328,8 @@ function buildFrom(view: View, options: SurfaceOptions, kept: number[]): Surface
       const p = view.quads[q * 4 + k] * 3;
       const v = (i * 4 + k) * 3;
       for (let axis = 0; axis < 3; axis++) {
-        positions[v + axis] = c[axis] + (view.positions[p + axis] - c[axis]) * options.shrink;
+        positions[v + axis] =
+          c[axis] + (view.positions[p + axis] - c[axis]) * options.shrink;
       }
       const col = (i * 4 + k) * 4;
       colors[col] = rgb[0];
