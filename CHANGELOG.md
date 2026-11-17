@@ -32,6 +32,29 @@ measurements that decided it.
   what makes them an oracle for the structure to come rather than a description
   of the one being replaced. The mesh file is unchanged byte for byte.
 
+- **A thin block is laid on four corners you click.** `⇧Q`, beside the `Q`
+  that lays one on a whole surface's own corners.
+
+  Each click puts a corner where the pointer is: on an existing handle if it
+  is near one, so two slabs laid side by side meet rather than nearly meet;
+  otherwise on the geometry, corners before curves before surfaces — which is
+  what the tolerance is made of, a corner being a small ball and a curve a
+  thin ribbon, so a click only reaches one by being near it. What is on
+  screen says how far along it is: a mark, then a side, then two, and at the
+  fourth the block. `Esc` gives up and `⌫` takes back the last corner.
+
+  A block and not a face, because a face on its own has no inside and
+  everything that follows wants one. The thickness is signed — the sign picks
+  which side the material is on — and defaults to a tenth of the quadrangle's
+  own shortest diagonal, so "thin" means the same thing whatever the model is
+  measured in.
+
+  The four corners on the geometry arrive **already classified**, in the same
+  command, rather than in a second step somebody could forget. The four inside
+  the material follow nothing, and the session is told so: each is next to a
+  classified corner, and the settling that puts fresh nodes on the model would
+  otherwise pull them onto the surface and leave the slab no thickness at all.
+
 - **Several faces grow into blocks at once, welded where they meet.** Drag
   any one of the selected faces and they all go up, in one command.
 

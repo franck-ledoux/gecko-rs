@@ -92,6 +92,12 @@ fn same_point(a: [f64; 3], b: [f64; 3]) -> bool {
 /// How thick a pillow layer is, as a share of the cell it is cut from.
 pub const PILLOW_SHARE: f64 = 1.0 / 3.0;
 
+/// How thick a slab is by default, as a share of its own shortest diagonal.
+///
+/// A share rather than a length, for the reason every other one here is: a
+/// thickness in millimeters is right for exactly one model.
+pub const SLAB_SHARE: f64 = 0.1;
+
 /// Where a node of a pillowed patch goes.
 ///
 /// A mitre, as in a picture frame. The copy has to end up `depth` clear of
@@ -658,6 +664,55 @@ impl Blocking {
     /// it. Joining blocks is a separate operation, and a later step.
     pub fn add_block(&mut self, corners: [[f64; 3]; 8]) -> Result<CellId, BlockingError> {
         Ok(self.build_block(corners)?.0)
+    }
+
+    /// A block of small thickness, laid on four points.
+    ///
+    /// The points are its **outer** face, in the order they are given, and
+    /// the block grows the other way by `thickness` — signed, so the sign
+    /// picks which side of the quadrangle the material is on.
+    ///
+    /// What comes back is the block, its four outer corners and its four
+    /// inner ones, in the order the points were given. The caller wants both
+    /// lists and for opposite reasons: the outer four are to be told what
+    /// they are lying on, and the inner four are to be left **alone** — they
+    /// are inside the material, they follow nothing, and anything that
+    /// settles fresh nodes onto the geometry would otherwise flatten the
+    /// slab to nothing. See `Session::settle_fresh`.
+    pub fn add_slab(
+        &mut self,
+        quad: [[f64; 3]; 4],
+        thickness: f64,
+    ) -> Result<(CellId, [CellId; 4], [CellId; 4]), BlockingError> {
+        if !thickness.is_finite() || thickness == 0.0 {
+            return Err(BlockingError::BadHeight(thickness));
+        }
+        let normal = quad_normal(quad);
+        let length = (0..3).map(|k| normal[k] * normal[k]).sum::<f64>().sqrt();
+        // Four points in a line, or on top of each other: no quadrangle, so
+        // no side to be thick on.
+        if length < 1e-12 {
+            return Err(BlockingError::LostFace);
+        }
+        let step = normal.map(|x| x * thickness / length);
+
+        let mut corners = [[0.0; 3]; 8];
+        corners[..4].copy_from_slice(&quad);
+        for k in 0..4 {
+            corners[4 + k] = [0, 1, 2].map(|axis| quad[k][axis] + step[axis]);
+        }
+        let (block, first) = self.build_block(corners)?;
+
+        // By the dart each corner starts at, rather than by asking the block
+        // for its corners in some order of its own: this is the only place
+        // that knows which of the eight was which of the four points.
+        let named = |slot: usize| {
+            self.node_tag_of(self.map.vertex_id(corner_dart(first, slot)))
+                .id
+        };
+        let outer = [0, 1, 2, 3].map(named);
+        let inner = [4, 5, 6, 7].map(named);
+        Ok((block, outer, inner))
     }
 
     /// A single quadrangular face, standing on its own.

@@ -3609,6 +3609,82 @@ test("⌥ slides a selected face instead of growing a block from it", async ({
   expect(errors).toEqual([]);
 });
 
+test("⇧Q lays a slab on four corners clicked on the geometry", async ({
+  page,
+}) => {
+  const errors = await boot(page);
+  await openSquare(page);
+  await expect(page.locator("[data-test=geom-surfaces]")).toHaveText("1");
+  await page.evaluate(() => (window as any).__gecko.run("recenter"));
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // Nothing laid yet, and the mode says what it wants.
+  await page.evaluate(() => (window as any).__gecko.run("lay-slab"));
+  await expect(page.locator("#status")).toContainText("four corners");
+
+  // Four clicks spread over the square. Each one says how many are left,
+  // which is how a reader knows the mode is still running.
+  const box = (await page.locator("#view").boundingBox())!;
+  const at: [number, number][] = [
+    [box.width * 0.4, box.height * 0.4],
+    [box.width * 0.6, box.height * 0.4],
+    [box.width * 0.6, box.height * 0.6],
+    [box.width * 0.4, box.height * 0.6],
+  ];
+  for (let k = 0; k < 3; k++) {
+    await page.mouse.click(box.x + at[k][0], box.y + at[k][1]);
+    await expect(page.locator("#status")).toContainText(`${k + 1} of 4`);
+  }
+  await page.mouse.click(box.x + at[3][0], box.y + at[3][1]);
+  await page.evaluate(() => (window as any).__gecko.settled());
+  await expect(page.locator("#status")).toContainText("laid on");
+
+  // One block, eight corners — and the four on the geometry are classified
+  // on it while the four inside the material are not. That is the whole
+  // point of the thing: a slab whose inner corners were settled onto the
+  // surface would have no thickness left.
+  const stats = (await page.evaluate(() =>
+    (window as any).__gecko.stats(),
+  )) as {
+    blocks: number;
+    nodes: number;
+    classified: { nodes: number };
+  };
+  expect(stats.blocks).toBe(1);
+  expect(stats.nodes).toBe(8);
+  expect(stats.classified.nodes).toBe(4);
+
+  expect(errors).toEqual([]);
+});
+
+test("a slab being laid is given up on with Esc, and walked back with ⌫", async ({
+  page,
+}) => {
+  const errors = await boot(page);
+  await openSquare(page);
+  await page.evaluate(() => (window as any).__gecko.run("recenter"));
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  const box = (await page.locator("#view").boundingBox())!;
+  await page.evaluate(() => (window as any).__gecko.run("lay-slab"));
+  await page.mouse.click(box.x + box.width * 0.45, box.y + box.height * 0.45);
+  await page.mouse.click(box.x + box.width * 0.55, box.y + box.height * 0.45);
+  await expect(page.locator("#status")).toContainText("2 of 4");
+
+  // Back one.
+  await page.keyboard.press("Backspace");
+  await expect(page.locator("#status")).toContainText("1 of 4");
+
+  // And give up: nothing was put in the model, so nothing comes out of it.
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#status")).toContainText("given up");
+  expect(
+    await page.evaluate(() => (window as any).__gecko.stats().blocks),
+  ).toBe(0);
+
+  expect(errors).toEqual([]);
+});
+
 test("the band is opened with W as well, and works in an axis view", async ({
   page,
 }) => {

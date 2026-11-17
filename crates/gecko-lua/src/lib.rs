@@ -102,6 +102,16 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
     command(lua, &gecko, &kernel, "face_on_surface", |lua, a| {
         Ok(json!({ "op": "face_on_surface", "surface": at(lua, &a, 0)? }))
     })?;
+    command(lua, &gecko, &kernel, "add_slab", |lua, a| {
+        // The four points, then what each is lying on and how thick — both
+        // optional, and `false` for a point that follows nothing.
+        let o = options(lua, &a, 1)?;
+        Ok(with(
+            json!({ "op": "add_slab", "corners": at(lua, &a, 0)? }),
+            &o,
+            &["on", "thickness"],
+        ))
+    })?;
     command(lua, &gecko, &kernel, "add_face", |lua, a| {
         Ok(json!({ "op": "add_face", "corners": at(lua, &a, 0)? }))
     })?;

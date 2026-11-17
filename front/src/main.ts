@@ -1085,6 +1085,13 @@ async function boot() {
       return;
     }
     if (moved) return;
+    // Laying a slab, a click is a corner and nothing else: the selection is
+    // not what the gesture is about, and a click that also picked a face
+    // would leave one behind every corner.
+    if (laying) {
+      void layCorner(x, y);
+      return;
+    }
     // Aimed at the geometry, the blocks are not there to be clicked at all
     // — which is the whole reason for the mode: the two are at the same
     // pixels, and whichever answered first would hide the other.
@@ -1374,6 +1381,10 @@ async function boot() {
   }
 
   function clearSelection() {
+    if (laying) {
+      stopLaying("given up");
+      return;
+    }
     viewer.selectedEdge = null;
     viewer.showSheet([]);
     viewer.selectGeom([]);
@@ -1593,6 +1604,87 @@ async function boot() {
    * face comes back classified — corners on corners, sides on the curves
    * between them, face on the surface.
    */
+  /**
+   * The corners placed so far for a slab being laid, or nothing when no
+   * slab is being laid. Four of them close it.
+   *
+   * Each carries what it is lying on as well as where it is: the block
+   * arrives already following the model, in one command, rather than being
+   * classified afterwards in a second step somebody could forget.
+   */
+  let laying: { at: [number, number, number]; on: Spot | null }[] | undefined;
+
+  /** Start, or give up on, laying a slab on four points. */
+  function laySlab() {
+    if (laying) {
+      stopLaying("given up");
+      return;
+    }
+    if (viewer.geomCount("surfaces") === 0) {
+      say("load a geometry first — a slab is laid on one");
+      return;
+    }
+    laying = [];
+    viewer.showLaying([]);
+    say("lay a slab: click four corners on the geometry — Esc gives up");
+  }
+
+  function stopLaying(why?: string) {
+    laying = undefined;
+    viewer.showLaying([]);
+    if (why) say(why);
+  }
+
+  /**
+   * One corner, where the pointer is.
+   *
+   * A click near a handle takes **that node's place** rather than making a
+   * point of its own, so two slabs laid side by side meet instead of nearly
+   * meeting. Otherwise the geometry under the pointer answers, corners
+   * before curves before surfaces — which is the preference the tolerance
+   * is made of, a corner being a small ball and a curve a thin ribbon.
+   */
+  async function layCorner(x: number, y: number) {
+    if (!laying) return;
+    const node = viewer.pickNode(x, y);
+    const at = node === null ? null : viewer.nodePosition(node);
+    const placed =
+      node !== null && at
+        ? { at, on: viewer.nodeState(node)?.on ?? null }
+        : viewer.pickOnGeometry(x, y);
+    if (!placed) {
+      say("nothing there to put a corner on — click the geometry or a handle");
+      return;
+    }
+    const corner =
+      "spot" in placed
+        ? { at: placed.at, on: placed.spot }
+        : (placed as (typeof laying)[0]);
+    laying.push(corner);
+    viewer.showLaying(laying.map((c) => c.at));
+    if (laying.length < 4) {
+      const left = 4 - laying.length;
+      say(
+        `${laying.length} of 4 — ${left} more corner${left === 1 ? "" : "s"}`,
+      );
+      return;
+    }
+    const corners = laying.map((c) => c.at);
+    const on = laying.map((c) => c.on);
+    stopLaying(undefined);
+    const reply = await send({ op: "add_slab", corners, on });
+    message = reply.message;
+    await refresh();
+  }
+
+  /** Take back the corner last placed. */
+  function unlayCorner() {
+    if (!laying?.length) return;
+    laying.pop();
+    viewer.showLaying(laying.map((c) => c.at));
+    say(`${laying.length} of 4 — ⌫ again to take back another`);
+  }
+
   async function faceOnSurface() {
     const picked = viewer.geomSelection;
     const surface = picked.find((s) => s.dim === 2);
@@ -1893,6 +1985,12 @@ async function boot() {
    * a face has one on each side — but the pick knows which side it hit.
    */
   async function removeSelection() {
+    // While a slab is being laid, ⌫ takes back the last corner. Nothing is
+    // in the model yet, so there is nothing else it could mean.
+    if (laying) {
+      unlayCorner();
+      return;
+    }
     const edge = viewer.selectedEdge;
     const [first] = viewer.selection;
     const command =
@@ -2546,6 +2644,7 @@ async function boot() {
       drawLayers();
       say(`internal faces ${prefs.faces.internal ? "shown" : "hidden"}`);
     },
+    "lay-slab": laySlab,
     quad: () => {
       prefs.quad = !prefs.quad;
       showQuad();

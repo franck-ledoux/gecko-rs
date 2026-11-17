@@ -57,6 +57,7 @@ export const ACTIONS = [
   "curves",
   "surfaces",
   "quad",
+  "lay-slab",
   "triad",
   "theme",
   "drawer",
@@ -73,7 +74,8 @@ export interface Shortcut {
   show: string;
   does: string;
   action: Action;
-  group: "Edit" | "Select" | "Geometry" | "Mesh" | "View" | "Display" | "Window";
+  group:
+    "Edit" | "Select" | "Geometry" | "Mesh" | "View" | "Display" | "Window";
   /** Matched against `event.key`, lower-cased. */
   key?: string;
   /**
@@ -121,7 +123,13 @@ export const SHORTCUTS: readonly Shortcut[] = [
     does: "box the surfaces, or the whole geometry",
     group: "Geometry",
   },
-  { show: "G", key: "g", action: "glue", does: "glue the two selected faces", group: "Edit" },
+  {
+    show: "G",
+    key: "g",
+    action: "glue",
+    does: "glue the two selected faces",
+    group: "Edit",
+  },
   {
     show: "Del",
     key: "delete",
@@ -137,7 +145,13 @@ export const SHORTCUTS: readonly Shortcut[] = [
     does: "take the sheet out, gap left open",
     group: "Edit",
   },
-  { show: "P", key: "p", action: "pillow", does: "pillow the selected faces", group: "Edit" },
+  {
+    show: "P",
+    key: "p",
+    action: "pillow",
+    does: "pillow the selected faces",
+    group: "Edit",
+  },
   {
     show: "R",
     key: "r",
@@ -153,7 +167,14 @@ export const SHORTCUTS: readonly Shortcut[] = [
     does: "remove the chord through that face",
     group: "Edit",
   },
-  { show: "⇧⌫", key: "backspace", shift: true, action: "remove-chord", does: "", group: "Edit" },
+  {
+    show: "⇧⌫",
+    key: "backspace",
+    shift: true,
+    action: "remove-chord",
+    does: "",
+    group: "Edit",
+  },
   {
     show: "⇧P",
     key: "p",
@@ -181,6 +202,14 @@ export const SHORTCUTS: readonly Shortcut[] = [
     key: "q",
     action: "face-on-surface",
     does: "lay a quadrangle on the surface",
+    group: "Edit",
+  },
+  {
+    show: "⇧Q",
+    key: "q",
+    shift: true,
+    action: "lay-slab",
+    does: "lay one on four points you click",
     group: "Edit",
   },
   {
@@ -245,7 +274,13 @@ export const SHORTCUTS: readonly Shortcut[] = [
     does: "the layer next door",
     group: "Select",
   },
-  { show: "←", key: "arrowleft", action: "layer-back", does: "", group: "Select" },
+  {
+    show: "←",
+    key: "arrowleft",
+    action: "layer-back",
+    does: "",
+    group: "Select",
+  },
   {
     show: "Esc",
     key: "escape",
@@ -262,11 +297,23 @@ export const SHORTCUTS: readonly Shortcut[] = [
     group: "Select",
   },
 
-  { show: "F", key: "f", action: "recenter", does: "frame everything", group: "View" },
+  {
+    show: "F",
+    key: "f",
+    action: "recenter",
+    does: "frame everything",
+    group: "View",
+  },
   // One row for the three. Three lines saying the same thing with a
   // different letter in it are three lines nobody reads, and the card is
   // read at the size of the smallest window it has to fit in.
-  { show: "X", key: "x", action: "axis-x", does: "look down X, Y or Z", group: "View" },
+  {
+    show: "X",
+    key: "x",
+    action: "axis-x",
+    does: "look down X, Y or Z",
+    group: "View",
+  },
   { show: "Y", key: "y", action: "axis-y", does: "", group: "View" },
   { show: "Z", key: "z", action: "axis-z", does: "", group: "View" },
   {
@@ -277,8 +324,22 @@ export const SHORTCUTS: readonly Shortcut[] = [
     does: "look down −X, −Y or −Z",
     group: "View",
   },
-  { show: "⇧Y", key: "y", shift: true, action: "axis--y", does: "", group: "View" },
-  { show: "⇧Z", key: "z", shift: true, action: "axis--z", does: "", group: "View" },
+  {
+    show: "⇧Y",
+    key: "y",
+    shift: true,
+    action: "axis--y",
+    does: "",
+    group: "View",
+  },
+  {
+    show: "⇧Z",
+    key: "z",
+    shift: true,
+    action: "axis--z",
+    does: "",
+    group: "View",
+  },
   {
     show: "V",
     key: "v",
@@ -286,22 +347,107 @@ export const SHORTCUTS: readonly Shortcut[] = [
     does: "split the window into 3D, X, Y and Z",
     group: "View",
   },
-  { show: "T", key: "t", action: "triad", does: "show the X/Y/Z triad", group: "View" },
-  { show: "D", key: "d", action: "theme", does: "dark or light", group: "View" },
+  {
+    show: "T",
+    key: "t",
+    action: "triad",
+    does: "show the X/Y/Z triad",
+    group: "View",
+  },
+  {
+    show: "D",
+    key: "d",
+    action: "theme",
+    does: "dark or light",
+    group: "View",
+  },
 
-  { show: "1", code: "Digit1", action: "faces", does: "show faces", group: "Display" },
-  { show: "2", code: "Digit2", action: "blocks", does: "show blocks", group: "Display" },
-  { show: "3", code: "Digit3", action: "edges", does: "show edges", group: "Display" },
-  { show: "I", key: "i", action: "internal", does: "show internal faces", group: "Display" },
-  { show: "4", code: "Digit4", action: "surfaces", does: "show geometric surfaces", group: "Display" },
-  { show: "5", code: "Digit5", action: "curves", does: "show geometric curves", group: "Display" },
-  { show: "6", code: "Digit6", action: "corners", does: "show geometric corners", group: "Display" },
+  {
+    show: "1",
+    code: "Digit1",
+    action: "faces",
+    does: "show faces",
+    group: "Display",
+  },
+  {
+    show: "2",
+    code: "Digit2",
+    action: "blocks",
+    does: "show blocks",
+    group: "Display",
+  },
+  {
+    show: "3",
+    code: "Digit3",
+    action: "edges",
+    does: "show edges",
+    group: "Display",
+  },
+  {
+    show: "I",
+    key: "i",
+    action: "internal",
+    does: "show internal faces",
+    group: "Display",
+  },
+  {
+    show: "4",
+    code: "Digit4",
+    action: "surfaces",
+    does: "show geometric surfaces",
+    group: "Display",
+  },
+  {
+    show: "5",
+    code: "Digit5",
+    action: "curves",
+    does: "show geometric curves",
+    group: "Display",
+  },
+  {
+    show: "6",
+    code: "Digit6",
+    action: "corners",
+    does: "show geometric corners",
+    group: "Display",
+  },
 
-  { show: "Tab", key: "tab", action: "drawer", does: "how it is drawn", group: "Window" },
-  { show: ",", key: ",", action: "params", does: "what the operations do", group: "Window" },
-  { show: ";", key: ";", action: "console", does: "the script console", group: "Window" },
-  { show: "⇧Tab", key: "tab", shift: true, action: "chrome", does: "hide everything", group: "Window" },
-  { show: "S", key: "s", action: "screenshot", does: "save a picture", group: "Window" },
+  {
+    show: "Tab",
+    key: "tab",
+    action: "drawer",
+    does: "how it is drawn",
+    group: "Window",
+  },
+  {
+    show: ",",
+    key: ",",
+    action: "params",
+    does: "what the operations do",
+    group: "Window",
+  },
+  {
+    show: ";",
+    key: ";",
+    action: "console",
+    does: "the script console",
+    group: "Window",
+  },
+  {
+    show: "⇧Tab",
+    key: "tab",
+    shift: true,
+    action: "chrome",
+    does: "hide everything",
+    group: "Window",
+  },
+  {
+    show: "S",
+    key: "s",
+    action: "screenshot",
+    does: "save a picture",
+    group: "Window",
+  },
   { show: "H", key: "h", action: "help", does: "this card", group: "Window" },
   { show: "?", key: "?", action: "help", does: "", group: "Window" },
 ];
@@ -357,14 +503,22 @@ function isTyping(target: KeyPress["target"]): boolean {
 
 /** The table, grouped, for the help card to print. Rows with nothing to say
  *  are folded onto the one above them. */
-export function helpRows(): { group: Shortcut["group"]; keys: string[]; does: string }[] {
+export function helpRows(): {
+  group: Shortcut["group"];
+  keys: string[];
+  does: string;
+}[] {
   const rows: { group: Shortcut["group"]; keys: string[]; does: string }[] = [];
   for (const shortcut of SHORTCUTS) {
     if (!shortcut.does && rows.length) {
       rows[rows.length - 1].keys.push(shortcut.show);
       continue;
     }
-    rows.push({ group: shortcut.group, keys: [shortcut.show], does: shortcut.does });
+    rows.push({
+      group: shortcut.group,
+      keys: [shortcut.show],
+      does: shortcut.does,
+    });
   }
   return rows;
 }

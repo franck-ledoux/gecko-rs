@@ -72,6 +72,36 @@ pub fn line(command: &Command) -> String {
         Command::ExtrudePatch { face, height } => {
             format!("gecko.extrude_patch({face}, {})", number(*height))
         }
+        Command::AddSlab {
+            corners,
+            on,
+            thickness,
+        } => {
+            let points = corners.iter().map(point).collect::<Vec<_>>().join(", ");
+            let said = on
+                .iter()
+                .map(|spot| match spot {
+                    Some(s) => format!("{{ dim = {}, tag = {} }}", s.dim, s.tag),
+                    // A corner that follows nothing, written down so that the
+                    // list stays one entry per corner and the fourth is the
+                    // fourth.
+                    None => "false".to_string(),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let mut options: Vec<String> = Vec::new();
+            if !on.is_empty() {
+                options.push(format!("on = {{{said}}}"));
+            }
+            if let Some(thickness) = thickness {
+                options.push(format!("thickness = {}", number(*thickness)));
+            }
+            if options.is_empty() {
+                format!("gecko.add_slab({{{points}}})")
+            } else {
+                format!("gecko.add_slab({{{points}}}, {{ {} }})", options.join(", "))
+            }
+        }
         Command::AddFace { corners } => {
             format!(
                 "gecko.add_face{{{}}}",

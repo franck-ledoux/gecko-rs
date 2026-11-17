@@ -190,3 +190,65 @@ fn an_edge_knows_the_names_of_its_own_two_ends() {
         assert_eq!(on, None, "nothing is classified yet");
     }
 }
+
+/// A block of small thickness, laid on four points.
+mod slabs {
+    use gecko_core::{Blocking, BlockingError};
+
+    const SQUARE: [[f64; 3]; 4] = [
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [1.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],
+    ];
+
+    #[test]
+    fn four_points_make_a_block_with_a_thin_side() {
+        let mut b = Blocking::new().unwrap();
+        let (block, outer, inner) = b.add_slab(SQUARE, 0.1).expect("a slab");
+
+        let seen = b.census();
+        assert_eq!((seen.blocks, seen.nodes, seen.faces), (1, 8, 6));
+        assert!(b.is_block(block));
+
+        // The four points came back as the four points, in order.
+        for (k, name) in outer.iter().enumerate() {
+            assert_eq!(b.position(*name).unwrap(), SQUARE[k], "corner {k}");
+        }
+        // And the other four are one thickness away, along the normal — the
+        // square is wound anticlockwise seen from +z, so that is +z.
+        for (k, name) in inner.iter().enumerate() {
+            let at = b.position(*name).unwrap();
+            assert_eq!([at[0], at[1]], [SQUARE[k][0], SQUARE[k][1]], "corner {k}");
+            assert!((at[2] - 0.1).abs() < 1e-9, "thickness: {}", at[2]);
+        }
+        // Outer and inner are eight different nodes.
+        let mut all: Vec<_> = outer.iter().chain(inner.iter()).collect();
+        all.sort_unstable();
+        all.dedup();
+        assert_eq!(all.len(), 8);
+    }
+
+    #[test]
+    fn the_sign_picks_the_side_the_material_is_on() {
+        let mut b = Blocking::new().unwrap();
+        let (_, _, inner) = b.add_slab(SQUARE, -0.1).expect("a slab");
+        for name in inner {
+            assert!(b.position(name).unwrap()[2] < 0.0, "the other way");
+        }
+    }
+
+    #[test]
+    fn no_thickness_and_no_quadrangle_are_both_refused() {
+        let mut b = Blocking::new().unwrap();
+        assert!(matches!(
+            b.add_slab(SQUARE, 0.0),
+            Err(BlockingError::BadHeight(_))
+        ));
+        let flat = [[0.0; 3], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.0, 0.0]];
+        assert!(matches!(
+            b.add_slab(flat, 0.1),
+            Err(BlockingError::LostFace)
+        ));
+    }
+}

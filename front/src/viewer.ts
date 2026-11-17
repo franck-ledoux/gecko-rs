@@ -597,6 +597,8 @@ export class Viewer {
     normal: Vector3;
     by: number;
   };
+  /** The marks and sides shown while a slab is being laid on the geometry. */
+  private laying?: { marks: Mesh[]; wire?: GreasedLineMesh };
   private grownWire?: GreasedLineMesh;
   private grownBox?: Mesh;
   private grown: number | null = null;
@@ -1641,6 +1643,21 @@ export class Viewer {
    * and a curve lies exactly on the surfaces it bounds.
    */
   pickGeometry(x: number, y: number): Spot | null {
+    return this.pickOnGeometry(x, y)?.spot ?? null;
+  }
+
+  /**
+   * The same, with the point the ray touched it at.
+   *
+   * Corners first, then curves, then surfaces — which is the preference the
+   * tolerance is made of: a corner is a small ball and a curve a thin
+   * ribbon, so a click only reaches one of them by being near it, and a
+   * click that reaches two means the nearer kind.
+   */
+  pickOnGeometry(
+    x: number,
+    y: number,
+  ): { spot: Spot; at: [number, number, number] } | null {
     for (const group of ["corners", "curves", "surfaces"] as const) {
       const mine = new Set(this.geomMeshes[group].map((m) => m.name));
       if (!mine.size) continue;
@@ -1651,11 +1668,79 @@ export class Viewer {
         false,
         this.cameraFor(x, y),
       );
-      if (!hit?.hit || !hit.pickedMesh) continue;
+      if (!hit?.hit || !hit.pickedMesh || !hit.pickedPoint) continue;
       const tag = Number(hit.pickedMesh.name.split("-").pop());
-      if (Number.isFinite(tag)) return { dim: DIM_OF[group], tag };
+      if (!Number.isFinite(tag)) continue;
+      const p = hit.pickedPoint;
+      return {
+        spot: { dim: DIM_OF[group], tag },
+        at: [p.x + this.center[0], p.y + this.center[1], p.z + this.center[2]],
+      };
     }
     return null;
+  }
+
+  /**
+   * Show the corners placed so far for a slab being laid, and the sides
+   * between them.
+   *
+   * One point is a mark, two are a mark and a side, and four close the
+   * quadrangle — so what is on screen says how many more clicks there are
+   * without a word being written anywhere.
+   */
+  showLaying(points: readonly [number, number, number][]) {
+    for (const mark of this.laying?.marks ?? []) mark.dispose();
+    this.laying?.wire?.dispose(false, true);
+    this.laying = undefined;
+    if (!points.length) return;
+
+    const here = points.map(
+      (p) =>
+        new Vector3(
+          p[0] - this.center[0],
+          p[1] - this.center[1],
+          p[2] - this.center[2],
+        ),
+    );
+    const marks = here.map((at, k) => {
+      const mark = CreateSphere(
+        `laying${k}`,
+        { diameter: 1, segments: 8 },
+        this.scene,
+      );
+      mark.position = at;
+      const material = new StandardMaterial(`layingMat${k}`, this.scene);
+      material.emissiveColor = Color3.FromHexString(this.prefs.theme.corners);
+      material.disableLighting = true;
+      mark.material = material;
+      mark.layerMask = MAIN_LAYER;
+      mark.renderingGroupId = PASS.aiming;
+      return mark;
+    });
+
+    let wire: GreasedLineMesh | undefined;
+    if (here.length > 1) {
+      // Closed once there are four: the last side is the one that makes it
+      // a quadrangle rather than three sides of one.
+      const ring = here.length === 4 ? [...here, here[0]] : here;
+      const lines = ring
+        .slice(1)
+        .map((to, k) => [ring[k].x, ring[k].y, ring[k].z, to.x, to.y, to.z]);
+      wire = CreateGreasedLine(
+        "layingWire",
+        { points: lines, updatable: false },
+        {
+          color: Color3.FromHexString(this.prefs.theme.corners),
+          materialType: GreasedLineMeshMaterialType.MATERIAL_TYPE_SIMPLE,
+          ...this.ribbon(2 / SHEET_PIXELS),
+        },
+        this.scene,
+      ) as GreasedLineMesh;
+      wire.layerMask = MAIN_LAYER;
+      wire.renderingGroupId = PASS.aiming;
+    }
+    this.laying = { marks, wire };
+    this.fitLimits();
   }
 
   /**

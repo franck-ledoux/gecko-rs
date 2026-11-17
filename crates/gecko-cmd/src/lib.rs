@@ -148,6 +148,29 @@ pub enum Command {
     AddFace {
         corners: [[f64; 3]; 4],
     },
+    /// Lay a block of small thickness on four points.
+    ///
+    /// What `Q` does from a surface's own corners, done from four points
+    /// somebody placed: the points are the block's outer face, and it is
+    /// thickened away from them. A block rather than a face because a face
+    /// on its own has no inside, and everything that follows — cutting it
+    /// into a grid, growing from it — wants one.
+    ///
+    /// `on` says what each point is lying on, in the same order, so that
+    /// the block arrives already following the model rather than being
+    /// classified afterwards in a second step somebody could forget.
+    AddSlab {
+        corners: [[f64; 3]; 4],
+        /// Empty, or one entry a corner. `None` where a corner follows
+        /// nothing.
+        #[serde(default)]
+        on: Vec<Option<Spot>>,
+        /// Signed — the sign picks which side the material is on. Absent
+        /// means [`SLAB_SHARE`] of the quadrangle's own shortest diagonal,
+        /// which is a thickness that means the same thing on any model.
+        #[serde(default)]
+        thickness: Option<f64>,
+    },
     /// Lay a quadrangle on a geometric surface.
     ///
     /// The four corners are the geometric corners of the surface's boundary
@@ -478,6 +501,19 @@ pub struct Outcome {
 
 pub struct Session {
     blocking: Blocking,
+    /// Nodes the command being run put there **deliberately unclassified**,
+    /// which the settling must therefore leave alone.
+    ///
+    /// A slab's inner corners are the case: they are inside the material,
+    /// they follow nothing, and each of them has its outer opposite — which
+    /// *is* classified — as a neighbor. `settle_fresh` keeps fresh nodes
+    /// that are beside a classified one, so without this it would project
+    /// them onto the surface and flatten the slab to nothing.
+    ///
+    /// Here rather than on `Outcome` because it is nobody's business
+    /// outside this one step: no client ever sees it, and it is emptied at
+    /// the top of every command.
+    left_free: Vec<CellId>,
     /// The geometry the blocks are meant to follow, once one is loaded.
     ///
     /// Beside the blocking rather than inside it: nothing in a combinatorial
@@ -580,6 +616,7 @@ impl Session {
     pub fn new() -> Result<Self, SessionError> {
         Ok(Session {
             blocking: Blocking::new()?,
+            left_free: Vec::new(),
             geometry: None,
             composites: Composites::default(),
             geometry_box: None,
@@ -633,6 +670,9 @@ impl Session {
         // otherwise leave the model with a hole in it and the reply saying
         // nothing happened.
         let before = self.capture()?;
+        // Whatever the last command left here is spent. A command that does
+        // not set it leaves nothing free on purpose, which is the usual case.
+        self.left_free.clear();
         // Where the nodes end, so that the ones the command is about to
         // make can be told from the ones it renames.
         let mark = self.blocking.corner_mark();
@@ -654,8 +694,10 @@ impl Session {
             }
             self.settle_origin();
             // The nodes this command made, onto the model if they are on
-            // it. Before the settling below, which reads what they say.
-            self.settle_fresh(mark);
+            // it — bar the ones it left free on purpose. Before the settling
+            // below, which reads what they say.
+            let free = std::mem::take(&mut self.left_free);
+            self.settle_fresh(mark, &free);
             // Every edge, after anything that touched the model. An edge's
             // classification is a statement about its two ends, so it is
             // out of date the moment either of them is — and a cut makes
@@ -844,6 +886,59 @@ impl Session {
                         self.blocking.nb_edges(),
                         self.blocking.nb_faces(),
                         self.blocking.nb_patches(),
+                    ),
+                    view_changed: true,
+                })
+            }
+            Command::AddSlab {
+                corners,
+                on,
+                thickness,
+            } => {
+                // A share of the quadrangle's own shortest diagonal when
+                // nobody says, so that "thin" means the same thing whatever
+                // the model is measured in.
+                let diagonal = |a: usize, b: usize| {
+                    (0..3)
+                        .map(|k| (corners[a][k] - corners[b][k]).powi(2))
+                        .sum::<f64>()
+                        .sqrt()
+                };
+                let thickness = thickness
+                    .unwrap_or_else(|| diagonal(0, 2).min(diagonal(1, 3)) * gecko_core::SLAB_SHARE);
+                let (block, outer, inner) = self.blocking.add_slab(corners, thickness)?;
+
+                // What each point was lying on, told to the corner it
+                // became — in the same command, so that a slab laid on the
+                // model is one step of undo rather than two.
+                let mut followed = 0;
+                for (node, spot) in outer.iter().zip(on.iter().chain(std::iter::repeat(&None))) {
+                    let Some(spot) = spot else { continue };
+                    self.blocking.set_node_class(
+                        *node,
+                        Some(On {
+                            dim: spot.dim,
+                            tag: spot.tag,
+                        }),
+                    )?;
+                    followed += 1;
+                }
+                // And the four inside the material follow nothing, which is
+                // a decision and not an omission: said out loud, so that the
+                // settling below leaves them where they were put.
+                self.left_free = inner.to_vec();
+
+                Ok(Outcome {
+                    script: None,
+                    message: format!(
+                        "block {block:?} laid on {followed} point{} — {} thick, \
+                         {} nodes, {} edges, {} faces, {} blocks",
+                        if followed == 1 { "" } else { "s" },
+                        format_args!("{thickness:.3}"),
+                        self.blocking.nb_nodes(),
+                        self.blocking.nb_edges(),
+                        self.blocking.nb_faces(),
+                        self.blocking.nb_blocks(),
                     ),
                     view_changed: true,
                 })
@@ -1597,7 +1692,7 @@ impl Session {
     /// working at five percent means five percent, and a node this pass
     /// leaves behind is one that comes back as an edge with nothing on
     /// it.
-    fn settle_fresh(&mut self, mark: u32) {
+    fn settle_fresh(&mut self, mark: u32, left_free: &[CellId]) {
         let Session {
             blocking,
             geometry,
@@ -1612,6 +1707,11 @@ impl Session {
         let fresh: Vec<CellId> = blocking
             .nodes_since(mark)
             .into_iter()
+            // Left unclassified on purpose, and so not a node waiting to be
+            // told what it is on. A slab's inner corners are inside the
+            // material: pulled onto the surface their opposites are on, the
+            // slab would have no thickness left.
+            .filter(|n| !left_free.contains(n))
             .filter(|n| blocking.node_class(*n).is_none() && !blocking.is_frozen(*n))
             // Born among nodes that are on the model. A block somebody
             // has just made — a cube, the box round a geometry — is not a
