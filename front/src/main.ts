@@ -862,6 +862,10 @@ async function boot() {
       return;
     if (aiming !== null || growing) return;
     lasso = [e.offsetX, e.offsetY];
+    // Which dimension this band is for, decided when it starts and not when
+    // it ends: the modifier may be let go mid-drag, and a gesture that
+    // changes its mind under the pointer is a gesture you cannot aim.
+    bandingFaces = banding && e.shiftKey;
     canvas.setPointerCapture(e.pointerId);
     viewer.suspendCamera();
     drawLasso(lasso, lasso);
@@ -874,6 +878,10 @@ async function boot() {
     canvas.releasePointerCapture(e.pointerId);
     viewer.resumeCamera();
     $("lasso").hidden = true;
+    if (bandingFaces) {
+      chooseMany(viewer.facesInRect(from[0], from[1], e.offsetX, e.offsetY));
+      return;
+    }
     const caught = viewer.nodesInRect(from[0], from[1], e.offsetX, e.offsetY);
     const now = [...new Set([...viewer.selectedNodes, ...caught])];
     viewer.selectNodes(now);
@@ -985,6 +993,8 @@ async function boot() {
    * would otherwise leave it held for ever.
    */
   let banding = false;
+  /** Whether the band being drawn is after faces rather than nodes. */
+  let bandingFaces = false;
   window.addEventListener("keydown", (e) => {
     if (e.key.toLowerCase() === LASSO_KEY) banding = true;
     if (e.key === "Shift") showChord(true);
@@ -1661,6 +1671,32 @@ async function boot() {
       noted("face", true);
     }
 
+    settleChoice(picked);
+  }
+
+  /**
+   * Add a bandful of faces at once.
+   *
+   * One note in the undo-a-pick order for the whole band, not one per face:
+   * the band is one gesture, and ⇧Esc should take back the gesture rather
+   * than peel it off a face at a time. Faces already picked are left where
+   * they are rather than toggled off — a band says *these as well*, and a
+   * band drawn twice over the same corner should not undo itself.
+   */
+  function chooseMany(picks: Pick[]) {
+    if (!picks.length) {
+      say("nothing enclosed — a face is caught when all four corners are in");
+      return;
+    }
+    const picked = viewer.selection;
+    const already = new Set(picked.map((p) => `${p.face}/${p.block}`));
+    const fresh = picks.filter((p) => !already.has(`${p.face}/${p.block}`));
+    if (fresh.length) noted("face", true);
+    settleChoice([...picked, ...fresh]);
+  }
+
+  /** What every way of picking a face ends with: the verbs, and a word. */
+  function settleChoice(picked: Pick[]) {
     viewer.select(picked);
     // No cap: a glue wants two and a pillow wants as many as you like, so
     // the selection just grows and each verb says what it can do with it.

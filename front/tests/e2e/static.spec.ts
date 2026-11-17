@@ -35,10 +35,15 @@ window.facingPair = () => {
   return best;
 };`;
 
-
 const CUBE = [
-  [0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
-  [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1],
+  [0, 0, 0],
+  [1, 0, 0],
+  [1, 1, 0],
+  [0, 1, 0],
+  [0, 0, 1],
+  [1, 0, 1],
+  [1, 1, 1],
+  [0, 1, 1],
 ];
 
 /**
@@ -64,7 +69,11 @@ async function openParams(page: import("@playwright/test").Page) {
 
 /** Unfold part of the display drawer, which mostly starts folded: a section
  *  by its name, a group of cells by `grp-…`. */
-async function unfold(page: import("@playwright/test").Page, id: string, handle = "> summary") {
+async function unfold(
+  page: import("@playwright/test").Page,
+  id: string,
+  handle = "> summary",
+) {
   await openDrawer(page);
   const fold = page.locator(`#${id}`);
   if (!(await fold.evaluate((d) => (d as HTMLDetailsElement).open))) {
@@ -97,7 +106,9 @@ test("boots with its own kernel and nothing else", async ({ page }) => {
   expect(errors, "no console errors, no wasm panic").toEqual([]);
 });
 
-test("creating a cube reaches the kernel and comes back to the scene", async ({ page }) => {
+test("creating a cube reaches the kernel and comes back to the scene", async ({
+  page,
+}) => {
   await boot(page);
   await page.locator("#cube").click();
   await page.waitForFunction(() => (window as any).__gecko.revision() > 1);
@@ -114,7 +125,9 @@ test("creating a cube reaches the kernel and comes back to the scene", async ({ 
   });
 
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 16,
+  );
   await expect(page.locator("[data-test=blocks]")).toHaveText("2");
 });
 
@@ -124,7 +137,10 @@ test("a refused command is reported and changes nothing", async ({ page }) => {
   await page.waitForFunction(() => (window as any).__gecko.revision() > 1);
 
   const reply = await page.evaluate(
-    () => (window as any).__gecko.apply({ op: "nonesuch" }) as Promise<{ ok: boolean }>,
+    () =>
+      (window as any).__gecko.apply({ op: "nonesuch" }) as Promise<{
+        ok: boolean;
+      }>,
   );
   expect(reply.ok).toBe(false);
   await expect(page.locator("[data-test=blocks]")).toHaveText("1");
@@ -141,17 +157,23 @@ test("the model is rebased on its own center", async ({ page }) => {
   expect(center[0]).toBeCloseTo(1e6 + 0.5, 3);
 });
 
-test("dragging a node with the mouse moves it in the kernel", async ({ page }) => {
+test("dragging a node with the mouse moves it in the kernel", async ({
+  page,
+}) => {
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
 
   // Screen coordinates are read off the camera's transform matrix, which the
   // *next* render updates. Reading them before the reframe has been drawn
   // aims the mouse with a stale matrix — which is right often enough to look
   // like it works.
   await page.evaluate(() => (window as any).__gecko.settled());
-  const name = (await page.evaluate(() => (window as any).__gecko.names()))[4] as number;
+  const name = (
+    await page.evaluate(() => (window as any).__gecko.names())
+  )[4] as number;
   const before = await page.evaluate(
     (n) => (window as any).__gecko.nodePosition(n),
     name,
@@ -172,7 +194,9 @@ test("dragging a node with the mouse moves it in the kernel", async ({ page }) =
     await page.mouse.move(box.x + at[0] + i * 10, box.y + at[1] - i * 6);
   }
   await page.mouse.up();
-  await page.waitForFunction(() => (window as any).__gecko.message().includes("moved"));
+  await page.waitForFunction(() =>
+    (window as any).__gecko.message().includes("moved"),
+  );
 
   // Dragging a node is not orbiting. Babylon suspends the controls of
   // `scene.activeCamera`, which with two cameras is whichever rendered last —
@@ -224,7 +248,9 @@ test("colors can be changed, and are remembered", async ({ page }) => {
   // three that say what a cell follows. Being frozen is not among them —
   // that is a shape, not a color.
   await expect(page.locator("#swatches input[type=color]")).toHaveCount(12);
-  expect(await page.evaluate(() => (window as any).__gecko.theme())).toMatchObject({
+  expect(
+    await page.evaluate(() => (window as any).__gecko.theme()),
+  ).toMatchObject({
     background: "#15171b",
   });
 
@@ -251,14 +277,18 @@ test("the triad turns the view, and can be hidden", async ({ page }) => {
   await boot(page);
   await openSection(page, "colors");
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 
-  expect(await page.evaluate(() => (window as any).__gecko.axesVisible())).toBe(true);
+  expect(await page.evaluate(() => (window as any).__gecko.axesVisible())).toBe(
+    true,
+  );
 
   // Aim a real mouse at the +X handle in the corner.
-  const at = (await page.evaluate(
-    () => (window as any).__gecko.axisScreen("+x"),
+  const at = (await page.evaluate(() =>
+    (window as any).__gecko.axisScreen("+x"),
   )) as [number, number];
   expect(at, "the +x handle should be on screen").not.toBeNull();
 
@@ -278,7 +308,9 @@ test("the triad turns the view, and can be hidden", async ({ page }) => {
 
   // Hidden means out of the way, not merely invisible.
   await page.locator("#show-axes").uncheck();
-  expect(await page.evaluate(() => (window as any).__gecko.axesVisible())).toBe(false);
+  expect(await page.evaluate(() => (window as any).__gecko.axesVisible())).toBe(
+    false,
+  );
   expect(
     await page.evaluate(
       (p) => (window as any).__gecko.pickAxis(p[0], p[1]),
@@ -289,14 +321,20 @@ test("the triad turns the view, and can be hidden", async ({ page }) => {
   // And that choice is remembered too.
   await page.reload();
   await page.waitForSelector("body[data-ready='1']", { timeout: 30_000 });
-  expect(await page.evaluate(() => (window as any).__gecko.axesVisible())).toBe(false);
+  expect(await page.evaluate(() => (window as any).__gecko.axesVisible())).toBe(
+    false,
+  );
 });
 
-test("faces and blocks are drawn, colored and faded from the panel", async ({ page }) => {
+test("faces and blocks are drawn, colored and faded from the panel", async ({
+  page,
+}) => {
   const errors = await boot(page);
   await openDrawer(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
 
   const surface = (group: string) =>
     page.evaluate((g) => (window as any).__gecko.surface(g), group);
@@ -333,14 +371,18 @@ test("each kind of cell shrinks towards its own center", async ({ page }) => {
   const errors = await boot(page);
   await openDrawer(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.locator("[data-test=blocks-visible]").check();
   // Blocks come up slightly shrunk, because that is what makes them legible
   // over the faces they are drawn from. Start both at full size, so what the
   // numbers below say about shrinking is about shrinking.
   await openGroup(page, "blocks");
   await page.locator("[data-test=blocks-shrink]").fill("1");
-  await page.waitForFunction(() => (window as any).__gecko.display().blocks.shrink === 1);
+  await page.waitForFunction(
+    () => (window as any).__gecko.display().blocks.shrink === 1,
+  );
 
   const extent = async (group: string) =>
     page.evaluate((g) => {
@@ -407,7 +449,9 @@ test("the display settings survive a reload", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
-test("every handle stays grabbable through an opaque surface", async ({ page }) => {
+test("every handle stays grabbable through an opaque surface", async ({
+  page,
+}) => {
   // All eight, not a node picked for being likely: Babylon's pointer system
   // returns the nearest pickable mesh, so when the surfaces joined that
   // contest it was exactly the handles **behind** one that stopped working —
@@ -418,13 +462,17 @@ test("every handle stays grabbable through an opaque surface", async ({ page }) 
   const errors = await boot(page);
   await openDrawer(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.locator("[data-test=blocks-visible]").check();
   await openGroup(page, "faces");
   await page.locator("[data-test=faces-alpha]").fill("1");
   await page.evaluate(() => (window as any).__gecko.settled());
 
-  const names = (await page.evaluate(() => (window as any).__gecko.names())) as number[];
+  const names = (await page.evaluate(() =>
+    (window as any).__gecko.names(),
+  )) as number[];
   expect(names).toHaveLength(8);
   const box = (await page.locator("#view").boundingBox())!;
 
@@ -461,14 +509,20 @@ test("every handle stays grabbable through an opaque surface", async ({ page }) 
   }
 
   // Dragged, never selected: a handle is a handle even with a face over it.
-  expect(await page.evaluate(() => (window as any).__gecko.selection())).toEqual([]);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.selection()),
+  ).toEqual([]);
   expect(errors).toEqual([]);
 });
 
-test("zooming in stops at the model instead of going through it", async ({ page }) => {
+test("zooming in stops at the model instead of going through it", async ({
+  page,
+}) => {
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 
   const camera = () => page.evaluate(() => (window as any).__gecko.camera());
@@ -496,9 +550,13 @@ test("two faces are picked with the mouse and glued", async ({ page }) => {
   // Two cubes side by side, sharing the plane x = 1.5 — the button spaces
   // them, so they are glued across the gap rather than at a touching face.
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 16,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 
   // Nothing to glue until two faces are chosen.
@@ -509,20 +567,27 @@ test("two faces are picked with the mouse and glued", async ({ page }) => {
 
   const box = (await page.locator("#view").boundingBox())!;
   for (const face of facing) {
-    const at = (await page.evaluate((f) => (window as any).__gecko.faceScreen(f), face)) as
-      | [number, number]
-      | null;
+    const at = (await page.evaluate(
+      (f) => (window as any).__gecko.faceScreen(f),
+      face,
+    )) as [number, number] | null;
     expect(at, `face ${face} should be on screen`).not.toBeNull();
     await page.mouse.click(box.x + at![0], box.y + at![1]);
   }
 
   // Both picked, and the panel says what gluing them would do.
-  expect(await page.evaluate(() => (window as any).__gecko.selection())).toHaveLength(2);
-  await expect(page.locator("#status")).toContainText("will be welded where they meet");
+  expect(
+    await page.evaluate(() => (window as any).__gecko.selection()),
+  ).toHaveLength(2);
+  await expect(page.locator("#status")).toContainText(
+    "will be welded where they meet",
+  );
   await expect(page.locator("#glue")).toBeEnabled();
 
   await page.locator("#glue").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 12);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 12,
+  );
 
   // **Which** two faces a click lands on is a question about the camera:
   // the faces looking at each other are in the middle of the model, and
@@ -538,7 +603,9 @@ test("two faces are picked with the mouse and glued", async ({ page }) => {
   await expect(page.locator("[data-test=faces]")).toHaveText("11");
   await expect(page.locator("[data-test=blocks]")).toHaveText("2");
   // And the selection is gone: those two names mean something else now.
-  expect(await page.evaluate(() => (window as any).__gecko.selection())).toEqual([]);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.selection()),
+  ).toEqual([]);
   await expect(page.locator("#glue")).toBeDisabled();
   expect(errors).toEqual([]);
 });
@@ -550,9 +617,13 @@ test("a glue across a gap meets in the middle", async ({ page }) => {
   // whatever is in front.
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 16,
+  );
 
   /**
    * The distinct x every **node** sits at.
@@ -564,7 +635,8 @@ test("a glue across a gap meets in the middle", async ({ page }) => {
     page.evaluate(() => {
       const g = (window as any).__gecko;
       const seen = new Set<number>();
-      for (const name of g.names()) seen.add(Math.round(g.nodePosition(name)[0] * 1e4) / 1e4);
+      for (const name of g.names())
+        seen.add(Math.round(g.nodePosition(name)[0] * 1e4) / 1e4);
       return [...seen].sort((a: number, b: number) => a - b);
     });
 
@@ -578,7 +650,9 @@ test("a glue across a gap meets in the middle", async ({ page }) => {
     g.apply({ op: "glue_faces", first, second });
     await g.refresh();
   });
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 12);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 12,
+  );
 
   // One column where there were two, half way between them: the faces met
   // in the middle, and neither block was dragged onto the other.
@@ -586,28 +660,37 @@ test("a glue across a gap meets in the middle", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
-test("dragging from a face turns the view instead of selecting it", async ({ page }) => {
+test("dragging from a face turns the view instead of selecting it", async ({
+  page,
+}) => {
   // Orbiting starts wherever the pointer happens to be, which is usually on
   // the model. A press-move-release must not also count as a pick.
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 
-  const face = (await page.evaluate(() => (window as any).__gecko.surface("faces").faces[0])) as number;
-  const at = (await page.evaluate((f) => (window as any).__gecko.faceScreen(f), face)) as [
-    number,
-    number,
-  ];
+  const face = (await page.evaluate(
+    () => (window as any).__gecko.surface("faces").faces[0],
+  )) as number;
+  const at = (await page.evaluate(
+    (f) => (window as any).__gecko.faceScreen(f),
+    face,
+  )) as [number, number];
   const box = (await page.locator("#view").boundingBox())!;
   const before = await page.evaluate(() => (window as any).__gecko.camera());
 
   await page.mouse.move(box.x + at[0], box.y + at[1]);
   await page.mouse.down();
-  for (let i = 1; i <= 6; i++) await page.mouse.move(box.x + at[0] + i * 12, box.y + at[1]);
+  for (let i = 1; i <= 6; i++)
+    await page.mouse.move(box.x + at[0] + i * 12, box.y + at[1]);
   await page.mouse.up();
 
-  expect(await page.evaluate(() => (window as any).__gecko.selection())).toEqual([]);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.selection()),
+  ).toEqual([]);
   const after = await page.evaluate(() => (window as any).__gecko.camera());
   expect(after.alpha).not.toBeCloseTo(before.alpha, 3);
   expect(errors).toEqual([]);
@@ -619,16 +702,23 @@ test("gluing leaves the camera exactly where it was", async ({ page }) => {
   // is a different question from whether the camera should move.
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 16,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 
   // Put the camera somewhere deliberate, so "unchanged" means something.
   const box = (await page.locator("#view").boundingBox())!;
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
-  await page.mouse.move(box.x + box.width / 2 + 60, box.y + box.height / 2 + 30);
+  await page.mouse.move(
+    box.x + box.width / 2 + 60,
+    box.y + box.height / 2 + 30,
+  );
   await page.mouse.up();
   await page.mouse.wheel(0, -240);
   // Babylon keeps applying inertia after a gesture, so "unchanged" means
@@ -648,7 +738,9 @@ test("gluing leaves the camera exactly where it was", async ({ page }) => {
     facing,
   );
   await page.locator("#glue").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 12);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 12,
+  );
 
   const after = await page.evaluate(() => (window as any).__gecko.camera());
   expect(after.alpha).toBe(before.alpha);
@@ -657,11 +749,16 @@ test("gluing leaves the camera exactly where it was", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
-test("recentring shows everything without changing the direction", async ({ page }) => {
+test("recentring shows everything without changing the direction", async ({
+  page,
+}) => {
   const errors = await boot(page);
   for (let i = 0; i < 3; i++) {
     await page.locator("#cube").click();
-    await page.waitForFunction((n) => (window as any).__gecko.counts().nodes === n, (i + 1) * 8);
+    await page.waitForFunction(
+      (n) => (window as any).__gecko.counts().nodes === n,
+      (i + 1) * 8,
+    );
   }
   await page.evaluate(() => (window as any).__gecko.settled());
 
@@ -684,13 +781,20 @@ test("recentring shows everything without changing the direction", async ({ page
   const offScreen = async () =>
     page.evaluate(() => {
       const g = (window as any).__gecko;
-      const r = (document.querySelector("#view") as HTMLCanvasElement).getBoundingClientRect();
+      const r = (
+        document.querySelector("#view") as HTMLCanvasElement
+      ).getBoundingClientRect();
       return (g.names() as number[]).filter((n) => {
         const at = g.nodeScreen(n) as [number, number] | null;
-        return !at || at[0] < 0 || at[1] < 0 || at[0] > r.width || at[1] > r.height;
+        return (
+          !at || at[0] < 0 || at[1] < 0 || at[0] > r.width || at[1] > r.height
+        );
       }).length;
     });
-  expect(await offScreen(), "the zoom should have lost some of the model").toBeGreaterThan(0);
+  expect(
+    await offScreen(),
+    "the zoom should have lost some of the model",
+  ).toBeGreaterThan(0);
 
   // Record every frame's radius while it moves. Sampling at one chosen
   // moment instead would be a bet on how fast the machine is — and on a slow
@@ -711,13 +815,20 @@ test("recentring shows everything without changing the direction", async ({ page
   // It glided: a cut goes straight from one radius to the other and leaves
   // nothing in between, however the frames happen to fall.
   const after = await page.evaluate(() => (window as any).__gecko.camera());
-  const between = (await page.evaluate(() => (window as any).__radii)) as number[];
-  const partWay = between.filter((r) => r > before.radius + 1e-6 && r < after.radius - 1e-6);
+  const between = (await page.evaluate(
+    () => (window as any).__radii,
+  )) as number[];
+  const partWay = between.filter(
+    (r) => r > before.radius + 1e-6 && r < after.radius - 1e-6,
+  );
   // One is the whole claim: it did not get there in a single step. A cut
   // leaves exactly none however the frames fall, so this still fails on one
   // — and asking for more was a bet on the frame rate that a CI runner
   // drawing seven frames in 450 ms, most of them at the eased ends, lost.
-  expect(partWay.length, `radii seen: ${between.join(", ")}`).toBeGreaterThanOrEqual(1);
+  expect(
+    partWay.length,
+    `radii seen: ${between.join(", ")}`,
+  ).toBeGreaterThanOrEqual(1);
 
   // Everything in view, and looked at from exactly where it was.
   expect(await offScreen()).toBe(0);
@@ -730,19 +841,23 @@ test("recentring shows everything without changing the direction", async ({ page
 test("a block is picked and removed", async ({ page }) => {
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 16,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 
   await expect(page.locator("#remove")).toBeDisabled();
 
   // One click is enough: a pick knows which block's side it landed on.
   const face = (await page.evaluate(() => facingPair()))[0] as number;
-  const at = (await page.evaluate((f) => (window as any).__gecko.faceScreen(f), face)) as [
-    number,
-    number,
-  ];
+  const at = (await page.evaluate(
+    (f) => (window as any).__gecko.faceScreen(f),
+    face,
+  )) as [number, number];
   const box = (await page.locator("#view").boundingBox())!;
   await page.mouse.click(box.x + at[0], box.y + at[1]);
 
@@ -750,10 +865,14 @@ test("a block is picked and removed", async ({ page }) => {
   await expect(page.locator("#status")).toContainText("block");
 
   await page.locator("#remove").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await expect(page.locator("[data-test=blocks]")).toHaveText("1");
   await expect(page.locator("[data-test=faces]")).toHaveText("6");
-  expect(await page.evaluate(() => (window as any).__gecko.selection())).toEqual([]);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.selection()),
+  ).toEqual([]);
   await expect(page.locator("#remove")).toBeDisabled();
   expect(errors).toEqual([]);
 });
@@ -763,21 +882,31 @@ test("the toolbar and the keyboard are the same thing", async ({ page }) => {
   // shortcut did something subtly different would be the worst of both.
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
 
   await page.keyboard.press("c");
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 16,
+  );
 
   // And the keys that are not actions are left alone.
   await page.keyboard.press("q");
-  expect(await page.evaluate(() => (window as any).__gecko.counts().nodes)).toBe(16);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.counts().nodes),
+  ).toBe(16);
   expect(errors).toEqual([]);
 });
 
-test("the interface folds away, and remembers that it did", async ({ page }) => {
+test("the interface folds away, and remembers that it did", async ({
+  page,
+}) => {
   const errors = await boot(page);
   // Shut to begin with: the window belongs to the model.
-  expect(await page.evaluate(() => (window as any).__gecko.chrome())).toMatchObject({
+  expect(
+    await page.evaluate(() => (window as any).__gecko.chrome()),
+  ).toMatchObject({
     drawer: false,
     hidden: false,
   });
@@ -785,7 +914,10 @@ test("the interface folds away, and remembers that it did", async ({ page }) => 
 
   await page.keyboard.press("Tab");
   await expect(page.locator("#drawer")).toBeVisible();
-  await expect(page.locator("#display")).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("#display")).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
 
   // Everything away, toolbar and readout included.
   await page.keyboard.press("Shift+Tab");
@@ -800,7 +932,9 @@ test("the interface folds away, and remembers that it did", async ({ page }) => 
   expect(errors).toEqual([]);
 });
 
-test("the help card lists the keys, and any key dismisses it", async ({ page }) => {
+test("the help card lists the keys, and any key dismisses it", async ({
+  page,
+}) => {
   const errors = await boot(page);
   await expect(page.locator("#help")).toBeHidden();
 
@@ -814,7 +948,9 @@ test("the help card lists the keys, and any key dismisses it", async ({ page }) 
   // is a trap. And the key that dismissed it does nothing else.
   await page.keyboard.press("c");
   await expect(page.locator("#help")).toBeHidden();
-  expect(await page.evaluate(() => (window as any).__gecko.counts().nodes)).toBe(0);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.counts().nodes),
+  ).toBe(0);
   expect(errors).toEqual([]);
 });
 
@@ -825,7 +961,9 @@ test("typing in a field is typing, not a shortcut", async ({ page }) => {
   await openGroup(page, "faces");
   await page.locator("[data-test=faces-alpha]").focus();
   await page.keyboard.press("c");
-  expect(await page.evaluate(() => (window as any).__gecko.counts().nodes)).toBe(0);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.counts().nodes),
+  ).toBe(0);
 
   // Tab from inside the drawer walks its fields rather than shutting it.
   await page.keyboard.press("Tab");
@@ -835,15 +973,21 @@ test("typing in a field is typing, not a shortcut", async ({ page }) => {
 
 /** Width and height out of a PNG's header, which is all this needs to read. */
 function pngSize(bytes: Buffer): { width: number; height: number } {
-  expect(bytes.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  expect(bytes.subarray(0, 8)).toEqual(
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+  );
   expect(bytes.subarray(12, 16).toString()).toBe("IHDR");
   return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
 }
 
-test("a picture is saved, at the size the drawer asks for", async ({ page }) => {
+test("a picture is saved, at the size the drawer asks for", async ({
+  page,
+}) => {
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 
   const canvas = await page.evaluate(() => {
@@ -856,7 +1000,9 @@ test("a picture is saved, at the size the drawer asks for", async ({ page }) => 
   const saved = await download;
 
   // Named by the moment, so the files sort the way they were taken.
-  expect(saved.suggestedFilename()).toMatch(/^gecko-\d{4}-\d{2}-\d{2}-\d{6}\.png$/);
+  expect(saved.suggestedFilename()).toMatch(
+    /^gecko-\d{4}-\d{2}-\d{2}-\d{6}\.png$/,
+  );
   const where = await saved.path();
   const size = pngSize(await readFile(where));
   // Twice the canvas by default: a figure in a paper wants more pixels than
@@ -871,12 +1017,17 @@ test("a picture can be saved with nothing behind it", async ({ page }) => {
   // For dropping a figure onto a page whose color you do not know yet.
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 
   const cornerAlpha = (transparent: boolean) =>
     page.evaluate(async (t) => {
-      const url = await (window as any).__gecko.capture({ scale: 1, transparent: t });
+      const url = await (window as any).__gecko.capture({
+        scale: 1,
+        transparent: t,
+      });
       const image = new Image();
       await new Promise((done) => {
         image.onload = done;
@@ -893,7 +1044,9 @@ test("a picture can be saved with nothing behind it", async ({ page }) => {
   expect(await cornerAlpha(false)).toBe(255);
   expect(await cornerAlpha(true)).toBe(0);
   // And the scene is left as it was found, whatever the capture did to it.
-  expect(await page.evaluate(() => (window as any).__gecko.theme().background)).toBe("#15171b");
+  expect(
+    await page.evaluate(() => (window as any).__gecko.theme().background),
+  ).toBe("#15171b");
   expect(errors).toEqual([]);
 });
 
@@ -918,27 +1071,33 @@ test("clicking an edge lights up its sheet", async ({ page }) => {
   const errors = await boot(page);
   await page.evaluate(EDGE_NEAR);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 
   const edge = (await page.evaluate(() => edgeNear([0.5, 0, 0]))) as number;
-  const at = (await page.evaluate((e) => (window as any).__gecko.edgeScreen(e), edge)) as [
-    number,
-    number,
-  ];
+  const at = (await page.evaluate(
+    (e) => (window as any).__gecko.edgeScreen(e),
+    edge,
+  )) as [number, number];
   const box = (await page.locator("#view").boundingBox())!;
   await page.mouse.click(box.x + at[0], box.y + at[1]);
 
   // Four parallel edges on a lone cube, and the one clicked is among them.
   await page.waitForFunction(() => (window as any).__gecko.sheet().length > 0);
-  const lit = (await page.evaluate(() => (window as any).__gecko.sheet())) as number[];
+  const lit = (await page.evaluate(() =>
+    (window as any).__gecko.sheet(),
+  )) as number[];
   expect(lit).toHaveLength(4);
   expect(lit).toContain(edge);
   await expect(page.locator("#status")).toContainText("4 edges");
 
   // Clicking it again puts it out.
   await page.mouse.click(box.x + at[0], box.y + at[1]);
-  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 0);
+  await page.waitForFunction(
+    () => (window as any).__gecko.sheet().length === 0,
+  );
   expect(errors).toEqual([]);
 });
 
@@ -956,7 +1115,9 @@ async function litPixels(page: import("@playwright/test").Page) {
     flat.width = view.width;
     flat.height = view.height;
     flat.getContext("2d")!.drawImage(view, 0, 0);
-    const pixels = flat.getContext("2d")!.getImageData(0, 0, view.width, view.height).data;
+    const pixels = flat
+      .getContext("2d")!
+      .getImageData(0, 0, view.width, view.height).data;
     let lit = 0;
     for (let i = 0; i < pixels.length; i += 4) {
       const [r, g, b] = [pixels[i], pixels[i + 1], pixels[i + 2]];
@@ -966,7 +1127,9 @@ async function litPixels(page: import("@playwright/test").Page) {
   });
 }
 
-test("a lit sheet is the same thickness however far away it is", async ({ page }) => {
+test("a lit sheet is the same thickness however far away it is", async ({
+  page,
+}) => {
   // The sheet is something you are being shown, not part of the model, so
   // its width belongs to the screen. Drawn in scene units instead it reads
   // as a measure of where the camera happens to be — and every recentring
@@ -974,7 +1137,9 @@ test("a lit sheet is the same thickness however far away it is", async ({ page }
   const errors = await boot(page);
   await page.evaluate(EDGE_NEAR);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
 
   // Creating a cube glides the camera into place, and that glide writes to
   // `radius` every frame. Setting a distance while it runs is setting a
@@ -984,15 +1149,16 @@ test("a lit sheet is the same thickness however far away it is", async ({ page }
 
   const edge = (await page.evaluate(() => edgeNear([0.5, 0, 0]))) as number;
   await page.evaluate((e) => (window as any).__gecko.pickEdgeByName(e), edge);
-  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 4);
+  await page.waitForFunction(
+    () => (window as any).__gecko.sheet().length === 4,
+  );
 
   const at = async (radius: number) => {
     await page.evaluate((r) => (window as any).__gecko.setRadius(r), radius);
     await page.evaluate(() => (window as any).__gecko.settled());
-    expect(await page.evaluate(() => (window as any).__gecko.camera().radius)).toBeCloseTo(
-      radius,
-      3,
-    );
+    expect(
+      await page.evaluate(() => (window as any).__gecko.camera().radius),
+    ).toBeCloseTo(radius, 3);
     return litPixels(page);
   };
   const near = await at(6);
@@ -1009,7 +1175,10 @@ test("a lit sheet is the same thickness however far away it is", async ({ page }
 });
 
 /** Cut the model in half along `axis`, once, wherever the first edge runs. */
-async function cutInHalf(page: import("@playwright/test").Page, at: [number, number, number]) {
+async function cutInHalf(
+  page: import("@playwright/test").Page,
+  at: [number, number, number],
+) {
   const edge = (await page.evaluate((w) => edgeNear(w), at)) as number;
   await page.evaluate(async (e) => {
     const g = (window as any).__gecko;
@@ -1026,13 +1195,17 @@ test("a lit sheet is hidden by the model it runs through", async ({ page }) => {
   const errors = await boot(page);
   await page.evaluate(EDGE_NEAR);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
 
   // In two each way, so the sheet has edges with blocks in front of them.
   await cutInHalf(page, [0.5, 0, 0]);
   await cutInHalf(page, [0, 0.5, 0]);
   await cutInHalf(page, [0, 0, 0.5]);
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 27);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 27,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 
   const edge = (await page.evaluate(() => edgeNear([0, 0.25, 0]))) as number;
@@ -1046,22 +1219,30 @@ test("a lit sheet is hidden by the model it runs through", async ({ page }) => {
   // so every edge of it comes out at its own color. Drawn over everything,
   // the two counts would be the same number.
   await page.keyboard.press("1");
-  await page.waitForFunction(() => !(window as any).__gecko.prefs().faces.visible);
+  await page.waitForFunction(
+    () => !(window as any).__gecko.prefs().faces.visible,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
   const bare = await litPixels(page);
 
-  expect(bare, `through ${through}, bare ${bare}`).toBeGreaterThan(through * 1.1);
+  expect(bare, `through ${through}, bare ${bare}`).toBeGreaterThan(
+    through * 1.1,
+  );
   expect(errors).toEqual([]);
 });
 
-test("N takes the lit sheet away and leaves the gap it was in", async ({ page }) => {
+test("N takes the lit sheet away and leaves the gap it was in", async ({
+  page,
+}) => {
   // Del closes behind itself, which is what you want nine times in ten.
   // This is the other one: the two walls stay where they are, so the model
   // keeps its shape and gains a slot.
   const errors = await boot(page);
   await page.evaluate(EDGE_NEAR);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await cutInHalf(page, [0.5, 0, 0]);
   await cutInHalf(page, [0.75, 0, 0]);
   await expect(page.locator("[data-test=blocks]")).toHaveText("3");
@@ -1070,7 +1251,9 @@ test("N takes the lit sheet away and leaves the gap it was in", async ({ page })
   // The middle layer, the thin one between x = 0.5 and x = 0.75.
   const edge = (await page.evaluate(() => edgeNear([0.625, 0, 0]))) as number;
   await page.evaluate((e) => (window as any).__gecko.pickEdgeByName(e), edge);
-  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 4);
+  await page.waitForFunction(
+    () => (window as any).__gecko.sheet().length === 4,
+  );
 
   await page.keyboard.press("n");
   await expect(page.locator("[data-test=blocks]")).toHaveText("2");
@@ -1086,7 +1269,9 @@ test("N takes the lit sheet away and leaves the gap it was in", async ({ page })
  *  it, then halve the half. Twenty-seven blocks, sixty-four nodes. */
 async function cutGrid(page: import("@playwright/test").Page) {
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   for (const at of [
     [0.5, 0, 0],
     [0, 0.5, 0],
@@ -1097,7 +1282,9 @@ async function cutGrid(page: import("@playwright/test").Page) {
   ] as [number, number, number][]) {
     await cutInHalf(page, at);
   }
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 64);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 64,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 }
 
@@ -1112,7 +1299,9 @@ test("J stands you in one layer, and the arrows walk the model a layer at a time
 
   const edge = (await page.evaluate(() => edgeNear([0.125, 0, 0]))) as number;
   await page.evaluate((e) => (window as any).__gecko.pickEdgeByName(e), edge);
-  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 16);
+  await page.waitForFunction(
+    () => (window as any).__gecko.sheet().length === 16,
+  );
 
   const drawn = () =>
     page.evaluate(() => ({
@@ -1123,7 +1312,9 @@ test("J stands you in one layer, and the arrows walk the model a layer at a time
 
   // One layer of nine blocks: sixteen corners on each of its two faces.
   await page.keyboard.press("j");
-  await page.waitForFunction(() => (window as any).__gecko.message().includes("the layer through"));
+  await page.waitForFunction(() =>
+    (window as any).__gecko.message().includes("the layer through"),
+  );
   expect(await drawn()).toEqual({ nodes: 32, edges: 64 });
 
   // Along the model, a layer at a time, and off the end of it. Each step
@@ -1133,8 +1324,13 @@ test("J stands you in one layer, and the arrows walk the model a layer at a time
   for (let step = 0; step < 3; step++) {
     await page.keyboard.press("ArrowRight");
     await page.evaluate(() => (window as any).__gecko.settled());
-    seen.push((await page.evaluate(() => (window as any).__gecko.message())) as string);
-    expect(await drawn(), `after ${step + 1} steps`).toEqual({ nodes: 32, edges: 64 });
+    seen.push(
+      (await page.evaluate(() => (window as any).__gecko.message())) as string,
+    );
+    expect(await drawn(), `after ${step + 1} steps`).toEqual({
+      nodes: 32,
+      edges: 64,
+    });
   }
   expect(seen[2], `${seen.join(" | ")}`).toBe("no layer that way");
   // And the three it went through are three different layers, not two of
@@ -1147,7 +1343,9 @@ test("J stands you in one layer, and the arrows walk the model a layer at a time
   expect(await drawn()).toEqual({ nodes: 32, edges: 64 });
 
   await page.keyboard.press("Escape");
-  await page.waitForFunction(() => (window as any).__gecko.message().includes("whole model"));
+  await page.waitForFunction(() =>
+    (window as any).__gecko.message().includes("whole model"),
+  );
   expect(await drawn()).toEqual({ nodes: 64, edges: 144 });
   expect(errors).toEqual([]);
 });
@@ -1163,24 +1361,34 @@ test("a lit sheet stops at the edge of what is on screen", async ({ page }) => {
   // Stand in the first layer across x.
   const along = (await page.evaluate(() => edgeNear([0.125, 0, 0]))) as number;
   await page.evaluate((e) => (window as any).__gecko.pickEdgeByName(e), along);
-  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 16);
+  await page.waitForFunction(
+    () => (window as any).__gecko.sheet().length === 16,
+  );
   await page.keyboard.press("j");
-  await page.waitForFunction(() => (window as any).__gecko.message().includes("the layer through"));
+  await page.waitForFunction(() =>
+    (window as any).__gecko.message().includes("the layer through"),
+  );
 
   // And light a sheet that runs across it and out through the other two.
   // Sixteen edges, at the four values of x by the four of z; the layer is
   // two of those four values of x, so half of them are on screen.
   const across = (await page.evaluate(() => edgeNear([0, 0.125, 0]))) as number;
   await page.evaluate((e) => (window as any).__gecko.pickEdgeByName(e), across);
-  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 16);
+  await page.waitForFunction(
+    () => (window as any).__gecko.sheet().length === 16,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
   expect(await page.evaluate(() => (window as any).__gecko.litDrawn())).toBe(8);
 
   // Out again, and the rest of it comes back.
   await page.keyboard.press("Escape");
-  await page.waitForFunction(() => (window as any).__gecko.message().includes("whole model"));
+  await page.waitForFunction(() =>
+    (window as any).__gecko.message().includes("whole model"),
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
-  expect(await page.evaluate(() => (window as any).__gecko.litDrawn())).toBe(16);
+  expect(await page.evaluate(() => (window as any).__gecko.litDrawn())).toBe(
+    16,
+  );
   expect(errors).toEqual([]);
 });
 
@@ -1192,7 +1400,9 @@ test("the arrow keys do not turn the view", async ({ page }) => {
   // say they do.
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 
   // On the canvas, because that is where the camera listens: a key sent to
@@ -1225,17 +1435,25 @@ test("editing from inside a layer reaches the kernel, and the layer gives way", 
 
   const edge = (await page.evaluate(() => edgeNear([0.125, 0, 0]))) as number;
   await page.evaluate((e) => (window as any).__gecko.pickEdgeByName(e), edge);
-  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 16);
+  await page.waitForFunction(
+    () => (window as any).__gecko.sheet().length === 16,
+  );
   await page.keyboard.press("j");
-  await page.waitForFunction(() => (window as any).__gecko.message().includes("the layer through"));
+  await page.waitForFunction(() =>
+    (window as any).__gecko.message().includes("the layer through"),
+  );
 
   // The layer you are standing in, taken away from inside it.
   await page.keyboard.press("n");
   await expect(page.locator("[data-test=blocks]")).toHaveText("18");
   // And nowhere to stand any more, so the whole model comes back rather
   // than a filter made of names nothing answers to showing nothing at all.
-  await page.waitForFunction(() => (window as any).__gecko.message().includes("the layer is gone"));
-  expect(await page.evaluate(() => (window as any).__gecko.nodesDrawn())).toBe(48);
+  await page.waitForFunction(() =>
+    (window as any).__gecko.message().includes("the layer is gone"),
+  );
+  expect(await page.evaluate(() => (window as any).__gecko.nodesDrawn())).toBe(
+    48,
+  );
   expect(errors).toEqual([]);
 });
 
@@ -1243,16 +1461,28 @@ test("a sheet runs on through a glued block", async ({ page }) => {
   const errors = await boot(page);
   await page.evaluate(EDGE_NEAR);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 16,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 
   const facing = (await page.evaluate(() => facingPair())) as number[];
-  await page.evaluate((f) => (window as any).__gecko.choose({ face: f[0], block: 0 }), facing);
-  await page.evaluate((f) => (window as any).__gecko.choose({ face: f[1], block: 1 }), facing);
+  await page.evaluate(
+    (f) => (window as any).__gecko.choose({ face: f[0], block: 0 }),
+    facing,
+  );
+  await page.evaluate(
+    (f) => (window as any).__gecko.choose({ face: f[1], block: 1 }),
+    facing,
+  );
   await page.locator("#glue").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 12);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 12,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 
   // An edge lying in the seam, parallel to it: its sheet crosses into the
@@ -1260,16 +1490,22 @@ test("a sheet runs on through a glued block", async ({ page }) => {
   const seam = (await page.evaluate(() => edgeNear([1, 0.5, 0]))) as number;
   await page.evaluate((e) => (window as any).__gecko.pickEdgeByName(e), seam);
   await page.waitForFunction(() => (window as any).__gecko.sheet().length > 0);
-  expect(await page.evaluate(() => (window as any).__gecko.sheet())).toHaveLength(6);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.sheet()),
+  ).toHaveLength(6);
 
   // And one that does not lie in the seam stays in the block it started in.
   const away = (await page.evaluate(() => edgeNear([0.5, 0, 0]))) as number;
   await page.evaluate((e) => (window as any).__gecko.pickEdgeByName(e), away);
-  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 4);
+  await page.waitForFunction(
+    () => (window as any).__gecko.sheet().length === 4,
+  );
 
   // Esc clears it, as it clears a face selection.
   await page.keyboard.press("Escape");
-  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 0);
+  await page.waitForFunction(
+    () => (window as any).__gecko.sheet().length === 0,
+  );
   expect(errors).toEqual([]);
 });
 
@@ -1277,30 +1513,41 @@ test("dragging along an edge cuts the whole sheet", async ({ page }) => {
   const errors = await boot(page);
   await page.evaluate(EDGE_NEAR);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 
   const edge = (await page.evaluate(() => edgeNear([1, 0.5, 1]))) as number;
-  const at = (await page.evaluate((e) => (window as any).__gecko.edgeScreen(e), edge)) as [
-    number,
-    number,
-  ];
+  const at = (await page.evaluate(
+    (e) => (window as any).__gecko.edgeScreen(e),
+    edge,
+  )) as [number, number];
   const box = (await page.locator("#view").boundingBox())!;
   const camera = await page.evaluate(() => (window as any).__gecko.camera());
 
   await page.mouse.move(box.x + at[0], box.y + at[1]);
   await page.mouse.down();
   // Pressing lights the sheet; nothing is cut yet.
-  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 4);
-  expect(await page.evaluate(() => (window as any).__gecko.counts().nodes)).toBe(8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.sheet().length === 4,
+  );
+  expect(
+    await page.evaluate(() => (window as any).__gecko.counts().nodes),
+  ).toBe(8);
 
-  for (let i = 1; i <= 6; i++) await page.mouse.move(box.x + at[0], box.y + at[1] - i * 12);
+  for (let i = 1; i <= 6; i++)
+    await page.mouse.move(box.x + at[0], box.y + at[1] - i * 12);
   // Aimed, and said, and still nothing cut.
-  const aimed = (await page.evaluate(() => (window as any).__gecko.aimedAt())) as number;
+  const aimed = (await page.evaluate(() =>
+    (window as any).__gecko.aimedAt(),
+  )) as number;
   expect(aimed).toBeGreaterThan(0);
   expect(aimed).toBeLessThan(1);
   await expect(page.locator("#status")).toContainText("let go to cut");
-  expect(await page.evaluate(() => (window as any).__gecko.counts().nodes)).toBe(8);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.counts().nodes),
+  ).toBe(8);
 
   // Aiming is not orbiting: the pointer was taken off the camera.
   const during = await page.evaluate(() => (window as any).__gecko.camera());
@@ -1308,7 +1555,9 @@ test("dragging along an edge cuts the whole sheet", async ({ page }) => {
   expect(during.beta).toBe(camera.beta);
 
   await page.mouse.up();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 12);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 12,
+  );
 
   // One cube became two blocks, sharing a face.
   await expect(page.locator("[data-test=blocks]")).toHaveText("2");
@@ -1318,41 +1567,61 @@ test("dragging along an edge cuts the whole sheet", async ({ page }) => {
     edges: 20,
   });
   // The sheet is gone with the edge it was named by.
-  expect(await page.evaluate(() => (window as any).__gecko.sheet())).toEqual([]);
-  expect(await page.evaluate(() => (window as any).__gecko.aimedAt())).toBeNull();
+  expect(await page.evaluate(() => (window as any).__gecko.sheet())).toEqual(
+    [],
+  );
+  expect(
+    await page.evaluate(() => (window as any).__gecko.aimedAt()),
+  ).toBeNull();
   expect(errors).toEqual([]);
 });
 
-test("pressing an edge without moving selects it rather than cutting", async ({ page }) => {
+test("pressing an edge without moving selects it rather than cutting", async ({
+  page,
+}) => {
   // A cut cannot be undone, and a click is cheap to make by accident.
   const errors = await boot(page);
   await page.evaluate(EDGE_NEAR);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 
   const edge = (await page.evaluate(() => edgeNear([1, 0.5, 1]))) as number;
-  const at = (await page.evaluate((e) => (window as any).__gecko.edgeScreen(e), edge)) as [
-    number,
-    number,
-  ];
+  const at = (await page.evaluate(
+    (e) => (window as any).__gecko.edgeScreen(e),
+    edge,
+  )) as [number, number];
   const box = (await page.locator("#view").boundingBox())!;
 
   await page.mouse.click(box.x + at[0], box.y + at[1]);
-  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 4);
-  expect(await page.evaluate(() => (window as any).__gecko.counts().nodes)).toBe(8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.sheet().length === 4,
+  );
+  expect(
+    await page.evaluate(() => (window as any).__gecko.counts().nodes),
+  ).toBe(8);
 
   // And clicking it again puts the sheet out, still without cutting.
   await page.mouse.click(box.x + at[0], box.y + at[1]);
-  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 0);
-  expect(await page.evaluate(() => (window as any).__gecko.counts().nodes)).toBe(8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.sheet().length === 0,
+  );
+  expect(
+    await page.evaluate(() => (window as any).__gecko.counts().nodes),
+  ).toBe(8);
   expect(errors).toEqual([]);
 });
 
-test("pillowing lays a layer and leaves the surface where it was", async ({ page }) => {
+test("pillowing lays a layer and leaves the surface where it was", async ({
+  page,
+}) => {
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 
   // The highest face, chosen the way the eye would.
@@ -1380,7 +1649,9 @@ test("pillowing lays a layer and leaves the surface where it was", async ({ page
   await page.evaluate((t) => (window as any).__gecko.choose(t), top);
   await expect(page.locator("#pillow")).toBeEnabled();
   await page.locator("#pillow").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 12);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 12,
+  );
 
   await expect(page.locator("[data-test=blocks]")).toHaveText("2");
   await expect(page.locator("[data-test=faces]")).toHaveText("11");
@@ -1392,10 +1663,15 @@ test("pillowing lays a layer and leaves the surface where it was", async ({ page
     return (g.names() as number[]).map((n) => g.nodePosition(n)[2]);
   })) as number[];
   for (const z of before) {
-    expect(after.some((w) => Math.abs(w - z) < 1e-6), `height ${z} went missing`).toBe(true);
+    expect(
+      after.some((w) => Math.abs(w - z) < 1e-6),
+      `height ${z} went missing`,
+    ).toBe(true);
   }
   expect(new Set(after.map((z) => z.toFixed(6))).size).toBe(3);
-  expect(await page.evaluate(() => (window as any).__gecko.selection())).toEqual([]);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.selection()),
+  ).toEqual([]);
   expect(errors).toEqual([]);
 });
 
@@ -1404,7 +1680,9 @@ test("the selection grows as far as you like", async ({ page }) => {
   // third click no longer throws the first two away.
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 
   const faces = (await page.evaluate(() => {
@@ -1412,17 +1690,24 @@ test("the selection grows as far as you like", async ({ page }) => {
     return [0, 1, 2].map((q) => ({ face: s.faces[q], block: s.blocks[q] }));
   })) as { face: number; block: number }[];
 
-  for (const f of faces) await page.evaluate((t) => (window as any).__gecko.choose(t), f);
-  expect(await page.evaluate(() => (window as any).__gecko.selection())).toHaveLength(3);
+  for (const f of faces)
+    await page.evaluate((t) => (window as any).__gecko.choose(t), f);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.selection()),
+  ).toHaveLength(3);
   // Three is too many to glue and fine to pillow.
   await expect(page.locator("#glue")).toBeDisabled();
   await expect(page.locator("#pillow")).toBeEnabled();
   // All three lit, which is what tells you what the layer will cover.
-  expect(await page.evaluate(() => (window as any).__gecko.surface("faces").colors)).toBe(3);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.surface("faces").colors),
+  ).toBe(3);
 
   // Clicking one again takes it out rather than starting over.
   await page.evaluate((t) => (window as any).__gecko.choose(t), faces[0]);
-  expect(await page.evaluate(() => (window as any).__gecko.selection())).toHaveLength(2);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.selection()),
+  ).toHaveLength(2);
   await expect(page.locator("#glue")).toBeEnabled();
   expect(errors).toEqual([]);
 });
@@ -1437,14 +1722,22 @@ async function centerPixel(page: import("@playwright/test").Page) {
     flat.getContext("2d")!.drawImage(view, 0, 0);
     const at = flat
       .getContext("2d")!
-      .getImageData(Math.floor(view.width / 2), Math.floor(view.height / 2), 1, 1).data;
+      .getImageData(
+        Math.floor(view.width / 2),
+        Math.floor(view.height / 2),
+        1,
+        1,
+      ).data;
     return [at[0], at[1], at[2]] as [number, number, number];
   });
 }
 
-const apart = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+const apart = (a: number[], b: number[]) =>
+  Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 
-test("the nearer of two translucent blocks is the one you see", async ({ page }) => {
+test("the nearer of two translucent blocks is the one you see", async ({
+  page,
+}) => {
   // Which of them is nearer has to follow the camera. It cannot when every
   // cell is in one mesh: Babylon sorts transparent *meshes* back to front
   // and leaves the triangles inside one in the order they were built, so
@@ -1456,7 +1749,9 @@ test("the nearer of two translucent blocks is the one you see", async ({ page })
 
   // One cube, seen from +x: this is what that cube looks like on its own.
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.evaluate(() => (window as any).__gecko.snapTo("+x"));
   await page.evaluate(() => (window as any).__gecko.settled());
   const alone = await centerPixel(page);
@@ -1464,7 +1759,9 @@ test("the nearer of two translucent blocks is the one you see", async ({ page })
   // A second cube at a greater x, so it stands between that one and the
   // camera. Along the row they cover each other exactly.
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 16,
+  );
   await page.evaluate(() => (window as any).__gecko.snapTo("+x"));
   await page.evaluate(() => (window as any).__gecko.settled());
   const behindIt = await centerPixel(page);
@@ -1490,21 +1787,26 @@ test("a lit sheet is what the remove button takes away", async ({ page }) => {
   const errors = await boot(page);
   await page.evaluate(EDGE_NEAR);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 
   // Cut it in two, so there is a sheet worth removing.
   const edge = (await page.evaluate(() => edgeNear([1, 0.5, 1]))) as number;
-  const at = (await page.evaluate((e) => (window as any).__gecko.edgeScreen(e), edge)) as [
-    number,
-    number,
-  ];
+  const at = (await page.evaluate(
+    (e) => (window as any).__gecko.edgeScreen(e),
+    edge,
+  )) as [number, number];
   const box = (await page.locator("#view").boundingBox())!;
   await page.mouse.move(box.x + at[0], box.y + at[1]);
   await page.mouse.down();
-  for (let i = 1; i <= 6; i++) await page.mouse.move(box.x + at[0], box.y + at[1] - i * 10);
+  for (let i = 1; i <= 6; i++)
+    await page.mouse.move(box.x + at[0], box.y + at[1] - i * 10);
   await page.mouse.up();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 12);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 12,
+  );
 
   // Light the sheet across the upper slab and take it out.
   await expect(page.locator("#remove")).toBeDisabled();
@@ -1530,11 +1832,15 @@ test("a lit sheet is what the remove button takes away", async ({ page }) => {
   await expect(page.locator("#remove")).toBeEnabled();
 
   await page.locator("#remove").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
 
   // One block left, and nothing still lit.
   await expect(page.locator("[data-test=blocks]")).toHaveText("1");
-  expect(await page.evaluate(() => (window as any).__gecko.sheet())).toEqual([]);
+  expect(await page.evaluate(() => (window as any).__gecko.sheet())).toEqual(
+    [],
+  );
   await expect(page.locator("#remove")).toBeDisabled();
   expect(errors).toEqual([]);
 });
@@ -1543,7 +1849,9 @@ test("clicking the background lets go of everything", async ({ page }) => {
   const errors = await boot(page);
   await page.evaluate(EDGE_NEAR);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
   const box = (await page.locator("#view").boundingBox())!;
 
@@ -1553,9 +1861,13 @@ test("clicking the background lets go of everything", async ({ page }) => {
     return { face: s.faces[0], block: s.blocks[0] };
   })) as { face: number; block: number };
   await page.evaluate((f) => (window as any).__gecko.choose(f), face);
-  expect(await page.evaluate(() => (window as any).__gecko.selection())).toHaveLength(1);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.selection()),
+  ).toHaveLength(1);
   await page.mouse.click(box.x + 20, box.y + box.height - 20);
-  expect(await page.evaluate(() => (window as any).__gecko.selection())).toEqual([]);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.selection()),
+  ).toEqual([]);
 
   // And a lit sheet, which used to stay lit because only the faces were
   // being let go of.
@@ -1563,8 +1875,12 @@ test("clicking the background lets go of everything", async ({ page }) => {
   await page.evaluate((e) => (window as any).__gecko.pickEdgeByName(e), edge);
   await page.waitForFunction(() => (window as any).__gecko.sheet().length > 0);
   await page.mouse.click(box.x + 20, box.y + box.height - 20);
-  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 0);
-  expect(await page.evaluate(() => (window as any).__gecko.selectedEdge())).toBeNull();
+  await page.waitForFunction(
+    () => (window as any).__gecko.sheet().length === 0,
+  );
+  expect(
+    await page.evaluate(() => (window as any).__gecko.selectedEdge()),
+  ).toBeNull();
   await expect(page.locator("#remove")).toBeDisabled();
   expect(errors).toEqual([]);
 });
@@ -1575,7 +1891,9 @@ test("a lit sheet says how many blocks it would take", async ({ page }) => {
   const errors = await boot(page);
   await page.evaluate(EDGE_NEAR);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 
   const edge = (await page.evaluate(() => edgeNear([1, 0.5, 1]))) as number;
@@ -1615,7 +1933,10 @@ $Elements
 $EndElements
 `;
 
-async function openSquare(page: import("@playwright/test").Page, msh = SQUARE_MSH) {
+async function openSquare(
+  page: import("@playwright/test").Page,
+  msh = SQUARE_MSH,
+) {
   await page.locator("#msh").setInputFiles({
     name: "square.msh",
     mimeType: "text/plain",
@@ -1623,7 +1944,9 @@ async function openSquare(page: import("@playwright/test").Page, msh = SQUARE_MS
   });
 }
 
-test("everything on screen is drawn against one origin, even when it moves", async ({ page }) => {
+test("everything on screen is drawn against one origin, even when it moves", async ({
+  page,
+}) => {
   // The scene is sent rebased on a single origin so that f32 coordinates
   // stay small, and that origin **moves** when the model walks away from
   // it. Everything then has to be re-sent against the new one: the
@@ -1632,14 +1955,19 @@ test("everything on screen is drawn against one origin, even when it moves", asy
   // of the scene used to be is drawn an origin-shift away from the blocks.
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
 
   // A geometry a thousand kilometers away from that block: only its node
   // coordinates move, so it is the same square and still one surface.
   const far = SQUARE_MSH.split("$EndNodes")
     .map((part, at) =>
       at === 0
-        ? part.replace(/^([1-4]) (\S+)/gm, (_, id: string, x: string) => `${id} ${Number(x) + 1e6}`)
+        ? part.replace(
+            /^([1-4]) (\S+)/gm,
+            (_, id: string, x: string) => `${id} ${Number(x) + 1e6}`,
+          )
         : part,
     )
     .join("$EndNodes");
@@ -1647,7 +1975,9 @@ test("everything on screen is drawn against one origin, even when it moves", asy
   await expect(page.locator("[data-test=geom-surfaces]")).toHaveText("1");
 
   // Both on the session's origin, wherever its hysteresis has left it.
-  const between = (await page.evaluate(() => (window as any).__gecko.origins())) as {
+  const between = (await page.evaluate(() =>
+    (window as any).__gecko.origins(),
+  )) as {
     view: number[];
     geometry: number[] | null;
   };
@@ -1656,7 +1986,9 @@ test("everything on screen is drawn against one origin, even when it moves", asy
   // Something picked on the geometry, to be looked for again afterwards: a
   // re-centring fetches the geometry again, and a selection dropped over a
   // change of coordinates is a click lost for no reason anybody can see.
-  await page.evaluate(() => (window as any).__gecko.selectGeom([{ dim: 2, tag: 1 }]));
+  await page.evaluate(() =>
+    (window as any).__gecko.selectGeom([{ dim: 2, tag: 1 }]),
+  );
 
   // The block goes, and now the model *is* the geometry: the origin has to
   // follow it out there, which is the moment the two could part company.
@@ -1668,14 +2000,21 @@ test("everything on screen is drawn against one origin, even when it moves", asy
     g.apply({ op: "remove_block", block });
     await g.refresh();
   });
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 0);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 0,
+  );
 
-  const after = (await page.evaluate(() => (window as any).__gecko.origins())) as {
+  const after = (await page.evaluate(() =>
+    (window as any).__gecko.origins(),
+  )) as {
     view: number[];
     geometry: number[] | null;
   };
   expect(after.view[0]).toBeGreaterThan(999_999);
-  expect(after.geometry, "the geometry is drawn against a stale origin").toEqual(after.view);
+  expect(
+    after.geometry,
+    "the geometry is drawn against a stale origin",
+  ).toEqual(after.view);
   expect(
     await page.evaluate(() => (window as any).__gecko.geomSelection()),
     "the selection survived the re-centring",
@@ -1683,7 +2022,9 @@ test("everything on screen is drawn against one origin, even when it moves", asy
   expect(errors).toEqual([]);
 });
 
-test("a geometry is opened from a file and drawn in its three groups", async ({ page }) => {
+test("a geometry is opened from a file and drawn in its three groups", async ({
+  page,
+}) => {
   const errors = await boot(page);
   await openSquare(page);
 
@@ -1701,7 +2042,9 @@ test("a geometry is opened from a file and drawn in its three groups", async ({ 
   expect(errors).toEqual([]);
 });
 
-test("each geometry group is hidden, colored and faded on its own", async ({ page }) => {
+test("each geometry group is hidden, colored and faded on its own", async ({
+  page,
+}) => {
   const errors = await boot(page);
   await openSquare(page);
   await expect(page.locator("[data-test=geom-curves]")).toHaveText("4");
@@ -1710,7 +2053,10 @@ test("each geometry group is hidden, colored and faded on its own", async ({ pag
   const count = (group: string) =>
     page.evaluate((g) => (window as any).__gecko.geomCount(g), group);
   const look = (group: string, tag: number) =>
-    page.evaluate(([g, t]) => (window as any).__gecko.geomLook(g, t), [group, tag] as const);
+    page.evaluate(([g, t]) => (window as any).__gecko.geomLook(g, t), [
+      group,
+      tag,
+    ] as const);
 
   // Hidden from the drawer, and the other two groups stay.
   await page.locator('[data-test="curves-visible"]').uncheck();
@@ -1725,7 +2071,9 @@ test("each geometry group is hidden, colored and faded on its own", async ({ pag
   const uniform = await look("curves", 11);
   expect((await look("curves", 12))!.color).toBe(uniform!.color);
   await page.locator('[data-test="curves-mode"]').selectOption("id");
-  expect((await look("curves", 12))!.color).not.toBe((await look("curves", 11))!.color);
+  expect((await look("curves", 12))!.color).not.toBe(
+    (await look("curves", 11))!.color,
+  );
 
   // And opacity, per group.
   await openGroup(page, "surfaces");
@@ -1735,7 +2083,9 @@ test("each geometry group is hidden, colored and faded on its own", async ({ pag
   expect(errors).toEqual([]);
 });
 
-test("the geometry groups have keys of their own, and they are remembered", async ({ page }) => {
+test("the geometry groups have keys of their own, and they are remembered", async ({
+  page,
+}) => {
   const errors = await boot(page);
   await openSquare(page);
   await expect(page.locator("[data-test=geom-surfaces]")).toHaveText("1");
@@ -1744,7 +2094,9 @@ test("the geometry groups have keys of their own, and they are remembered", asyn
     page.evaluate((g) => (window as any).__gecko.geomCount(g), group);
   await page.keyboard.press("Digit4");
   expect(await count("surfaces")).toBe(0);
-  await expect(page.locator("#status")).toContainText("geometric surfaces hidden");
+  await expect(page.locator("#status")).toContainText(
+    "geometric surfaces hidden",
+  );
   await page.keyboard.press("Digit5");
   expect(await count("curves")).toBe(0);
   await page.keyboard.press("Digit6");
@@ -1754,15 +2106,21 @@ test("the geometry groups have keys of their own, and they are remembered", asyn
   // it lives in the kernel and a static page's kernel goes with the tab.
   await page.reload();
   await page.waitForSelector("body[data-ready='1']");
-  expect(await page.evaluate(() => (window as any).__gecko.prefs().surfaces.visible)).toBe(false);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.prefs().surfaces.visible),
+  ).toBe(false);
   expect(errors).toEqual([]);
 });
 
-test("a file that is not a gmsh mesh is refused and says why", async ({ page }) => {
+test("a file that is not a gmsh mesh is refused and says why", async ({
+  page,
+}) => {
   const errors = await boot(page);
   await openSquare(page, "hello, I am not a mesh\n");
   await expect(page.locator("#status")).toContainText("$MeshFormat");
-  expect(await page.evaluate(() => (window as any).__gecko.geomCount("surfaces"))).toBe(0);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.geomCount("surfaces")),
+  ).toBe(0);
 
   // A modern gmsh writes 4.1 by default, so this is the message most likely
   // to be read in anger: it has to say what to do about it.
@@ -1771,18 +2129,26 @@ test("a file that is not a gmsh mesh is refused and says why", async ({ page }) 
   expect(errors).toEqual([]);
 });
 
-test("framing takes in the geometry as well as the blocks", async ({ page }) => {
+test("framing takes in the geometry as well as the blocks", async ({
+  page,
+}) => {
   const errors = await boot(page);
   // The square sits at the origin; put a cube well away from it.
   await page.evaluate(() =>
-    (window as any).__gecko.apply({ op: "create_cube", origin: [20, 0, 0], size: 1 }),
+    (window as any).__gecko.apply({
+      op: "create_cube",
+      origin: [20, 0, 0],
+      size: 1,
+    }),
   );
   await page.evaluate(() => (window as any).__gecko.refresh());
   await openSquare(page);
   await page.evaluate(() => (window as any).__gecko.settled());
 
   // Far enough back to hold both, which is more than either alone needs.
-  const radius = (await page.evaluate(() => (window as any).__gecko.camera().radius)) as number;
+  const radius = (await page.evaluate(
+    () => (window as any).__gecko.camera().radius,
+  )) as number;
   expect(radius).toBeGreaterThan(20);
   expect(errors).toEqual([]);
 });
@@ -1820,7 +2186,10 @@ window.outward = (picked) => {
   return { at: here, dir: [(here[0] - behind[0]) / length, (here[1] - behind[1]) / length] };
 };`;
 
-declare function outward(face: number): { at: [number, number]; dir: [number, number] };
+declare function outward(face: number): {
+  at: [number, number];
+  dir: [number, number];
+};
 
 /** The model's longest side, which an extrusion along a cube's face normal
  *  lengthens by exactly the height asked for. */
@@ -1841,7 +2210,9 @@ test("a selected face is dragged out into a new block", async ({ page }) => {
   await page.evaluate(OUTWARD);
   await page.evaluate(SPAN);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 
   // Clicked first, which is what arms the gesture: an unselected face is
@@ -1849,8 +2220,12 @@ test("a selected face is dragged out into a new block", async ({ page }) => {
   // comes from the click rather than from this test's idea of the angle.
   const box = (await page.locator("#view").boundingBox())!;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  await page.waitForFunction(() => (window as any).__gecko.selection().length === 1);
-  const picked = (await page.evaluate(() => (window as any).__gecko.selection()[0])) as {
+  await page.waitForFunction(
+    () => (window as any).__gecko.selection().length === 1,
+  );
+  const picked = (await page.evaluate(
+    () => (window as any).__gecko.selection()[0],
+  )) as {
     face: number;
   };
   const out = (await page.evaluate((f) => outward(f), picked.face)) as {
@@ -1858,17 +2233,24 @@ test("a selected face is dragged out into a new block", async ({ page }) => {
     dir: [number, number];
   };
 
-  const before = (await page.evaluate(() => (window as any).__gecko.camera())) as {
+  const before = (await page.evaluate(() =>
+    (window as any).__gecko.camera(),
+  )) as {
     alpha: number;
     beta: number;
   };
   await page.mouse.move(box.x + out.at[0], box.y + out.at[1]);
   await page.mouse.down();
   for (const step of [20, 50, 90]) {
-    await page.mouse.move(box.x + out.at[0] + out.dir[0] * step, box.y + out.at[1] + out.dir[1] * step);
+    await page.mouse.move(
+      box.x + out.at[0] + out.dir[0] * step,
+      box.y + out.at[1] + out.dir[1] * step,
+    );
   }
   // The preview says how far before anything is built.
-  const asked = (await page.evaluate(() => (window as any).__gecko.grownBy())) as number;
+  const asked = (await page.evaluate(() =>
+    (window as any).__gecko.grownBy(),
+  )) as number;
   expect(asked).toBeGreaterThan(0.2);
   await expect(page.locator("#status")).toContainText("let go to build");
   await page.mouse.up();
@@ -1880,10 +2262,15 @@ test("a selected face is dragged out into a new block", async ({ page }) => {
 
   // And it grew by what the preview promised, along the face's own normal —
   // which for a cube lengthens exactly one side of the model.
-  expect((await page.evaluate(() => span())) as number).toBeCloseTo(1 + asked, 3);
+  expect((await page.evaluate(() => span())) as number).toBeCloseTo(
+    1 + asked,
+    3,
+  );
 
   // The view did not turn while the face was being dragged.
-  const after = (await page.evaluate(() => (window as any).__gecko.camera())) as {
+  const after = (await page.evaluate(() =>
+    (window as any).__gecko.camera(),
+  )) as {
     alpha: number;
     beta: number;
   };
@@ -1892,21 +2279,32 @@ test("a selected face is dragged out into a new block", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
-test("pressing a selected face without moving lets go of it", async ({ page }) => {
+test("pressing a selected face without moving lets go of it", async ({
+  page,
+}) => {
   // The gesture has to leave the plain click alone: press and release on
   // the spot is how a selection is undone, extrusion or no extrusion.
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 
   const box = (await page.locator("#view").boundingBox())!;
-  const middle: [number, number] = [box.x + box.width / 2, box.y + box.height / 2];
+  const middle: [number, number] = [
+    box.x + box.width / 2,
+    box.y + box.height / 2,
+  ];
   await page.mouse.click(...middle);
-  await page.waitForFunction(() => (window as any).__gecko.selection().length === 1);
+  await page.waitForFunction(
+    () => (window as any).__gecko.selection().length === 1,
+  );
 
   await page.mouse.click(...middle);
-  await page.waitForFunction(() => (window as any).__gecko.selection().length === 0);
+  await page.waitForFunction(
+    () => (window as any).__gecko.selection().length === 0,
+  );
   await expect(page.locator("[data-test=blocks]")).toHaveText("1");
   expect(errors).toEqual([]);
 });
@@ -1965,11 +2363,15 @@ test("the geometry buttons wait for a geometry", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
-test("aiming at the geometry picks surfaces, and the blocks stay out of it", async ({ page }) => {
+test("aiming at the geometry picks surfaces, and the blocks stay out of it", async ({
+  page,
+}) => {
   const errors = await boot(page);
   await openCube(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 
   const box = (await page.locator("#view").boundingBox())!;
@@ -2000,21 +2402,32 @@ test("aiming at the geometry picks surfaces, and the blocks stay out of it", asy
         [1, -1],
         [-1, 1],
       ]) {
-        const p: [number, number] = [middle[0] + dx * away, middle[1] + dy * away];
-        const free = g.pickNode(p[0], p[1]) === null && g.pickEdge(p[0], p[1]) === null;
+        const p: [number, number] = [
+          middle[0] + dx * away,
+          middle[1] + dy * away,
+        ];
+        const free =
+          g.pickNode(p[0], p[1]) === null && g.pickEdge(p[0], p[1]) === null;
         if (free && g.pickSurface(p[0], p[1])?.face === face) return p;
       }
     }
     return null;
   })) as [number, number] | null;
-  expect(at, "somewhere on a face of the block that a click would take").not.toBeNull();
+  expect(
+    at,
+    "somewhere on a face of the block that a click would take",
+  ).not.toBeNull();
   const middle: [number, number] = [box.x + at![0], box.y + at![1]];
 
   // Blocks first: the click takes a face of the cube, not the geometry
   // around it.
   await page.mouse.click(...middle);
-  await page.waitForFunction(() => (window as any).__gecko.selection().length === 1);
-  expect(await page.evaluate(() => (window as any).__gecko.surfaceSelection())).toEqual([]);
+  await page.waitForFunction(
+    () => (window as any).__gecko.selection().length === 1,
+  );
+  expect(
+    await page.evaluate(() => (window as any).__gecko.surfaceSelection()),
+  ).toEqual([]);
 
   // Which mode you are in is said twice over, because a toggle that looks
   // the same either way is one you click to find out about.
@@ -2027,36 +2440,56 @@ test("aiming at the geometry picks surfaces, and the blocks stay out of it", asy
   await expect(page.locator("[data-test=aim]")).toHaveText("picking geometry");
   await expect(page.locator("#picking .as-geometry")).toBeVisible();
   await expect(page.locator("#picking .as-blocks")).toBeHidden();
-  expect(await page.evaluate(() => (window as any).__gecko.picking())).toBe("geometry");
-  await expect(page.locator("#picking")).toHaveAttribute("aria-pressed", "true");
+  expect(await page.evaluate(() => (window as any).__gecko.picking())).toBe(
+    "geometry",
+  );
+  await expect(page.locator("#picking")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
   // The face stays picked through the change of mode: a handful of cells
   // and the entity to put them on are chosen in different modes and used
   // together. `Esc` is how you let go.
-  expect(await page.evaluate(() => (window as any).__gecko.selection())).toHaveLength(1);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.selection()),
+  ).toHaveLength(1);
 
   await page.mouse.click(...middle);
-  await page.waitForFunction(() => (window as any).__gecko.surfaceSelection().length === 1);
+  await page.waitForFunction(
+    () => (window as any).__gecko.surfaceSelection().length === 1,
+  );
   const [tag] = (await page.evaluate(() =>
     (window as any).__gecko.surfaceSelection(),
   )) as number[];
-  await expect(page.locator("#status")).toContainText(`surface ${tag} selected`);
+  await expect(page.locator("#status")).toContainText(
+    `surface ${tag} selected`,
+  );
   // And it is drawn in the selection color, like a picked face.
   expect(
-    (await page.evaluate((t) => (window as any).__gecko.geomLook("surfaces", t), tag)) as {
+    (await page.evaluate(
+      (t) => (window as any).__gecko.geomLook("surfaces", t),
+      tag,
+    )) as {
       color: string;
     },
   ).toMatchObject({ color: "#ffcc33" });
   // Nothing of the blocking answered the click: the face selection is the
   // one from before the change of mode, not a second one.
-  expect(await page.evaluate(() => (window as any).__gecko.selection())).toHaveLength(1);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.selection()),
+  ).toHaveLength(1);
 
   // Clicking it again puts it out, and the background lets go of the lot.
   await page.mouse.click(...middle);
-  await page.waitForFunction(() => (window as any).__gecko.surfaceSelection().length === 0);
+  await page.waitForFunction(
+    () => (window as any).__gecko.surfaceSelection().length === 0,
+  );
   expect(errors).toEqual([]);
 });
 
-test("a box is built round the geometry, or round what is selected", async ({ page }) => {
+test("a box is built round the geometry, or round what is selected", async ({
+  page,
+}) => {
   const errors = await boot(page);
   await openCube(page);
 
@@ -2081,18 +2514,24 @@ test("a box is built round the geometry, or round what is selected", async ({ pa
   expect(errors).toEqual([]);
 });
 
-test("a box that cannot be built says why and builds nothing", async ({ page }) => {
+test("a box that cannot be built says why and builds nothing", async ({
+  page,
+}) => {
   const errors = await boot(page);
   await openCube(page);
   await page.keyboard.press("m");
-  await page.evaluate(() => (window as any).__gecko.selectGeom([{ dim: 2, tag: 1 }]));
+  await page.evaluate(() =>
+    (window as any).__gecko.selectGeom([{ dim: 2, tag: 1 }]),
+  );
   await page.keyboard.press("b");
   await expect(page.locator("#status")).toContainText("flat");
   await expect(page.locator("[data-test=blocks]")).toHaveText("0");
   expect(errors).toEqual([]);
 });
 
-test("each group of cells is its own box, not nested inside the last", async ({ page }) => {
+test("each group of cells is its own box, not nested inside the last", async ({
+  page,
+}) => {
   // An unclosed element is not a parse error — it is an element that
   // swallows whatever comes after it. The boxes came out one inside the
   // next, which reads as though edges were part of blocks were part of
@@ -2177,19 +2616,27 @@ async function boxedAndPinned(page: import("@playwright/test").Page) {
   // A box resting exactly on it, so every corner is already where it
   // belongs and the tolerance has nothing to forgive.
   await page.evaluate(() =>
-    (window as any).__gecko.apply({ op: "box_geometry", surfaces: [], margin: 0 }),
+    (window as any).__gecko.apply({
+      op: "box_geometry",
+      surfaces: [],
+      margin: 0,
+    }),
   );
   await page.evaluate(() => (window as any).__gecko.refresh());
   await page.evaluate(() => (window as any).__gecko.settled());
 }
 
-test("the blocking is put on the geometry and wears what it follows", async ({ page }) => {
+test("the blocking is put on the geometry and wears what it follows", async ({
+  page,
+}) => {
   const errors = await boot(page);
   await boxedAndPinned(page);
   await expect(page.locator("[data-test=pinned]")).toHaveText("0");
 
   await page.keyboard.press("k");
-  await expect(page.locator("#status")).toContainText("8 nodes, 12 edges and 6 faces");
+  await expect(page.locator("#status")).toContainText(
+    "8 nodes, 12 edges and 6 faces",
+  );
   await expect(page.locator("[data-test=pinned]")).toHaveText("8");
 
   // Every corner of the block is on a corner of the model, and wears its
@@ -2203,7 +2650,9 @@ test("the blocking is put on the geometry and wears what it follows", async ({ p
   expect(errors).toEqual([]);
 });
 
-test("a frozen node is a cube, and still wears what the coloring says", async ({ page }) => {
+test("a frozen node is a cube, and still wears what the coloring says", async ({
+  page,
+}) => {
   // Freezing used to paint the handle gray, which hid the very thing the
   // coloring is for. Now it changes the handle's shape, and the color is
   // left to say what the node is on.
@@ -2212,11 +2661,16 @@ test("a frozen node is a cube, and still wears what the coloring says", async ({
   await page.keyboard.press("k");
   await expect(page.locator("[data-test=pinned]")).toHaveText("8");
 
-  const name = (await page.evaluate(() => (window as any).__gecko.names()[0])) as number;
-  const other = (await page.evaluate(() => (window as any).__gecko.names()[1])) as number;
+  const name = (await page.evaluate(
+    () => (window as any).__gecko.names()[0],
+  )) as number;
+  const other = (await page.evaluate(
+    () => (window as any).__gecko.names()[1],
+  )) as number;
   const shape = (n: number) =>
     page.evaluate((who) => (window as any).__gecko.nodeShape(who), n);
-  const tint = (n: number) => page.evaluate((who) => (window as any).__gecko.nodeTint(who), n);
+  const tint = (n: number) =>
+    page.evaluate((who) => (window as any).__gecko.nodeTint(who), n);
 
   // Every corner of the block is on a corner of the model, so under the
   // `follows` coloring every handle wears the corner color — set from
@@ -2224,7 +2678,9 @@ test("a frozen node is a cube, and still wears what the coloring says", async ({
   await openDrawer(page);
   await openGroup(page, "nodes");
   await page.locator('[data-test="nodes-mode"]').selectOption("class");
-  const theme = (await page.evaluate(() => (window as any).__gecko.theme())) as {
+  const theme = (await page.evaluate(() =>
+    (window as any).__gecko.theme(),
+  )) as {
     onCorner: string;
   };
   expect(await shape(name)).toBe("ball");
@@ -2236,7 +2692,10 @@ test("a frozen node is a cube, and still wears what the coloring says", async ({
     g.apply({ op: "freeze_node", nodes: [who], frozen: true });
     await g.refresh();
   }, name);
-  await page.waitForFunction((n) => (window as any).__gecko.nodeState(n).frozen, name);
+  await page.waitForFunction(
+    (n) => (window as any).__gecko.nodeState(n).frozen,
+    name,
+  );
 
   // A cube where it was a ball, and the color unchanged — while the node
   // beside it is still a ball.
@@ -2255,7 +2714,9 @@ test("a node is picked, locked, and taken off the model", async ({ page }) => {
   // There was no such thing as a picked node until freezing needed one:
   // a press and release on a handle, which the drag behavior has already
   // decided was not a drag.
-  const name = (await page.evaluate(() => (window as any).__gecko.names()[0])) as number;
+  const name = (await page.evaluate(
+    () => (window as any).__gecko.names()[0],
+  )) as number;
   const at = (await page.evaluate(
     (n) => (window as any).__gecko.nodeScreen(n),
     name,
@@ -2271,14 +2732,23 @@ test("a node is picked, locked, and taken off the model", async ({ page }) => {
   // Locked, and it stays locked until it is let go.
   await page.keyboard.press("l");
   await expect(page.locator("#status")).toContainText("frozen");
-  await page.waitForFunction((n) => (window as any).__gecko.nodeState(n).frozen, name);
+  await page.waitForFunction(
+    (n) => (window as any).__gecko.nodeState(n).frozen,
+    name,
+  );
   await page.keyboard.press("l");
-  await page.waitForFunction((n) => !(window as any).__gecko.nodeState(n).frozen, name);
+  await page.waitForFunction(
+    (n) => !(window as any).__gecko.nodeState(n).frozen,
+    name,
+  );
 
   // And off the model, which is something you say rather than something
   // that happens to you by dragging.
   await page.keyboard.press("u");
-  await page.waitForFunction((n) => (window as any).__gecko.nodeState(n).on === null, name);
+  await page.waitForFunction(
+    (n) => (window as any).__gecko.nodeState(n).on === null,
+    name,
+  );
   await expect(page.locator("[data-test=pinned]")).toHaveText("7");
   expect(errors).toEqual([]);
 });
@@ -2296,10 +2766,14 @@ test("the classify button waits for a geometry", async ({ page }) => {
 test("the window splits into four views of the one scene", async ({ page }) => {
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 
-  expect(await page.evaluate(() => (window as any).__gecko.split())).toBe(false);
+  expect(await page.evaluate(() => (window as any).__gecko.split())).toBe(
+    false,
+  );
   await expect(page.locator("#panes")).toBeHidden();
 
   await page.keyboard.press("v");
@@ -2322,9 +2796,13 @@ test("the window splits into four views of the one scene", async ({ page }) => {
   // worth having; the 3-D one does. Aimed clear of the toolbar, which is
   // over the top left of that pane and takes the pointer events itself.
   await page.mouse.move(box.x + box.width * 0.25, box.y + box.height * 0.3);
-  expect(await page.evaluate(() => (window as any).__gecko.paneCamera().ortho)).toBe(false);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.paneCamera().ortho),
+  ).toBe(false);
   await page.mouse.move(box.x + box.width - 20, box.y + 20);
-  expect(await page.evaluate(() => (window as any).__gecko.paneCamera().ortho)).toBe(true);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.paneCamera().ortho),
+  ).toBe(true);
 
   // Remembered, like every other thing about how it looks.
   await page.reload();
@@ -2333,7 +2811,9 @@ test("the window splits into four views of the one scene", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
-test("dragging a node in an axis view keeps it in the plane of the screen", async ({ page }) => {
+test("dragging a node in an axis view keeps it in the plane of the screen", async ({
+  page,
+}) => {
   // The reason for the split: two coordinates move and the third cannot,
   // so placing a corner is a matter of looking at it rather than of
   // guessing how far away it ended up.
@@ -2345,7 +2825,9 @@ test("dragging a node in an axis view keeps it in the plane of the screen", asyn
   // **pane's**, said rather than inherited.
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.keyboard.press("v");
   await page.evaluate(() => (window as any).__gecko.run("recenter"));
   await page.evaluate(() => (window as any).__gecko.settled());
@@ -2355,11 +2837,15 @@ test("dragging a node in an axis view keeps it in the plane of the screen", asyn
   // must not move.
   await page.mouse.move(box.x + box.width * 0.75, box.y + box.height * 0.75);
   expect(await page.evaluate(() => (window as any).__gecko.pane())).toBe("z");
-  expect(await page.evaluate(() => (window as any).__gecko.dragPlane())).toEqual([0, 0, 1]);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.dragPlane()),
+  ).toEqual([0, 0, 1]);
   // And in the 3-D pane there is no plane to name: it faces the camera,
   // wherever that is.
   await page.mouse.move(box.x + box.width * 0.25, box.y + box.height * 0.3);
-  expect(await page.evaluate(() => (window as any).__gecko.dragPlane())).toBeNull();
+  expect(
+    await page.evaluate(() => (window as any).__gecko.dragPlane()),
+  ).toBeNull();
   await page.mouse.move(box.x + box.width * 0.75, box.y + box.height * 0.75);
 
   // Where the nodes are before, and where one of them is on screen. Which
@@ -2398,10 +2884,14 @@ test("dragging a node in an axis view keeps it in the plane of the screen", asyn
   expect(errors).toEqual([]);
 });
 
-test("a face is picked in an axis view, through that view's own camera", async ({ page }) => {
+test("a face is picked in an axis view, through that view's own camera", async ({
+  page,
+}) => {
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.keyboard.press("v");
   await page.evaluate(() => (window as any).__gecko.run("recenter"));
   await page.evaluate(() => (window as any).__gecko.settled());
@@ -2409,11 +2899,15 @@ test("a face is picked in an axis view, through that view's own camera", async (
   // The middle of the Y pane, which is looking straight at the model.
   const box = (await page.locator("#view").boundingBox())!;
   await page.mouse.click(box.x + box.width * 0.25, box.y + box.height * 0.75);
-  await page.waitForFunction(() => (window as any).__gecko.selection().length === 1);
+  await page.waitForFunction(
+    () => (window as any).__gecko.selection().length === 1,
+  );
   expect(errors).toEqual([]);
 });
 
-test("the help card says what the classification colors mean", async ({ page }) => {
+test("the help card says what the classification colors mean", async ({
+  page,
+}) => {
   // A color code nobody can look up is a color code nobody reads. It is
   // generated from the theme, so it cannot come to disagree with the
   // screen — the same reason the keys beside it are generated from the
@@ -2434,7 +2928,9 @@ test("the help card says what the classification colors mean", async ({ page }) 
     .locator("#help-legend .key i")
     .first()
     .evaluate((e) => (e as HTMLElement).style.background);
-  const theme = (await page.evaluate(() => (window as any).__gecko.theme())) as {
+  const theme = (await page.evaluate(() =>
+    (window as any).__gecko.theme(),
+  )) as {
     onCorner: string;
   };
   // The browser hands a style back as `rgb(…)` whatever it was set with.
@@ -2448,16 +2944,18 @@ test("nodes, edges and faces each take three colorings", async ({ page }) => {
   const errors = await boot(page);
   await openCube(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await openDrawer(page);
 
   // Four for each of the three — one color, its id, its classification,
   // its group — and three for blocks: a block is classified on nothing, a
   // surface mesh having no volumes to put it on.
   const offered = (group: string) =>
-    page.locator(`[data-test="${group}-mode"] option`).evaluateAll((all) =>
-      all.map((o) => (o as HTMLOptionElement).value),
-    );
+    page
+      .locator(`[data-test="${group}-mode"] option`)
+      .evaluateAll((all) => all.map((o) => (o as HTMLOptionElement).value));
   for (const group of ["nodes", "edges", "faces"]) {
     expect(await offered(group)).toEqual(["uniform", "id", "class", "group"]);
   }
@@ -2471,14 +2969,20 @@ test("nodes, edges and faces each take three colorings", async ({ page }) => {
   // looks.
   await openGroup(page, "nodes");
   await page.locator('[data-test="nodes-mode"]').selectOption("class");
-  expect(await page.evaluate(() => (window as any).__gecko.prefs().nodes.coloring)).toBe("class");
+  expect(
+    await page.evaluate(() => (window as any).__gecko.prefs().nodes.coloring),
+  ).toBe("class");
   await page.reload();
   await page.waitForSelector("body[data-ready='1']");
-  expect(await page.evaluate(() => (window as any).__gecko.prefs().nodes.coloring)).toBe("class");
+  expect(
+    await page.evaluate(() => (window as any).__gecko.prefs().nodes.coloring),
+  ).toBe("class");
   expect(errors).toEqual([]);
 });
 
-test("an edge is picked and its sheet cut from an axis view", async ({ page }) => {
+test("an edge is picked and its sheet cut from an axis view", async ({
+  page,
+}) => {
   // Everything works in every pane or the split is half a feature. Each
   // pick goes through the camera of the pane the pointer is in; it was
   // the edges that were still asking the 3-D one, so clicking a line in
@@ -2486,7 +2990,9 @@ test("an edge is picked and its sheet cut from an axis view", async ({ page }) =
   const errors = await boot(page);
   await page.evaluate(EDGE_NEAR);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.keyboard.press("v");
   await page.evaluate(() => (window as any).__gecko.run("recenter"));
   await page.evaluate(() => (window as any).__gecko.settled());
@@ -2497,12 +3003,14 @@ test("an edge is picked and its sheet cut from an axis view", async ({ page }) =
   expect(await page.evaluate(() => (window as any).__gecko.pane())).toBe("y");
 
   const edge = (await page.evaluate(() => edgeNear([0.5, 0, 0]))) as number;
-  const at = (await page.evaluate((e) => (window as any).__gecko.edgeScreen(e), edge)) as [
-    number,
-    number,
-  ];
+  const at = (await page.evaluate(
+    (e) => (window as any).__gecko.edgeScreen(e),
+    edge,
+  )) as [number, number];
   await page.mouse.click(box.x + at[0], box.y + at[1]);
-  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 4);
+  await page.waitForFunction(
+    () => (window as any).__gecko.sheet().length === 4,
+  );
 
   // And dragging along it there cuts, as it does in the 3-D view.
   const ends = (await page.evaluate(
@@ -2523,17 +3031,23 @@ test("an edge is picked and its sheet cut from an axis view", async ({ page }) =
   expect(errors).toEqual([]);
 });
 
-test("a change can be taken back, and the button says when there is one", async ({ page }) => {
+test("a change can be taken back, and the button says when there is one", async ({
+  page,
+}) => {
   const errors = await boot(page);
   // Nothing has happened, so there is nothing to take back.
   await expect(page.locator("#undo")).toBeDisabled();
 
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await expect(page.locator("#undo")).toBeEnabled();
 
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 16,
+  );
 
   // The keyboard, with the modifier everybody already knows. Bare Z is a
   // view down the Z axis and has to stay one.
@@ -2548,7 +3062,9 @@ test("a change can be taken back, and the button says when there is one", async 
   expect(errors).toEqual([]);
 });
 
-test("a cut is taken back whole, and the names come back with it", async ({ page }) => {
+test("a cut is taken back whole, and the names come back with it", async ({
+  page,
+}) => {
   // The point of keeping states rather than replaying commands: the cells
   // answer to the same numbers afterwards. A model rebuilt from a
   // description of itself would renumber them, and every name this page is
@@ -2557,7 +3073,9 @@ test("a cut is taken back whole, and the names come back with it", async ({ page
   const errors = await boot(page);
   await page.evaluate(EDGE_NEAR);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
 
   // Every node's name, and where the scene has it.
   const dump = () =>
@@ -2569,7 +3087,11 @@ test("a cut is taken back whole, and the names come back with it", async ({ page
     });
   const before = await dump();
   const edge = (await page.evaluate(() => edgeNear([0.5, 0, 0]))) as number;
-  await page.evaluate((e) => (window as any).__gecko.apply({ op: "split_sheet", edge: e, at: 0.5 }), edge);
+  await page.evaluate(
+    (e) =>
+      (window as any).__gecko.apply({ op: "split_sheet", edge: e, at: 0.5 }),
+    edge,
+  );
   await page.evaluate(() => (window as any).__gecko.refresh());
   await expect(page.locator("[data-test=blocks]")).toHaveText("2");
 
@@ -2578,13 +3100,19 @@ test("a cut is taken back whole, and the names come back with it", async ({ page
   expect(await dump()).toEqual(before);
 
   // And the same cut again, on the same edge, which still names it.
-  await page.evaluate((e) => (window as any).__gecko.apply({ op: "split_sheet", edge: e, at: 0.5 }), edge);
+  await page.evaluate(
+    (e) =>
+      (window as any).__gecko.apply({ op: "split_sheet", edge: e, at: 0.5 }),
+    edge,
+  );
   await page.evaluate(() => (window as any).__gecko.refresh());
   await expect(page.locator("[data-test=blocks]")).toHaveText("2");
   expect(errors).toEqual([]);
 });
 
-test("how far back it goes is a setting, and it is remembered", async ({ page }) => {
+test("how far back it goes is a setting, and it is remembered", async ({
+  page,
+}) => {
   const errors = await boot(page);
   await openParams(page);
   await expect(page.locator("[data-test=history-steps]")).toHaveText("5");
@@ -2594,9 +3122,13 @@ test("how far back it goes is a setting, and it is remembered", async ({ page })
   await page.locator("[data-test=history]").dispatchEvent("input");
   await expect(page.locator("[data-test=history-steps]")).toHaveText("1");
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 16,
+  );
 
   await page.locator("#undo").click();
   await expect(page.locator("[data-test=blocks]")).toHaveText("1");
@@ -2631,7 +3163,9 @@ test("the drawer folds, and what is open is remembered", async ({ page }) => {
 
   // A folded group still says what it is: what you opened it to find out.
   // Faces start on their classification, so that is what it says.
-  await expect(page.locator("#grp-faces .digest")).toHaveText("classification · 35%");
+  await expect(page.locator("#grp-faces .digest")).toHaveText(
+    "classification · 35%",
+  );
   // And the longest of those words still fits on the line: the drawer is
   // 246 pixels wide and the word is the longest thing that goes there.
   const spills = await page
@@ -2665,7 +3199,9 @@ test("the drawer folds, and what is open is remembered", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
-test("the two panels are one at a time, and the cog has its own key", async ({ page }) => {
+test("the two panels are one at a time, and the cog has its own key", async ({
+  page,
+}) => {
   // They are drawn in the same place: two sheets of glass on top of each
   // other is a bug that looks like a rendering fault.
   const errors = await boot(page);
@@ -2675,7 +3211,10 @@ test("the two panels are one at a time, and the cog has its own key", async ({ p
   await page.locator("#settings").click();
   await expect(page.locator("#params")).toBeVisible();
   await expect(page.locator("#drawer")).toBeHidden();
-  await expect(page.locator("#settings")).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("#settings")).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
 
   await page.keyboard.press("Tab");
   await expect(page.locator("#drawer")).toBeVisible();
@@ -2688,13 +3227,17 @@ test("the two panels are one at a time, and the cog has its own key", async ({ p
   expect(errors).toEqual([]);
 });
 
-test("a fresh window starts on the classification, with a box that hugs", async ({ page }) => {
+test("a fresh window starts on the classification, with a box that hugs", async ({
+  page,
+}) => {
   // What somebody sees the first time: putting the blocking onto the model
   // is what the session is for, so nodes, edges and faces say what they
   // are classified on before they say anything else. Blocks keep their own
   // coloring — a block is classified on nothing.
   const errors = await boot(page);
-  const prefs = (await page.evaluate(() => (window as any).__gecko.prefs())) as {
+  const prefs = (await page.evaluate(() =>
+    (window as any).__gecko.prefs(),
+  )) as {
     nodes: { coloring: string };
     edges: { coloring: string };
     faces: { coloring: string };
@@ -2712,14 +3255,18 @@ test("a fresh window starts on the classification, with a box that hugs", async 
   expect(errors).toEqual([]);
 });
 
-test("how big the handles and the edges are drawn is a setting", async ({ page }) => {
+test("how big the handles and the edges are drawn is a setting", async ({
+  page,
+}) => {
   // Both in pixels on the screen rather than in model units: what they are
   // for is being easy to see and easy to hit, and that is a question about
   // the screen. A blocking with a lot in it wants thin, a projector wants
   // thick.
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await openParams(page);
 
   // What a handle measures on screen, in CSS pixels: the sizing pass puts
@@ -2749,12 +3296,18 @@ test("how big the handles and the edges are drawn is a setting", async ({ page }
   // a GL line is one pixel whatever anybody asks for, which is why they
   // are no longer GL lines.
   await expect(page.locator("[data-test=edge-width-value]")).toHaveText("2px");
-  const narrow = (await page.evaluate(() => (window as any).__gecko.edgeRibbonWidth())) as number;
+  const narrow = (await page.evaluate(() =>
+    (window as any).__gecko.edgeRibbonWidth(),
+  )) as number;
   await page.locator("[data-test=edge-width]").fill("6");
   await page.locator("[data-test=edge-width]").dispatchEvent("input");
   await expect(page.locator("[data-test=edge-width-value]")).toHaveText("6px");
-  expect(await page.evaluate(() => (window as any).__gecko.prefs().edges.width)).toBe(6);
-  const wide = (await page.evaluate(() => (window as any).__gecko.edgeRibbonWidth())) as number;
+  expect(
+    await page.evaluate(() => (window as any).__gecko.prefs().edges.width),
+  ).toBe(6);
+  const wide = (await page.evaluate(() =>
+    (window as any).__gecko.edgeRibbonWidth(),
+  )) as number;
   // Drawn at it, not merely remembered. Measured as a ratio rather than in
   // pixels, so the assertion does not depend on how many device pixels the
   // runner's screen puts in one of the pointer's.
@@ -2763,12 +3316,18 @@ test("how big the handles and the edges are drawn is a setting", async ({ page }
   // And both are remembered, like every other thing about how it looks.
   await page.reload();
   await page.waitForSelector("body[data-ready='1']");
-  expect(await page.evaluate(() => (window as any).__gecko.prefs().nodes.size)).toBe(20);
-  expect(await page.evaluate(() => (window as any).__gecko.prefs().edges.width)).toBe(6);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.prefs().nodes.size),
+  ).toBe(20);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.prefs().edges.width),
+  ).toBe(6);
   expect(errors).toEqual([]);
 });
 
-test("the box margin in the settings panel is the one the box is built to", async ({ page }) => {
+test("the box margin in the settings panel is the one the box is built to", async ({
+  page,
+}) => {
   // The kernel's constant is what you get when nobody says; this is
   // somebody saying, and it has to reach the command.
   const errors = await boot(page);
@@ -2778,9 +3337,13 @@ test("the box margin in the settings panel is the one the box is built to", asyn
   /** How wide the blocking is, on each axis. Rebasing-proof: a difference
    *  of two positions does not care where the origin went. */
   const extent = async () => {
-    const names = (await page.evaluate(() => (window as any).__gecko.names())) as number[];
+    const names = (await page.evaluate(() =>
+      (window as any).__gecko.names(),
+    )) as number[];
     const at = await Promise.all(
-      names.map((n) => page.evaluate((m) => (window as any).__gecko.nodePosition(m), n)),
+      names.map((n) =>
+        page.evaluate((m) => (window as any).__gecko.nodePosition(m), n),
+      ),
     );
     return [0, 1, 2].map((axis) => {
       const all = (at as number[][]).map((p) => p[axis]);
@@ -2837,9 +3400,15 @@ test("a curve is picked, not the surfaces it bounds", async ({ page }) => {
   const nodes = await handles(page);
   const a = nodes.find((n) => n.at.every((v) => Math.abs(v) < 1e-6))!;
   const b = nodes.find(
-    (n) => Math.abs(n.at[0] - 1) < 1e-6 && Math.abs(n.at[1]) < 1e-6 && Math.abs(n.at[2]) < 1e-6,
+    (n) =>
+      Math.abs(n.at[0] - 1) < 1e-6 &&
+      Math.abs(n.at[1]) < 1e-6 &&
+      Math.abs(n.at[2]) < 1e-6,
   )!;
-  const middle: [number, number] = [(a.on[0] + b.on[0]) / 2, (a.on[1] + b.on[1]) / 2];
+  const middle: [number, number] = [
+    (a.on[0] + b.on[0]) / 2,
+    (a.on[1] + b.on[1]) / 2,
+  ];
 
   const spot = await page.evaluate(
     (at) => (window as any).__gecko.pickGeometry(at[0], at[1]),
@@ -2867,8 +3436,14 @@ test("four corners go onto one curve in one gesture", async ({ page }) => {
   const xs = bottom.map((n) => n.on[0]);
   const ys = bottom.map((n) => n.on[1]);
   const pad = 12;
-  const from: [number, number] = [box.x + Math.min(...xs) - pad, box.y + Math.min(...ys) - pad];
-  const to: [number, number] = [box.x + Math.max(...xs) + pad, box.y + Math.max(...ys) + pad];
+  const from: [number, number] = [
+    box.x + Math.min(...xs) - pad,
+    box.y + Math.min(...ys) - pad,
+  ];
+  const to: [number, number] = [
+    box.x + Math.max(...xs) + pad,
+    box.y + Math.max(...ys) + pad,
+  ];
 
   await page.keyboard.down("Shift");
   await page.mouse.move(...from);
@@ -2881,15 +3456,23 @@ test("four corners go onto one curve in one gesture", async ({ page }) => {
   await expect(page.locator("#lasso")).toBeHidden();
 
   expect(
-    ((await page.evaluate(() => (window as any).__gecko.selectedNodes())) as number[]).sort(),
+    (
+      (await page.evaluate(() =>
+        (window as any).__gecko.selectedNodes(),
+      )) as number[]
+    ).sort(),
   ).toEqual(bottom.map((n) => n.name).sort());
-  await expect(page.locator("#status")).toContainText("4 nodes — 0 on the geometry");
+  await expect(page.locator("#status")).toContainText(
+    "4 nodes — 0 on the geometry",
+  );
   // Still not enough: there is nothing to put them on yet.
   await expect(page.locator("#attach")).toBeDisabled();
 
   // Curve 201 runs along y = z = 0. Picked through the viewer rather than
   // by aiming at it, which the test above does.
-  await page.evaluate(() => (window as any).__gecko.selectGeom([{ dim: 1, tag: 201 }]));
+  await page.evaluate(() =>
+    (window as any).__gecko.selectGeom([{ dim: 1, tag: 201 }]),
+  );
   await page.evaluate(() => (window as any).__gecko.showVerbs());
   await expect(page.locator("#attach")).toBeEnabled();
 
@@ -2906,7 +3489,9 @@ test("four corners go onto one curve in one gesture", async ({ page }) => {
     expect(Math.abs(now.at[2])).toBeLessThan(1e-6);
   }
   // Both selections let go: the next four corners are the next gesture.
-  expect(await page.evaluate(() => (window as any).__gecko.selectedNodes())).toEqual([]);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.selectedNodes()),
+  ).toEqual([]);
   await expect(page.locator("#attach")).toBeDisabled();
 
   // One step back puts all four where they were.
@@ -2915,27 +3500,38 @@ test("four corners go onto one curve in one gesture", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
-test("freezing and unclassifying take the whole selection", async ({ page }) => {
+test("freezing and unclassifying take the whole selection", async ({
+  page,
+}) => {
   const errors = await boot(page);
   await boxedAndPinned(page);
   await page.keyboard.press("k");
   await expect(page.locator("[data-test=pinned]")).toHaveText("8");
 
-  const names = (await page.evaluate(() => (window as any).__gecko.names())) as number[];
-  await page.evaluate((n) => (window as any).__gecko.selectNodes(n), names.slice(0, 3));
+  const names = (await page.evaluate(() =>
+    (window as any).__gecko.names(),
+  )) as number[];
+  await page.evaluate(
+    (n) => (window as any).__gecko.selectNodes(n),
+    names.slice(0, 3),
+  );
   await page.evaluate(() => (window as any).__gecko.showVerbs());
 
   await page.keyboard.press("l");
   await expect(page.locator("#status")).toContainText("frozen");
   expect(
-    await page.evaluate(() => (window as any).__gecko.stats().classified.frozen),
+    await page.evaluate(
+      () => (window as any).__gecko.stats().classified.frozen,
+    ),
   ).toBe(3);
 
   // Thawed only when every one of them is frozen, so a mixed selection has
   // an obvious answer.
   await page.keyboard.press("l");
   expect(
-    await page.evaluate(() => (window as any).__gecko.stats().classified.frozen),
+    await page.evaluate(
+      () => (window as any).__gecko.stats().classified.frozen,
+    ),
   ).toBe(0);
 
   await page.keyboard.press("u");
@@ -2943,10 +3539,76 @@ test("freezing and unclassifying take the whole selection", async ({ page }) => 
   expect(errors).toEqual([]);
 });
 
-test("the band is opened with W as well, and works in an axis view", async ({ page }) => {
+test("⇧W bands the faces whose four corners are inside it", async ({
+  page,
+}) => {
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
+  await page.evaluate(() => (window as any).__gecko.run("recenter"));
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  const box = (await page.locator("#view").boundingBox())!;
+  const seen = await handles(page);
+  expect(seen).toHaveLength(8);
+
+  // A band round the whole cube: every corner is in, so every face is.
+  await page.keyboard.down("w");
+  await page.keyboard.down("Shift");
+  await page.mouse.move(box.x + 2, box.y + 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width - 2, box.y + box.height - 2, {
+    steps: 6,
+  });
+  await expect(page.locator("#lasso")).toBeVisible();
+  await page.mouse.up();
+  await page.keyboard.up("Shift");
+  await page.keyboard.up("w");
+
+  const all = (await page.evaluate(() =>
+    (window as any).__gecko.selection(),
+  )) as { face: number; block: number }[];
+  expect(new Set(all.map((p) => p.face)).size).toBe(6);
+  // And the nodes were left alone: one band, one dimension.
+  expect(
+    await page.evaluate(() => (window as any).__gecko.selectedNodes()),
+  ).toEqual([]);
+  await expect(page.locator("#status")).toContainText("6 faces");
+
+  // A band round one corner catches no face at all: a face needs all four
+  // of its corners, and that corner's three faces each have three outside.
+  await page.keyboard.press("Escape");
+  const first = seen[0];
+  const pad = 12;
+  await page.keyboard.down("w");
+  await page.keyboard.down("Shift");
+  await page.mouse.move(box.x + first.on[0] - pad, box.y + first.on[1] - pad);
+  await page.mouse.down();
+  await page.mouse.move(box.x + first.on[0] + pad, box.y + first.on[1] + pad, {
+    steps: 4,
+  });
+  await page.mouse.up();
+  await page.keyboard.up("Shift");
+  await page.keyboard.up("w");
+
+  expect(
+    await page.evaluate(() => (window as any).__gecko.selection()),
+  ).toEqual([]);
+  await expect(page.locator("#status")).toContainText("nothing enclosed");
+
+  expect(errors).toEqual([]);
+});
+
+test("the band is opened with W as well, and works in an axis view", async ({
+  page,
+}) => {
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.keyboard.press("v");
   await page.evaluate(() => (window as any).__gecko.run("recenter"));
   await page.evaluate(() => (window as any).__gecko.settled());
@@ -2961,20 +3623,28 @@ test("the band is opened with W as well, and works in an axis view", async ({ pa
   // other. A band round one of them has to catch both — which is only true
   // if the handles are projected through this pane's own camera.
   const first = seen[0];
-  const pair = seen.filter((n) => Math.hypot(n.on[0] - first.on[0], n.on[1] - first.on[1]) < 3);
+  const pair = seen.filter(
+    (n) => Math.hypot(n.on[0] - first.on[0], n.on[1] - first.on[1]) < 3,
+  );
   expect(pair).toHaveLength(2);
 
   const pad = 10;
   await page.keyboard.down("w");
   await page.mouse.move(box.x + first.on[0] - pad, box.y + first.on[1] - pad);
   await page.mouse.down();
-  await page.mouse.move(box.x + first.on[0] + pad, box.y + first.on[1] + pad, { steps: 4 });
+  await page.mouse.move(box.x + first.on[0] + pad, box.y + first.on[1] + pad, {
+    steps: 4,
+  });
   await expect(page.locator("#lasso")).toBeVisible();
   await page.mouse.up();
   await page.keyboard.up("w");
 
   expect(
-    ((await page.evaluate(() => (window as any).__gecko.selectedNodes())) as number[]).sort(),
+    (
+      (await page.evaluate(() =>
+        (window as any).__gecko.selectedNodes(),
+      )) as number[]
+    ).sort(),
   ).toEqual(pair.map((n) => n.name).sort());
 
   // A band that wanders out of the pane it was begun in still means what
@@ -3006,15 +3676,23 @@ test("the band is opened with W as well, and works in an axis view", async ({ pa
     .map((n) => n.name);
   expect(inside.length).toBeGreaterThan(0);
   expect(
-    ((await page.evaluate(() => (window as any).__gecko.selectedNodes())) as number[]).sort(),
+    (
+      (await page.evaluate(() =>
+        (window as any).__gecko.selectedNodes(),
+      )) as number[]
+    ).sort(),
   ).toEqual(inside.sort());
   expect(errors).toEqual([]);
 });
 
-test("dragging one picked handle takes the others with it", async ({ page }) => {
+test("dragging one picked handle takes the others with it", async ({
+  page,
+}) => {
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 
   const before = await handles(page);
@@ -3029,9 +3707,13 @@ test("dragging one picked handle takes the others with it", async ({ page }) => 
   const grab = picked[0];
   await page.mouse.move(box.x + grab.on[0], box.y + grab.on[1]);
   await page.mouse.down();
-  await page.mouse.move(box.x + grab.on[0] + 100, box.y + grab.on[1], { steps: 8 });
+  await page.mouse.move(box.x + grab.on[0] + 100, box.y + grab.on[1], {
+    steps: 8,
+  });
   await page.mouse.up();
-  await page.waitForFunction(() => (window as any).__gecko.message().includes("moved"));
+  await page.waitForFunction(() =>
+    (window as any).__gecko.message().includes("moved"),
+  );
 
   const after = await handles(page);
   const moved = (name: number) => {
@@ -3044,16 +3726,21 @@ test("dragging one picked handle takes the others with it", async ({ page }) => 
   // The other two picked handles went exactly as far, and the five that
   // were not picked did not move at all.
   for (const node of picked.slice(1)) {
-    for (const k of [0, 1, 2]) expect(moved(node.name)[k]).toBeCloseTo(by[k], 5);
+    for (const k of [0, 1, 2])
+      expect(moved(node.name)[k]).toBeCloseTo(by[k], 5);
   }
-  for (const node of before.filter((n) => !picked.some((p) => p.name === n.name))) {
+  for (const node of before.filter(
+    (n) => !picked.some((p) => p.name === n.name),
+  )) {
     expect(Math.hypot(...moved(node.name))).toBeLessThan(1e-9);
   }
 
   // One gesture, one command, one step back.
   await expect(page.locator("#status")).toContainText("3 nodes moved");
   await page.keyboard.press("ControlOrMeta+z");
-  await page.waitForFunction(() => (window as any).__gecko.message().includes("undone"));
+  await page.waitForFunction(() =>
+    (window as any).__gecko.message().includes("undone"),
+  );
   const back = await handles(page);
   for (const node of before) {
     const now = back.find((n) => n.name === node.name)!.at;
@@ -3062,10 +3749,14 @@ test("dragging one picked handle takes the others with it", async ({ page }) => 
   expect(errors).toEqual([]);
 });
 
-test("dragging a handle that is not picked moves it alone", async ({ page }) => {
+test("dragging a handle that is not picked moves it alone", async ({
+  page,
+}) => {
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 
   const before = await handles(page);
@@ -3078,9 +3769,13 @@ test("dragging a handle that is not picked moves it alone", async ({ page }) => 
   const grab = before[5];
   await page.mouse.move(box.x + grab.on[0], box.y + grab.on[1]);
   await page.mouse.down();
-  await page.mouse.move(box.x + grab.on[0] + 80, box.y + grab.on[1], { steps: 8 });
+  await page.mouse.move(box.x + grab.on[0] + 80, box.y + grab.on[1], {
+    steps: 8,
+  });
   await page.mouse.up();
-  await page.waitForFunction(() => (window as any).__gecko.message().includes("moved"));
+  await page.waitForFunction(() =>
+    (window as any).__gecko.message().includes("moved"),
+  );
 
   const after = await handles(page);
   for (const node of before) {
@@ -3092,11 +3787,17 @@ test("dragging a handle that is not picked moves it alone", async ({ page }) => 
   expect(errors).toEqual([]);
 });
 
-test("a blocking is discretised and the skin of it is drawn", async ({ page }) => {
+test("a blocking is discretised and the skin of it is drawn", async ({
+  page,
+}) => {
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
-  expect(await page.evaluate(() => (window as any).__gecko.skinCount())).toBe(0);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
+  expect(await page.evaluate(() => (window as any).__gecko.skinCount())).toBe(
+    0,
+  );
 
   // Three segments a side, set in the settings panel before asking.
   await openParams(page);
@@ -3108,17 +3809,25 @@ test("a blocking is discretised and the skin of it is drawn", async ({ page }) =
   await expect(page.locator("#status")).toContainText("64 nodes, 27 hexahedra");
   await expect(page.locator("[data-test=mesh-hexes]")).toHaveText("27");
   // Six faces of nine quadrangles: the skin, and nothing inside it.
-  expect(await page.evaluate(() => (window as any).__gecko.skinCount())).toBe(54);
+  expect(await page.evaluate(() => (window as any).__gecko.skinCount())).toBe(
+    54,
+  );
 
   // A mesh of a blocking you have since edited is a lie, and a lie that
   // looks right — so it goes when the blocking moves.
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
-  expect(await page.evaluate(() => (window as any).__gecko.skinCount())).toBe(0);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 16,
+  );
+  expect(await page.evaluate(() => (window as any).__gecko.skinCount())).toBe(
+    0,
+  );
   expect(errors).toEqual([]);
 });
 
-test("a script is opened like a geometry, and replayed from nothing", async ({ page }) => {
+test("a script is opened like a geometry, and replayed from nothing", async ({
+  page,
+}) => {
   // The same button: "open" is the same question whether the file is a
   // model to work on or a session to play back. And a script describes a
   // session from an empty one, so what is there goes first.
@@ -3126,7 +3835,9 @@ test("a script is opened like a geometry, and replayed from nothing", async ({ p
 
   // Something to throw away, so the reset is doing work.
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await openSquare(page);
   await expect(page.locator("[data-test=geom-surfaces]")).toHaveText("1");
   await expect(page.locator("[data-test=blocks]")).toHaveText("1");
@@ -3144,13 +3855,19 @@ test("a script is opened like a geometry, and replayed from nothing", async ({ p
   // Two blocks, not three: the cube that was there went with the reset,
   // and so did the geometry.
   await expect(page.locator("[data-test=blocks]")).toHaveText("2");
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 16,
+  );
   await expect(page.locator("[data-test=geom-surfaces]")).toHaveCount(0);
 
   // The console is where a script talks, so it is open and it said so.
   await expect(page.locator("#console")).toBeVisible();
-  await expect(page.locator("[data-test=console-out]")).toContainText("emptied first");
-  await expect(page.locator("[data-test=console-out]")).toContainText("replayed");
+  await expect(page.locator("[data-test=console-out]")).toContainText(
+    "emptied first",
+  );
+  await expect(page.locator("[data-test=console-out]")).toContainText(
+    "replayed",
+  );
   await expect(page.locator("#status")).toContainText("2 blocks");
 
   // One step of undo takes the whole replay back — the reset included, so
@@ -3168,16 +3885,23 @@ test("⇧Esc drops the last thing picked, Esc the lot", async ({ page }) => {
   // that click, not the selection.
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
 
   // Three nodes, picked through the same door a click goes through.
-  const names = (await page.evaluate(() => (window as any).__gecko.names())) as number[];
+  const names = (await page.evaluate(() =>
+    (window as any).__gecko.names(),
+  )) as number[];
   for (const n of names.slice(0, 3)) {
-    await page.evaluate((who) => (window as any).__gecko.pickNodeByName(who), n);
+    await page.evaluate(
+      (who) => (window as any).__gecko.pickNodeByName(who),
+      n,
+    );
   }
-  expect(await page.evaluate(() => (window as any).__gecko.selectedNodes())).toEqual(
-    names.slice(0, 3),
-  );
+  expect(
+    await page.evaluate(() => (window as any).__gecko.selectedNodes()),
+  ).toEqual(names.slice(0, 3));
 
   // Then a face, which is a different selection — so "the last one" is a
   // question nothing but the order of the clicks can answer.
@@ -3187,25 +3911,31 @@ test("⇧Esc drops the last thing picked, Esc the lot", async ({ page }) => {
     g.choose({ face: s.faces[0], block: s.blocks[0] });
     return s.faces[0];
   })) as number;
-  expect(await page.evaluate(() => (window as any).__gecko.selection())).toHaveLength(1);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.selection()),
+  ).toHaveLength(1);
 
   // ⇧Esc takes back the face, and leaves the three nodes alone.
   await page.keyboard.press("Shift+Escape");
-  expect(await page.evaluate(() => (window as any).__gecko.selection())).toEqual([]);
-  expect(await page.evaluate(() => (window as any).__gecko.selectedNodes())).toEqual(
-    names.slice(0, 3),
-  );
+  expect(
+    await page.evaluate(() => (window as any).__gecko.selection()),
+  ).toEqual([]);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.selectedNodes()),
+  ).toEqual(names.slice(0, 3));
   void face;
 
   // Again, and it is the last node that goes — one at a time, newest first.
   await page.keyboard.press("Shift+Escape");
-  expect(await page.evaluate(() => (window as any).__gecko.selectedNodes())).toEqual(
-    names.slice(0, 2),
-  );
+  expect(
+    await page.evaluate(() => (window as any).__gecko.selectedNodes()),
+  ).toEqual(names.slice(0, 2));
 
   // Esc still lets go of everything.
   await page.keyboard.press("Escape");
-  expect(await page.evaluate(() => (window as any).__gecko.selectedNodes())).toEqual([]);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.selectedNodes()),
+  ).toEqual([]);
 
   // And with nothing picked it says so rather than doing something.
   await page.keyboard.press("Shift+Escape");
@@ -3219,7 +3949,9 @@ test("the mesh button takes the mesh away again", async ({ page }) => {
   // all you want is to see the blocks again.
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await expect(page.locator("#mesh")).toHaveAttribute("aria-pressed", "false");
 
   await page.locator("#mesh").click();
@@ -3233,7 +3965,9 @@ test("the mesh button takes the mesh away again", async ({ page }) => {
   await expect(page.locator("#status")).toContainText("mesh cleared");
   await expect(page.locator("#mesh")).toHaveAttribute("aria-pressed", "false");
   await page.waitForFunction(() => (window as any).__gecko.skinCount() === 0);
-  expect(await page.evaluate(() => (window as any).__gecko.stats().mesh.hexes)).toBeUndefined();
+  expect(
+    await page.evaluate(() => (window as any).__gecko.stats().mesh.hexes),
+  ).toBeUndefined();
 
   // And once more, to say the door swings both ways rather than once.
   await page.locator("#mesh").click();
@@ -3245,7 +3979,9 @@ test("the lit sheet is made finer and coarser", async ({ page }) => {
   const errors = await boot(page);
   await page.evaluate(EDGE_NEAR);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
 
   const edge = (await page.evaluate(() => edgeNear([0.5, 0, 0]))) as number;
   await page.evaluate((e) => (window as any).__gecko.pickEdgeByName(e), edge);
@@ -3259,14 +3995,18 @@ test("the lit sheet is made finer and coarser", async ({ page }) => {
 
   // And the mesh is built to it: nine one way, the default ten the others.
   await page.keyboard.press("e");
-  await expect(page.locator("[data-test=mesh-hexes]")).toHaveText(String(9 * 10 * 10));
+  await expect(page.locator("[data-test=mesh-hexes]")).toHaveText(
+    String(9 * 10 * 10),
+  );
   expect(errors).toEqual([]);
 });
 
 test("the mesh is written out as VTK", async ({ page }) => {
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await openParams(page);
   await page.locator("[data-test=segments]").fill("2");
   await page.locator("[data-test=segments]").dispatchEvent("input");
@@ -3280,7 +4020,9 @@ test("the mesh is written out as VTK", async ({ page }) => {
   const download = page.waitForEvent("download");
   await page.keyboard.press("Shift+E");
   const saved = await download;
-  expect(saved.suggestedFilename()).toMatch(/^gecko-\d{4}-\d{2}-\d{2}-\d{6}\.vtk$/);
+  expect(saved.suggestedFilename()).toMatch(
+    /^gecko-\d{4}-\d{2}-\d{2}-\d{6}\.vtk$/,
+  );
 
   const file = await readFile(await saved.path(), "utf8");
   expect(file.split("\n")[0]).toBe("# vtk DataFile Version 2.0");
@@ -3291,15 +4033,21 @@ test("the mesh is written out as VTK", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
-test("blocks are put in a group, which colors and filters what is drawn", async ({ page }) => {
+test("blocks are put in a group, which colors and filters what is drawn", async ({
+  page,
+}) => {
   // Groups are of blocks; a face, an edge or a node is in a group when a
   // block it bounds is. Nothing here touches the geometry: a group is a
   // part of the model somebody named.
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 16,
+  );
   await openDrawer(page);
   await openSection(page, "groups");
   await expect(page.locator("#groups")).toContainText("No groups yet");
@@ -3364,7 +4112,9 @@ test("blocks are put in a group, which colors and filters what is drawn", async 
   await expect(page.locator("[data-test=group-written]")).toBeChecked();
   await page.locator("[data-test=group-written]").uncheck();
   await expect(page.locator("[data-test=group-written]")).not.toBeChecked();
-  await expect(page.locator("#status")).toContainText("not written into the mesh");
+  await expect(page.locator("#status")).toContainText(
+    "not written into the mesh",
+  );
   await page.locator("[data-test=group-written]").check();
   await expect(page.locator("[data-test=group-written]")).toBeChecked();
 
@@ -3389,9 +4139,13 @@ test("hiding a group leaves the blocks beside it whole", async ({ page }) => {
   // is drawn.
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 16,
+  );
 
   // Glued, so the two blocks share a face — four nodes and four edges
   // belong to both.
@@ -3401,12 +4155,16 @@ test("hiding a group leaves the blocks beside it whole", async ({ page }) => {
     g.apply({ op: "glue_faces", first, second });
     await g.refresh();
   });
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 12);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 12,
+  );
 
   // One of the two in a group.
   await page.evaluate(async () => {
     const g = (window as any).__gecko;
-    const blocks = [...new Set(Array.from(g.surface("faces").blocks as number[]))];
+    const blocks = [
+      ...new Set(Array.from(g.surface("faces").blocks as number[])),
+    ];
     g.apply({ op: "group", name: "fluid", blocks: [blocks[0]] });
     await g.refresh();
   });
@@ -3419,9 +4177,13 @@ test("hiding a group leaves the blocks beside it whole", async ({ page }) => {
   await expect
     .poll(async () => page.evaluate(() => (window as any).__gecko.nodesDrawn()))
     .toBe(8);
-  expect(await page.evaluate(() => (window as any).__gecko.counts().edges)).toBe(12);
   expect(
-    await page.evaluate(() => (window as any).__gecko.surface("faces").faces.length),
+    await page.evaluate(() => (window as any).__gecko.counts().edges),
+  ).toBe(12);
+  expect(
+    await page.evaluate(
+      () => (window as any).__gecko.surface("faces").faces.length,
+    ),
   ).toBe(6);
 
   // And a sheet lit through both of them stops where the picture does. Six
@@ -3430,24 +4192,32 @@ test("hiding a group leaves the blocks beside it whole", async ({ page }) => {
   await page.evaluate(EDGE_NEAR);
   const seam = (await page.evaluate(() => edgeNear([1, 0.5, 0]))) as number;
   await page.evaluate((e) => (window as any).__gecko.pickEdgeByName(e), seam);
-  await page.waitForFunction(() => (window as any).__gecko.sheet().length === 6);
+  await page.waitForFunction(
+    () => (window as any).__gecko.sheet().length === 6,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
   expect(await page.evaluate(() => (window as any).__gecko.litDrawn())).toBe(4);
   expect(errors).toEqual([]);
 });
 
-test("the handles can be put away, and the pointer lets them be", async ({ page }) => {
+test("the handles can be put away, and the pointer lets them be", async ({
+  page,
+}) => {
   // Edges, faces and blocks could each be hidden; the handles could not,
   // on the grounds that they are what you grab. A hundred blocks is a
   // thousand dots over the model, and looking at the shape of a blocking
   // is a thing you do as much as working on it.
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await openDrawer(page);
   await openGroup(page, "nodes");
 
-  const name = (await page.evaluate(() => (window as any).__gecko.names()[0])) as number;
+  const name = (await page.evaluate(
+    () => (window as any).__gecko.names()[0],
+  )) as number;
   const at = (await page.evaluate(
     (n) => (window as any).__gecko.nodeScreen(n),
     name,
@@ -3455,39 +4225,63 @@ test("the handles can be put away, and the pointer lets them be", async ({ page 
   const box = (await page.locator("#view").boundingBox())!;
 
   // There to begin with, and a click on it picks it.
-  expect(await page.evaluate((p) => (window as any).__gecko.pickNode(p[0], p[1]), at)).toBe(name);
+  expect(
+    await page.evaluate(
+      (p) => (window as any).__gecko.pickNode(p[0], p[1]),
+      at,
+    ),
+  ).toBe(name);
 
   await page.locator('[data-test="nodes-visible"]').uncheck();
   await expect(page.locator("#grp-nodes .digest")).toHaveText("hidden");
-  expect(await page.evaluate(() => (window as any).__gecko.nodeShape(0))).not.toBeNull();
+  expect(
+    await page.evaluate(() => (window as any).__gecko.nodeShape(0)),
+  ).not.toBeNull();
 
   // Gone from the picture, and gone from the pointer with it: a handle you
   // cannot see but can still grab moves the model with nothing on screen
   // to say what you took hold of.
-  expect(await page.evaluate((p) => (window as any).__gecko.pickNode(p[0], p[1]), at)).toBeNull();
+  expect(
+    await page.evaluate(
+      (p) => (window as any).__gecko.pickNode(p[0], p[1]),
+      at,
+    ),
+  ).toBeNull();
   await page.mouse.click(box.x + at[0], box.y + at[1]);
-  expect(await page.evaluate(() => (window as any).__gecko.selectedNodes())).toEqual([]);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.selectedNodes()),
+  ).toEqual([]);
 
   // Nor caught by a band drawn over them.
   await page.keyboard.down("Shift");
   await page.mouse.move(box.x + 10, box.y + 10);
   await page.mouse.down();
-  await page.mouse.move(box.x + box.width - 10, box.y + box.height - 10, { steps: 8 });
+  await page.mouse.move(box.x + box.width - 10, box.y + box.height - 10, {
+    steps: 8,
+  });
   await page.mouse.up();
   await page.keyboard.up("Shift");
-  expect(await page.evaluate(() => (window as any).__gecko.selectedNodes())).toEqual([]);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.selectedNodes()),
+  ).toEqual([]);
 
   // And the setting is remembered, like every other thing about how it looks.
   await page.reload();
   await page.waitForSelector("body[data-ready='1']");
-  expect(await page.evaluate(() => (window as any).__gecko.prefs().nodes.visible)).toBe(false);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.prefs().nodes.visible),
+  ).toBe(false);
   expect(errors).toEqual([]);
 });
 
-test("the mesh has a band of its own, and can be put away", async ({ page }) => {
+test("the mesh has a band of its own, and can be put away", async ({
+  page,
+}) => {
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.keyboard.press("e");
   await expect(page.locator("[data-test=mesh-hexes]")).toHaveText("1000");
 
@@ -3500,14 +4294,20 @@ test("the mesh has a band of its own, and can be put away", async ({ page }) => 
   await expect(page.locator('[data-test="mesh-alpha"]')).toBeVisible();
   await page.locator("[data-test=mesh-visible]").uncheck();
   // Still meshed — the kernel holds it — but nothing of it is drawn.
-  expect(await page.evaluate(() => (window as any).__gecko.skinCount())).toBe(0);
+  expect(await page.evaluate(() => (window as any).__gecko.skinCount())).toBe(
+    0,
+  );
   await expect(page.locator("[data-test=mesh-hexes]")).toHaveText("1000");
   expect(errors).toEqual([]);
 });
 
 /** Open the console and wait for the interpreter to be there. */
 async function openConsole(page: import("@playwright/test").Page) {
-  if (!(await page.evaluate(() => document.body.classList.contains("console-open")))) {
+  if (
+    !(await page.evaluate(() =>
+      document.body.classList.contains("console-open"),
+    ))
+  ) {
     await page.locator("#console-open").click();
   }
   await expect(page.locator("#console")).toBeVisible();
@@ -3528,15 +4328,22 @@ test("the console runs Lua, and the scene catches up", async ({ page }) => {
   const errors = await boot(page);
   await openConsole(page);
 
-  await lua(page, "for i = 1, 3 do gecko.create_cube{ origin = {i * 1.5, 0, 0} } end");
+  await lua(
+    page,
+    "for i = 1, 3 do gecko.create_cube{ origin = {i * 1.5, 0, 0} } end",
+  );
   await expect(page.locator("[data-test=blocks]")).toHaveText("3");
   // And the scene drew them, rather than the readout merely saying so.
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 24);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 24,
+  );
 
   // A value comes back, and a table is opened out rather than printed as
   // an address.
   await lua(page, "return gecko.stats()");
-  await expect(page.locator("[data-test=console-out]")).toContainText("blocks = 3");
+  await expect(page.locator("[data-test=console-out]")).toContainText(
+    "blocks = 3",
+  );
   // Whole, and in name order: the table has nine fields, and a console
   // that printed them in hash order would hide one of them behind an
   // ellipsis as soon as a tenth was added.
@@ -3546,11 +4353,15 @@ test("the console runs Lua, and the scene catches up", async ({ page }) => {
 
   // `print` goes to the scrollback.
   await lua(page, 'print("nodes:", #gecko.nodes())');
-  await expect(page.locator("[data-test=console-out]")).toContainText("nodes:\t24");
+  await expect(page.locator("[data-test=console-out]")).toContainText(
+    "nodes:\t24",
+  );
   expect(errors).toEqual([]);
 });
 
-test("what the mouse does is written in the console as Lua", async ({ page }) => {
+test("what the mouse does is written in the console as Lua", async ({
+  page,
+}) => {
   // The session's history, kept by the kernel so that both doors — the
   // mouse and the console — write into the same one, in order.
   const errors = await boot(page);
@@ -3566,7 +4377,8 @@ test("what the mouse does is written in the console as Lua", async ({ page }) =>
 
   // Both of them are in the script, in the order they happened.
   await lua(page, "return gecko.script()");
-  const shown = (await page.locator("[data-test=console-out]").textContent()) ?? "";
+  const shown =
+    (await page.locator("[data-test=console-out]").textContent()) ?? "";
   expect(shown, "the two commands are not in order in the script").toMatch(
     /size = 1 \}\s*gecko\.create_cube\{ origin = \{3, 0, 0\}/,
   );
@@ -3593,13 +4405,18 @@ test("a mistake in a script is reported, not swallowed", async ({ page }) => {
 
   // A refusal from the kernel arrives the same way, and stops the chunk
   // where it went wrong rather than letting it carry on.
-  await lua(page, "gecko.create_cube() gecko.remove_block(99) gecko.create_cube()");
+  await lua(
+    page,
+    "gecko.create_cube() gecko.remove_block(99) gecko.create_cube()",
+  );
   await expect(page.locator("#console-out .bad").last()).toContainText("99");
   await expect(page.locator("[data-test=blocks]")).toHaveText("1");
   expect(errors).toEqual([]);
 });
 
-test("a file handed to the page can then be opened by a script", async ({ page }) => {
+test("a file handed to the page can then be opened by a script", async ({
+  page,
+}) => {
   // The answer to "how do I open a file from Lua on the published page":
   // give the page the file first, and open it by name afterwards. There
   // is no path to give a browser, and the picker that could ask for one
@@ -3617,16 +4434,29 @@ test("a file handed to the page can then be opened by a script", async ({ page }
   await expect(page.locator("#console-out").last()).toContainText("square.msh");
 
   await lua(page, 'gecko.clear_geometry() gecko.load_geometry("square.msh")');
-  expect(await page.evaluate(() => (window as any).__gecko.stats().geometry.surfaces)).toBe(1);
+  expect(
+    await page.evaluate(
+      () => (window as any).__gecko.stats().geometry.surfaces,
+    ),
+  ).toBe(1);
 
   // Even written with a folder in front of it: there is no folder here for
   // it to be wrong about.
-  await lua(page, 'gecko.clear_geometry() gecko.load_geometry("data/square.msh")');
-  expect(await page.evaluate(() => (window as any).__gecko.stats().geometry.surfaces)).toBe(1);
+  await lua(
+    page,
+    'gecko.clear_geometry() gecko.load_geometry("data/square.msh")',
+  );
+  expect(
+    await page.evaluate(
+      () => (window as any).__gecko.stats().geometry.surfaces,
+    ),
+  ).toBe(1);
   expect(errors).toEqual([]);
 });
 
-test("a script asking this page for a file is told why there is none", async ({ page }) => {
+test("a script asking this page for a file is told why there is none", async ({
+  page,
+}) => {
   // The suite serves the page as a static host does, so this is the case a
   // reader meets on the published page — and the first thing anyone tries
   // then is a longer path. The message has to say that no path will do.
@@ -3651,7 +4481,9 @@ test("the session is saved as a script", async ({ page }) => {
   const download = page.waitForEvent("download");
   await page.locator("#console-save").click();
   const saved = await download;
-  expect(saved.suggestedFilename()).toMatch(/^gecko-\d{4}-\d{2}-\d{2}-\d{6}\.lua$/);
+  expect(saved.suggestedFilename()).toMatch(
+    /^gecko-\d{4}-\d{2}-\d{2}-\d{6}\.lua$/,
+  );
 
   const file = await readFile(await saved.path(), "utf8");
   expect(file).toContain("-- Written by gecko");
@@ -3660,7 +4492,9 @@ test("the session is saved as a script", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
-test("the page's Lua and the terminal's agree, byte for byte", async ({ page }) => {
+test("the page's Lua and the terminal's agree, byte for byte", async ({
+  page,
+}) => {
   // The same script runs in two hosts: one holds the session, the other
   // reaches it through JavaScript. Everything above those four primitives
   // is the same code, and this is what says so — the script computes a
@@ -3670,7 +4504,10 @@ test("the page's Lua and the terminal's agree, byte for byte", async ({ page }) 
   await openConsole(page);
 
   const script = await readFile(
-    new URL("../../../crates/gecko-lua/tests/scripts/agree.lua", import.meta.url),
+    new URL(
+      "../../../crates/gecko-lua/tests/scripts/agree.lua",
+      import.meta.url,
+    ),
     "utf8",
   );
   await lua(page, script);
@@ -3678,23 +4515,34 @@ test("the page's Lua and the terminal's agree, byte for byte", async ({ page }) 
   // Its own assertions did the work; what matters here is that none of
   // them fired.
   await expect(page.locator("[data-test=console-out]")).toContainText("digest");
-  expect(await page.locator("#console-out .bad").count(), "the hosts disagree").toBe(0);
+  expect(
+    await page.locator("#console-out .bad").count(),
+    "the hosts disagree",
+  ).toBe(0);
   // Both digests were printed, and the model the script leaves behind is
   // the smoothed grid of its second half.
-  await expect(page.locator("[data-test=console-out]")).toContainText("smoothed:");
+  await expect(page.locator("[data-test=console-out]")).toContainText(
+    "smoothed:",
+  );
   await expect(page.locator("[data-test=mesh-hexes]")).toHaveText("216");
   expect(errors).toEqual([]);
 });
 
-test("holding shift lights the chord, and ⇧Del takes it out", async ({ page }) => {
+test("holding shift lights the chord, and ⇧Del takes it out", async ({
+  page,
+}) => {
   // The one gesture both chord operations share: hold ⇧ with a face
   // selected and the thread through it lights up, so what is about to go
   // is on screen before it goes.
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 16,
+  );
 
   // Glued through the same door a script uses: what is under test is the
   // keyboard, not the mouse, and the mouse has its own tests.
@@ -3705,7 +4553,9 @@ test("holding shift lights the chord, and ⇧Del takes it out", async ({ page })
     await g.refresh();
     return first;
   });
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 12);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 12,
+  );
 
   // Selected from outside the pointer, with the block the surface lists it
   // under — the pair a click would have given.
@@ -3716,16 +4566,22 @@ test("holding shift lights the chord, and ⇧Del takes it out", async ({ page })
     g.choose({ face, block: s.blocks[at] });
   }, seam);
   await expect(page.locator("#status")).toContainText("hold ⇧ for its chord");
-  expect(await page.evaluate(() => (window as any).__gecko.sheet())).toEqual([]);
+  expect(await page.evaluate(() => (window as any).__gecko.sheet())).toEqual(
+    [],
+  );
 
   await page.keyboard.down("Shift");
   await expect(page.locator("#status")).toContainText("2 blocks");
   // Three faces along a chord of two blocks — two ends and the seam — four
   // edges each.
-  expect(await page.evaluate(() => (window as any).__gecko.sheet().length)).toBe(12);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.sheet().length),
+  ).toBe(12);
 
   await page.keyboard.press("Delete");
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 0);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 0,
+  );
   await page.keyboard.up("Shift");
   await expect(page.locator("[data-test=blocks]")).toHaveText("0");
   expect(errors).toEqual([]);
@@ -3734,9 +4590,13 @@ test("holding shift lights the chord, and ⇧Del takes it out", async ({ page })
 test("⇧P wraps that chord in an o-grid", async ({ page }) => {
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 16);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 16,
+  );
 
   const seam = await page.evaluate(async () => {
     const g = (window as any).__gecko;
@@ -3745,7 +4605,9 @@ test("⇧P wraps that chord in an o-grid", async ({ page }) => {
     await g.refresh();
     return first;
   });
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 12);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 12,
+  );
   await page.evaluate((face) => {
     const g = (window as any).__gecko;
     const s = g.surface("faces");
@@ -3811,7 +4673,9 @@ test("dragging a face of a patch raises the whole sheet", async ({ page }) => {
     await g.refresh();
   });
   await page.waitForFunction(() => (window as any).__gecko.stats().faces === 2);
-  expect(await page.evaluate(() => (window as any).__gecko.stats().patches)).toBe(1);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.stats().patches),
+  ).toBe(1);
 
   // Raised through the page's own door, as the drag does it.
   await page.evaluate(async () => {
@@ -3820,7 +4684,9 @@ test("dragging a face of a patch raises the whole sheet", async ({ page }) => {
     g.apply({ op: "extrude_patch", face: s.faces[0], height: 0.5 });
     await g.refresh();
   });
-  await page.waitForFunction(() => (window as any).__gecko.stats().blocks === 2);
+  await page.waitForFunction(
+    () => (window as any).__gecko.stats().blocks === 2,
+  );
   const stats = await page.evaluate(() => (window as any).__gecko.stats());
   expect(stats.patches).toBe(0);
   expect(stats.nodes).toBe(12);
@@ -3861,7 +4727,9 @@ test("a quadrangle is laid on the picked surface with Q", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
-test("a face of a patch is dragged either way, and the block follows", async ({ page }) => {
+test("a face of a patch is dragged either way, and the block follows", async ({
+  page,
+}) => {
   // Which way a free face is wound came from the triangles under it, and
   // nobody looking at the screen can tell — so dragging it towards you has
   // to build a block towards you, rather than a sliver the other way.
@@ -3877,14 +4745,18 @@ test("a face of a patch is dragged either way, and the block follows", async ({ 
   await page.evaluate(() => (window as any).__gecko.settled());
 
   // Selected by clicking it, which is what arms the drag.
-  const face = (await page.evaluate(() => (window as any).__gecko.surface("faces").faces[0])) as number;
-  const at = (await page.evaluate((f) => (window as any).__gecko.faceScreen(f), face)) as [
-    number,
-    number,
-  ];
+  const face = (await page.evaluate(
+    () => (window as any).__gecko.surface("faces").faces[0],
+  )) as number;
+  const at = (await page.evaluate(
+    (f) => (window as any).__gecko.faceScreen(f),
+    face,
+  )) as [number, number];
   const box = (await page.locator("#view").boundingBox())!;
   await page.mouse.click(box.x + at[0], box.y + at[1]);
-  await page.waitForFunction(() => (window as any).__gecko.selection().length === 1);
+  await page.waitForFunction(
+    () => (window as any).__gecko.selection().length === 1,
+  );
 
   // Down the screen, which on this camera is the side the face is *not*
   // wound towards: the direction the old clamp refused to go.
@@ -3893,11 +4765,15 @@ test("a face of a patch is dragged either way, and the block follows", async ({ 
   for (const step of [20, 60, 110]) {
     await page.mouse.move(box.x + at[0], box.y + at[1] + step);
   }
-  const asked = (await page.evaluate(() => (window as any).__gecko.grownBy())) as number;
+  const asked = (await page.evaluate(() =>
+    (window as any).__gecko.grownBy(),
+  )) as number;
   expect(asked).toBeLessThan(-0.2);
   await page.mouse.up();
 
-  await page.waitForFunction(() => (window as any).__gecko.stats().blocks === 1);
+  await page.waitForFunction(
+    () => (window as any).__gecko.stats().blocks === 1,
+  );
   const stats = await page.evaluate(() => (window as any).__gecko.stats());
   expect(stats.nodes).toBe(8);
   expect(stats.patches).toBe(0);
@@ -3919,7 +4795,9 @@ for (const [width, height] of [
   [1100, 760],
   [900, 700],
 ] as const) {
-  test(`the help card is read without scrolling at ${width}×${height}`, async ({ page }) => {
+  test(`the help card is read without scrolling at ${width}×${height}`, async ({
+    page,
+  }) => {
     // The complaint this answers: the card had grown past the bottom of
     // the window, and half of what it says is the half nobody reads. Three
     // ordinary window sizes, and the measurement is the plain one — what
@@ -3931,7 +4809,11 @@ for (const [width, height] of [
 
     const fits = await page.evaluate(() => {
       const card = document.querySelector("#help-card") as HTMLElement;
-      return { wants: card.scrollHeight, has: card.clientHeight, window: window.innerHeight };
+      return {
+        wants: card.scrollHeight,
+        has: card.clientHeight,
+        window: window.innerHeight,
+      };
     });
     // Not scrolling, first — the plain reading of the complaint.
     expect(
@@ -3973,7 +4855,9 @@ test("the window says which gecko it is", async ({ page }) => {
 
   // One source: the kernel's own, so it cannot disagree with the release
   // it was built from.
-  expect(await page.evaluate(() => (window as any).__gecko.version())).toBe(shown);
+  expect(await page.evaluate(() => (window as any).__gecko.version())).toBe(
+    shown,
+  );
   expect(errors).toEqual([]);
 });
 
@@ -4004,20 +4888,28 @@ test("R smooths the blocking, by what the sliders say", async ({ page }) => {
        end
      end`,
   );
-  await page.waitForFunction(() => (window as any).__gecko.stats().blocks === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.stats().blocks === 8,
+  );
 
   // All the way to the middle, once, so where the node lands says that the
   // slider was the number sent.
   await openParams(page);
   await page.locator("[data-test=smooth-rounds]").fill("1");
   await page.locator("[data-test=smooth-share]").fill("1");
-  await expect(page.locator("[data-test=smooth-share-value]")).toHaveText("100%");
+  await expect(page.locator("[data-test=smooth-share-value]")).toHaveText(
+    "100%",
+  );
 
   // Out of the slider first: anything typed into a field is typing, which
   // is exactly the rule the keyboard is supposed to follow.
-  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.evaluate(() =>
+    (document.activeElement as HTMLElement | null)?.blur(),
+  );
   await page.keyboard.press("r");
-  await expect(page.locator("#status")).toContainText("smoothed 1 time by 100%");
+  await expect(page.locator("#status")).toContainText(
+    "smoothed 1 time by 100%",
+  );
 
   // And the node went back to the middle of its ring, which for this grid
   // is where it started.
@@ -4044,7 +4936,12 @@ async function anLShape(page: import("@playwright/test").Page) {
     [0, 1, 0],
   ]) {
     await page.evaluate(
-      (at) => (window as any).__gecko.apply({ op: "create_cube", origin: at, size: 1 }),
+      (at) =>
+        (window as any).__gecko.apply({
+          op: "create_cube",
+          origin: at,
+          size: 1,
+        }),
       origin,
     );
   }
@@ -4056,7 +4953,9 @@ async function anLShape(page: import("@playwright/test").Page) {
 /** The drawer, open at the fold the shading's switch lives in. */
 async function openShading(page: import("@playwright/test").Page) {
   await openDrawer(page);
-  await page.locator("#sec-colors").evaluate((d) => ((d as HTMLDetailsElement).open = true));
+  await page
+    .locator("#sec-colors")
+    .evaluate((d) => ((d as HTMLDetailsElement).open = true));
   await expect(page.locator("#show-ao")).toBeVisible();
 }
 
@@ -4075,7 +4974,8 @@ async function shadingDiff(page: import("@playwright/test").Page) {
       flat.width = view.width;
       flat.height = view.height;
       flat.getContext("2d")!.drawImage(view, 0, 0);
-      return flat.getContext("2d")!.getImageData(0, 0, view.width, view.height).data;
+      return flat.getContext("2d")!.getImageData(0, 0, view.width, view.height)
+        .data;
     };
     /**
      * A picture that has stopped changing.
@@ -4091,7 +4991,8 @@ async function shadingDiff(page: import("@playwright/test").Page) {
         await frame();
         const now = grab();
         let moved = 0;
-        for (let p = 0; p < now.length; p += 4) moved += Math.abs(now[p] - last[p]);
+        for (let p = 0; p < now.length; p += 4)
+          moved += Math.abs(now[p] - last[p]);
         last = now;
         if (moved / (now.length / 4) < 0.5) return now;
       }
@@ -4102,7 +5003,9 @@ async function shadingDiff(page: import("@playwright/test").Page) {
     // Opaque before the first reading, so that turning the shading on moves
     // nothing but the shading: it opens the faces too, and a comparison
     // across that would only be measuring the transparency.
-    const slider = document.querySelector('input[data-test="faces-alpha"]') as HTMLInputElement;
+    const slider = document.querySelector(
+      'input[data-test="faces-alpha"]',
+    ) as HTMLInputElement;
     slider.value = "1";
     slider.dispatchEvent(new Event("input", { bubbles: true }));
     const plain = await read();
@@ -4124,7 +5027,13 @@ async function shadingDiff(page: import("@playwright/test").Page) {
       if (drop > deepest) deepest = drop;
     }
     return { lit, darkened, untouched, deepest, on: g.occluding() };
-  })) as { lit: number; darkened: number; untouched: number; deepest: number; on: boolean };
+  })) as {
+    lit: number;
+    darkened: number;
+    untouched: number;
+    deepest: number;
+    on: boolean;
+  };
 }
 
 test("shading the hollows darkens the corner and leaves the open faces alone", async ({
@@ -4172,23 +5081,31 @@ test("the shading opens the faces, and closing it hands the transparency back", 
   await openShading(page);
 
   const alpha = () =>
-    page.evaluate(() => (window as any).__gecko.display().faces.alpha) as Promise<number>;
+    page.evaluate(
+      () => (window as any).__gecko.display().faces.alpha,
+    ) as Promise<number>;
   const before = await alpha();
   expect(before).toBeLessThan(1);
 
   await page.locator("#show-ao").click();
   await expect(page.locator("#status")).toContainText("hollows shaded");
   expect(await alpha()).toBe(1);
-  expect(await page.evaluate(() => (window as any).__gecko.occluding())).toBe(true);
+  expect(await page.evaluate(() => (window as any).__gecko.occluding())).toBe(
+    true,
+  );
 
   await page.locator("#show-ao").click();
   await expect(page.locator("#status")).toContainText("hollows plain");
   expect(await alpha()).toBe(before);
-  expect(await page.evaluate(() => (window as any).__gecko.occluding())).toBe(false);
+  expect(await page.evaluate(() => (window as any).__gecko.occluding())).toBe(
+    false,
+  );
   expect(errors).toEqual([]);
 });
 
-test("the triad is still drawn while the hollows are shaded", async ({ page }) => {
+test("the triad is still drawn while the hollows are shaded", async ({
+  page,
+}) => {
   // The pipeline is given the geometry buffer rather than left to take a
   // prepass, which is scene-wide: it rode over the corner camera's own
   // viewport and left the corner empty.
@@ -4205,7 +5122,9 @@ test("the triad is still drawn while the hollows are shaded", async ({ page }) =
     flat.width = view.width;
     flat.height = view.height;
     flat.getContext("2d")!.drawImage(view, 0, 0);
-    const p = flat.getContext("2d")!.getImageData(0, 0, view.width, view.height).data;
+    const p = flat
+      .getContext("2d")!
+      .getImageData(0, 0, view.width, view.height).data;
     let n = 0;
     for (let i = 0; i < p.length; i += 4) {
       if (p[i] > 150 && p[i + 1] < 90 && p[i + 2] < 90) n++;
@@ -4216,7 +5135,9 @@ test("the triad is still drawn while the hollows are shaded", async ({ page }) =
   expect(errors).toEqual([]);
 });
 
-test("the wireframe and the handles are kept out of the shading", async ({ page }) => {
+test("the wireframe and the handles are kept out of the shading", async ({
+  page,
+}) => {
   // The occlusion is computed from a buffer of its own, and what goes into
   // that buffer is what counts as *the model*. A greased line lying along an
   // edge is not the model — it is a drawing of one — and left in, it shades
@@ -4227,16 +5148,19 @@ test("the wireframe and the handles are kept out of the shading", async ({ page 
   await cutGrid(page);
   await openShading(page);
   await page.locator("#show-ao").click();
-  expect(await page.evaluate(() => (window as any).__gecko.occluding())).toBe(true);
+  expect(await page.evaluate(() => (window as any).__gecko.occluding())).toBe(
+    true,
+  );
 
   const shaded = (await page.evaluate(() =>
     (window as any).__gecko.shadedNames(),
   )) as string[];
   // Everything in it is a surface, one mesh per block.
   expect(shaded.length).toBeGreaterThan(20);
-  expect(shaded.every((name) => /^(faces|blocks)-\d+$/.test(name)), shaded.join(" ")).toBe(
-    true,
-  );
+  expect(
+    shaded.every((name) => /^(faces|blocks)-\d+$/.test(name)),
+    shaded.join(" "),
+  ).toBe(true);
   // And the two things that would spoil it are not.
   expect(shaded).not.toContain("edges");
   expect(shaded.filter((name) => name.startsWith("node"))).toEqual([]);
@@ -4253,12 +5177,15 @@ test("two walls of a block that face different ways are drawn different shades",
   // a corner between two walls visible at all.
   const errors = await boot(page);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 
   const shades = (await page.evaluate(() => {
     const el = (key: string) =>
-      document.getElementById(key) ?? document.querySelector(`[data-test="${key}"]`);
+      document.getElementById(key) ??
+      document.querySelector(`[data-test="${key}"]`);
     // The faces alone: a wireframe and a handle have colors of their own,
     // and this is counting the colors of the surfaces.
     for (const key of ["edges-visible", "nodes-visible"]) {
@@ -4276,7 +5203,9 @@ test("two walls of a block that face different ways are drawn different shades",
           flat.width = view.width;
           flat.height = view.height;
           flat.getContext("2d")!.drawImage(view, 0, 0);
-          const p = flat.getContext("2d")!.getImageData(0, 0, view.width, view.height).data;
+          const p = flat
+            .getContext("2d")!
+            .getImageData(0, 0, view.width, view.height).data;
           const tally = new Map<number, number>();
           let lit = 0;
           for (let i = 0; i < p.length; i += 4) {
@@ -4321,7 +5250,9 @@ test("the shading does nothing at all where you can see through the model", asyn
   await anLShape(page);
   await openShading(page);
   await page.locator("#show-ao").click();
-  expect(await page.evaluate(() => (window as any).__gecko.occluding())).toBe(true);
+  expect(await page.evaluate(() => (window as any).__gecko.occluding())).toBe(
+    true,
+  );
 
   const diff = await translucentDiff(page);
   const where = JSON.stringify(diff);
@@ -4346,7 +5277,8 @@ async function translucentDiff(page: import("@playwright/test").Page) {
       flat.width = view.width;
       flat.height = view.height;
       flat.getContext("2d")!.drawImage(view, 0, 0);
-      return flat.getContext("2d")!.getImageData(0, 0, view.width, view.height).data;
+      return flat.getContext("2d")!.getImageData(0, 0, view.width, view.height)
+        .data;
     };
     const read = async () => {
       let last = grab();
@@ -4354,13 +5286,16 @@ async function translucentDiff(page: import("@playwright/test").Page) {
         await frame();
         const now = grab();
         let moved = 0;
-        for (let p = 0; p < now.length; p += 4) moved += Math.abs(now[p] - last[p]);
+        for (let p = 0; p < now.length; p += 4)
+          moved += Math.abs(now[p] - last[p]);
         last = now;
         if (moved / (now.length / 4) < 0.5) return now;
       }
       return last;
     };
-    const slider = document.querySelector('input[data-test="faces-alpha"]') as HTMLInputElement;
+    const slider = document.querySelector(
+      'input[data-test="faces-alpha"]',
+    ) as HTMLInputElement;
     const box = document.getElementById("show-ao") as HTMLInputElement;
     // Half open, with the shading on — the state somebody reaches by pulling
     // the slider back down after switching it on.
@@ -4397,16 +5332,27 @@ async function aimPixels(page: import("@playwright/test").Page) {
     flat.width = view.width;
     flat.height = view.height;
     flat.getContext("2d")!.drawImage(view, 0, 0);
-    const p = flat.getContext("2d")!.getImageData(0, 0, view.width, view.height).data;
+    const p = flat
+      .getContext("2d")!
+      .getImageData(0, 0, view.width, view.height).data;
     let n = 0;
     for (let i = 0; i < p.length; i += 4) {
-      if (p[i] > 190 && p[i + 1] > 40 && p[i + 1] < 130 && p[i + 2] > 60 && p[i + 2] < 170) n++;
+      if (
+        p[i] > 190 &&
+        p[i + 1] > 40 &&
+        p[i + 1] < 130 &&
+        p[i + 2] > 60 &&
+        p[i + 2] < 170
+      )
+        n++;
     }
     return n;
   });
 }
 
-test("the mark a cut is aimed with is hidden by the model too", async ({ page }) => {
+test("the mark a cut is aimed with is hidden by the model too", async ({
+  page,
+}) => {
   // The sheet stopped being drawn over everything, and the mark along it
   // did not: the red showing where the cut lands came out in front of the
   // blocks it runs behind, so a cut at the back read as loudly as one at
@@ -4415,24 +5361,29 @@ test("the mark a cut is aimed with is hidden by the model too", async ({ page })
   const errors = await boot(page);
   await page.evaluate(EDGE_NEAR);
   await page.locator("#cube").click();
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
   // In two each way, so the sheet has edges with blocks in front of them.
   await cutInHalf(page, [0.5, 0, 0]);
   await cutInHalf(page, [0, 0.5, 0]);
   await cutInHalf(page, [0, 0, 0.5]);
-  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 27);
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 27,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 
   const edge = (await page.evaluate(() => edgeNear([0, 0.25, 0]))) as number;
-  const at = (await page.evaluate((e) => (window as any).__gecko.edgeScreen(e), edge)) as [
-    number,
-    number,
-  ];
+  const at = (await page.evaluate(
+    (e) => (window as any).__gecko.edgeScreen(e),
+    edge,
+  )) as [number, number];
   const box = (await page.locator("#view").boundingBox())!;
   await page.mouse.move(box.x + at[0], box.y + at[1]);
   await page.mouse.down();
   await page.waitForFunction(() => (window as any).__gecko.sheet().length > 0);
-  for (let i = 1; i <= 5; i++) await page.mouse.move(box.x + at[0], box.y + at[1] - i * 10);
+  for (let i = 1; i <= 5; i++)
+    await page.mouse.move(box.x + at[0], box.y + at[1] - i * 10);
   await page.waitForFunction(() => (window as any).__gecko.aimedAt() !== null);
   await page.evaluate(() => (window as any).__gecko.settled());
   const through = await aimPixels(page);
@@ -4442,16 +5393,22 @@ test("the mark a cut is aimed with is hidden by the model too", async ({ page })
   // nothing in front of the mark now. Drawn over everything, the two
   // counts would be the same number.
   await page.evaluate(() => (window as any).__gecko.run("faces"));
-  await page.waitForFunction(() => !(window as any).__gecko.prefs().faces.visible);
+  await page.waitForFunction(
+    () => !(window as any).__gecko.prefs().faces.visible,
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
   const bare = await aimPixels(page);
   await page.mouse.up();
 
-  expect(bare, `through ${through}, bare ${bare}`).toBeGreaterThan(through * 1.1);
+  expect(bare, `through ${through}, bare ${bare}`).toBeGreaterThan(
+    through * 1.1,
+  );
   expect(errors).toEqual([]);
 });
 
-test("the hollows wait for a single view, and four views are all drawn", async ({ page }) => {
+test("the hollows wait for a single view, and four views are all drawn", async ({
+  page,
+}) => {
   // The shading belongs to one camera, and a camera drawing into a corner
   // of the canvas is more than the pipeline can follow: in four views it
   // was not merely missing from the three orthographic panes, it was
@@ -4468,7 +5425,9 @@ test("the hollows wait for a single view, and four views are all drawn", async (
   await anLShape(page);
   await openShading(page);
   await page.locator("#show-ao").click();
-  expect(await page.evaluate(() => (window as any).__gecko.occluding())).toBe(true);
+  expect(await page.evaluate(() => (window as any).__gecko.occluding())).toBe(
+    true,
+  );
 
   // Through the action rather than the key: the switch was just clicked,
   // so the keyboard belongs to the drawer.
@@ -4477,12 +5436,18 @@ test("the hollows wait for a single view, and four views are all drawn", async (
   await page.evaluate(() => (window as any).__gecko.settled());
 
   // Nothing is shaded...
-  expect(await page.evaluate(() => (window as any).__gecko.occluding())).toBe(false);
+  expect(await page.evaluate(() => (window as any).__gecko.occluding())).toBe(
+    false,
+  );
   await expect(page.locator("#status")).toContainText("hollows plain here");
   // ...and nothing about what you asked for has been thrown away: the
   // faces are still opaque and the switch is still on.
-  expect(await page.evaluate(() => (window as any).__gecko.prefs().ao)).toBe(true);
-  expect(await page.evaluate(() => (window as any).__gecko.display().faces.alpha)).toBe(1);
+  expect(await page.evaluate(() => (window as any).__gecko.prefs().ao)).toBe(
+    true,
+  );
+  expect(
+    await page.evaluate(() => (window as any).__gecko.display().faces.alpha),
+  ).toBe(1);
 
   // And all four panes have something in them.
   const quadrants = (await page.evaluate(() => {
@@ -4491,7 +5456,9 @@ test("the hollows wait for a single view, and four views are all drawn", async (
     flat.width = view.width;
     flat.height = view.height;
     flat.getContext("2d")!.drawImage(view, 0, 0);
-    const p = flat.getContext("2d")!.getImageData(0, 0, view.width, view.height).data;
+    const p = flat
+      .getContext("2d")!
+      .getImageData(0, 0, view.width, view.height).data;
     const lit = [0, 0, 0, 0];
     for (let y = 0; y < view.height; y++) {
       for (let x = 0; x < view.width; x++) {
@@ -4508,7 +5475,9 @@ test("the hollows wait for a single view, and four views are all drawn", async (
   // switched off.
   await page.evaluate(() => (window as any).__gecko.run("quad"));
   await page.waitForFunction(() => !(window as any).__gecko.prefs().quad);
-  expect(await page.evaluate(() => (window as any).__gecko.occluding())).toBe(true);
+  expect(await page.evaluate(() => (window as any).__gecko.occluding())).toBe(
+    true,
+  );
   await expect(page.locator("#status")).toContainText("hollows shaded");
   expect(errors).toEqual([]);
 });
@@ -4526,14 +5495,16 @@ async function darkPixels(page: import("@playwright/test").Page) {
       flat.width = view.width;
       flat.height = view.height;
       flat.getContext("2d")!.drawImage(view, 0, 0);
-      return flat.getContext("2d")!.getImageData(0, 0, view.width, view.height).data;
+      return flat.getContext("2d")!.getImageData(0, 0, view.width, view.height)
+        .data;
     };
     let last = grab();
     for (let i = 0; i < 60; i++) {
       await frame();
       const now = grab();
       let moved = 0;
-      for (let p = 0; p < now.length; p += 4) moved += Math.abs(now[p] - last[p]);
+      for (let p = 0; p < now.length; p += 4)
+        moved += Math.abs(now[p] - last[p]);
       last = now;
       if (moved / (now.length / 4) < 0.5) break;
     }
@@ -4588,7 +5559,9 @@ test("a block that lends its faces to its neighbours is still shaded the right w
 
   // Through the element rather than the drawer: replaying a script opens
   // the console over it, and this test is not about where the switch is.
-  await page.evaluate(() => (document.getElementById("show-ao") as HTMLInputElement).click());
+  await page.evaluate(() =>
+    (document.getElementById("show-ao") as HTMLInputElement).click(),
+  );
   await page.waitForFunction(() => (window as any).__gecko.occluding());
 
   const shaded = await darkPixels(page);

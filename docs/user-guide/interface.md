@@ -48,6 +48,7 @@ cannot disagree with the release it was built from.
 | `A`         | put the selected nodes on the selected entity        |
 | `Q`         | lay a quadrangle on the selected surface             |
 | `W`-drag    | catch every node handle inside the band              |
+| `⇧W`-drag   | catch every face whose four corners are inside it    |
 | `L`         | lock the picked node, or let it go                   |
 | `U`         | take the picked node off the geometry                |
 | `G`         | glue the two selected faces                          |
