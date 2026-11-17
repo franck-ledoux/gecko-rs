@@ -41,7 +41,7 @@ import type { GreasedLineMesh } from "@babylonjs/core/Meshes/GreasedLine/greased
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { PointerDragBehavior } from "@babylonjs/core/Behaviors/Meshes/pointerDragBehavior";
 import "@babylonjs/core/Culling/ray";
-import type { GeometryView, MeshView, View } from "./decode";
+import type { GeometryView, MeshView, NodesView, View } from "./decode";
 import type { GeomGroup, Spot } from "./geometry";
 import {
   DIM_OF,
@@ -2198,6 +2198,69 @@ export class Viewer {
       carried = [];
       this.dropped.forEach((listener) => listener(name, to, also));
     });
+  }
+
+  /**
+   * Take a new set of node places and classifications, and redraw what moved.
+   *
+   * What a drop does when the only thing the kernel changed is where a node
+   * is. Everything else the viewer holds — the edges, the quadrangles, their
+   * names, their colors — is still right, and rebuilding it from a whole view
+   * is what used to make dropping a node at five hundred blocks a quarter of
+   * a second's wait.
+   *
+   * Returns **false** when this cannot be believed, and then the caller asks
+   * for the whole view: a different set of names, a different count, an
+   * origin that has shifted under the quadrangles still held here, or a node
+   * that has been frozen or thawed — a frozen handle is a cube and a thawed
+   * one a ball, and swapping a mesh is not an update.
+   */
+  applyNodes(fresh: NodesView): boolean {
+    const view = this.view;
+    if (!view || fresh.names.length !== view.names.length) return false;
+    for (let k = 0; k < 3; k++)
+      if (fresh.center[k] !== this.center[k]) return false;
+    for (let i = 0; i < fresh.names.length; i++) {
+      if (fresh.names[i] !== view.names[i]) return false;
+      if (fresh.frozen[i] !== view.nodeFrozen[i]) return false;
+    }
+
+    const moved: number[] = [];
+    for (let i = 0; i < fresh.names.length; i++) {
+      const p = i * 3;
+      if (
+        view.positions[p] !== fresh.positions[p] ||
+        view.positions[p + 1] !== fresh.positions[p + 1] ||
+        view.positions[p + 2] !== fresh.positions[p + 2]
+      ) {
+        view.positions[p] = fresh.positions[p];
+        view.positions[p + 1] = fresh.positions[p + 1];
+        view.positions[p + 2] = fresh.positions[p + 2];
+        moved.push(i);
+      }
+    }
+
+    // The classification may have settled onto the geometry on the way
+    // past, and that is a color. Copied for every node rather than for the
+    // ones that moved: it is one short array, and a node that was dragged
+    // off a curve changes what its neighbors are beside.
+    view.nodeClassDim.set(fresh.classDim);
+    view.nodeClassTag.set(fresh.classTag);
+    view.nodeGroupsLo.set(fresh.groupsLo);
+    view.nodeGroupsHi.set(fresh.groupsHi);
+    view.nodeLoose.set(fresh.loose);
+
+    for (const i of moved) {
+      const handle = this.nodes[i];
+      if (handle) handle.position = this.point(i);
+    }
+    for (let i = 0; i < this.nodes.length; i++) {
+      const material = this.nodes[i]?.material as StandardMaterial | undefined;
+      if (material) material.emissiveColor = this.nodeColor(i);
+    }
+    this.redrawAround(moved);
+    this.fitLimits();
+    return true;
   }
 
   /** Move a node in the working copy, without redrawing anything yet. */

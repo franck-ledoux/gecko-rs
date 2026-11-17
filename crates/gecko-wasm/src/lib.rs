@@ -41,6 +41,12 @@ impl WasmSession {
         self.inner.view_buffer()
     }
 
+    /// The nodes alone, for a command that moved one and made nothing.
+    #[wasm_bindgen(js_name = nodesBuffer)]
+    pub fn nodes_buffer(&self) -> Vec<u8> {
+        self.inner.nodes_buffer()
+    }
+
     /// The geometry, in the same bytes the station sends down its socket.
     ///
     /// Separate from the view because it changes on a different clock: see

@@ -127,6 +127,12 @@ export interface Kernel {
   readonly direct: Direct;
   apply(command: Record<string, unknown>): Reply;
   view(): Uint8Array;
+  /** The nodes alone, for a command that moved one and made nothing.
+   *
+   *  A tenth of the bytes of a view and a twentieth of the time, at the
+   *  price of being right about nodes only — so it is asked for after a
+   *  move and never instead of a view that something else changed. */
+  nodes(): Uint8Array;
   /** The geometry, in a buffer of its own. Asked for only when the
    *  generation in `stats` says it has changed. */
   geometry(): Uint8Array;

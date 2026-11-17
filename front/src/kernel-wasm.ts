@@ -8,7 +8,16 @@
  */
 
 import initWasm, { initSync, Session } from "./pkg/gecko";
-import type { Chord, Direct, Group, Kernel, Reply, Sheet, SheetCells, Stats } from "./kernel";
+import type {
+  Chord,
+  Direct,
+  Group,
+  Kernel,
+  Reply,
+  Sheet,
+  SheetCells,
+  Stats,
+} from "./kernel";
 
 let ready = false;
 
@@ -81,6 +90,10 @@ export class WasmKernel implements Kernel {
           script: raw.outcome.script,
         }
       : { ok: false, message: raw.error, viewChanged: false };
+  }
+
+  nodes(): Uint8Array {
+    return this.session.nodesBuffer();
   }
 
   view(): Uint8Array {

@@ -7,7 +7,7 @@
  */
 
 import { Engine } from "@babylonjs/core/Engines/engine";
-import { decodeGeometry, decodeMesh, decodeView } from "./decode";
+import { decodeGeometry, decodeMesh, decodeNodes, decodeView } from "./decode";
 import type { Stats } from "./kernel";
 import { initKernel, WasmKernel } from "./kernel-wasm";
 import { Viewer, type Group, type Pick } from "./viewer";
@@ -38,7 +38,8 @@ import { GEOM_GROUPS, spotName, type GeomGroup, type Spot } from "./geometry";
 import type { Axis } from "./axes";
 import "./style.css";
 
-const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+const $ = <T extends HTMLElement>(id: string) =>
+  document.getElementById(id) as T;
 
 /** Where to put the next cube, so successive ones stand side by side.
  *  Placement is the interface's business; the kernel takes an origin. */
@@ -53,7 +54,12 @@ async function boot() {
   const kernel = new WasmKernel();
 
   const canvas = $<HTMLCanvasElement>("view");
-  const engine = new Engine(canvas, true, { preserveDrawingBuffer: true }, true);
+  const engine = new Engine(
+    canvas,
+    true,
+    { preserveDrawingBuffer: true },
+    true,
+  );
   const viewer = new Viewer(engine);
   viewer.attachTo(canvas);
 
@@ -116,14 +122,23 @@ async function boot() {
       if (span) span.outerHTML = html;
     };
     for (const { group } of LAYERS) {
-      say(group, digest(prefs[group].coloring, prefs[group].alpha, prefs[group].visible));
+      say(
+        group,
+        digest(prefs[group].coloring, prefs[group].alpha, prefs[group].visible),
+      );
     }
     say("edges", digest(prefs.edges.coloring, undefined, prefs.edges.visible));
     say("nodes", digest(prefs.nodes.coloring, undefined, prefs.nodes.visible));
     for (const group of GEOM_GROUPS) {
-      say(group, digest(prefs[group].coloring, prefs[group].alpha, prefs[group].visible));
+      say(
+        group,
+        digest(prefs[group].coloring, prefs[group].alpha, prefs[group].visible),
+      );
     }
-    say("mesh", digest(prefs.mesh.coloring, prefs.mesh.alpha, prefs.mesh.visible));
+    say(
+      "mesh",
+      digest(prefs.mesh.coloring, prefs.mesh.alpha, prefs.mesh.visible),
+    );
   }
 
   /** The opacity the occlusion took away, to be handed back when it goes
@@ -150,7 +165,10 @@ async function boot() {
       prefs.faces.alpha = 1;
       prefs.blocks.alpha = 1;
     } else {
-      const was = translucent ?? { faces: DEFAULTS.faces.alpha, blocks: DEFAULTS.blocks.alpha };
+      const was = translucent ?? {
+        faces: DEFAULTS.faces.alpha,
+        blocks: DEFAULTS.blocks.alpha,
+      };
       prefs.faces.alpha = was.faces;
       prefs.blocks.alpha = was.blocks;
       translucent = null;
@@ -207,7 +225,11 @@ async function boot() {
    * nothing — a surface mesh has no volumes to classify one on — so it
    * keeps the two colorings it always had.
    */
-  const LAYERS: ReadonlyArray<{ group: Group; label: string; classified: boolean }> = [
+  const LAYERS: ReadonlyArray<{
+    group: Group;
+    label: string;
+    classified: boolean;
+  }> = [
     { group: "blocks", label: "Blocks", classified: false },
     { group: "faces", label: "Faces", classified: true },
   ];
@@ -267,7 +289,13 @@ async function boot() {
    * which is what keeps the drawer the height of one open group however
    * many groups there are.
    */
-  const summary = (band: string, group: string, label: string, inside: string, show?: boolean) =>
+  const summary = (
+    band: string,
+    group: string,
+    label: string,
+    inside: string,
+    show?: boolean,
+  ) =>
     `<details class="layer" name="${band}" id="grp-${group}"${
       prefs.panels.includes(`grp-${group}`) ? " open" : ""
     }><summary>` +
@@ -279,7 +307,9 @@ async function boot() {
 
   /** Hook up one group's color list. */
   function wireModes(group: string, set: (value: Coloring) => void) {
-    const list = $("layers").querySelector<HTMLSelectElement>(`[data-test="${group}-mode"]`);
+    const list = $("layers").querySelector<HTMLSelectElement>(
+      `[data-test="${group}-mode"]`,
+    );
     list?.addEventListener("change", () => {
       set(list.value as Coloring);
       redraw();
@@ -317,7 +347,10 @@ async function boot() {
         digest(prefs.edges.coloring, undefined, prefs.edges.visible),
         prefs.edges.visible,
       ) +
-      modes("edges", prefs.edges.coloring, { classified: true, grouped: true }) +
+      modes("edges", prefs.edges.coloring, {
+        classified: true,
+        grouped: true,
+      }) +
       slider("edges-shrink", "shrink", 0.1, prefs.edges.shrink) +
       `</details>` +
       summary(
@@ -327,7 +360,10 @@ async function boot() {
         digest(prefs.nodes.coloring, undefined, prefs.nodes.visible),
         prefs.nodes.visible,
       ) +
-      modes("nodes", prefs.nodes.coloring, { classified: true, grouped: true }) +
+      modes("nodes", prefs.nodes.coloring, {
+        classified: true,
+        grouped: true,
+      }) +
       `</details>`;
 
     for (const { group } of LAYERS) {
@@ -355,22 +391,30 @@ async function boot() {
     wireModes("nodes", (value) => {
       prefs.nodes.coloring = value;
     });
-    const internal = $("layers").querySelector<HTMLInputElement>('[data-test="faces-internal"]')!;
+    const internal = $("layers").querySelector<HTMLInputElement>(
+      '[data-test="faces-internal"]',
+    )!;
     internal.addEventListener("change", (e) => {
       prefs.faces.internal = (e.target as HTMLInputElement).checked;
       redraw();
     });
-    const edges = $("layers").querySelector<HTMLInputElement>('[data-test="edges-shrink"]')!;
+    const edges = $("layers").querySelector<HTMLInputElement>(
+      '[data-test="edges-shrink"]',
+    )!;
     edges.addEventListener("input", (e) => {
       prefs.edges.shrink = Number((e.target as HTMLInputElement).value);
       redraw();
     });
-    const wire = $("layers").querySelector<HTMLInputElement>('[data-test="edges-visible"]')!;
+    const wire = $("layers").querySelector<HTMLInputElement>(
+      '[data-test="edges-visible"]',
+    )!;
     wire.addEventListener("change", (e) => {
       prefs.edges.visible = (e.target as HTMLInputElement).checked;
       redraw();
     });
-    const handles = $("layers").querySelector<HTMLInputElement>('[data-test="nodes-visible"]')!;
+    const handles = $("layers").querySelector<HTMLInputElement>(
+      '[data-test="nodes-visible"]',
+    )!;
     handles.addEventListener("change", (e) => {
       prefs.nodes.visible = (e.target as HTMLInputElement).checked;
       redraw();
@@ -441,7 +485,8 @@ async function boot() {
    */
   function drawGroups() {
     const all = kernel.groups();
-    const ungrouped = `<label class="check"><input type="checkbox" data-test="ungrouped-visible"` +
+    const ungrouped =
+      `<label class="check"><input type="checkbox" data-test="ungrouped-visible"` +
       `${hiddenGroups.has(UNGROUPED) ? "" : " checked"} /> blocks in no group</label>`;
     $("groups").innerHTML =
       (all.length === 0
@@ -483,7 +528,8 @@ async function boot() {
 
     for (const row of $("groups").querySelectorAll<HTMLElement>(".group")) {
       const name = row.dataset.group ?? "";
-      const find = (test: string) => row.querySelector<HTMLInputElement>(`[data-test="${test}"]`)!;
+      const find = (test: string) =>
+        row.querySelector<HTMLInputElement>(`[data-test="${test}"]`)!;
       find("group-shown").addEventListener("change", (e) => {
         const shown = (e.target as HTMLInputElement).checked;
         if (shown) hiddenGroups.delete(name);
@@ -494,7 +540,8 @@ async function boot() {
       });
       find("group-name").addEventListener("change", (e) => {
         const to = (e.target as HTMLInputElement).value.trim();
-        if (to && to !== name) void send({ op: "rename_group", name, to }).then(after);
+        if (to && to !== name)
+          void send({ op: "rename_group", name, to }).then(after);
         else drawGroups();
       });
       find("group-written").addEventListener("change", (e) => {
@@ -519,7 +566,8 @@ async function boot() {
     $("groups")
       .querySelector<HTMLInputElement>('[data-test="ungrouped-visible"]')!
       .addEventListener("change", (e) => {
-        if ((e.target as HTMLInputElement).checked) hiddenGroups.delete(UNGROUPED);
+        if ((e.target as HTMLInputElement).checked)
+          hiddenGroups.delete(UNGROUPED);
         else hiddenGroups.add(UNGROUPED);
         prefs.hiddenGroups = [...hiddenGroups];
         savePrefs(prefs);
@@ -567,7 +615,10 @@ async function boot() {
 
   /** `&` and `"` in a name, which a group may have and markup may not. */
   function escaped(text: string): string {
-    return text.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+    return text
+      .replace(/&/g, "&amp;")
+      .replace(/"/g, "&quot;")
+      .replace(/</g, "&lt;");
   }
 
   /**
@@ -596,7 +647,9 @@ async function boot() {
       prefs.mesh.visible = (e.target as HTMLInputElement).checked;
       redraw();
     });
-    const list = $("mesh-layer").querySelector<HTMLSelectElement>('[data-test="mesh-mode"]')!;
+    const list = $("mesh-layer").querySelector<HTMLSelectElement>(
+      '[data-test="mesh-mode"]',
+    )!;
     list.addEventListener("change", () => {
       prefs.mesh.coloring = list.value as Coloring;
       redraw();
@@ -621,7 +674,10 @@ async function boot() {
     for (const input of $("swatches").querySelectorAll("input")) {
       input.addEventListener("input", (e) => {
         const target = e.target as HTMLInputElement;
-        setTheme({ ...prefs.theme, [target.dataset.key as keyof Theme]: target.value });
+        setTheme({
+          ...prefs.theme,
+          [target.dataset.key as keyof Theme]: target.value,
+        });
       });
     }
   }
@@ -641,7 +697,9 @@ async function boot() {
   $("preset-light").addEventListener("click", () => setTheme(PRESETS.light));
 
   // --- the folds ----------------------------------------------------------
-  for (const section of $("drawer").querySelectorAll<HTMLDetailsElement>(".section")) {
+  for (const section of $("drawer").querySelectorAll<HTMLDetailsElement>(
+    ".section",
+  )) {
     section.open = prefs.panels.includes(section.id);
   }
   // `toggle` does not bubble, so it is caught on the way down. Read off the
@@ -650,7 +708,9 @@ async function boot() {
   $("drawer").addEventListener(
     "toggle",
     () => {
-      prefs.panels = [...$("drawer").querySelectorAll("details[open]")].map((d) => d.id);
+      prefs.panels = [...$("drawer").querySelectorAll("details[open]")].map(
+        (d) => d.id,
+      );
       savePrefs(prefs);
     },
     true,
@@ -701,7 +761,8 @@ async function boot() {
   const howFar = $<HTMLInputElement>("smooth-share");
   howFar.value = String(prefs.smooth.share);
   const showShare = () => {
-    $("smooth-share-n").textContent = `${Math.round(prefs.smooth.share * 100)}%`;
+    $("smooth-share-n").textContent =
+      `${Math.round(prefs.smooth.share * 100)}%`;
   };
   showShare();
   howFar.addEventListener("input", () => {
@@ -725,7 +786,12 @@ async function boot() {
   // Pixels, not model units: both of these are about how easy a thing is to
   // see and to hit with a pointer, and that is a question about the screen.
   // Neither goes anywhere near the kernel.
-  const drawnIn = (id: string, set: (px: number) => void, now: () => number, most: number) => {
+  const drawnIn = (
+    id: string,
+    set: (px: number) => void,
+    now: () => number,
+    most: number,
+  ) => {
     const input = $<HTMLInputElement>(id);
     input.max = String(most);
     input.value = String(now());
@@ -739,8 +805,18 @@ async function boot() {
       redraw();
     });
   };
-  drawnIn("node-size", (px) => (prefs.nodes.size = px), () => prefs.nodes.size, MAX_NODE_SIZE);
-  drawnIn("edge-width", (px) => (prefs.edges.width = px), () => prefs.edges.width, MAX_EDGE_WIDTH);
+  drawnIn(
+    "node-size",
+    (px) => (prefs.nodes.size = px),
+    () => prefs.nodes.size,
+    MAX_NODE_SIZE,
+  );
+  drawnIn(
+    "edge-width",
+    (px) => (prefs.edges.width = px),
+    () => prefs.edges.width,
+    MAX_EDGE_WIDTH,
+  );
 
   // --- how far back it can go ---------------------------------------------
   const history = $<HTMLInputElement>("history");
@@ -782,7 +858,8 @@ async function boot() {
    * one rectangle can be caught in two.
    */
   canvas.addEventListener("pointerdown", (e) => {
-    if (e.button !== 0 || !(banding || e.shiftKey) || viewer.aimedAtGeometry) return;
+    if (e.button !== 0 || !(banding || e.shiftKey) || viewer.aimedAtGeometry)
+      return;
     if (aiming !== null || growing) return;
     lasso = [e.offsetX, e.offsetY];
     canvas.setPointerCapture(e.pointerId);
@@ -830,7 +907,8 @@ async function boot() {
   // taken off the camera so that dragging sets the parameter rather than
   // turning the view.
   canvas.addEventListener("pointerdown", (e) => {
-    if (e.button !== 0 || aiming !== null || viewer.aimedAtGeometry || lasso) return;
+    if (e.button !== 0 || aiming !== null || viewer.aimedAtGeometry || lasso)
+      return;
     if (viewer.axes.pick(e.offsetX, e.offsetY)) return;
     if (viewer.pickNode(e.offsetX, e.offsetY) !== null) return;
     const edge = viewer.pickEdge(e.offsetX, e.offsetY);
@@ -851,13 +929,25 @@ async function boot() {
   // selection first: a face fills the screen, and a drag from one cannot be
   // both an orbit and an extrusion.
   canvas.addEventListener("pointerdown", (e) => {
-    if (e.button !== 0 || aiming !== null || growing || viewer.aimedAtGeometry || lasso) return;
+    if (
+      e.button !== 0 ||
+      aiming !== null ||
+      growing ||
+      viewer.aimedAtGeometry ||
+      lasso
+    )
+      return;
     if (viewer.axes.pick(e.offsetX, e.offsetY)) return;
     if (viewer.pickNode(e.offsetX, e.offsetY) !== null) return;
     if (viewer.pickEdge(e.offsetX, e.offsetY) !== null) return;
     const surface = viewer.pickSurface(e.offsetX, e.offsetY);
     const [first] = viewer.selection;
-    if (!surface || !first || first.face !== surface.face || first.block !== surface.block) {
+    if (
+      !surface ||
+      !first ||
+      first.face !== surface.face ||
+      first.block !== surface.block
+    ) {
       return;
     }
     // A face of an open sheet may be dragged either way: it has no
@@ -915,7 +1005,8 @@ async function boot() {
     if (aiming !== null) aimAt(e.offsetX, e.offsetY);
     if (growing) {
       const height = viewer.aimExtrusion(e.offsetX, e.offsetY);
-      if (height !== null) say(`extruding ${height.toFixed(2)} — let go to build`);
+      if (height !== null)
+        say(`extruding ${height.toFixed(2)} — let go to build`);
     }
   });
 
@@ -1113,7 +1204,11 @@ async function boot() {
   }
 
   /** Narrow the view to the layer through this edge. */
-  function standOn(edge: number, cameFrom: number | null, heading: 1 | -1): boolean {
+  function standOn(
+    edge: number,
+    cameFrom: number | null,
+    heading: 1 | -1,
+  ): boolean {
     const cells = kernel.sheetCells(edge);
     if (!cells.ok) {
       say(cells.error);
@@ -1128,7 +1223,11 @@ async function boot() {
     say(
       `the layer through edge ${edge} — ${cells.blocks.length} block` +
         `${cells.blocks.length === 1 ? "" : "s"}, ` +
-        (ways === 2 ? "one each way" : ways === 1 ? "one way on" : "nothing beside it") +
+        (ways === 2
+          ? "one each way"
+          : ways === 1
+            ? "one way on"
+            : "nothing beside it") +
         ", ← → to step, Esc to come back out",
     );
     return true;
@@ -1357,7 +1456,8 @@ async function boot() {
     $("picking").setAttribute("aria-pressed", String(at === "geometry"));
     $("picking").title =
       at === "geometry" ? "Aim at the blocks — M" : "Aim at the geometry — M";
-    $("aim").textContent = at === "geometry" ? "picking geometry" : "picking blocks";
+    $("aim").textContent =
+      at === "geometry" ? "picking geometry" : "picking blocks";
     // Both selections stay. They used to be cleared on the way through,
     // on the grounds that a selection you cannot see is a mystery — but
     // the two are made to be held at once now: a handful of nodes and the
@@ -1459,7 +1559,9 @@ async function boot() {
     const nodes = viewer.selectedNodes;
     const picked = viewer.geomSelection;
     if (nodes.length === 0) {
-      say("pick some nodes first — click them, or hold shift and drag a box round them");
+      say(
+        "pick some nodes first — click them, or hold shift and drag a box round them",
+      );
       return;
     }
     if (picked.length !== 1) {
@@ -1512,7 +1614,11 @@ async function boot() {
     }
     const nodes = picked.filter((n) => viewer.nodeState(n)?.on);
     if (nodes.length === 0) {
-      say(picked.length === 1 ? `node ${picked[0]} is on nothing already` : "none of them is on anything");
+      say(
+        picked.length === 1
+          ? `node ${picked[0]} is on nothing already`
+          : "none of them is on anything",
+      );
       return;
     }
     const reply = await send({ op: "classify_node", nodes });
@@ -1559,7 +1665,8 @@ async function boot() {
     // No cap: a glue wants two and a pillow wants as many as you like, so
     // the selection just grows and each verb says what it can do with it.
     $<HTMLButtonElement>("glue").disabled = picked.length !== 2;
-    $<HTMLButtonElement>("remove").disabled = picked.length === 0 && viewer.selectedEdge === null;
+    $<HTMLButtonElement>("remove").disabled =
+      picked.length === 0 && viewer.selectedEdge === null;
     $<HTMLButtonElement>("pillow").disabled = picked.length === 0;
     // The block is named as well as the face: it is what remove and pillow
     // both act on, and a click that changes something unnamed is no good.
@@ -1595,7 +1702,9 @@ async function boot() {
       return null;
     }
     if (picked.length > 1) {
-      say(`a chord runs through one face — ${picked.length} are selected, Esc clears them`);
+      say(
+        `a chord runs through one face — ${picked.length} are selected, Esc clears them`,
+      );
       return null;
     }
     return { face: picked[0].face, block: picked[0].block };
@@ -1637,7 +1746,11 @@ async function boot() {
   async function removeChord() {
     const pick = soleFace();
     if (!pick) return;
-    const reply = await send({ op: "remove_chord", face: pick.face, block: pick.block });
+    const reply = await send({
+      op: "remove_chord",
+      face: pick.face,
+      block: pick.block,
+    });
     clearSelection();
     message = reply.message;
     // Not framed: taking something away is no reason to move the camera.
@@ -1648,7 +1761,11 @@ async function boot() {
   async function pillowChord() {
     const pick = soleFace();
     if (!pick) return;
-    const reply = await send({ op: "pillow_chord", face: pick.face, block: pick.block });
+    const reply = await send({
+      op: "pillow_chord",
+      face: pick.face,
+      block: pick.block,
+    });
     // Every face of the chord is a different cell now, and the lit wire was
     // drawn from the names it had.
     clearSelection();
@@ -1811,7 +1928,8 @@ async function boot() {
       // The extension decides. A `.msh` is a model to work on, a `.lua` is
       // a session to replay — the same button, because "open" is the same
       // question either way.
-      if (file.name.toLowerCase().endsWith(".lua")) await replay(file.name, text);
+      if (file.name.toLowerCase().endsWith(".lua"))
+        await replay(file.name, text);
       else await loadGeometry(file.name, text);
     } catch (problem) {
       say(`could not read ${file.name}: ${problem}`);
@@ -1849,7 +1967,9 @@ async function boot() {
     }
     // A script among them is run, and the rest are already kept — which is
     // how a script that opens a `.msh` by name finds it: drop both.
-    const script = dropped.find((file) => file.name.toLowerCase().endsWith(".lua"));
+    const script = dropped.find((file) =>
+      file.name.toLowerCase().endsWith(".lua"),
+    );
     if (script) {
       await replay(script.name, await script.text());
       return;
@@ -1927,7 +2047,10 @@ async function boot() {
     // Files, when the page was served by `gecko` on this machine; a
     // download when it was not.
     lua = await Interpreter.open(direct, files);
-    echo("did", "ready — gecko.stats() to look, gecko.script() for the history");
+    echo(
+      "did",
+      "ready — gecko.stats() to look, gecko.script() for the history",
+    );
   }
 
   /** Run what was typed, and show what came of it. */
@@ -1956,6 +2079,40 @@ async function boot() {
 
   /** `frame` is how the camera should get there, not whether the bytes are
    *  stale — they always are by the time this is called. */
+  /**
+   * A redraw for a command that moved nodes and made nothing.
+   *
+   * Answers **false** when it cannot be trusted — a different set of nodes,
+   * or an origin that has shifted — and the caller falls back to the whole
+   * view. Everything it leaves alone is something a move cannot change: the
+   * edges and quadrangles the viewer holds, which cells there are, how they
+   * are grouped, and which components are patches.
+   *
+   * What this is worth: a whole view is the kernel walking every block's
+   * faces and the page rebuilding every mesh from the result. At five
+   * hundred blocks that was most of a second between letting go of a node
+   * and seeing where it landed.
+   */
+  async function refreshNodes(): Promise<boolean> {
+    if (!viewer.applyNodes(decodeNodes(await kernel.nodes()))) return false;
+    const stats = await kernel.stats();
+    // The mesh, which an edit throws away: the number counts the discards
+    // as well as the builds, so this is how a stale picture goes.
+    if (stats.mesh.generation !== meshDrawn) {
+      meshDrawn = stats.mesh.generation;
+      viewer.setMesh(
+        stats.mesh.nodes === undefined ? null : decodeMesh(kernel.mesh()),
+      );
+    }
+    // The counts in the status line are the same ones; the history is not,
+    // and neither is the line itself — a gesture says what it did.
+    showVerbs();
+    showHistory(stats);
+    $("status").textContent = message;
+    revision++;
+    return true;
+  }
+
   async function refresh(frame: false | "jump" | "glide" = false) {
     const [bytes, stats] = await Promise.all([kernel.view(), kernel.stats()]);
     const view = decodeView(bytes);
@@ -1984,7 +2141,8 @@ async function boot() {
       // fetching it again is that the scene has been re-centerd, it *is*
       // the same geometry, and dropping a selection over a change of
       // coordinates would lose a click for no reason the reader can see.
-      const picked = stats.geometry.generation === geometryDrawn ? viewer.geomSelection : [];
+      const picked =
+        stats.geometry.generation === geometryDrawn ? viewer.geomSelection : [];
       geometryDrawn = stats.geometry.generation;
       viewer.setGeometry(decodeGeometry(kernel.geometry()));
       if (picked.length) viewer.selectGeom(picked);
@@ -1994,13 +2152,18 @@ async function boot() {
     // as the builds, so this is also how a stale picture goes.
     if (recenterd || stats.mesh.generation !== meshDrawn) {
       meshDrawn = stats.mesh.generation;
-      viewer.setMesh(stats.mesh.nodes === undefined ? null : decodeMesh(kernel.mesh()));
+      viewer.setMesh(
+        stats.mesh.nodes === undefined ? null : decodeMesh(kernel.mesh()),
+      );
     }
     // After the geometry, not before: framing has to see everything there
     // is to frame.
     if (frame) viewer.frameAll(frame === "jump");
     // Whether there is a mesh, so the button says which way it will go.
-    $("mesh").setAttribute("aria-pressed", String(stats.mesh.nodes !== undefined));
+    $("mesh").setAttribute(
+      "aria-pressed",
+      String(stats.mesh.nodes !== undefined),
+    );
     // Nothing to aim at, box or classify onto without one.
     const loaded = stats.geometry.surfaces !== undefined;
     for (const id of ["picking", "box", "classify"]) {
@@ -2153,7 +2316,9 @@ async function boot() {
     document.body.classList.toggle("drawer-open", prefs.drawer);
     document.body.classList.toggle("params-open", prefs.params);
     document.body.classList.toggle("chrome-hidden", !prefs.chrome);
-    document.body.dataset.chrome = isLight(prefs.theme.background) ? "light" : "dark";
+    document.body.dataset.chrome = isLight(prefs.theme.background)
+      ? "light"
+      : "dark";
     $("display").setAttribute("aria-expanded", String(prefs.drawer));
     $("settings").setAttribute("aria-expanded", String(prefs.params));
   }
@@ -2312,7 +2477,11 @@ async function boot() {
       // The shading is one camera's, so four views do without it. Said,
       // because a setting that stops working without a word is a fault
       // report waiting to be written.
-      const shading = prefs.ao ? (prefs.quad ? ", hollows plain here" : ", hollows shaded") : "";
+      const shading = prefs.ao
+        ? prefs.quad
+          ? ", hollows plain here"
+          : ", hollows shaded"
+        : "";
       say((prefs.quad ? "split into four views" : "one view") + shading);
     },
     triad: () => {
@@ -2321,9 +2490,11 @@ async function boot() {
       $<HTMLInputElement>("show-axes").checked = prefs.axes;
       savePrefs(prefs);
     },
-    theme: () => setTheme(isLight(prefs.theme.background) ? PRESETS.dark : PRESETS.light),
+    theme: () =>
+      setTheme(isLight(prefs.theme.background) ? PRESETS.dark : PRESETS.light),
     drawer: () => showPanel("drawer", !prefs.drawer),
-    console: () => void showConsole(!document.body.classList.contains("console-open")),
+    console: () =>
+      void showConsole(!document.body.classList.contains("console-open")),
     params: () => showPanel("params", !prefs.params),
     chrome: () => {
       prefs.chrome = !prefs.chrome;
@@ -2400,12 +2571,18 @@ async function boot() {
       void showConsole(false);
       return;
     }
-    if ((event.key === "ArrowUp" || event.key === "ArrowDown") && typed.length) {
+    if (
+      (event.key === "ArrowUp" || event.key === "ArrowDown") &&
+      typed.length
+    ) {
       // Only when the line is a single one: inside a block, the arrows are
       // how you move about in it.
       if (field.value.includes("\n")) return;
       event.preventDefault();
-      walking = Math.min(typed.length, Math.max(0, walking + (event.key === "ArrowUp" ? -1 : 1)));
+      walking = Math.min(
+        typed.length,
+        Math.max(0, walking + (event.key === "ArrowUp" ? -1 : 1)),
+      );
       field.value = typed[walking] ?? "";
       return;
     }
@@ -2420,7 +2597,11 @@ async function boot() {
   });
   $("console-save").addEventListener("click", () => {
     const script = kernel.script();
-    saveBlob(new Blob([script], { type: "text/plain" }), fileName(new Date(), "lua"), document);
+    saveBlob(
+      new Blob([script], { type: "text/plain" }),
+      fileName(new Date(), "lua"),
+      document,
+    );
     say("the session written out as a script");
   });
 
@@ -2443,7 +2624,10 @@ async function boot() {
       ctrlKey: e.ctrlKey,
       metaKey: e.metaKey,
       altKey: e.altKey,
-      target: e.target as unknown as { tagName?: string; isContentEditable?: boolean },
+      target: e.target as unknown as {
+        tagName?: string;
+        isContentEditable?: boolean;
+      },
     });
     if (!action) return;
     e.preventDefault();
@@ -2467,7 +2651,10 @@ async function boot() {
       snap: prefs.box.snap,
     });
     message = reply.message;
-    await refresh();
+    // A move makes and unmakes nothing, so the nodes are the only thing that
+    // can have changed. If the kernel disagrees — a snap that consumed a
+    // node, an origin that shifted — the whole view comes back instead.
+    if (!(await refreshNodes())) await refresh();
   });
   window.addEventListener("resize", () => {
     engine.resize();

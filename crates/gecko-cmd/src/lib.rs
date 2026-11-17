@@ -1892,6 +1892,15 @@ impl Session {
         ViewBuffer::of(&self.blocking, self.origin).to_bytes()
     }
 
+    /// The nodes alone, for a command that moved one and made nothing.
+    ///
+    /// See [`NodeBuffer`]: a tenth of the bytes and a twentieth of the time,
+    /// at the price of being wrong about anything but nodes — so a caller
+    /// asks for this only after a move, and for the whole view otherwise.
+    pub fn nodes_buffer(&self) -> Vec<u8> {
+        NodeBuffer::of(&self.blocking, self.origin).bytes()
+    }
+
     /// The geometry, in the same shape both transports deliver it.
     ///
     /// Rebased on the origin the view buffer last settled on, so the two land

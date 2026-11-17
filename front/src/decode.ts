@@ -66,16 +66,20 @@ const HEADER = 44;
 
 export function decodeView(bytes: Uint8Array): View {
   if (bytes.byteLength < HEADER) {
-    throw new Error(`view buffer: ${bytes.byteLength} bytes is shorter than a header`);
+    throw new Error(
+      `view buffer: ${bytes.byteLength} bytes is shorter than a header`,
+    );
   }
   // Typed-array views need alignment; wasm-bindgen usually hands us a fresh
   // buffer, but a WebSocket frame need not be so obliging.
   if (bytes.byteOffset % 8 !== 0) bytes = new Uint8Array(bytes);
 
   const head = new DataView(bytes.buffer, bytes.byteOffset, HEADER);
-  if (head.getUint32(0, true) !== MAGIC) throw new Error("view buffer: bad magic");
+  if (head.getUint32(0, true) !== MAGIC)
+    throw new Error("view buffer: bad magic");
   const version = head.getUint32(4, true);
-  if (version !== 7) throw new Error(`view buffer: version ${version} not understood`);
+  if (version !== 7)
+    throw new Error(`view buffer: version ${version} not understood`);
 
   const center: [number, number, number] = [
     head.getFloat64(8, true),
@@ -106,14 +110,20 @@ export function decodeView(bytes: Uint8Array): View {
   // Walked forward rather than addressed by a table of offsets: the arrays
   // come in this order and nothing else needs to know where each starts.
   let at = bytes.byteOffset + HEADER;
-  const take = <T>(make: (b: ArrayBufferLike, at: number, n: number) => T, n: number): T => {
+  const take = <T>(
+    make: (b: ArrayBufferLike, at: number, n: number) => T,
+    n: number,
+  ): T => {
     const made = make(bytes.buffer, at, n);
     at += n * 4;
     return made;
   };
-  const f32 = (b: ArrayBufferLike, o: number, n: number) => new Float32Array(b, o, n);
-  const u32 = (b: ArrayBufferLike, o: number, n: number) => new Uint32Array(b, o, n);
-  const i32 = (b: ArrayBufferLike, o: number, n: number) => new Int32Array(b, o, n);
+  const f32 = (b: ArrayBufferLike, o: number, n: number) =>
+    new Float32Array(b, o, n);
+  const u32 = (b: ArrayBufferLike, o: number, n: number) =>
+    new Uint32Array(b, o, n);
+  const i32 = (b: ArrayBufferLike, o: number, n: number) =>
+    new Int32Array(b, o, n);
 
   return {
     center,
@@ -139,6 +149,94 @@ export function decodeView(bytes: Uint8Array): View {
     edgeLoose: take(u32, nEdges),
     quadGroupsLo: take(u32, nQuads),
     quadGroupsHi: take(u32, nQuads),
+  };
+}
+
+/**
+ * The nodes alone, decoded from their own buffer.
+ *
+ * The mirror of `NodeBuffer::bytes`. What a move sends back: a move makes and
+ * unmakes no cell, so the edges and the quadrangles the page is holding are
+ * still right, and rebuilding them from a whole view is the expensive thing
+ * this avoids.
+ *
+ * The names are here to be **checked**, not used: a caller compares them with
+ * the ones it has and asks for the whole view when they differ, which is what
+ * a topology that moved underneath looks like from here.
+ */
+export interface NodesView {
+  center: [number, number, number];
+  positions: Float32Array;
+  names: Uint32Array;
+  classDim: Int32Array;
+  classTag: Int32Array;
+  frozen: Uint32Array;
+  groupsLo: Uint32Array;
+  groupsHi: Uint32Array;
+  loose: Uint32Array;
+}
+
+const NODES_MAGIC = 0x314e_4b47; // "GKN1" little-endian
+const NODES_HEADER = 36;
+
+export function decodeNodes(bytes: Uint8Array): NodesView {
+  if (bytes.byteLength < NODES_HEADER) {
+    throw new Error(
+      `nodes buffer: ${bytes.byteLength} bytes is shorter than a header`,
+    );
+  }
+  if (bytes.byteOffset % 8 !== 0) bytes = new Uint8Array(bytes);
+
+  const head = new DataView(bytes.buffer, bytes.byteOffset, NODES_HEADER);
+  if (head.getUint32(0, true) !== NODES_MAGIC)
+    throw new Error("nodes buffer: bad magic");
+  const version = head.getUint32(4, true);
+  if (version !== 1)
+    throw new Error(`nodes buffer: version ${version} not understood`);
+
+  const center: [number, number, number] = [
+    head.getFloat64(8, true),
+    head.getFloat64(16, true),
+    head.getFloat64(24, true),
+  ];
+  const count = head.getUint32(32, true);
+
+  // Ten numbers a node: three of position, the name, two for what it is
+  // classified on, one for frozen, two for its groups and one for whether it
+  // touches a block in no group.
+  const expected = NODES_HEADER + count * 40;
+  if (expected !== bytes.byteLength) {
+    throw new Error(
+      `nodes buffer: header declares ${expected} bytes, buffer holds ${bytes.byteLength}`,
+    );
+  }
+
+  let at = bytes.byteOffset + NODES_HEADER;
+  const take = <T>(
+    make: (b: ArrayBufferLike, at: number, n: number) => T,
+    n: number,
+  ): T => {
+    const made = make(bytes.buffer, at, n);
+    at += n * 4;
+    return made;
+  };
+  const f32 = (b: ArrayBufferLike, o: number, n: number) =>
+    new Float32Array(b, o, n);
+  const u32 = (b: ArrayBufferLike, o: number, n: number) =>
+    new Uint32Array(b, o, n);
+  const i32 = (b: ArrayBufferLike, o: number, n: number) =>
+    new Int32Array(b, o, n);
+
+  return {
+    center,
+    positions: take(f32, count * 3),
+    names: take(u32, count),
+    classDim: take(i32, count),
+    classTag: take(i32, count),
+    frozen: take(u32, count),
+    groupsLo: take(u32, count),
+    groupsHi: take(u32, count),
+    loose: take(u32, count),
   };
 }
 
@@ -172,14 +270,18 @@ const GEOMETRY_HEADER = 48;
 
 export function decodeGeometry(bytes: Uint8Array): GeometryView {
   if (bytes.byteLength < GEOMETRY_HEADER) {
-    throw new Error(`geometry buffer: ${bytes.byteLength} bytes is shorter than a header`);
+    throw new Error(
+      `geometry buffer: ${bytes.byteLength} bytes is shorter than a header`,
+    );
   }
   if (bytes.byteOffset % 8 !== 0) bytes = new Uint8Array(bytes);
 
   const head = new DataView(bytes.buffer, bytes.byteOffset, GEOMETRY_HEADER);
-  if (head.getUint32(0, true) !== GEOMETRY_MAGIC) throw new Error("geometry buffer: bad magic");
+  if (head.getUint32(0, true) !== GEOMETRY_MAGIC)
+    throw new Error("geometry buffer: bad magic");
   const version = head.getUint32(4, true);
-  if (version !== 1) throw new Error(`geometry buffer: version ${version} not understood`);
+  if (version !== 1)
+    throw new Error(`geometry buffer: version ${version} not understood`);
 
   const center: [number, number, number] = [
     head.getFloat64(8, true),
@@ -194,7 +296,11 @@ export function decodeGeometry(bytes: Uint8Array): GeometryView {
   // Per node three f32. Per triangle three indices and a tag, per segment
   // two and a tag, per corner one and a tag.
   const expected =
-    GEOMETRY_HEADER + nNodes * 12 + nTriangles * 16 + nSegments * 12 + nCorners * 8;
+    GEOMETRY_HEADER +
+    nNodes * 12 +
+    nTriangles * 16 +
+    nSegments * 12 +
+    nCorners * 8;
   if (expected !== bytes.byteLength) {
     throw new Error(
       `geometry buffer: header declares ${expected} bytes, buffer holds ${bytes.byteLength}`,
@@ -202,14 +308,20 @@ export function decodeGeometry(bytes: Uint8Array): GeometryView {
   }
 
   let at = bytes.byteOffset + GEOMETRY_HEADER;
-  const take = <T>(make: (buffer: ArrayBufferLike, at: number, n: number) => T, n: number): T => {
+  const take = <T>(
+    make: (buffer: ArrayBufferLike, at: number, n: number) => T,
+    n: number,
+  ): T => {
     const made = make(bytes.buffer, at, n);
     at += n * 4;
     return made;
   };
-  const f32 = (b: ArrayBufferLike, o: number, n: number) => new Float32Array(b, o, n);
-  const u32 = (b: ArrayBufferLike, o: number, n: number) => new Uint32Array(b, o, n);
-  const i32 = (b: ArrayBufferLike, o: number, n: number) => new Int32Array(b, o, n);
+  const f32 = (b: ArrayBufferLike, o: number, n: number) =>
+    new Float32Array(b, o, n);
+  const u32 = (b: ArrayBufferLike, o: number, n: number) =>
+    new Uint32Array(b, o, n);
+  const i32 = (b: ArrayBufferLike, o: number, n: number) =>
+    new Int32Array(b, o, n);
 
   return {
     center,
@@ -246,14 +358,18 @@ const MESH_HEADER = 40;
  */
 export function decodeMesh(bytes: Uint8Array): MeshView {
   if (bytes.byteLength < MESH_HEADER) {
-    throw new Error(`mesh buffer: ${bytes.byteLength} bytes is shorter than a header`);
+    throw new Error(
+      `mesh buffer: ${bytes.byteLength} bytes is shorter than a header`,
+    );
   }
   if (bytes.byteOffset % 8 !== 0) bytes = new Uint8Array(bytes);
 
   const head = new DataView(bytes.buffer, bytes.byteOffset, MESH_HEADER);
-  if (head.getUint32(0, true) !== MESH_MAGIC) throw new Error("mesh buffer: bad magic");
+  if (head.getUint32(0, true) !== MESH_MAGIC)
+    throw new Error("mesh buffer: bad magic");
   const version = head.getUint32(4, true);
-  if (version !== 1) throw new Error(`mesh buffer: version ${version} not understood`);
+  if (version !== 1)
+    throw new Error(`mesh buffer: version ${version} not understood`);
 
   const center: [number, number, number] = [
     head.getFloat64(8, true),
@@ -272,7 +388,10 @@ export function decodeMesh(bytes: Uint8Array): MeshView {
   }
 
   let at = bytes.byteOffset + MESH_HEADER;
-  const take = <T>(make: (buffer: ArrayBufferLike, at: number, n: number) => T, n: number): T => {
+  const take = <T>(
+    make: (buffer: ArrayBufferLike, at: number, n: number) => T,
+    n: number,
+  ): T => {
     const made = make(bytes.buffer, at, n);
     at += n * 4;
     return made;
