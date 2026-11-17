@@ -1159,13 +1159,23 @@ async function boot() {
     // cannot be raised, since a block welded to the other half is not
     // something the map can hold. Same gesture, and the kernel's own
     // answer about which face this is.
+    //
+    // A face of a block takes the whole selection with it, in one command:
+    // two faces that meet have to go up together or the edge they share
+    // goes up twice, and the blocks lean on each other instead of being
+    // welded along the face it becomes.
+    const picked = viewer.selection;
+    const faces = picked.some(
+      (p) => p.face === from.face && p.block === from.block,
+    )
+      ? picked
+      : [from];
     const reply = await send(
       isPatch(from)
         ? { op: "extrude_patch", face: from.face, height }
         : {
             op: "extrude_face",
-            face: from.face,
-            block: from.block,
+            faces: faces.map((p) => ({ face: p.face, block: p.block })),
             height,
           },
     );

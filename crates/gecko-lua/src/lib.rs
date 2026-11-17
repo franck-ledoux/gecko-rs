@@ -126,12 +126,24 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
         }))
     })?;
     command(lua, &gecko, &kernel, "extrude_face", |lua, a| {
-        Ok(json!({
-            "op": "extrude_face",
-            "face": at(lua, &a, 0)?,
-            "block": at(lua, &a, 1)?,
-            "height": at(lua, &a, 2)?,
-        }))
+        // Either `(face, block, height)` for one, or `({{f, b}, …}, height)`
+        // for several — the same two shapes a click gives and a band would.
+        // Several go up together, which is what welds the blocks that meet.
+        Ok(match at(lua, &a, 0)? {
+            Json::Array(pairs) => json!({
+                "op": "extrude_face",
+                "faces": pairs
+                    .iter()
+                    .map(|p| json!({ "face": p[0], "block": p[1] }))
+                    .collect::<Vec<Json>>(),
+                "height": at(lua, &a, 1)?,
+            }),
+            face => json!({
+                "op": "extrude_face",
+                "faces": [{ "face": face, "block": at(lua, &a, 1)? }],
+                "height": at(lua, &a, 2)?,
+            }),
+        })
     })?;
     command(lua, &gecko, &kernel, "pillow", |lua, a| {
         // A list of `{face, block}` pairs, which is what a Lua table of

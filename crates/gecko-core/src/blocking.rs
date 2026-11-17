@@ -3287,6 +3287,153 @@ impl Blocking {
     /// each side already has everything it can be glued to.
     ///
     /// Returns the new block.
+    /// Grow a block out of each of these faces at once, welded to each other
+    /// wherever two of them share an edge.
+    ///
+    /// Not a loop over [`extrude_face`][Self::extrude_face], and the
+    /// difference is the whole point. Two faces that meet along an edge
+    /// raise that edge **once**: the corners it holds are shared, so the
+    /// copies they go to are shared, and the two new blocks therefore have
+    /// a face in common rather than two faces in the same place. That face
+    /// is then welded, and the result is a corner that holds together
+    /// instead of two slabs leaning on each other.
+    ///
+    /// Each face grows along **its own** normal, which is what an extrusion
+    /// means — and a corner on several of them goes along the [`mitre`], so
+    /// that it ends up `height` clear of every face it was on. On a flat
+    /// patch that is the plain normal; on a right-angled crease it is the
+    /// diagonal, which is what makes the two copies meet.
+    ///
+    /// Outward only, for the reason one face is: the other side of a face
+    /// of a block is the block.
+    pub fn extrude_faces(
+        &mut self,
+        picked: &[(CellId, CellId)],
+        height: f64,
+    ) -> Result<Vec<CellId>, BlockingError> {
+        if picked.is_empty() {
+            return Err(BlockingError::EmptyPatch);
+        }
+        if !height.is_finite() || height == 0.0 {
+            return Err(BlockingError::BadHeight(height));
+        }
+        if height < 0.0 {
+            return Err(BlockingError::Inwards(height));
+        }
+
+        // Each face once, in the order asked for: picking the same face
+        // twice is a selection, not two extrusions.
+        let mut wanted: Vec<(CellId, CellId)> = Vec::new();
+        for pair in picked {
+            if !wanted.contains(pair) {
+                wanted.push(*pair);
+            }
+        }
+
+        // --- read every face before anything is built --------------------
+        struct Side {
+            points: [[f64; 3]; 4],
+            keys: [CornerKey; 4],
+            edges: [EdgeIdType; 4],
+            face: CellId,
+        }
+        let all = self.block_faces();
+        let mut sides: Vec<Side> = Vec::with_capacity(wanted.len());
+        for &(face, block) in &wanted {
+            // On the outside, as one face has to be: a face with a block on
+            // each side has no room to grow into.
+            if all.iter().any(|s| s.face == face && s.block != block) {
+                return Err(BlockingError::NotOnTheSurface(face));
+            }
+            // The darts on **this block's** side, so the four corners come
+            // in the winding that block sees as outward.
+            let first = self.side_dart(face, block)?;
+            let mut darts = [first; 4];
+            for k in 1..4 {
+                darts[k] = self.map.beta::<1>(darts[k - 1]);
+            }
+            sides.push(Side {
+                points: darts.map(|d| self.position_of(self.map.vertex_id(d)).unwrap_or([0.0; 3])),
+                keys: darts.map(|d| self.node_tag_of(self.map.vertex_id(d)).corner_key),
+                edges: darts.map(|d| self.map.edge_id(d)),
+                face,
+            });
+        }
+
+        // --- where every corner goes -------------------------------------
+        // By corner key: two faces that meet share the node itself, and the
+        // map says so without anything being measured.
+        let mut normals: HashMap<CornerKey, Vec<[f64; 3]>> = HashMap::new();
+        for side in &sides {
+            let normal = quad_normal(side.points);
+            let length = (0..3).map(|k| normal[k] * normal[k]).sum::<f64>().sqrt();
+            if length < 1e-12 {
+                return Err(BlockingError::LostFace);
+            }
+            let unit = normal.map(|x| x / length);
+            for key in &side.keys {
+                normals.entry(*key).or_default().push(unit);
+            }
+        }
+        let steps: HashMap<CornerKey, [f64; 3]> = normals
+            .iter()
+            .map(|(key, around)| (*key, mitre(around, height)))
+            .collect();
+
+        // --- which pairs will have to be welded --------------------------
+        // An edge held by two of the chosen faces becomes a face held by the
+        // two blocks they raise. Written down now, in the selection's own
+        // numbering, because the names will not survive what follows.
+        let mut along: HashMap<EdgeIdType, Vec<(usize, usize)>> = HashMap::new();
+        for (k, side) in sides.iter().enumerate() {
+            for (slot, edge) in side.edges.iter().enumerate() {
+                along.entry(*edge).or_default().push((k, slot));
+            }
+        }
+        let mut seams: Vec<((usize, usize), (usize, usize))> = Vec::new();
+        for (_, holders) in along {
+            // Three chosen faces on one edge would raise three blocks round
+            // it, and which two of them meet is not a question with an
+            // answer. Refused rather than welded arbitrarily.
+            if holders.len() > 2 {
+                return Err(BlockingError::NotOnTheSurface(sides[holders[0].0].face));
+            }
+            if let [first, second] = holders[..] {
+                seams.push((first, second));
+            }
+        }
+        seams.sort_unstable();
+
+        // --- up with the blocks ------------------------------------------
+        let mut raised: Vec<(CellId, DartIdType)> = Vec::with_capacity(sides.len());
+        for side in &sides {
+            let mut corners = [[0.0; 3]; 8];
+            for k in 0..4 {
+                let from = side.points[k];
+                let step = steps.get(&side.keys[k]).copied().unwrap_or([0.0; 3]);
+                corners[k] = from;
+                corners[4 + k] = [0, 1, 2].map(|axis| from[axis] + step[axis]);
+            }
+            raised.push(self.build_block(corners)?);
+        }
+
+        // Each onto the face it grew from, and then to each other. In that
+        // order: a block welded to its neighbor first would be welded by a
+        // face whose corners the base weld is about to move.
+        for (side, &(_, first)) in sides.iter().zip(&raised) {
+            let against = self.face_tag_of(self.map.face_id(first)).id;
+            self.glue_onto(side.face, against)?;
+        }
+        for ((a, a_slot), (b, b_slot)) in seams {
+            let first = self.lateral(raised[a].1, a_slot);
+            let second = self.lateral(raised[b].1, b_slot);
+            self.glue_onto(first, second)?;
+        }
+
+        self.assign_missing_ids();
+        Ok(raised.iter().map(|(name, _)| *name).collect())
+    }
+
     pub fn extrude_face(
         &mut self,
         face: CellId,

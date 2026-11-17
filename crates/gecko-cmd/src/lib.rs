@@ -273,14 +273,20 @@ pub enum Command {
         #[serde(default = "default_snap")]
         tolerance: f64,
     },
-    /// Grow a new block out of a face, along the normal at its center.
+    /// Grow a new block out of each of these faces, along the normal at the
+    /// center of each.
     ///
-    /// The face is given as the pair a click gives — the face and the block
-    /// it was picked on — and does not move: the new block is laid against
-    /// it and welded on.
+    /// A face is given as the pair a click gives — the face and the block it
+    /// was picked on — and none of them moves: each new block is laid
+    /// against its own and welded on.
+    ///
+    /// A list rather than one, because two faces that meet have to go up
+    /// **together**: raised one after the other they would each bring their
+    /// own copy of the edge they share, and the two new blocks would lean on
+    /// each other rather than hold together. Sent as one command, the shared
+    /// edge rises once and the blocks are welded along the face it becomes.
     ExtrudeFace {
-        face: u32,
-        block: u32,
+        faces: Vec<PickedFace>,
         height: f64,
     },
     /// Raise a block out of **every** face of a patch.
@@ -1059,18 +1065,19 @@ impl Session {
                     view_changed: true,
                 })
             }
-            Command::ExtrudeFace {
-                face,
-                block,
-                height,
-            } => {
-                let (face, block) = (CellId::from_raw(face), CellId::from_raw(block));
-                let grown = self.blocking.extrude_face(face, block, height)?;
+            Command::ExtrudeFace { faces, height } => {
+                let picked: Vec<(CellId, CellId)> = faces
+                    .iter()
+                    .map(|f| (CellId::from_raw(f.face), CellId::from_raw(f.block)))
+                    .collect();
+                let grown = self.blocking.extrude_faces(&picked, height)?;
                 Ok(Outcome {
                     script: None,
                     message: format!(
-                        "block {grown:?} grown from face {face:?} by {height:.3} — \
+                        "{} block{} grown by {height:.3} — \
                          {} nodes, {} edges, {} faces, {} blocks",
+                        grown.len(),
+                        if grown.len() == 1 { "" } else { "s" },
                         self.blocking.nb_nodes(),
                         self.blocking.nb_edges(),
                         self.blocking.nb_faces(),

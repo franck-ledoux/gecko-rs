@@ -32,6 +32,29 @@ measurements that decided it.
   what makes them an oracle for the structure to come rather than a description
   of the one being replaced. The mesh file is unchanged byte for byte.
 
+- **Several faces grow into blocks at once, welded where they meet.** Drag
+  any one of the selected faces and they all go up, in one command.
+
+  Not a loop over one-at-a-time, and the difference is the point. Two faces
+  that meet along an edge raise that edge **once**: the corners it holds are
+  shared, so the places they go to are shared, and the blocks they become
+  have a face in common rather than two faces in the same place. That face is
+  then welded. Raised one after the other, the same two faces leave 16 nodes
+  and 16 faces, two slabs leaning on each other; raised together, 14 and 15.
+
+  Each face grows along **its own** normal, which is what an extrusion means,
+  and a corner on several of them goes along the mitre so that it ends up the
+  full height clear of every face it was on. On a flat patch that is the
+  plain normal; on a right-angled crease it is the diagonal, which is what
+  makes the two copies meet in the first place.
+
+  Three chosen faces on one edge are refused rather than welded arbitrarily:
+  which two of the three blocks meet is not a question with an answer.
+
+  `gecko.extrude_face` takes either shape now — `(face, block, height)` for
+  one, or `({{f, b}, …}, height)` for several — and a session that grew one
+  block still writes itself out as one face.
+
 - **A selected face can be slid instead of grown from.** Hold `⌥` and drag
   it: the corners move, and no block is built.
 

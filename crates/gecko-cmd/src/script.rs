@@ -109,11 +109,25 @@ pub fn line(command: &Command) -> String {
                 option("tolerance", *tolerance, crate::SNAP_SHARE)
             )
         }
-        Command::ExtrudeFace {
-            face,
-            block,
-            height,
-        } => format!("gecko.extrude_face({face}, {block}, {})", number(*height)),
+        Command::ExtrudeFace { faces, height } => {
+            // One face reads as one face. Writing a list of one would be
+            // honest and unreadable, and a session that grew a block out of
+            // a face should say so.
+            let picked = faces
+                .iter()
+                .map(|f| format!("{{{}, {}}}", f.face, f.block))
+                .collect::<Vec<_>>()
+                .join(", ");
+            match faces.as_slice() {
+                [one] => format!(
+                    "gecko.extrude_face({}, {}, {})",
+                    one.face,
+                    one.block,
+                    number(*height)
+                ),
+                _ => format!("gecko.extrude_face({{{picked}}}, {})", number(*height)),
+            }
+        }
         // The contents are not written out — that would be the mesh in the
         // middle of the script rather than a script. The name is, and the
         // header says the file has to be beside it.

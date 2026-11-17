@@ -206,3 +206,96 @@ fn the_face_it_welds_to_is_known_rather_than_looked_for() {
     assert_eq!(b.nb_faces(), 11);
     assert_eq!(b.nb_nodes(), 12);
 }
+
+/// Growing out of several faces at once.
+mod together {
+    use super::*;
+
+    #[test]
+    fn two_faces_that_meet_raise_two_blocks_welded_along_the_edge_they_share() {
+        let mut b = cube();
+        // The top and one side: they meet along an edge of the cube.
+        let top = face_near(&b, [0.5, 0.5, 1.0]);
+        let side = face_near(&b, [1.0, 0.5, 0.5]);
+        assert_ne!(top.0, side.0, "two different faces");
+
+        let made = b.extrude_faces(&[top, side], 1.0).expect("two blocks");
+        assert_eq!(made.len(), 2);
+
+        let seen = b.census();
+        assert_eq!(seen.blocks, 3, "the cube and the two it raised");
+        // Raised separately the two would bring four corners each: 8 + 4 + 4
+        // = 16 nodes and 6 + 5 + 5 = 16 faces. Here the shared edge goes up
+        // to the **same two places** for both blocks — that is what the
+        // mitre is for — and the weld between them then makes the two pairs
+        // one pair.
+        assert_eq!(seen.nodes, 14, "the raised edge is one edge");
+        assert_eq!(seen.faces, 15, "and the two blocks have a face in common");
+
+        // Said the other way round, from the blocks themselves.
+        let of =
+            |block: CellId| -> Vec<CellId> { b.faces_of(block).iter().map(|s| s.face).collect() };
+        let (first, second) = (of(made[0]), of(made[1]));
+        let common: Vec<CellId> = first
+            .iter()
+            .copied()
+            .filter(|f| second.contains(f))
+            .collect();
+        assert_eq!(common.len(), 1, "exactly one face between them");
+    }
+
+    #[test]
+    fn two_faces_that_do_not_meet_raise_two_blocks_that_do_not_either() {
+        let mut b = cube();
+        let top = face_near(&b, [0.5, 0.5, 1.0]);
+        let bottom = face_near(&b, [0.5, 0.5, 0.0]);
+
+        let made = b.extrude_faces(&[top, bottom], 1.0).expect("two blocks");
+        assert_eq!(made.len(), 2);
+        let seen = b.census();
+        assert_eq!(seen.blocks, 3);
+        // Nothing is shared but the cube's own corners: four new ones each.
+        assert_eq!(seen.nodes, 16);
+        assert_eq!(seen.faces, 16);
+    }
+
+    #[test]
+    fn one_face_is_the_same_as_growing_from_it_alone() {
+        let mut one = cube();
+        let mut many = cube();
+        let picked = face_near(&one, [0.5, 0.5, 1.0]);
+        one.extrude_face(picked.0, picked.1, 1.0).expect("a block");
+        many.extrude_faces(&[picked], 1.0).expect("a block");
+        assert_eq!(one.census(), many.census());
+    }
+
+    #[test]
+    fn a_face_already_inside_the_model_has_nowhere_to_grow() {
+        let mut b = cube();
+        let top = face_near(&b, [0.5, 0.5, 1.0]);
+        b.extrude_face(top.0, top.1, 1.0).expect("a block");
+        // That face has a block on each side now.
+        assert!(matches!(
+            b.extrude_faces(&[top], 1.0),
+            Err(BlockingError::NotOnTheSurface(_))
+        ));
+    }
+
+    #[test]
+    fn nothing_to_grow_from_and_nowhere_to_grow_are_both_refused() {
+        let mut b = cube();
+        let top = face_near(&b, [0.5, 0.5, 1.0]);
+        assert!(matches!(
+            b.extrude_faces(&[], 1.0),
+            Err(BlockingError::EmptyPatch)
+        ));
+        assert!(matches!(
+            b.extrude_faces(&[top], 0.0),
+            Err(BlockingError::BadHeight(_))
+        ));
+        assert!(matches!(
+            b.extrude_faces(&[top], -1.0),
+            Err(BlockingError::Inwards(_))
+        ));
+    }
+}

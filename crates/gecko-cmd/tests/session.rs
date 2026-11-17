@@ -1272,12 +1272,12 @@ fn a_face_is_grown_into_a_block_through_the_door() {
         .clone();
 
     let reply = s.apply_json(&format!(
-        r#"{{"op":"extrude_face","face":{},"block":{},"height":2.0}}"#,
+        r#"{{"op":"extrude_face","faces":[{{"face":{},"block":{}}}],"height":2.0}}"#,
         top["id"].as_u64().unwrap(),
         top["block"].as_u64().unwrap(),
     ));
     assert!(reply.contains(r#""ok":true"#), "{reply}");
-    assert!(reply.contains("grown from face"), "{reply}");
+    assert!(reply.contains("1 block grown"), "{reply}");
 
     let stats: serde_json::Value = serde_json::from_str(&s.stats_json()).unwrap();
     assert_eq!(stats["blocks"], 2);
@@ -1289,7 +1289,7 @@ fn a_face_is_grown_into_a_block_through_the_door() {
 fn a_refused_extrusion_comes_back_as_a_refusal_rather_than_a_panic() {
     let mut s = Session::new().unwrap();
     s.apply(Command::AddBlock { corners: UNIT_CUBE }).unwrap();
-    let reply = s.apply_json(r#"{"op":"extrude_face","face":0,"block":0,"height":0}"#);
+    let reply = s.apply_json(r#"{"op":"extrude_face","faces":[{"face":0,"block":0}],"height":0}"#);
     assert!(reply.contains(r#""ok":false"#), "{reply}");
     assert!(reply.contains("positive distance"), "{reply}");
 }
