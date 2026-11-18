@@ -70,6 +70,14 @@ measurements that decided it.
   is left free rather than welded to a guess, and so is a slab thickened the
   other way: back to back is not the same as side by side.
 
+- **A recorded slab replays.** The script writer spells a corner that
+  follows nothing `false` — a `nil` inside a Lua table literal would end the
+  list there and make the fourth corner the third — and the reader was
+  refusing it: `invalid type: boolean false, expected struct Spot`, on the
+  page's own script, at the first corner laid on nothing. A script that
+  cannot be replayed is a record of nothing. `true` is still refused, because
+  reading it as "nothing" would be reading a mistake as a meaning.
+
 - **Several faces grow into blocks at once, welded where they meet.** Drag
   any one of the selected faces and they all go up, in one command.
 

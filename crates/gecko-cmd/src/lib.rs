@@ -128,6 +128,42 @@ fn default_margin() -> f64 {
     BOX_MARGIN
 }
 
+/// What each corner of a laid slab is lying on, with **nothing** spelled
+/// `false`.
+///
+/// Lua has no `nil` that survives in a list — a `nil` inside a table literal
+/// ends the array there — so a corner that follows nothing is written
+/// `false`, which keeps the list one entry per corner and the fourth the
+/// fourth. This is the side that reads it back: without it a script the page
+/// wrote is refused when it is replayed, and a recorded script that cannot
+/// be replayed is the one thing it must not be.
+fn spots<'de, D>(d: D) -> Result<Vec<Option<Spot>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OrNothing {
+        On(Spot),
+        Nothing(bool),
+    }
+    let mut out = Vec::new();
+    for said in Vec::<Option<OrNothing>>::deserialize(d)? {
+        out.push(match said {
+            Some(OrNothing::On(spot)) => Some(spot),
+            // Only `false`. `true` is nothing anybody writes, and reading it
+            // as "follows nothing" would be reading a mistake as a meaning.
+            Some(OrNothing::Nothing(true)) => {
+                return Err(serde::de::Error::custom(
+                    "a corner is lying on a spot, or on nothing, written false",
+                ))
+            }
+            Some(OrNothing::Nothing(false)) | None => None,
+        });
+    }
+    Ok(out)
+}
+
 /// Everything that can change a session.
 ///
 /// This set *is* the API. A convenience written in one façade would have to be
@@ -161,9 +197,9 @@ pub enum Command {
     /// classified afterwards in a second step somebody could forget.
     AddSlab {
         corners: [[f64; 3]; 4],
-        /// Empty, or one entry a corner. `None` where a corner follows
-        /// nothing.
-        #[serde(default)]
+        /// Empty, or one entry a corner. `None` — written `false` by the
+        /// script, see [`spots`] — where a corner follows nothing.
+        #[serde(default, deserialize_with = "spots")]
         on: Vec<Option<Spot>>,
         /// Signed — the sign picks which side the material is on. Absent
         /// means [`SLAB_SHARE`] of the quadrangle's own shortest diagonal,

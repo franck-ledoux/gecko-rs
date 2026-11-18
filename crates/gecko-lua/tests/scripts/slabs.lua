@@ -43,3 +43,13 @@ assert(both.blocks == 2, "two blocks: " .. both.blocks)
 assert(both.nodes == 12, "twelve nodes: " .. both.nodes)
 assert(both.faces == 11, "eleven faces: " .. both.faces)
 print(string.format("%d blocks, %d nodes", both.blocks, both.nodes))
+
+-- A corner that follows nothing is written `false`, which is how the page
+-- writes it down: a `nil` inside a table literal would end the list there and
+-- make the fourth corner the third. A recorded script that cannot be replayed
+-- is a record of nothing, so the reader has to take what the writer puts.
+gecko.undo()
+gecko.undo()
+assert(gecko.stats().blocks == 0, "back to nothing")
+gecko.add_slab({ {0,0,0}, {1,0,0}, {1,1,0}, {0,1,0} }, { on = { false, false, false, false } })
+assert(gecko.stats().blocks == 1, "four corners, all following nothing")
