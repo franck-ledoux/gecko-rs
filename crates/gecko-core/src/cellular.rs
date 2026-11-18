@@ -32,9 +32,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use crate::arena::{index, Arena};
 use crate::attributes::On;
 use crate::cells::{
-    across, apart, best_pairing, quad_normal, BlockFace, BlockingError, Census, ChordBlock,
-    GroupMasks, Hex, Settling, Sheet, SheetCells, SheetEdge, Slab, Smoothing, Unmet, EDGE_AXIS,
-    FACE_AXIS, HEX_EDGES, HEX_FACES, OPPOSITE, SPLIT_FRAME,
+    across, apart, best_pairing, flatness, mitre, quad_normal, scaled_jacobian, BlockFace,
+    BlockingError, Census, ChordBlock, GroupMasks, Hex, Settling, Sheet, SheetCells, SheetEdge,
+    Slab, Smoothing, Unmet, EDGE_AXIS, FACE_AXIS, HEX_CORNER_EDGES, HEX_EDGES, HEX_FACES, OPPOSITE,
+    PILLOW_SHARE, SPLIT_FRAME,
 };
 use crate::ids::CellId;
 
@@ -128,6 +129,14 @@ struct Known {
     by_pair: HashMap<[NodeId; 2], EdgeId>,
     by_quad: HashMap<[NodeId; 4], FaceId>,
 }
+
+/// What a cut makes of one face: the two halves as node quads, the edge it
+/// laid across the whole, and what the whole was classified on.
+type Halved = ([[NodeId; 4]; 2], [NodeId; 2], Option<On>);
+
+/// One face a pillow draws in: the face, the block drawing it, the four
+/// corners as that block winds them, the way in, and how far.
+type Drawn = (FaceId, BlockId, [NodeId; 4], [f64; 3], f64);
 
 /// A cycle of four, read the other way round.
 fn reversed(cycle: [NodeId; 4]) -> [NodeId; 4] {
@@ -442,6 +451,380 @@ impl Blocking {
             [one] => Some(one),
             _ => None,
         }
+    }
+
+    /// The blocks and loose faces a node is a corner of.
+    fn around_node(&self, node: NodeId) -> (Vec<BlockId>, Vec<FaceId>) {
+        self.climbing(|up| {
+            let faces: Vec<FaceId> = up.node_faces.get(&node).cloned().unwrap_or_default();
+            let mut blocks: Vec<BlockId> = faces
+                .iter()
+                .filter_map(|f| self.faces.get(*f))
+                .flat_map(|f| f.sides.iter().flatten().map(|side| side.block))
+                .collect();
+            blocks.sort_unstable();
+            blocks.dedup();
+            let loose: Vec<FaceId> = faces
+                .into_iter()
+                .filter(|f| {
+                    self.faces
+                        .get(*f)
+                        .is_some_and(|face| face.sides.iter().all(|side| side.is_none()))
+                })
+                .collect();
+            (blocks, loose)
+        })
+    }
+
+    /// The worst corner of anything this node is a corner of.
+    ///
+    /// What a smoothing step is judged by: a Laplacian on a concave
+    /// boundary would happily turn a cell inside out, and this is how it is
+    /// told not to.
+    fn worst_corner_at(&self, node: NodeId) -> f64 {
+        let mut worst = f64::INFINITY;
+        let (blocks, loose) = self.around_node(node);
+        for id in blocks {
+            let corners = self.blocks.get(id).expect("live").nodes;
+            let at = corners.map(|c| self.nodes.get(c).expect("live").at);
+            for (corner, sides) in HEX_CORNER_EDGES.iter().enumerate() {
+                worst = worst.min(scaled_jacobian(at[corner], sides.map(|s| at[s])));
+            }
+        }
+        // The faces of a patch, which can fold without any block being
+        // involved at all.
+        for id in loose {
+            let at = self
+                .faces
+                .get(id)
+                .expect("live")
+                .nodes
+                .map(|c| self.nodes.get(c).expect("live").at);
+            for k in 0..4 {
+                worst = worst.min(flatness(at[k], at[(k + 3) % 4], at[(k + 1) % 4]));
+            }
+        }
+        if worst.is_finite() {
+            worst
+        } else {
+            // A node that is a corner of nothing cannot be made worse.
+            0.0
+        }
+    }
+
+    /// Say where some of the nodes are, and put them there.
+    fn classify_some(
+        &mut self,
+        which: impl Fn(NodeId, &Node) -> bool,
+        pick: impl Fn(Option<On>, [f64; 3]) -> Option<On>,
+        project: impl Fn(On, [f64; 3]) -> Option<[f64; 3]>,
+    ) {
+        let found: Vec<(NodeId, Option<On>, Option<[f64; 3]>)> = self
+            .nodes
+            .iter()
+            .filter(|(id, node)| !node.frozen && which(*id, node))
+            .map(|(id, node)| {
+                let on = pick(node.on, node.at);
+                (id, on, on.and_then(|on| project(on, node.at)))
+            })
+            .collect();
+        for (id, on, onto) in found {
+            let node = self.nodes.get_mut(id).expect("live");
+            node.on = on;
+            if let Some(at) = onto {
+                node.at = at;
+            }
+        }
+    }
+
+    /// Let the two sides of a patch of faces go, so that drawing one in does
+    /// not drag the other with it.
+    ///
+    /// Where the map unsewed β₃ and left honeycomb to split whatever vertex
+    /// orbits came apart, here it is said outright. The blocks are grouped
+    /// by whether they can reach each other **without crossing the patch**;
+    /// the group holding the chosen blocks keeps the cells of the patch,
+    /// and every other group is handed its own copy of them.
+    ///
+    /// A group that can reach the chosen blocks anyway — two blocks joined
+    /// along another face as well — is refused, because there is no space
+    /// to open up between them.
+    ///
+    /// Returns where each node of the patch went on the far side, which is
+    /// what a caller laying a layer into the gap needs: the far copy did
+    /// not move, so it is where the layer's own far face belongs.
+    fn separate(
+        &mut self,
+        picked: &[(FaceId, BlockId)],
+    ) -> Result<HashMap<NodeId, NodeId>, BlockingError> {
+        let cut: HashSet<FaceId> = picked.iter().map(|(face, _)| *face).collect();
+        let front: HashSet<BlockId> = picked.iter().map(|(_, block)| *block).collect();
+
+        // Which blocks can reach which without crossing the patch.
+        let mut group: HashMap<BlockId, BlockId> = HashMap::new();
+        fn root(group: &HashMap<BlockId, BlockId>, mut b: BlockId) -> BlockId {
+            while let Some(up) = group.get(&b) {
+                if *up == b {
+                    break;
+                }
+                b = *up;
+            }
+            b
+        }
+        for (id, _) in self.blocks.iter() {
+            group.insert(id, id);
+        }
+        for (id, face) in self.faces.iter() {
+            if cut.contains(&id) {
+                continue;
+            }
+            if let [Some(a), Some(b)] = face.sides {
+                let (ra, rb) = (root(&group, a.block), root(&group, b.block));
+                if ra != rb {
+                    group.insert(rb, ra);
+                }
+            }
+        }
+        let ours: HashSet<BlockId> = front.iter().map(|b| root(&group, *b)).collect();
+
+        // The far side of each face of the patch, and what it holds.
+        let mut behind: Vec<(FaceId, Side)> = Vec::new();
+        for (face, block) in picked {
+            let f = self.faces.get(*face).expect("live");
+            let Some(other) = f.sides.iter().flatten().find(|s| s.block != *block) else {
+                continue;
+            };
+            if ours.contains(&root(&group, other.block)) {
+                // Still the same group: the two blocks are joined somewhere
+                // else as well, so drawing one in would drag the other.
+                return Err(BlockingError::NotOnTheSurface(self.face_name(*face)));
+            }
+            behind.push((*face, *other));
+        }
+        if behind.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        // A copy of every node and edge of the patch, for the far side.
+        let mut node_copy: HashMap<NodeId, NodeId> = HashMap::new();
+        let mut edge_copy: HashMap<EdgeId, EdgeId> = HashMap::new();
+        for (face, _) in &behind {
+            let f = self.faces.get(*face).expect("live").clone();
+            for node in f.nodes {
+                if node_copy.contains_key(&node) {
+                    continue;
+                }
+                let was = self.nodes.get(node).expect("live").clone();
+                let born = self.nodes.handed_out();
+                let copy = self.nodes.insert(Node { born, ..was });
+                node_copy.insert(node, copy);
+            }
+            for edge in f.edges {
+                if edge_copy.contains_key(&edge) {
+                    continue;
+                }
+                let was = self.edges.get(edge).expect("live").clone();
+                let ends = was.ends.map(|n| node_copy[&n]);
+                let copy = self.edges.insert(Edge { ends, ..was });
+                edge_copy.insert(edge, copy);
+            }
+        }
+
+        // Everything on the far side now names the copies.
+        let theirs: Vec<BlockId> = self
+            .blocks
+            .ids()
+            .filter(|b| !ours.contains(&root(&group, *b)))
+            .collect();
+        let over: HashSet<BlockId> = theirs.iter().copied().collect();
+        for id in &theirs {
+            let block = self.blocks.get_mut(*id).expect("live");
+            for node in block.nodes.iter_mut() {
+                if let Some(copy) = node_copy.get(node) {
+                    *node = *copy;
+                }
+            }
+            for edge in block.edges.iter_mut() {
+                if let Some(copy) = edge_copy.get(edge) {
+                    *edge = *copy;
+                }
+            }
+        }
+        for id in self.faces.ids().collect::<Vec<_>>() {
+            if cut.contains(&id) {
+                continue;
+            }
+            let face = self.faces.get(id).expect("live");
+            // Only a face wholly on the far side: one with a side on each
+            // is a face of the patch, and those are split below.
+            if !face
+                .sides
+                .iter()
+                .flatten()
+                .all(|side| over.contains(&side.block))
+                || face.sides.iter().flatten().count() == 0
+            {
+                continue;
+            }
+            let face = self.faces.get_mut(id).expect("live");
+            for node in face.nodes.iter_mut() {
+                if let Some(copy) = node_copy.get(node) {
+                    *node = *copy;
+                }
+            }
+            for edge in face.edges.iter_mut() {
+                if let Some(copy) = edge_copy.get(edge) {
+                    *edge = *copy;
+                }
+            }
+        }
+
+        // And each face of the patch becomes two: the one that was there
+        // for this side, and a copy of it for the far side.
+        for (face, side) in behind {
+            let f = self.faces.get(face).expect("live").clone();
+            let which = f
+                .sides
+                .iter()
+                .position(|s| *s == Some(side))
+                .expect("the far side");
+            let mut nodes = f.nodes.map(|n| node_copy[&n]);
+            let mut edges = f.edges.map(|e| edge_copy[&e]);
+            if which == 1 {
+                // The copy is this block's own face now, so it is wound the
+                // way that block sees it — which is side 0's way round.
+                nodes = reversed(nodes);
+                edges = [edges[2], edges[1], edges[0], edges[3]];
+            }
+            let copy = self.faces.insert(Face {
+                nodes,
+                edges,
+                sides: [Some(side), None],
+                on: f.on,
+            });
+            self.blocks.get_mut(side.block).expect("live").faces[side.slot as usize] = copy;
+            let f = self.faces.get_mut(face).expect("live");
+            f.sides[which] = None;
+            if which == 0 {
+                f.sides[0] = f.sides[1].take();
+                f.nodes = reversed(f.nodes);
+                f.edges = [f.edges[2], f.edges[1], f.edges[0], f.edges[3]];
+            }
+        }
+        self.forget();
+        Ok(node_copy)
+    }
+
+    /// Raise a block out of each of these faces at once.
+    ///
+    /// The shared half of all three extrusions. Each side is a face and the
+    /// four corners **as the thing growing out of it sees them**; the faces
+    /// are consumed, becoming the bottoms of the blocks and carrying what
+    /// they were classified on, because they are the same cells.
+    ///
+    /// Two things make the blocks fit together, and in this structure both
+    /// are free:
+    ///
+    /// * **one step per node, not per face.** A corner on several of the
+    ///   faces is one node, so it raises to one new node — and the map
+    ///   needed a corner key to say that two faces shared a corner, where
+    ///   here they share the `NodeId` itself. The step is the mitre of the
+    ///   normals meeting there, so a ridge rises straight up the fold's own
+    ///   plane of symmetry.
+    /// * **no welding at all.** Two blocks raised from faces that share an
+    ///   edge share the two corners of that edge and the two they raise to,
+    ///   so `emplace_block` finds the face between them by its four nodes
+    ///   and hands the second block its other side. What the map did with a
+    ///   `glue_onto` per seam, in an order it had to be careful about,
+    ///   happens here by nobody doing anything.
+    fn raise_faces(
+        &mut self,
+        sides: &[(FaceId, [NodeId; 4])],
+        height: f64,
+        back: bool,
+    ) -> Result<Vec<CellId>, BlockingError> {
+        // Where every corner goes, by the node itself.
+        let mut around: HashMap<NodeId, Vec<[f64; 3]>> = HashMap::new();
+        for (_, winding) in sides {
+            let points = winding.map(|n| self.nodes.get(n).expect("live").at);
+            let normal = quad_normal(points);
+            let length = (0..3).map(|k| normal[k] * normal[k]).sum::<f64>().sqrt();
+            if length < 1e-12 {
+                return Err(BlockingError::LostFace);
+            }
+            let unit = normal.map(|x| if back { -x / length } else { x / length });
+            for node in winding {
+                around.entry(*node).or_default().push(unit);
+            }
+        }
+        let mut risen: HashMap<NodeId, NodeId> = HashMap::new();
+        for (node, normals) in &around {
+            let step = mitre(normals, height);
+            let at = self.nodes.get(*node).expect("live").at;
+            let born = self.nodes.handed_out();
+            let up = self.nodes.insert(Node {
+                at: [0, 1, 2].map(|k| at[k] + step[k]),
+                // A node raised off the model follows nothing: it is not on
+                // the boundary any more.
+                on: None,
+                frozen: false,
+                born,
+            });
+            risen.insert(*node, up);
+        }
+
+        let mut known = self.known();
+        let mut out = Vec::with_capacity(sides.len());
+        for (_, winding) in sides {
+            // The block's own bottom is this face wound the other way: what
+            // is outside the face is inside the block growing out of it.
+            let base = if back {
+                [winding[0], winding[3], winding[2], winding[1]]
+            } else {
+                [winding[3], winding[0], winding[1], winding[2]]
+            };
+            let corners = [
+                base[0],
+                base[1],
+                base[2],
+                base[3],
+                risen[&base[0]],
+                risen[&base[1]],
+                risen[&base[2]],
+                risen[&base[3]],
+            ];
+            let block = self.emplace_block(corners, &mut known)?;
+            out.push(self.block_name(block));
+        }
+        self.forget();
+        Ok(out)
+    }
+
+    /// A face of a block, with the four corners that block winds it by —
+    /// and only if it is on the surface, since a face with a block on each
+    /// side has no room to grow into.
+    fn free_side(
+        &self,
+        face: CellId,
+        block: CellId,
+    ) -> Result<(FaceId, [NodeId; 4]), BlockingError> {
+        let id = self.face_at(face).ok_or(BlockingError::NoSuchFace(face))?;
+        let at = self
+            .block_at(block)
+            .ok_or(BlockingError::NoSuchBlock(block))?;
+        let (_, which) = self
+            .slot_of(id, at)
+            .ok_or(BlockingError::FaceNotOnBlock(face, block))?;
+        let f = self.faces.get(id).expect("live");
+        if f.sides.iter().flatten().count() > 1 {
+            return Err(BlockingError::NotOnTheSurface(face));
+        }
+        let winding = if which == 1 {
+            reversed(f.nodes)
+        } else {
+            f.nodes
+        };
+        Ok((id, winding))
     }
 
     /// Whether anything still holds this edge.
@@ -874,6 +1257,13 @@ impl Blocking {
         first: CellId,
         second: CellId,
     ) -> Result<(FaceId, FaceId), BlockingError> {
+        // Asked **before** the names are resolved: gluing a face to itself
+        // is a complaint about the request and not about the structure, and
+        // it is the same complaint whether or not the name is one anything
+        // answers to.
+        if first == second {
+            return Err(BlockingError::SameFace);
+        }
         let a = self
             .face_at(first)
             .ok_or(BlockingError::NoSuchFace(first))?;
@@ -1647,7 +2037,72 @@ impl Blocking {
         how: Smoothing<'_>,
         project: impl Fn(On, [f64; 3]) -> Option<[f64; 3]>,
     ) -> f64 {
-        todo!("cellular: smooth")
+        let share = how.share.clamp(0.0, 1.0);
+        if share == 0.0 || how.rounds == 0 {
+            return 0.0;
+        }
+        let held: HashSet<CellId> = how.held.iter().copied().collect();
+
+        // By name, so the order does not depend on where anything happens
+        // to sit in an arena.
+        let mut movable: Vec<(CellId, NodeId)> = self
+            .nodes
+            .iter()
+            .filter(|(_, node)| {
+                !node.frozen
+                    // A point is a point: a node on a geometric corner has
+                    // one place to be.
+                    && node.on.is_none_or(|on| on.dim > 0)
+            })
+            .map(|(id, _)| (self.node_name(id), id))
+            .filter(|(name, id)| {
+                !held.contains(name)
+                    // Free inside, held on the boundary.
+                    && (self.nodes.get(*id).expect("live").on.is_some()
+                        || !self.on_the_surface(*name))
+            })
+            .collect();
+        movable.sort_by_key(|(name, _)| *name);
+
+        let mut furthest = 0.0f64;
+        for _ in 0..how.rounds {
+            for &(name, id) in &movable {
+                let ring: Vec<[f64; 3]> = self
+                    .neighbors(name)
+                    .into_iter()
+                    .filter_map(|other| self.position(other))
+                    .collect();
+                if ring.is_empty() {
+                    continue;
+                }
+                let from = self.nodes.get(id).expect("live").at;
+                let middle = self.middle(&ring);
+                let mut to = [0, 1, 2].map(|k| from[k] + (middle[k] - from[k]) * share);
+                // Back onto whatever it follows, before anybody judges it:
+                // the point to weigh is the one the node would end up at.
+                if let Some(on) = self.nodes.get(id).expect("live").on {
+                    if let Some(onto) = project(on, to) {
+                        to = onto;
+                    }
+                }
+                let step = apart(from, to);
+                if step == 0.0 {
+                    continue;
+                }
+
+                let before = self.worst_corner_at(id);
+                self.nodes.get_mut(id).expect("live").at = to;
+                if self.worst_corner_at(id) < before {
+                    // Not an improvement. A Laplacian on a concave
+                    // boundary would have taken it and turned a cell
+                    // inside out.
+                    self.nodes.get_mut(id).expect("live").at = from;
+                    continue;
+                }
+                furthest = furthest.max(step);
+            }
+        }
+        furthest
     }
 
     pub fn patches(&self) -> Vec<CellId> {
@@ -1761,7 +2216,7 @@ impl Blocking {
         pick: impl Fn(Option<On>, [f64; 3]) -> Option<On>,
         project: impl Fn(On, [f64; 3]) -> Option<[f64; 3]>,
     ) {
-        todo!("cellular: classify_nodes")
+        self.classify_some(|_, _| true, pick, project)
     }
 
     pub fn classify_named(
@@ -1770,7 +2225,8 @@ impl Blocking {
         pick: impl Fn(Option<On>, [f64; 3]) -> Option<On>,
         project: impl Fn(On, [f64; 3]) -> Option<[f64; 3]>,
     ) {
-        todo!("cellular: classify_named")
+        let wanted: HashSet<NodeId> = nodes.iter().filter_map(|n| self.node_at(*n)).collect();
+        self.classify_some(|id, _| wanted.contains(&id), pick, project)
     }
 
     pub fn reclassify(&mut self, settle: impl Fn(Settling<'_>) -> Option<On>) {
@@ -2337,7 +2793,22 @@ impl Blocking {
         face: CellId,
         block: CellId,
     ) -> Result<Vec<(CellId, Option<On>)>, BlockingError> {
-        todo!("cellular: pillow_chord")
+        // The chord is a tube of blocks, and what is pillowed is its
+        // **side**: the four faces of each of its blocks that the chord
+        // does not cross. The two at the ends are deliberately left out, so
+        // the tube stays open — a node on an end face belongs to two side
+        // faces and to no other, so it moves along the mitre of those two,
+        // inwards across the chord and not one bit along it.
+        let chord = self.chord_through(face, block)?;
+        let mut patch: Vec<(CellId, CellId)> = Vec::new();
+        for step in &chord {
+            for side in self.faces_of(step.block) {
+                if !step.through.contains(&side.face) {
+                    patch.push((side.face, side.block));
+                }
+            }
+        }
+        self.pillow(&patch)
     }
 
     pub fn split_sheet(&mut self, edge: CellId, t: f64) -> Result<Vec<CellId>, BlockingError> {
@@ -2397,7 +2868,7 @@ impl Blocking {
         // before any of them is touched: one block at a time would leave
         // its neighbour's shared face half cut, and nothing downstream
         // could tell that from a mistake.
-        let mut halves: Vec<[[NodeId; 8]; 2]> = Vec::new();
+        let mut halves: Vec<([[NodeId; 8]; 2], u64)> = Vec::new();
         let mut blocks: Vec<BlockId> = Vec::new();
         for (id, block) in self.blocks.iter() {
             let crossed: Vec<usize> = (0..12)
@@ -2427,20 +2898,25 @@ impl Blocking {
                     .expect("the upright is an edge of the block");
                 cut[&id]
             });
-            halves.push([
+            halves.push((
                 [
-                    frame[0], frame[1], frame[2], frame[3], middle[0], middle[1], middle[2],
-                    middle[3],
+                    [
+                        frame[0], frame[1], frame[2], frame[3], middle[0], middle[1], middle[2],
+                        middle[3],
+                    ],
+                    [
+                        middle[0], middle[1], middle[2], middle[3], frame[4], frame[5], frame[6],
+                        frame[7],
+                    ],
                 ],
-                [
-                    middle[0], middle[1], middle[2], middle[3], frame[4], frame[5], frame[6],
-                    frame[7],
-                ],
-            ]);
+                // Both halves are in whatever the block was in: a cut does
+                // not take anything out of a group.
+                block.groups,
+            ));
             blocks.push(id);
         }
 
-        let mut sheets: Vec<[[NodeId; 4]; 2]> = Vec::new();
+        let mut sheets: Vec<Halved> = Vec::new();
         let mut loose: Vec<FaceId> = Vec::new();
         for (id, face) in self.faces.iter() {
             let crossed: Vec<usize> = (0..4)
@@ -2457,21 +2933,28 @@ impl Blocking {
                 // crossing those is not a sheet.
                 return Err(BlockingError::BrokenSheet(edge));
             }
+            // The two halves, as node quads, whether this face bounds a
+            // block or not: either way they inherit what the whole was
+            // classified on.
+            let (p, q) = (cut[&face.edges[first]], cut[&face.edges[second]]);
+            let (a, b) = (first, second);
+            sheets.push((
+                [
+                    [face.nodes[a], p, q, face.nodes[(b + 1) % 4]],
+                    [p, face.nodes[(a + 1) % 4], face.nodes[b], q],
+                ],
+                [p, q],
+                face.on,
+            ));
             // A face of a block is cut by cutting the block; a face of a
             // patch has no block to cut, and cutting it in two **is** the
             // whole of the job. In two dimensions the cut is finished when
             // the faces are.
             if face.sides.iter().all(|side| side.is_none()) {
-                let (p, q) = (cut[&face.edges[first]], cut[&face.edges[second]]);
-                let (a, b) = (first, second);
-                sheets.push([
-                    [face.nodes[a], p, q, face.nodes[(b + 1) % 4]],
-                    [p, face.nodes[(a + 1) % 4], face.nodes[b], q],
-                ]);
                 loose.push(id);
             }
         }
-        if halves.is_empty() && sheets.is_empty() {
+        if halves.is_empty() && loose.is_empty() {
             return Err(BlockingError::BrokenSheet(edge));
         }
 
@@ -2499,10 +2982,6 @@ impl Blocking {
             .filter(|(_, face)| face.edges.iter().any(|e| cut.contains_key(e)))
             .map(|(id, _)| id)
             .collect();
-        let was: HashMap<FaceId, Option<On>> = crossed
-            .iter()
-            .map(|id| (*id, self.faces.get(*id).expect("live").on))
-            .collect();
         for id in &crossed {
             self.faces.remove(*id);
         }
@@ -2516,16 +2995,34 @@ impl Blocking {
             by_quad: self.known().by_quad,
         };
         known.by_pair.retain(|_, id| self.edges.get(*id).is_some());
-        for pair in halves {
+        for (pair, groups) in halves {
             for nodes in pair {
-                self.emplace_block(nodes, &mut known)?;
+                let block = self.emplace_block(nodes, &mut known)?;
+                self.blocks.get_mut(block).expect("just made").groups = groups;
             }
         }
-        for (pair, parent) in sheets.iter().zip(&loose) {
+        // Every half of every face the cut crossed, told what the whole was
+        // on — so a cut along a surface stays on that surface. The halves
+        // that bound a block were made by the blocks above and are found
+        // here; the ones that bound nothing are made here, a patch having
+        // no block to cut.
+        //
+        // And **the edge the cut laid across each of them** inherits it
+        // too, which is the one thing that knows a new edge runs across
+        // the inside of a disc rather than round its edge. Its two ends
+        // are both on the rim, so the settling asked afterwards would put
+        // it on the rim: the boundary of a cell says which entities it
+        // could be on and never which one it is.
+        for (pair, middle, on) in &sheets {
             for nodes in pair {
                 let id = self.face_on(*nodes, &mut known);
-                self.faces.get_mut(id).expect("just made").on = was.get(parent).copied().flatten();
+                self.faces.get_mut(id).expect("found or made").on = *on;
             }
+            if on.is_none() {
+                continue;
+            }
+            let across = self.edge_on(middle[0], middle[1], &mut known, (*on, 0));
+            self.edges.get_mut(across).expect("found or made").on = *on;
         }
 
         self.forget();
@@ -2539,7 +3036,37 @@ impl Blocking {
         face: CellId,
         height: f64,
     ) -> Result<Vec<CellId>, BlockingError> {
-        todo!("cellular: extrude_patch")
+        // Either way. A sheet of faces has no inside, so neither side of it
+        // is the wrong one: which way the quadrangles happen to be wound
+        // came from the triangles of the surface they were laid on, and
+        // nobody looking at the screen can tell. Only nowhere is refused.
+        if !height.is_finite() || height == 0.0 {
+            return Err(BlockingError::BadHeight(height));
+        }
+        let back = height < 0.0;
+        let height = height.abs();
+        let start = self.face_at(face).ok_or(BlockingError::NoSuchFace(face))?;
+        if self
+            .faces
+            .get(start)
+            .is_some_and(|f| f.sides.iter().any(|side| side.is_some()))
+        {
+            return Err(BlockingError::NotAPatch(face));
+        }
+
+        // All of it or none of it, and that is not a convenience: half a
+        // patch raised would leave the other half welded to a block along
+        // an edge, which is a sheet with a block hanging off it.
+        let component = self
+            .patch_components()
+            .into_iter()
+            .find(|faces| faces.contains(&start))
+            .ok_or(BlockingError::NotAPatch(face))?;
+        let sides: Vec<(FaceId, [NodeId; 4])> = component
+            .iter()
+            .map(|id| (*id, self.faces.get(*id).expect("live").nodes))
+            .collect();
+        self.raise_faces(&sides, height, back)
     }
 
     pub fn extrude_faces(
@@ -2547,7 +3074,45 @@ impl Blocking {
         picked: &[(CellId, CellId)],
         height: f64,
     ) -> Result<Vec<CellId>, BlockingError> {
-        todo!("cellular: extrude_faces")
+        if picked.is_empty() {
+            return Err(BlockingError::EmptyPatch);
+        }
+        if !height.is_finite() || height == 0.0 {
+            return Err(BlockingError::BadHeight(height));
+        }
+        if height < 0.0 {
+            return Err(BlockingError::Inwards(height));
+        }
+
+        // Each face once, in the order asked for: picking the same face
+        // twice is a selection, not two extrusions.
+        let mut wanted: Vec<(CellId, CellId)> = Vec::new();
+        for pair in picked {
+            if !wanted.contains(pair) {
+                wanted.push(*pair);
+            }
+        }
+        let sides = wanted
+            .iter()
+            .map(|(face, block)| self.free_side(*face, *block))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // Three chosen faces on one edge would raise three blocks round it,
+        // and which two of them meet is not a question with an answer.
+        // Refused rather than welded arbitrarily — and refused **here**,
+        // because what `emplace_block` would say about it is that some face
+        // already has two sides, which is true and unhelpful.
+        let mut along: HashMap<EdgeId, usize> = HashMap::new();
+        for (id, _) in &sides {
+            for edge in self.faces.get(*id).expect("live").edges {
+                *along.entry(edge).or_default() += 1;
+            }
+        }
+        if along.values().any(|holders| *holders > 2) {
+            return Err(BlockingError::NotOnTheSurface(wanted[0].0));
+        }
+
+        self.raise_faces(&sides, height, false)
     }
 
     pub fn extrude_face(
@@ -2556,14 +3121,180 @@ impl Blocking {
         block: CellId,
         height: f64,
     ) -> Result<CellId, BlockingError> {
-        todo!("cellular: extrude_face")
+        // Finite first, because NaN passes `<= 0.0`: every comparison with
+        // it is false.
+        if !height.is_finite() || height == 0.0 {
+            return Err(BlockingError::BadHeight(height));
+        }
+        // And one way only, which is not the same rule as for a patch: the
+        // other side of a face of a block is **the block**. Growing into it
+        // would lay a second block inside the first.
+        if height < 0.0 {
+            return Err(BlockingError::Inwards(height));
+        }
+        let side = self.free_side(face, block)?;
+        let raised = self.raise_faces(&[side], height, false)?;
+        raised.into_iter().next().ok_or(BlockingError::LostFace)
     }
 
     pub fn pillow(
         &mut self,
         patch: &[(CellId, CellId)],
     ) -> Result<Vec<(CellId, Option<On>)>, BlockingError> {
-        todo!("cellular: pillow")
+        if patch.is_empty() {
+            return Err(BlockingError::EmptyPatch);
+        }
+        // Drawing a block inwards means there is an inward: a patch of free
+        // faces has no inside to give way. A name nothing answers to is a
+        // different complaint, and the resolving below makes it.
+        for (_, block) in patch {
+            if self.block_at(*block).is_none() && self.face_at(*block).is_some() {
+                return Err(BlockingError::NotABlock(*block));
+            }
+        }
+
+        // --- read everything before a single node moves ----------------
+        let mut picked: Vec<(FaceId, BlockId)> = Vec::new();
+        let mut plans: Vec<Drawn> = Vec::new();
+        for (face, block) in patch {
+            // A pair, and the complaint is about the pair: a face that is
+            // not this block's and a name nothing answers to are the same
+            // mistake from here, which is what the map said too.
+            let (id, at) = self
+                .face_at(*face)
+                .zip(self.block_at(*block))
+                .ok_or(BlockingError::FaceNotOnBlock(*face, *block))?;
+            let (_, which) = self
+                .slot_of(id, at)
+                .ok_or(BlockingError::FaceNotOnBlock(*face, *block))?;
+            let f = self.faces.get(id).expect("live");
+            let winding = if which == 1 {
+                reversed(f.nodes)
+            } else {
+                f.nodes
+            };
+            let points = winding.map(|n| self.nodes.get(n).expect("live").at);
+            let normal = quad_normal(points);
+            let length = (0..3).map(|k| normal[k] * normal[k]).sum::<f64>().sqrt();
+            if length < 1e-12 {
+                return Err(BlockingError::LostFace);
+            }
+            // The block's own extent in that direction, from its centre to
+            // the face and back again; a third of it is the layer.
+            let corners = self.blocks.get(at).expect("live").nodes;
+            let centre = self.middle(
+                &corners
+                    .iter()
+                    .map(|n| self.nodes.get(*n).expect("live").at)
+                    .collect::<Vec<_>>(),
+            );
+            let middle = self.middle(&points);
+            let reach = (0..3)
+                .map(|k| (middle[k] - centre[k]).powi(2))
+                .sum::<f64>()
+                .sqrt();
+            picked.push((id, at));
+            plans.push((
+                id,
+                at,
+                winding,
+                normal.map(|x| -x / length),
+                2.0 * reach * PILLOW_SHARE,
+            ));
+        }
+
+        // What each node of the patch is, where it is and what it follows,
+        // read before anything moves: the node that moves is **not** the
+        // one that ends up where it is now. The layer leaves one there, and
+        // that one is the one on the geometry.
+        let mut was: HashMap<NodeId, ([f64; 3], Option<On>, bool)> = HashMap::new();
+        let mut facing: HashMap<NodeId, (Vec<[f64; 3]>, f64)> = HashMap::new();
+        for (_, _, winding, inward, depth) in &plans {
+            for node in winding {
+                let n = self.nodes.get(*node).expect("live");
+                was.insert(*node, (n.at, n.on, n.frozen));
+                let entry = facing.entry(*node).or_insert((Vec::new(), f64::INFINITY));
+                entry.0.push(*inward);
+                entry.1 = entry.1.min(*depth);
+            }
+        }
+
+        // --- let go of the far side ------------------------------------
+        let far = self.separate(&picked)?;
+
+        // --- in with the patch -----------------------------------------
+        // In a settled order throughout, because a hash map's order is not
+        // one: two sessions pillowed the same way have to ship the same
+        // bytes, and the names handed out depend on the order the nodes are
+        // made in.
+        let mut patch: Vec<NodeId> = facing.keys().copied().collect();
+        patch.sort_unstable();
+        for node in &patch {
+            let (inward, depth) = &facing[node];
+            let step = mitre(inward, *depth);
+            let n = self.nodes.get_mut(*node).expect("live");
+            let from = n.at;
+            n.at = [0, 1, 2].map(|k| from[k] + step[k]);
+            // And it lets go of the geometry on the way in: this node is
+            // inside the material now, and what it used to follow is the
+            // business of the copy the layer leaves on the surface.
+            n.on = None;
+            n.frozen = false;
+        }
+
+        // --- a block per face, laid into the space that opened ----------
+        //
+        // Its far four are the **far side's own** nodes, which did not
+        // move: nothing beyond the patch moves, which is the whole point
+        // of pillowing. Where there is no far side the layer makes them,
+        // and they take what the node that moved in was carrying — the
+        // classification and the freeze both, a frozen node having been
+        // frozen where it stood and not wherever it is pushed to.
+        let mut over: HashMap<NodeId, NodeId> = HashMap::new();
+        for node in &patch {
+            let (at, on, frozen) = was[node];
+            let copy = far.get(node).copied().unwrap_or_else(|| {
+                let born = self.nodes.handed_out();
+                self.nodes.insert(Node {
+                    at,
+                    on,
+                    frozen,
+                    born,
+                })
+            });
+            over.insert(*node, copy);
+        }
+
+        let mut known = self.known();
+        for (_, _, winding, _, _) in &plans {
+            // As for an extrusion: what is outside the face is inside the
+            // block laid against it.
+            let base = [winding[3], winding[0], winding[1], winding[2]];
+            let corners = [
+                base[0],
+                base[1],
+                base[2],
+                base[3],
+                over[&base[0]],
+                over[&base[1]],
+                over[&base[2]],
+                over[&base[3]],
+            ];
+            self.emplace_block(corners, &mut known)?;
+        }
+        self.forget();
+
+        // The nodes that were drawn in, each with what it was following
+        // before it let go. The caller holds the triangles and may well
+        // decide it is still on the same thing — a node sliding along the
+        // rim of the patch is the case — which it cannot do without being
+        // told what that was.
+        let mut out: Vec<(CellId, Option<On>)> = patch
+            .iter()
+            .map(|node| (self.node_name(*node), was[node].1))
+            .collect();
+        out.sort_by_key(|(name, _)| *name);
+        Ok(out)
     }
 
     pub fn sheet_segments(&self, edge: CellId) -> Result<u32, BlockingError> {

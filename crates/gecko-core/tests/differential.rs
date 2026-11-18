@@ -22,7 +22,7 @@ use gecko_core::{cube_corners, CellId, On};
 /// Every step names what it acts on by **where it is**, never by a name:
 /// the two engines name cells differently on purpose, so a script that held
 /// a name would be testing the naming and not the structure.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 enum Step {
     AddBlock([[f64; 3]; 8]),
     AddFace([[f64; 3]; 4]),
@@ -83,6 +83,25 @@ enum Step {
     RemoveSheet {
         edge: [f64; 3],
         close: bool,
+    },
+    /// Raise a block out of the free face whose corners average to a point.
+    ExtrudeFace {
+        face: [f64; 3],
+        height: f64,
+    },
+    /// Raise one out of each of these at once, welded where they meet.
+    ExtrudeFaces {
+        faces: Vec<[f64; 3]>,
+        height: f64,
+    },
+    /// Raise the whole patch the face at a point belongs to.
+    ExtrudePatch {
+        face: [f64; 3],
+        height: f64,
+    },
+    /// Draw these faces in and lay a layer into the space.
+    Pillow {
+        faces: Vec<[f64; 3]>,
     },
 }
 
@@ -238,6 +257,16 @@ trait Engine: Sized {
     fn first_end(&self, edge: CellId) -> Place;
     fn remove_block(&mut self, block: CellId);
     fn remove_sheet(&mut self, edge: CellId, close: bool);
+    /// The free face whose corners average to a point, and the block it
+    /// belongs to.
+    fn surface_at(&self, middle: [f64; 3]) -> (CellId, CellId);
+    /// Any face whose corners average to a point, and its block if it has
+    /// one.
+    fn some_face_at(&self, middle: [f64; 3]) -> CellId;
+    fn extrude_face(&mut self, face: CellId, block: CellId, height: f64);
+    fn extrude_faces(&mut self, picked: &[(CellId, CellId)], height: f64);
+    fn extrude_patch(&mut self, face: CellId, height: f64);
+    fn pillow(&mut self, picked: &[(CellId, CellId)]);
     /// The cellular engine checks its own invariants; the map has none to
     /// check, so it says so by saying nothing.
     fn check(&self) -> Result<(), String>;
@@ -284,6 +313,24 @@ trait Engine: Sized {
             Step::RemoveSheet { edge, close } => {
                 let id = self.edge_at(edge);
                 self.remove_sheet(id, close);
+            }
+            Step::ExtrudeFace { face, height } => {
+                let (face, block) = self.surface_at(face);
+                self.extrude_face(face, block, height);
+            }
+            Step::ExtrudeFaces { ref faces, height } => {
+                let picked: Vec<(CellId, CellId)> =
+                    faces.iter().map(|at| self.surface_at(*at)).collect();
+                self.extrude_faces(&picked, height);
+            }
+            Step::ExtrudePatch { face, height } => {
+                let face = self.some_face_at(face);
+                self.extrude_patch(face, height);
+            }
+            Step::Pillow { ref faces } => {
+                let picked: Vec<(CellId, CellId)> =
+                    faces.iter().map(|at| self.surface_at(*at)).collect();
+                self.pillow(&picked);
             }
             Step::Split { edge, from, t } => {
                 let id = self.edge_at(edge);
@@ -429,6 +476,68 @@ macro_rules! reading {
 
         fn remove_block(&mut self, block: CellId) {
             Self::remove_block(self, block).expect("a live block");
+        }
+
+        fn surface_at(&self, middle: [f64; 3]) -> (CellId, CellId) {
+            let mut counted: std::collections::HashMap<CellId, usize> =
+                std::collections::HashMap::new();
+            for side in self.block_faces() {
+                *counted.entry(side.face).or_default() += 1;
+            }
+            let found: Vec<(CellId, CellId)> = self
+                .block_faces()
+                .into_iter()
+                .filter(|side| counted.get(&side.face).copied().unwrap_or(0) == 1)
+                .filter(|side| {
+                    let mut at = [0.0; 3];
+                    for node in side.nodes {
+                        let p = self.position(node).expect("a live corner");
+                        for k in 0..3 {
+                            at[k] += p[k] / 4.0;
+                        }
+                    }
+                    fixed(at) == fixed(middle)
+                })
+                .map(|side| (side.face, side.block))
+                .collect();
+            assert_eq!(found.len(), 1, "one free face at {middle:?}");
+            found[0]
+        }
+
+        fn some_face_at(&self, middle: [f64; 3]) -> CellId {
+            let found: Vec<CellId> = self
+                .faces()
+                .filter(|(face, _)| {
+                    let (corners, _) = self.face_cells(*face).expect("a live face");
+                    let mut at = [0.0; 3];
+                    for node in corners {
+                        let p = self.position(node).expect("a live corner");
+                        for k in 0..3 {
+                            at[k] += p[k] / 4.0;
+                        }
+                    }
+                    fixed(at) == fixed(middle)
+                })
+                .map(|(face, _)| face)
+                .collect();
+            assert_eq!(found.len(), 1, "one face at {middle:?}");
+            found[0]
+        }
+
+        fn extrude_face(&mut self, face: CellId, block: CellId, height: f64) {
+            Self::extrude_face(self, face, block, height).expect("a block");
+        }
+
+        fn extrude_faces(&mut self, picked: &[(CellId, CellId)], height: f64) {
+            Self::extrude_faces(self, picked, height).expect("blocks");
+        }
+
+        fn extrude_patch(&mut self, face: CellId, height: f64) {
+            Self::extrude_patch(self, face, height).expect("blocks");
+        }
+
+        fn pillow(&mut self, picked: &[(CellId, CellId)]) {
+            Self::pillow(self, picked).expect("a layer");
         }
 
         fn remove_sheet(&mut self, edge: CellId, close: bool) {
@@ -619,8 +728,8 @@ fn agree(script: &[Step]) {
     cellular.check().expect("the empty complex holds");
 
     for (k, step) in script.iter().enumerate() {
-        map.step(*step);
-        cellular.step(*step);
+        map.step(step.clone());
+        cellular.step(step.clone());
         cellular
             .check()
             .unwrap_or_else(|why| panic!("step {k}, {step:?}: {why}"));
@@ -776,6 +885,73 @@ fn a_script_of_cutting() {
             edge: [0.5, 0.0, 0.0],
             from: [0.0, 0.0, 0.0],
             t: 0.4,
+        },
+    ]);
+}
+
+#[test]
+fn a_script_of_growing() {
+    agree(&[
+        Step::AddBlock(cube_corners([0.0, 0.0, 0.0], 1.0)),
+        // One face up.
+        Step::ExtrudeFace {
+            face: [0.5, 0.5, 1.0],
+            height: 0.5,
+        },
+        // And two that share an edge, up **together**: raised one after the
+        // other they would leave two faces in the same place, and raised
+        // together they share the one the edge rises into.
+        Step::ExtrudeFaces {
+            faces: vec![[0.5, 0.0, 0.5], [0.0, 0.5, 0.5]],
+            height: 0.25,
+        },
+    ]);
+}
+
+#[test]
+fn a_script_of_a_patch_going_up() {
+    agree(&[
+        Step::LayFace([
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ]),
+        Step::LayFace([
+            [1.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [2.0, 1.0, 0.0],
+            [1.0, 1.0, 0.0],
+        ]),
+        // All of it or none of it, and the faces are consumed.
+        Step::ExtrudePatch {
+            face: [0.5, 0.5, 0.0],
+            height: 0.5,
+        },
+    ]);
+}
+
+#[test]
+fn a_script_of_pillowing() {
+    agree(&[
+        Step::AddBlock(cube_corners([0.0, 0.0, 0.0], 1.0)),
+        // One face of the surface drawn in, with a layer laid into the
+        // space: nothing on the far side moves.
+        Step::Pillow {
+            faces: vec![[0.5, 0.5, 1.0]],
+        },
+    ]);
+}
+
+#[test]
+fn a_script_of_pillowing_a_corner() {
+    agree(&[
+        Step::AddBlock(cube_corners([0.0, 0.0, 0.0], 1.0)),
+        // Three faces meeting at a corner: the corner moves along the
+        // mitre of three normals, which is the diagonal, and the three
+        // layers share the faces between them.
+        Step::Pillow {
+            faces: vec![[0.5, 0.5, 1.0], [0.5, 1.0, 0.5], [1.0, 0.5, 0.5]],
         },
     ]);
 }
