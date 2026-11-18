@@ -429,7 +429,8 @@ for byte: `agree.lua` keeps the digests it had.
    - **the suite is the oracle.** Not a line of it changes. `./cellular.sh`
      runs it under the feature, counts what passes, and fails if the count
      falls below `cellular.ratchet` — which is bumped in the commit that
-     earns it. It started at 43 of 314.
+     earns it. It started at 43 of 314, and stage 1 — construction, the reads, the
+     settling, the invariants — took it to 123 of 316.
    - `tests/differential.rs` runs a script of operations on **both** engines
      and compares every answer after every step, which is the part no test
      written by hand can do: a test says what its author thought to ask.

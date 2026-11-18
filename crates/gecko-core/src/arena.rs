@@ -61,6 +61,11 @@ pub struct Arena<I: Idx, T> {
     free: Vec<u32>,
     /// What has been inserted since this was last cleared.
     made: Vec<I>,
+    /// How many cells this arena has ever made. Monotone, never reset: it is
+    /// what `corner_mark` reads, and a cell's own birth number is compared
+    /// against it to say whether an operation made that cell or merely
+    /// touched it.
+    handed: u32,
     kind: PhantomData<fn() -> I>,
 }
 
@@ -71,6 +76,7 @@ impl<I: Idx, T> Default for Arena<I, T> {
             gen: Vec::new(),
             free: Vec::new(),
             made: Vec::new(),
+            handed: 0,
             kind: PhantomData,
         }
     }
@@ -114,7 +120,13 @@ impl<I: Idx, T> Arena<I, T> {
         self.slots[at as usize] = Some(value);
         let id = I::from_raw(at);
         self.made.push(id);
+        self.handed += 1;
         id
+    }
+
+    /// How many cells this arena has ever made.
+    pub fn handed_out(&self) -> u32 {
+        self.handed
     }
 
     pub fn remove(&mut self, id: I) -> Option<T> {
