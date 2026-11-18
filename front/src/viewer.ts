@@ -597,8 +597,11 @@ export class Viewer {
     normal: Vector3;
     by: number;
   };
-  /** The marks and sides shown while a slab is being laid on the geometry. */
+  /** The marks and sides shown while a quadrangle is being laid on the
+   *  geometry, and the provisional sides to wherever the pointer is. */
   private laying?: { marks: Mesh[]; wire?: GreasedLineMesh };
+  private layingAim?: GreasedLineMesh;
+  private layingAimSides = 0;
   private grownWire?: GreasedLineMesh;
   private grownBox?: Mesh;
   private grown: number | null = null;
@@ -1692,6 +1695,8 @@ export class Viewer {
     for (const mark of this.laying?.marks ?? []) mark.dispose();
     this.laying?.wire?.dispose(false, true);
     this.laying = undefined;
+    // A corner placed settles whatever was provisional about it.
+    this.aimLaying([], null);
     if (!points.length) return;
 
     const here = points.map(
@@ -1703,12 +1708,23 @@ export class Viewer {
         ),
     );
     const marks = here.map((at, k) => {
+      // A unit sphere, which is what the per-pane sizing pass expects — and
+      // sized here as well as there, so that it is never drawn at a world
+      // unit even for the one frame between being made and being scaled.
       const mark = CreateSphere(
         `laying${k}`,
         { diameter: 1, segments: 8 },
         this.scene,
       );
       mark.position = at;
+      mark.scaling.setAll(
+        worldSizeForPixels(
+          2 * this.prefs.nodes.size,
+          Vector3.Distance(at, this.camera.position),
+          this.camera.fov,
+          this.scene.getEngine().getRenderHeight(),
+        ),
+      );
       const material = new StandardMaterial(`layingMat${k}`, this.scene);
       material.emissiveColor = Color3.FromHexString(this.prefs.theme.corners);
       material.disableLighting = true;
@@ -1741,6 +1757,79 @@ export class Viewer {
     }
     this.laying = { marks, wire };
     this.fitLimits();
+  }
+
+  /**
+   * The sides that are not there yet: from the last corner placed to
+   * wherever the pointer is, and — once three are down — on from there back
+   * to the first.
+   *
+   * So the quadrangle is whole on screen before the fourth click rather
+   * than after it, which is the difference between placing a corner and
+   * finding out where it went. Drawn thinner than the sides that have been
+   * settled, because it is a question and not an answer.
+   *
+   * `at` null takes it away. Nothing is added to the camera's limits from
+   * here: a provisional point under the pointer is not part of the model,
+   * and letting it push the limits about would make the view breathe as
+   * the mouse moved.
+   */
+  aimLaying(
+    points: readonly [number, number, number][],
+    at: [number, number, number] | null,
+  ) {
+    this.layingAim?.dispose(false, true);
+    this.layingAim = undefined;
+    this.layingAimSides = 0;
+    if (at === null || !points.length || points.length > 3) return;
+
+    const here = [...points, at, ...(points.length === 3 ? [points[0]] : [])];
+    const lines = here
+      .slice(points.length - 1)
+      .map((p) => [
+        p[0] - this.center[0],
+        p[1] - this.center[1],
+        p[2] - this.center[2],
+      ]);
+    const segments = lines
+      .slice(1)
+      .map((to, k) => [...lines[k], ...to]) as number[][];
+    const wire = CreateGreasedLine(
+      "layingAim",
+      { points: segments, updatable: false },
+      {
+        color: Color3.FromHexString(this.prefs.theme.corners),
+        materialType: GreasedLineMeshMaterialType.MATERIAL_TYPE_SIMPLE,
+        ...this.ribbon(1 / SHEET_PIXELS),
+      },
+      this.scene,
+    ) as GreasedLineMesh;
+    wire.layerMask = MAIN_LAYER;
+    wire.renderingGroupId = PASS.aiming;
+    this.layingAim = wire;
+    this.layingAimSides = segments.length;
+  }
+
+  /** How many provisional sides are drawn: one, or two once the quadrangle
+   *  closes at the third corner. Zero when none is. */
+  get aimedSides(): number {
+    return this.layingAimSides;
+  }
+
+  /**
+   * How big a mark for a corner being placed comes out on screen, in
+   * pixels — the same arithmetic `handleAcross` undoes, and for the same
+   * reason: to say that the sizing pass reached the picture.
+   */
+  layingAcross(): number | null {
+    const mark = this.laying?.marks[0];
+    if (!mark) return null;
+    const camera = this.camera;
+    const height = this.scene.getEngine().getRenderHeight();
+    const distance = Vector3.Distance(mark.position, camera.position);
+    return (
+      (mark.scaling.x * height) / (2 * Math.tan(camera.fov / 2) * distance)
+    );
   }
 
   /**
@@ -3270,6 +3359,10 @@ export class Viewer {
     for (const [meshes, pixels] of [
       [this.nodes, this.prefs.nodes.size],
       [this.geomMeshes.corners, CORNER_PIXELS],
+      // Twice a handle: big enough to read as "this one is being placed",
+      // and sized in pixels like everything else rather than in world
+      // units, which on a twenty-unit model drew them the size of a block.
+      [this.laying?.marks ?? [], 2 * this.prefs.nodes.size],
     ] as const) {
       for (const mesh of meshes) {
         const wanted =

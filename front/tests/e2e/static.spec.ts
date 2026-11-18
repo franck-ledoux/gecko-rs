@@ -3838,6 +3838,99 @@ test("laying reaches the handle on the geometry, not the one behind it", async (
   expect(errors).toEqual([]);
 });
 
+test("what is on screen while a quadrangle is laid: marks, sides to the pointer, and the geometry under the pointer", async ({
+  page,
+}) => {
+  const errors = await boot(page);
+  await openSquare(page);
+  await expect(page.locator("[data-test=geom-surfaces]")).toHaveText("1");
+  await page.evaluate(() => (window as any).__gecko.run("recenter"));
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // Aimed at the blocks to start with, which is the mode the laying has to
+  // hand back.
+  expect(await page.evaluate(() => (window as any).__gecko.picking())).toBe(
+    "blocks",
+  );
+  await page.evaluate(() => (window as any).__gecko.run("lay-face"));
+  // For the duration the pointer is on the geometry and nothing of the
+  // block structure answers it.
+  expect(await page.evaluate(() => (window as any).__gecko.picking())).toBe(
+    "geometry",
+  );
+
+  let box = (await page.locator("#view").boundingBox())!;
+  const at = (x: number, y: number): [number, number] => [
+    box.x + box.width * x,
+    box.y + box.height * y,
+  ];
+
+  // Nothing provisional before a corner is down, whatever the pointer does.
+  await page.mouse.move(...at(0.45, 0.45));
+  expect(await page.evaluate(() => (window as any).__gecko.aimedSides())).toBe(
+    0,
+  );
+
+  // One corner, and a mark no bigger than two handles — in pixels, which is
+  // the only size a reader cares about.
+  await page.mouse.click(...at(0.45, 0.45));
+  const across = (await page.evaluate(() =>
+    (window as any).__gecko.layingAcross(),
+  )) as number;
+  const handle = (await page.evaluate(
+    () => (window as any).__gecko.prefs().nodes.size,
+  )) as number;
+  expect(across).toBeGreaterThan(0);
+  expect(across).toBeCloseTo(2 * handle, 0);
+
+  // And it stays that size when the camera moves, which is what the
+  // per-pane sizing pass is for: a mark fixed in world units grows into a
+  // block as you zoom in.
+  // And it is still that size after the window changes shape, which is what
+  // the per-pane sizing pass is for: a mark fixed in world units is a
+  // different number of pixels the moment the viewport is not the height it
+  // was made for.
+  await page.setViewportSize({ width: 1000, height: 420 });
+  await page.evaluate(() => (window as any).__gecko.settled());
+  box = (await page.locator("#view").boundingBox())!;
+  const resized = (await page.evaluate(() =>
+    (window as any).__gecko.layingAcross(),
+  )) as number;
+  expect(resized).toBeCloseTo(2 * handle, 0);
+
+  // And from there a side follows the pointer.
+  await page.mouse.move(...at(0.52, 0.45));
+  expect(await page.evaluate(() => (window as any).__gecko.aimedSides())).toBe(
+    1,
+  );
+
+  // At the third, two: on to the pointer and back to the first, so the
+  // quadrangle is whole before the click that closes it.
+  await page.mouse.click(...at(0.52, 0.45));
+  await page.mouse.click(...at(0.52, 0.55));
+  await page.mouse.move(...at(0.45, 0.55));
+  expect(await page.evaluate(() => (window as any).__gecko.aimedSides())).toBe(
+    2,
+  );
+
+  // The fourth click lays it, and nothing provisional is left over.
+  await page.mouse.click(...at(0.45, 0.55));
+  await page.evaluate(() => (window as any).__gecko.settled());
+  await expect(page.locator("#status")).toContainText("laid on");
+  expect(await page.evaluate(() => (window as any).__gecko.aimedSides())).toBe(
+    0,
+  );
+  expect(
+    await page.evaluate(() => (window as any).__gecko.layingAcross()),
+  ).toBeNull();
+  // And the pointer is back where it was.
+  expect(await page.evaluate(() => (window as any).__gecko.picking())).toBe(
+    "blocks",
+  );
+
+  expect(errors).toEqual([]);
+});
+
 test("a quadrangle being laid is given up on with Esc, and walked back with ⌫", async ({
   page,
 }) => {

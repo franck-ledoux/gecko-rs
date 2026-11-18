@@ -104,9 +104,19 @@ is:
   order is the tolerance: a corner is a small ball and a curve a thin ribbon,
   so a click only reaches one by being near it.
 
-What is on screen says how far along you are — a mark, then a side, then two,
-and at the fourth the quadrangle. `Esc` gives up, `⌫` takes back the last
-corner.
+What is on screen says how far along you are. Each corner placed gets a mark
+— twice the size of an ordinary handle, and twice the size of one however
+far away you are, which is what you want from a mark and not from a sphere a
+unit across. From the last one placed, a thinner side follows the pointer,
+and once three are down it runs on from the pointer back to the first: the
+quadrangle is whole on screen before the click that closes it. `Esc` gives
+up, `⌫` takes back the last corner.
+
+For the duration the pointer is aimed at the **geometry**, as if you had
+pressed `M`, and nothing of the block structure answers it — no edge lights
+up offering a cut, no face offers to be picked. A corner goes on the model or
+on a handle, and those are the only two things a click can mean here. The
+mode hands the pointer back as it found it.
 
 ```lua
 gecko.add_face({ {0,0,0}, {1,0,0}, {1,1,0}, {0,1,0} }, {

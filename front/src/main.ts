@@ -1023,6 +1023,12 @@ async function boot() {
 
   canvas.addEventListener("pointermove", (e) => {
     if (lasso) drawLasso(lasso, [e.offsetX, e.offsetY]);
+    if (laying) {
+      viewer.aimLaying(
+        laying.corners.map((c) => c.at),
+        cornerUnder(e.offsetX, e.offsetY)?.at ?? null,
+      );
+    }
     if (aiming !== null) aimAt(e.offsetX, e.offsetY);
     if (growing) {
       const height = viewer.aimExtrusion(e.offsetX, e.offsetY);
@@ -1617,6 +1623,8 @@ async function boot() {
   let laying:
     | {
         surface: number | null;
+        /** What the pointer was aimed at before the mode took it. */
+        was: "blocks" | "geometry";
         corners: { at: [number, number, number]; on: Spot | null }[];
       }
     | undefined;
@@ -1644,7 +1652,13 @@ async function boot() {
     const picked = viewer.geomSelection;
     const surface =
       picked.length === 1 && picked[0].dim === 2 ? picked[0].tag : null;
-    laying = { surface, corners: [] };
+    // Aimed at the geometry for the duration, so that nothing of the block
+    // structure answers the pointer: a corner goes on the model or on a
+    // handle, and an edge of a block lighting up under the pointer is an
+    // offer the mode cannot take. Handed back when the mode ends.
+    const was = viewer.aimedAtGeometry ? "geometry" : "blocks";
+    laying = { surface, was, corners: [] };
+    setPicking("geometry");
     viewer.showLaying([]);
     say(
       surface === null
@@ -1654,9 +1668,34 @@ async function boot() {
   }
 
   function stopLaying(why?: string) {
+    const was = laying?.was;
     laying = undefined;
     viewer.showLaying([]);
+    if (was) setPicking(was);
     if (why) say(why);
+  }
+
+  /**
+   * The corner a click at these coordinates would place, and what it would
+   * be lying on — or nothing, if there is neither a handle nor geometry
+   * under the pointer.
+   *
+   * One function for the click and for the preview, so that what is drawn
+   * before the click is what the click does. A handle first, and the one
+   * **on the geometry**: a block resting on a surface has a node inside
+   * the material a fraction of a pixel behind each of the ones on it, and
+   * the hidden one is never the corner anybody means.
+   */
+  function cornerUnder(
+    x: number,
+    y: number,
+  ): { at: [number, number, number]; on: Spot | null } | null {
+    const node = viewer.pickHandle(x, y);
+    const at = node === null ? null : viewer.nodePosition(node);
+    if (node !== null && at)
+      return { at, on: viewer.nodeState(node)?.on ?? null };
+    const placed = viewer.pickOnGeometry(x, y);
+    return placed ? { at: placed.at, on: placed.spot } : null;
   }
 
   /**
@@ -1671,20 +1710,11 @@ async function boot() {
    */
   async function layCorner(x: number, y: number) {
     if (!laying) return;
-    const node = viewer.pickHandle(x, y);
-    const at = node === null ? null : viewer.nodePosition(node);
-    const placed =
-      node !== null && at
-        ? { at, on: viewer.nodeState(node)?.on ?? null }
-        : viewer.pickOnGeometry(x, y);
-    if (!placed) {
+    const corner = cornerUnder(x, y);
+    if (!corner) {
       say("nothing there to put a corner on — click the geometry or a handle");
       return;
     }
-    const corner =
-      "spot" in placed
-        ? { at: placed.at, on: placed.spot }
-        : (placed as (typeof laying.corners)[0]);
     laying.corners.push(corner);
     viewer.showLaying(laying.corners.map((c) => c.at));
     if (laying.corners.length < 4) {
@@ -2946,6 +2976,11 @@ async function boot() {
     }),
     pickNode: (x: number, y: number) => viewer.pickNode(x, y),
     pickHandle: (x: number, y: number) => viewer.pickHandle(x, y),
+    /** What is drawn while a quadrangle is being laid: how big a mark for a
+     *  corner comes out in pixels, and how many provisional sides run to
+     *  the pointer. */
+    layingAcross: () => viewer.layingAcross(),
+    aimedSides: () => viewer.aimedSides,
     pickSurface: (x: number, y: number) => viewer.pickSurface(x, y),
     faceScreen: (name: number) => viewer.faceScreen(name),
     edgeScreen: (name: number) => viewer.edgeScreen(name),

@@ -66,6 +66,15 @@ measurements that decided it.
   pixel behind each of the ones on it, and that one is never the corner
   anybody meant.
 
+  What the mode draws, after trying it on a real model: a mark twice the
+  size of a handle rather than a sphere a world unit across, which on a
+  twenty-unit model was the size of a block; a thinner side from the last
+  corner placed to wherever the pointer is, running on from there back to
+  the first once three are down, so the quadrangle is whole before the click
+  that closes it; and the pointer aimed at the geometry for the duration, so
+  that no edge of a block lights up under it offering a cut the mode cannot
+  take. The pointer is handed back as it was found.
+
 - **A thin block laid by hand was the wrong primitive, and `⇧Q` no longer
   lays one.** Worth recording rather than quietly replacing, because the
   design note had decided the opposite.
