@@ -15,14 +15,17 @@ mod naming_tests;
 
 pub mod attributes;
 pub mod blocking;
+pub mod cells;
 pub mod ids;
 pub mod mesh;
 
 pub use attributes::{BlockTag, EdgeTag, FaceTag, NodeTag, On};
-pub use blocking::{
+pub use blocking::Blocking;
+/// The vocabulary, which belongs to no engine: see [`cells`].
+pub use cells::{
     across, best_pairing, cube_corners, flatness, mitre, quad_normal, scaled_jacobian, BlockFace,
-    Blocking, BlockingError, ChordBlock, GroupMasks, Settling, SheetCells, SheetEdge, Slab,
-    Smoothing, Unmet, HEX_CORNER_EDGES, HEX_FACES, PILLOW_SHARE, SLAB_SHARE,
+    BlockingError, Census, ChordBlock, GroupMasks, Settling, Sheet, SheetCells, SheetEdge, Slab,
+    Smoothing, Unmet, HEX_CORNER_EDGES, HEX_EDGES, HEX_FACES, PILLOW_SHARE, SLAB_SHARE,
 };
 pub use ids::{CellId, CornerKey};
 pub use mesh::{Mesh, SEGMENTS};

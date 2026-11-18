@@ -1,6 +1,6 @@
 //! Discretising a block structure.
 
-use gecko_core::blocking::HEX_FACES;
+use gecko_core::HEX_FACES;
 use gecko_core::{cube_corners, Blocking, CellId};
 
 fn cube() -> Blocking {

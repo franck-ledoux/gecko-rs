@@ -416,7 +416,7 @@ impl Blocking {
             // The six faces, each read on its own lattice and written onto
             // the block's. Nothing is placed here: this is where the
             // sharing happens, and all of it has been placed already.
-            for (slot, corners) in crate::blocking::HEX_FACES.iter().enumerate() {
+            for (slot, corners) in crate::cells::HEX_FACES.iter().enumerate() {
                 let quad = &quads[&hex.faces[slot]];
                 let mine = corners.map(|c| hex.corners[c]);
                 // Where the face's own four corners sit on the block's
