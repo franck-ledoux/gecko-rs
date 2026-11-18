@@ -32,8 +32,8 @@ use std::collections::{HashMap, HashSet};
 use crate::arena::{index, Arena};
 use crate::attributes::On;
 use crate::cells::{
-    BlockFace, BlockingError, Census, ChordBlock, GroupMasks, Hex, Settling, Sheet, SheetCells,
-    SheetEdge, Slab, Smoothing, Unmet, HEX_EDGES, HEX_FACES,
+    apart, best_pairing, quad_normal, BlockFace, BlockingError, Census, ChordBlock, GroupMasks,
+    Hex, Settling, Sheet, SheetCells, SheetEdge, Slab, Smoothing, Unmet, HEX_EDGES, HEX_FACES,
 };
 use crate::ids::CellId;
 
@@ -104,6 +104,14 @@ pub struct Up {
 /// reading starts.
 fn rotation_of(here: &[NodeId; 4], want: &[NodeId]) -> bool {
     (0..4).any(|turn| (0..4).all(|k| here[(turn + k) % 4] == want[k]))
+}
+
+/// What a weld decided about one pair of corners.
+#[derive(Clone, Copy, Debug)]
+struct Welded {
+    at: [f64; 3],
+    on: Option<On>,
+    frozen: bool,
 }
 
 /// An invariant that does not hold.
@@ -197,6 +205,350 @@ impl Blocking {
         self.face_at(name)
             .and_then(|id| self.faces.get(id))
             .ok_or(BlockingError::NoSuchFace(name))
+    }
+
+    /// Weld a slab just laid to the faces it was laid against.
+    ///
+    /// The rule is the map's, unchanged, because it is about geometry and
+    /// not about representation: a side is welded when the two points it
+    /// was laid on were both already nodes and an edge joins them, and the
+    /// face welded to is the one **leaning the same way** — a slab's edge
+    /// carries both the broad face it was laid on and the thin side, and
+    /// which way they lean from the middle of that edge is what tells them
+    /// apart. Two leaning our way and the side is left free.
+    fn weld_slab(&mut self, block: CellId, quad: [[f64; 3]; 4]) -> Result<usize, BlockingError> {
+        let reach = (0..4)
+            .map(|k| apart(quad[k], quad[(k + 1) % 4]))
+            .fold(0.0, f64::max);
+        let slack = 1e-6 * reach.max(f64::MIN_POSITIVE);
+        let id = self
+            .block_at(block)
+            .ok_or(BlockingError::NoSuchBlock(block))?;
+
+        let mut welded = 0;
+        for slot in 0..4 {
+            let mine = self.blocks.get(id).expect("live").faces;
+            // The slab's own thin side between corners `slot` and `slot+1`:
+            // the face of the block holding those two and their two
+            // opposites, which `HEX_FACES` names without anything being
+            // looked for by where it is.
+            let want = [slot, (slot + 1) % 4, 4 + (slot + 1) % 4, 4 + slot];
+            let at = HEX_FACES
+                .iter()
+                .position(|face| want.iter().all(|c| face.contains(c)))
+                .expect("every edge of a hexahedron is on two side faces");
+            let side = mine[at];
+            if self.faces.get(side).expect("live").sides[1].is_some() {
+                continue;
+            }
+            let Some(ours) = self.leaning(side, quad[slot], quad[(slot + 1) % 4], slack) else {
+                continue;
+            };
+
+            let mut best: Option<(f64, FaceId)> = None;
+            let mut leaning_our_way = 0;
+            for (face, _) in self.faces.iter() {
+                if mine.contains(&face) {
+                    continue;
+                }
+                let holder = self.faces.get(face).expect("live");
+                if holder.sides[0].is_none() || holder.sides[1].is_some() {
+                    continue;
+                }
+                let Some(theirs) = self.leaning(face, quad[slot], quad[(slot + 1) % 4], slack)
+                else {
+                    continue;
+                };
+                let along = (0..3).map(|k| ours[k] * theirs[k]).sum::<f64>();
+                if along <= 0.5 {
+                    continue;
+                }
+                leaning_our_way += 1;
+                if best.is_none_or(|(most, _)| along > most) {
+                    best = Some((along, face));
+                }
+            }
+
+            // Nothing there, or no way to choose: leave the side free.
+            if leaning_our_way != 1 {
+                continue;
+            }
+            let (_, against) = best.expect("one face leaning our way");
+            let (against, side) = (self.face_name(against), self.face_name(side));
+            self.glue_onto(against, side)?;
+            welded += 1;
+        }
+        Ok(welded)
+    }
+
+    /// Which way a face leans away from the side between two points: from
+    /// the middle of that side toward the middle of its other two corners,
+    /// as a unit vector. Nothing when the face does not hold both points.
+    fn leaning(&self, id: FaceId, from: [f64; 3], to: [f64; 3], slack: f64) -> Option<[f64; 3]> {
+        let face = self.faces.get(id)?;
+        let places = face.nodes.map(|n| self.nodes.get(n).expect("live").at);
+        let (mut on, mut off) = (Vec::with_capacity(2), Vec::with_capacity(2));
+        for at in places {
+            if apart(at, from) <= slack || apart(at, to) <= slack {
+                on.push(at);
+            } else {
+                off.push(at);
+            }
+        }
+        if on.len() != 2 {
+            return None;
+        }
+        let (a, b) = (self.middle(&on), self.middle(&off));
+        let v = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let length = (0..3).map(|k| v[k] * v[k]).sum::<f64>().sqrt();
+        (length > 0.0).then(|| v.map(|x| x / length))
+    }
+
+    /// Which faces hold this edge.
+    fn faces_on(&self, edge: EdgeId) -> Vec<FaceId> {
+        self.faces
+            .iter()
+            .filter(|(_, face)| face.edges.contains(&edge))
+            .map(|(id, _)| id)
+            .collect()
+    }
+
+    /// The edge a quadrangle being laid could share along one of its sides,
+    /// and which way the face that already holds it traverses it.
+    ///
+    /// Shareable means: an edge joins the two points, exactly one face
+    /// holds it, and that face bounds no block. Where the map asked whether
+    /// β₂ was null, this asks the structure the same question in its own
+    /// terms — an edge of a block is held by two faces of that block, so it
+    /// is not shareable, and two sheets already welded along an edge hold it
+    /// twice, so neither is.
+    ///
+    /// More than one such edge between the same two points — two sheets
+    /// lying coincident and unwelded — and the answer is none: the side is
+    /// left free rather than welded to a guess.
+    fn shareable(
+        &self,
+        from: [f64; 3],
+        to: [f64; 3],
+        slack: f64,
+    ) -> Option<(EdgeId, NodeId, NodeId, bool)> {
+        let at = |p: [f64; 3]| -> Vec<NodeId> {
+            self.nodes
+                .iter()
+                .filter(|(_, node)| apart(node.at, p) <= slack)
+                .map(|(id, _)| id)
+                .collect()
+        };
+        let (here, there) = (at(from), at(to));
+        if here.is_empty() || there.is_empty() {
+            return None;
+        }
+        let mut found: Vec<(EdgeId, NodeId, NodeId, bool)> = Vec::new();
+        for (id, edge) in self.edges.iter() {
+            let [a, b] = edge.ends;
+            let forward = here.contains(&a) && there.contains(&b);
+            let backward = here.contains(&b) && there.contains(&a);
+            if !forward && !backward {
+                continue;
+            }
+            let holders = self.faces_on(id);
+            let [holder] = holders[..] else { continue };
+            let face = self.faces.get(holder).expect("live");
+            if face.sides.iter().any(|side| side.is_some()) {
+                continue;
+            }
+            // Which way that face runs along it, which is what says whether
+            // the quadrangle being laid should be turned.
+            let k = face
+                .edges
+                .iter()
+                .position(|e| *e == id)
+                .expect("the holder holds it");
+            let same = face.nodes[k] == if forward { a } else { b };
+            let (p, q) = if forward { (a, b) } else { (b, a) };
+            found.push((id, p, q, same));
+        }
+        match found[..] {
+            [one] => Some(one),
+            _ => None,
+        }
+    }
+
+    /// Two faces that may be welded to each other: live, distinct, and each
+    /// with one side taken and one free.
+    ///
+    /// A face of a patch — no side at all — is refused rather than welded
+    /// face to face. In the map it was not refused, because β₃ did not ask;
+    /// here the structure does ask, and what two open sheets laid back to
+    /// back would be is not a question anything needs answered.
+    fn two_free_faces(
+        &self,
+        first: CellId,
+        second: CellId,
+    ) -> Result<(FaceId, FaceId), BlockingError> {
+        let a = self
+            .face_at(first)
+            .ok_or(BlockingError::NoSuchFace(first))?;
+        let b = self
+            .face_at(second)
+            .ok_or(BlockingError::NoSuchFace(second))?;
+        if a == b {
+            return Err(BlockingError::SameFace);
+        }
+        for (name, id) in [(first, a), (second, b)] {
+            let face = self.faces.get(id).expect("live");
+            if face.sides[1].is_some() || face.sides[0].is_none() {
+                return Err(BlockingError::AlreadyGlued(name));
+            }
+        }
+        Ok((a, b))
+    }
+
+    /// Where each corner of a face is.
+    fn corners_of(&self, id: FaceId) -> [[f64; 3]; 4] {
+        self.faces
+            .get(id)
+            .expect("live")
+            .nodes
+            .map(|n| self.nodes.get(n).expect("live").at)
+    }
+
+    /// Every reference to one node becomes a reference to another, and the
+    /// first is gone.
+    ///
+    /// A sweep of the three arenas that can hold a node. The cache that
+    /// makes this local — `node_edges` and `node_blocks` — arrives with the
+    /// sheet walks; until then this is correct and slow rather than clever
+    /// and wrong, and the suite is what says which it is.
+    fn rewrite_node(&mut self, from: NodeId, to: NodeId) {
+        for id in self.edges.ids().collect::<Vec<_>>() {
+            let edge = self.edges.get_mut(id).expect("live");
+            for end in edge.ends.iter_mut() {
+                if *end == from {
+                    *end = to;
+                }
+            }
+        }
+        for id in self.faces.ids().collect::<Vec<_>>() {
+            let face = self.faces.get_mut(id).expect("live");
+            for node in face.nodes.iter_mut() {
+                if *node == from {
+                    *node = to;
+                }
+            }
+        }
+        for id in self.blocks.ids().collect::<Vec<_>>() {
+            let block = self.blocks.get_mut(id).expect("live");
+            for node in block.nodes.iter_mut() {
+                if *node == from {
+                    *node = to;
+                }
+            }
+        }
+        self.nodes.remove(from);
+    }
+
+    /// The same for an edge, which only faces and blocks can hold.
+    fn rewrite_edge(&mut self, from: EdgeId, to: EdgeId) {
+        for id in self.faces.ids().collect::<Vec<_>>() {
+            let face = self.faces.get_mut(id).expect("live");
+            for edge in face.edges.iter_mut() {
+                if *edge == from {
+                    *edge = to;
+                }
+            }
+        }
+        for id in self.blocks.ids().collect::<Vec<_>>() {
+            let block = self.blocks.get_mut(id).expect("live");
+            for edge in block.edges.iter_mut() {
+                if *edge == from {
+                    *edge = to;
+                }
+            }
+        }
+        self.edges.remove(from);
+    }
+
+    /// Weld two faces into **one** face with a block on each side.
+    ///
+    /// Where the map sewed two faces together and left them two, here there
+    /// is one cell that both blocks name — which is what makes conformity
+    /// structural rather than maintained: there is nothing to keep in
+    /// agreement, because there is nothing in two places.
+    ///
+    /// `turn` is the quarter turn that lines the two up, from
+    /// [`best_pairing`]: corner `i` of the first meets corner
+    /// `(turn - i) mod 4` of the second. The pairing is necessarily
+    /// orientation-reversing, which is exactly what the structure wants —
+    /// side 0 reads `nodes` forward and side 1 backward — so invariant 3
+    /// comes out true without anything being done about it.
+    ///
+    /// `decided` says, per pair, where the welded node goes, what it is on
+    /// and whether it is frozen. Both callers work that out differently and
+    /// everything after it is the same, which is why it is a parameter.
+    fn join_faces(
+        &mut self,
+        keep: FaceId,
+        gone: FaceId,
+        turn: usize,
+        decided: [Welded; 4],
+    ) -> Result<(), BlockingError> {
+        let here = self.faces.get(keep).expect("live").clone();
+        let there = self.faces.get(gone).expect("live").clone();
+        let side = there.sides[0].expect("a face being welded has one side");
+
+        for (i, told) in decided.iter().enumerate() {
+            let (a, b) = (here.nodes[i], there.nodes[(turn + 4 - i) % 4]);
+            {
+                let node = self.nodes.get_mut(a).expect("live");
+                node.at = told.at;
+                node.on = told.on;
+                node.frozen = told.frozen;
+            }
+            if a != b {
+                self.rewrite_node(b, a);
+            }
+        }
+
+        // The sides, paired through the corners they now share rather than
+        // by arithmetic on `turn`: the same answer, and it cannot be out by
+        // one.
+        for i in 0..4 {
+            let keep_edge = here.edges[i];
+            let (from, to) = (here.nodes[i], here.nodes[(i + 1) % 4]);
+            let Some(gone_edge) = there.edges.into_iter().find(|e| {
+                self.edges
+                    .get(*e)
+                    .is_some_and(|edge| edge.ends == [from, to] || edge.ends == [to, from])
+            }) else {
+                continue;
+            };
+            if gone_edge == keep_edge {
+                continue;
+            }
+            let (on, segments) = {
+                let a = self.edges.get(keep_edge).expect("live");
+                let b = self.edges.get(gone_edge).expect("live");
+                // The finer of two discretisations is the safe one: it can
+                // represent what either side was asking for.
+                (a.on.or(b.on), a.segments.max(b.segments))
+            };
+            let edge = self.edges.get_mut(keep_edge).expect("live");
+            edge.on = on;
+            edge.segments = segments;
+            self.rewrite_edge(gone_edge, keep_edge);
+        }
+
+        // One face, with a block on each side.
+        {
+            let face = self.faces.get_mut(keep).expect("live");
+            face.sides[1] = Some(side);
+            face.on = here.on.or(there.on);
+        }
+        self.blocks.get_mut(side.block).expect("live").faces[side.slot as usize] = keep;
+        self.faces.remove(gone);
+        self.forget();
+        Ok(())
     }
 
     /// The middle of a few points.
@@ -505,7 +857,35 @@ impl Blocking {
     }
 
     pub fn add_slab(&mut self, quad: [[f64; 3]; 4], thickness: f64) -> Result<Slab, BlockingError> {
-        todo!("cellular: add_slab")
+        if !thickness.is_finite() || thickness == 0.0 {
+            return Err(BlockingError::BadHeight(thickness));
+        }
+        let normal = quad_normal(quad);
+        let length = (0..3).map(|k| normal[k] * normal[k]).sum::<f64>().sqrt();
+        // Four points in a line, or on top of each other: no quadrangle, so
+        // no side to be thick on.
+        if length < 1e-12 {
+            return Err(BlockingError::LostFace);
+        }
+        let step = normal.map(|x| x * thickness / length);
+
+        let mut corners = [[0.0; 3]; 8];
+        corners[..4].copy_from_slice(&quad);
+        for k in 0..4 {
+            corners[4 + k] = [0, 1, 2].map(|axis| quad[k][axis] + step[axis]);
+        }
+        let block = self.add_block(corners)?;
+        let welded = self.weld_slab(block, quad)?;
+
+        // Read after the welding: a corner swallowed by a weld comes back as
+        // the node that swallowed it.
+        let frame = self.hex_corners(block).expect("just made");
+        Ok(Slab {
+            block,
+            outer: [frame[0], frame[1], frame[2], frame[3]],
+            inner: [frame[4], frame[5], frame[6], frame[7]],
+            welded,
+        })
     }
 
     pub fn add_face(&mut self, corners: [[f64; 3]; 4]) -> Result<CellId, BlockingError> {
@@ -539,7 +919,92 @@ impl Blocking {
     }
 
     pub fn lay_face(&mut self, corners: [[f64; 3]; 4]) -> Result<Sheet, BlockingError> {
-        todo!("cellular: lay_face")
+        // Two points are "the same point" relative to the size of the thing
+        // being laid, as everywhere else here.
+        let reach = (0..4)
+            .map(|k| apart(corners[k], corners[(k + 1) % 4]))
+            .fold(0.0, f64::max);
+        let slack = 1e-6 * reach.max(f64::MIN_POSITIVE);
+
+        // Wound to agree with whatever it is laid against, before a cell
+        // exists. Two adjacent faces of a consistently wound sheet traverse
+        // the side they share in **opposite** directions, so a neighbour
+        // running the same way as this quadrangle would is a vote for
+        // turning it. A sheet has no inside, so which way round it is says
+        // nothing anybody meant: the clicks do not decide it, the
+        // neighbours do.
+        let (mut given, mut turned) = (0, 0);
+        for k in 0..4 {
+            if let Some((_, _, _, same)) = self.shareable(corners[k], corners[(k + 1) % 4], slack) {
+                if same {
+                    turned += 1;
+                } else {
+                    given += 1;
+                }
+            }
+        }
+        let order = if turned > given {
+            [0, 3, 2, 1]
+        } else {
+            [0, 1, 2, 3]
+        };
+        let wound = order.map(|k| corners[k]);
+
+        // What each side shares, if anything. Found before anything is
+        // made, so that the corners can be the neighbour's own.
+        let shared: [Option<(EdgeId, NodeId, NodeId, bool)>; 4] =
+            [0, 1, 2, 3].map(|k| self.shareable(wound[k], wound[(k + 1) % 4], slack));
+
+        // A corner is the neighbour's node when either side at it is
+        // shared; otherwise it is new.
+        let mut nodes = [None; 4];
+        for k in 0..4 {
+            if let Some((_, from, to, _)) = shared[k] {
+                nodes[k] = Some(from);
+                nodes[(k + 1) % 4] = Some(to);
+            }
+        }
+        let nodes: [NodeId; 4] = [0, 1, 2, 3].map(|k| {
+            nodes[k].unwrap_or_else(|| {
+                let born = self.nodes.handed_out();
+                self.nodes.insert(Node {
+                    at: wound[k],
+                    on: None,
+                    frozen: false,
+                    born,
+                })
+            })
+        });
+        let edges: [EdgeId; 4] = [0, 1, 2, 3].map(|k| match shared[k] {
+            Some((edge, _, _, _)) => edge,
+            None => self.edges.insert(Edge {
+                ends: [nodes[k], nodes[(k + 1) % 4]],
+                segments: 0,
+                on: None,
+            }),
+        });
+        let welded = shared.iter().flatten().count();
+
+        let face = self.faces.insert(Face {
+            nodes,
+            edges,
+            sides: [None, None],
+            on: None,
+        });
+        self.forget();
+
+        // In the order the **points** were given, whichever way round the
+        // quadrangle ended up wound, because that is the order the caller
+        // counts in.
+        let mut by_point = [CellId::NONE; 4];
+        for (slot, point) in order.iter().enumerate() {
+            by_point[*point] = self.node_name(nodes[slot]);
+        }
+        Ok(Sheet {
+            face: self.face_name(face),
+            corners: by_point,
+            welded,
+        })
     }
 
     pub fn face_cells(&self, face: CellId) -> Option<([CellId; 4], [CellId; 4])> {
@@ -890,11 +1355,114 @@ impl Blocking {
         common: impl Fn(On, On, [f64; 3]) -> Option<On>,
         project: impl Fn(On, [f64; 3]) -> Option<[f64; 3]>,
     ) -> Result<Vec<Unmet>, BlockingError> {
-        todo!("cellular: glue_faces")
+        let (a, b) = self.two_free_faces(first, second)?;
+        let (pa, pb) = (self.corners_of(a), self.corners_of(b));
+        let turn = best_pairing(&pa, &pb);
+        let here = self.faces.get(a).expect("live").nodes;
+        let there = self.faces.get(b).expect("live").nodes;
+
+        // Two frozen corners "coincide" relative to the size of what is
+        // being glued, not to an absolute number: a blocking of a turbine
+        // blade and one of a building are the same shape to a thousandth of
+        // a side.
+        let side = (0..4)
+            .map(|i| apart(pa[i], pa[(i + 1) % 4]))
+            .fold(0.0, f64::max);
+        let slack = 1e-6 * side.max(f64::MIN_POSITIVE);
+
+        // Every pair decided before a single node moves. A refused glue has
+        // to leave the blocking exactly as it was, and the only way to
+        // promise that is to find out everything first.
+        let mut decided: Vec<Welded> = Vec::with_capacity(4);
+        let mut unmet: Vec<Unmet> = Vec::new();
+        for i in 0..4 {
+            let (mine, partner) = (here[i], there[(turn + 4 - i) % 4]);
+            let (ta, tb) = (
+                self.nodes.get(mine).expect("live").clone(),
+                self.nodes.get(partner).expect("live").clone(),
+            );
+            let (qa, qb) = (pa[i], pb[(turn + 4 - i) % 4]);
+
+            // Where this corner is heading, as far as can be said before
+            // the classification is settled — and that is what settles it,
+            // when two entities share more than one thing.
+            let hint = match (ta.frozen, tb.frozen) {
+                (true, _) => qa,
+                (false, true) => qb,
+                (false, false) => [
+                    0.5 * (qa[0] + qb[0]),
+                    0.5 * (qa[1] + qb[1]),
+                    0.5 * (qa[2] + qb[2]),
+                ],
+            };
+
+            let on = match (ta.on, tb.on) {
+                (None, None) => None,
+                (Some(only), None) | (None, Some(only)) => Some(only),
+                (Some(x), Some(y)) if x == y => Some(x),
+                (Some(x), Some(y)) => Some(common(x, y, hint).unwrap_or_else(|| {
+                    // Nothing in common. The more constrained entity is the
+                    // one a node can be on while being near the other, so
+                    // it is the one to keep — and a tie goes to the first
+                    // face, as its name does when the two nodes merge.
+                    let (kept, dropped) = if y.dim < x.dim { (y, x) } else { (x, y) };
+                    unmet.push(Unmet {
+                        node: self.node_name(mine),
+                        kept,
+                        dropped,
+                    });
+                    kept
+                })),
+            };
+
+            let at = match (ta.frozen, tb.frozen) {
+                (true, true) if apart(qa, qb) > slack => {
+                    return Err(BlockingError::FrozenApart(
+                        self.node_name(mine),
+                        self.node_name(partner),
+                    ))
+                }
+                // A frozen node is where somebody put it: `hint` is already
+                // that point, and no projection may move it off.
+                (true, _) | (false, true) => hint,
+                // Here there is nobody to contradict.
+                (false, false) => on.and_then(|o| project(o, hint)).unwrap_or(hint),
+            };
+
+            decided.push(Welded {
+                at,
+                on,
+                frozen: ta.frozen || tb.frozen,
+            });
+        }
+
+        let decided: [Welded; 4] = decided.try_into().expect("four corners");
+        self.join_faces(a, b, turn, decided)?;
+        Ok(unmet)
     }
 
     pub fn glue_onto(&mut self, first: CellId, second: CellId) -> Result<(), BlockingError> {
-        todo!("cellular: glue_onto")
+        let (a, b) = self.two_free_faces(first, second)?;
+        let (pa, pb) = (self.corners_of(a), self.corners_of(b));
+        let turn = best_pairing(&pa, &pb);
+
+        // The caller has already put the two in the same place, so there is
+        // nothing to decide about where the corners go: the first face's
+        // place is the answer, and which of the two nodes survives cannot
+        // be told apart. What each node **claims** still has to be carried
+        // over, and that is what a merge policy used to do silently.
+        let there = self.faces.get(b).expect("live").nodes;
+        let here = self.faces.get(a).expect("live").nodes;
+        let decided = [0, 1, 2, 3].map(|i| {
+            let partner = self.nodes.get(there[(turn + 4 - i) % 4]).expect("live");
+            let mine = self.nodes.get(here[i]).expect("live");
+            Welded {
+                at: pa[i],
+                on: mine.on.or(partner.on),
+                frozen: mine.frozen || partner.frozen,
+            }
+        });
+        self.join_faces(a, b, turn, decided)
     }
 
     pub fn sheet_blocks(&self, sheet: &[SheetEdge]) -> usize {
@@ -1123,8 +1691,36 @@ impl Blocking {
     }
 
     pub fn faces_of(&self, block: CellId) -> Vec<BlockFace> {
+        // A **component** name, which is a block or a patch: the map's
+        // `faces_of` took a volume and a patch was a volume, so both have
+        // to answer here too. A patch is named by a face of its own (see
+        // `patch_components`), so a name that is not a block's is looked
+        // for among them.
         let Some(block) = self.block_at(block) else {
-            return Vec::new();
+            let Some(id) = self.face_at(block) else {
+                return Vec::new();
+            };
+            let Some(component) = self
+                .patch_components()
+                .into_iter()
+                .find(|faces| faces.contains(&id))
+            else {
+                return Vec::new();
+            };
+            let name = self.face_name(component[0]);
+            return component
+                .into_iter()
+                .filter_map(|id| {
+                    let face = self.faces.get(id)?;
+                    Some(BlockFace {
+                        face: self.face_name(id),
+                        block: name,
+                        groups: 0,
+                        nodes: face.nodes.map(|n| self.node_name(n)),
+                        on: face.on,
+                    })
+                })
+                .collect();
         };
         let Some(b) = self.blocks.get(block) else {
             return Vec::new();

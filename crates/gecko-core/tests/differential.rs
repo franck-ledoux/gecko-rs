@@ -46,6 +46,21 @@ enum Step {
     },
     /// Settle every edge from its ends and every face from its edges.
     Reclassify,
+    /// Lay a quadrangle, welded to whatever it is laid against.
+    LayFace([[f64; 3]; 4]),
+    /// Lay a thin block on four points, welded the same way.
+    AddSlab([[f64; 3]; 4], f64),
+    /// Weld the two faces whose corners average to these points, each
+    /// meeting the other in the middle.
+    Glue {
+        first: [f64; 3],
+        second: [f64; 3],
+    },
+    /// The same, the second coming onto the first.
+    GlueOnto {
+        first: [f64; 3],
+        second: [f64; 3],
+    },
 }
 
 /// A settling rule with no geometry behind it: the boundary agrees or the
@@ -133,6 +148,13 @@ trait Engine: Sized {
     fn set_frozen(&mut self, node: CellId);
     fn set_in_group(&mut self, block: CellId, bit: u8);
     fn reclassify(&mut self);
+    fn lay_face(&mut self, corners: [[f64; 3]; 4]);
+    fn add_slab(&mut self, quad: [[f64; 3]; 4], thickness: f64);
+    /// The face whose four corners average to a point and which has a block
+    /// on one side only — the one a weld can be asked for.
+    fn free_face_at(&self, middle: [f64; 3]) -> CellId;
+    fn glue(&mut self, first: CellId, second: CellId);
+    fn glue_onto(&mut self, first: CellId, second: CellId);
     /// The cellular engine checks its own invariants; the map has none to
     /// check, so it says so by saying nothing.
     fn check(&self) -> Result<(), String>;
@@ -162,6 +184,16 @@ trait Engine: Sized {
                 self.set_in_group(block, bit);
             }
             Step::Reclassify => self.reclassify(),
+            Step::LayFace(corners) => self.lay_face(corners),
+            Step::AddSlab(quad, thickness) => self.add_slab(quad, thickness),
+            Step::Glue { first, second } => {
+                let (a, b) = (self.free_face_at(first), self.free_face_at(second));
+                self.glue(a, b);
+            }
+            Step::GlueOnto { first, second } => {
+                let (a, b) = (self.free_face_at(first), self.free_face_at(second));
+                self.glue_onto(a, b);
+            }
         }
     }
 }
@@ -225,6 +257,48 @@ macro_rules! reading {
 
         fn reclassify(&mut self) {
             Self::reclassify(self, settle)
+        }
+
+        fn lay_face(&mut self, corners: [[f64; 3]; 4]) {
+            Self::lay_face(self, corners).expect("a quadrangle");
+        }
+
+        fn add_slab(&mut self, quad: [[f64; 3]; 4], thickness: f64) {
+            Self::add_slab(self, quad, thickness).expect("a slab");
+        }
+
+        fn free_face_at(&self, middle: [f64; 3]) -> CellId {
+            let mut found: Vec<CellId> = Vec::new();
+            let mut counted: std::collections::HashMap<CellId, usize> =
+                std::collections::HashMap::new();
+            for side in self.block_faces() {
+                *counted.entry(side.face).or_default() += 1;
+            }
+            for side in self.block_faces() {
+                if counted.get(&side.face).copied().unwrap_or(0) != 1 {
+                    continue;
+                }
+                let mut at = [0.0; 3];
+                for node in side.nodes {
+                    let p = self.position(node).expect("a live corner");
+                    for k in 0..3 {
+                        at[k] += p[k] / 4.0;
+                    }
+                }
+                if fixed(at) == fixed(middle) && !found.contains(&side.face) {
+                    found.push(side.face);
+                }
+            }
+            assert_eq!(found.len(), 1, "one free face at {middle:?}");
+            found[0]
+        }
+
+        fn glue(&mut self, first: CellId, second: CellId) {
+            Self::glue_faces(self, first, second, |_, _, _| None, |_, _| None).expect("a weld");
+        }
+
+        fn glue_onto(&mut self, first: CellId, second: CellId) {
+            Self::glue_onto(self, first, second).expect("a weld");
         }
 
         fn answers(&self) -> Answers {
@@ -441,5 +515,80 @@ fn a_script_of_everything_stage_one_can_do() {
             middle: [2.5, 0.5, 0.5],
             bit: 3,
         },
+    ]);
+}
+
+#[test]
+fn a_script_of_welding() {
+    agree(&[
+        // Two blocks a gap apart, welded in the middle: each gives way by
+        // half, which is what `glue_faces` means.
+        Step::AddBlock(cube_corners([0.0, 0.0, 0.0], 1.0)),
+        Step::AddBlock(cube_corners([1.5, 0.0, 0.0], 1.0)),
+        Step::Glue {
+            first: [1.0, 0.5, 0.5],
+            second: [1.5, 0.5, 0.5],
+        },
+        // The weld moved only the four corners of the seam, so the second
+        // block's far face is where it was, at x = 2.5. A third is brought
+        // **onto** it, which moves and does not meet in the middle.
+        Step::AddBlock(cube_corners([3.0, 0.0, 0.0], 1.0)),
+        Step::GlueOnto {
+            first: [2.5, 0.5, 0.5],
+            second: [3.0, 0.5, 0.5],
+        },
+    ]);
+}
+
+#[test]
+fn a_script_of_laying() {
+    // A strip of quadrangles laid corner to corner, each welded to the one
+    // before — including one clicked round the other way, which both
+    // engines have to turn to agree.
+    agree(&[
+        Step::LayFace([
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ]),
+        Step::LayFace([
+            [1.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [2.0, 1.0, 0.0],
+            [1.0, 1.0, 0.0],
+        ]),
+        Step::LayFace([
+            [2.0, 1.0, 0.0],
+            [3.0, 1.0, 0.0],
+            [3.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+        ]),
+    ]);
+}
+
+#[test]
+fn a_script_of_slabs() {
+    agree(&[
+        Step::AddSlab(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ],
+            0.1,
+        ),
+        // Laid on two of the first one's corners, so a side welds — and the
+        // face welded to is the thin side and not the broad one.
+        Step::AddSlab(
+            [
+                [1.0, 0.0, 0.0],
+                [2.0, 0.0, 0.0],
+                [2.0, 1.0, 0.0],
+                [1.0, 1.0, 0.0],
+            ],
+            0.1,
+        ),
     ]);
 }
