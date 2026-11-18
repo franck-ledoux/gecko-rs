@@ -86,6 +86,69 @@ The same machinery takes surfaces rather than curves, for a face of a
 blocking that spans several geometric surfaces. Nothing more is needed when
 that day comes: it is one notion with a dimension on it.
 
+## Laying a thin block on four points
+
+`Q` takes a whole surface's own corners. `⇧Q` takes four you click, which is
+the way to pave a surface that has no four corners worth using — a disc, a
+long strip, a face of a model that wants two blocks across it.
+
+Press `⇧Q` and click four times. Each click puts a corner where the pointer
+is:
+
+- **on an existing handle**, if it is near one — which is how a slab is laid
+  *against* another and welded to it;
+- otherwise **on the geometry**, corners before curves before surfaces. That
+  order is the tolerance: a corner is a small ball and a curve a thin ribbon,
+  so a click only reaches one by being near it.
+
+What is on screen says how far along you are — a mark, then a side, then two,
+and at the fourth the block. `Esc` gives up, `⌫` takes back the last corner.
+
+```lua
+gecko.add_slab({ {0,0,0}, {1,0,0}, {1,1,0}, {0,1,0} }, { thickness = 0.1 })
+```
+
+A **block** and not a face, because a face on its own has no inside and
+everything that follows — a chord, a pillow, a mesh — wants one. The
+thickness is signed, the sign picking which side the material is on, and
+without one it is a tenth of the quadrangle's own shortest diagonal, so
+"thin" means the same thing whatever the model is measured in.
+
+The four corners on the geometry come back **already classified**. The four
+inside the material follow nothing, deliberately: each sits next to a
+classified corner, and were they settled onto the surface like any other
+fresh node the slab would have no thickness left.
+
+### Welded to what it was laid against
+
+Lay a second slab on two of the first one's corners and the two share the
+face between them. Paving a surface therefore builds **one** blocking and
+not a heap of blocks in the same place.
+
+A side is welded when the two points it was laid on were both already nodes
+of the model and an edge joins them. Clicking two of a neighbour's handles
+makes that true; clicking the geometry twice at the same places does not, and
+is not meant to.
+
+Which face does it weld to? A slab's edge has two faces of its own — the
+broad face it was laid on and the thin side — and they are told apart by
+**which way they lean**, from the middle of the shared edge toward the middle
+of their other two corners. The thin side leans into the material, the way
+the new side does; the broad face leans across it.
+
+Two things follow, and both are refusals:
+
+- **Where two faces lean the same way**, the side is left free. Which of them
+  you meant is not a question with an answer.
+- **A slab thickened the other way** is not welded to. Back to back is not
+  side by side, and the sign of the thickness is what says which you have.
+
+The neighbour does not move. The new slab comes onto the old face and adopts
+its thickness there: two slabs a tenth of their own diagonal thick are not
+quite equally thick, and the one being laid is the one with no claim. The
+status line says how many sides were welded, so a slab you expected to join
+on and did not is visible at once.
+
 ## Taking one away
 
 Pick a face and press `Del`.

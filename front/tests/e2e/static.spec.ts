@@ -3657,6 +3657,78 @@ test("⇧Q lays a slab on four corners clicked on the geometry", async ({
   expect(errors).toEqual([]);
 });
 
+test("a slab laid on a neighbor's corners is welded to it", async ({
+  page,
+}) => {
+  const errors = await boot(page);
+  await openSquare(page);
+  await expect(page.locator("[data-test=geom-surfaces]")).toHaveText("1");
+  await page.evaluate(() => (window as any).__gecko.run("recenter"));
+  // Seen from −z. The slab below is thickened toward +z, away from the
+  // camera, so a click on one of its corners reaches the handle lying on
+  // the surface rather than the one inside the material behind it.
+  await page.evaluate(() => (window as any).__gecko.snapTo("-z"));
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // The left half of the square, laid without clicking, so that the one
+  // gesture under test is the second slab.
+  await openConsole(page);
+  await lua(page, "gecko.add_slab({ {0,0,0}, {0.5,0,0}, {0.5,1,0}, {0,1,0} })");
+  await expect(page.locator("[data-test=blocks]")).toHaveText("1");
+  await page.locator("#console-open").click();
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // Where its corners are. The square lies in a plane facing the camera, so
+  // that plane's projection is a plain scaling — which is what lets the
+  // right-hand half be found by stepping the same way again.
+  const nodes = await handles(page);
+  const lying = (x: number, y: number) => {
+    const found = nodes.find(
+      (n) =>
+        Math.abs(n.at[0] - x) < 1e-9 &&
+        Math.abs(n.at[1] - y) < 1e-9 &&
+        Math.abs(n.at[2]) < 1e-9,
+    );
+    expect(found, `a handle at (${x}, ${y}, 0)`).toBeTruthy();
+    return found!.on;
+  };
+  const origin = lying(0, 0);
+  const along = lying(0.5, 0);
+  const up = lying(0, 1);
+  const screen = (x: number, y: number): [number, number] => [
+    origin[0] + (x / 0.5) * (along[0] - origin[0]) + y * (up[0] - origin[0]),
+    origin[1] + (x / 0.5) * (along[1] - origin[1]) + y * (up[1] - origin[1]),
+  ];
+
+  // The right-hand half, wound the same way round so that the material is
+  // on the same side: the shared side first, taken backwards, by its two
+  // corners; then two points on the geometry, kept just inside the edge.
+  const box = (await page.locator("#view").boundingBox())!;
+  const at: [number, number][] = [
+    lying(0.5, 1),
+    lying(0.5, 0),
+    screen(0.95, 0.05),
+    screen(0.95, 0.95),
+  ];
+  await page.evaluate(() => (window as any).__gecko.run("lay-slab"));
+  for (let k = 0; k < 4; k++) {
+    await page.mouse.click(box.x + at[k][0], box.y + at[k][1]);
+    if (k < 3) await expect(page.locator("#status")).toContainText(`${k + 1} of 4`);
+  }
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // Welded along the side it was laid on, and said so.
+  await expect(page.locator("#status")).toContainText("welded along 1 side");
+  const stats = (await page.evaluate(() =>
+    (window as any).__gecko.stats(),
+  )) as { blocks: number; nodes: number };
+  // Two slabs sharing a face: sixteen corners less the four that met.
+  expect(stats.blocks).toBe(2);
+  expect(stats.nodes).toBe(12);
+
+  expect(errors).toEqual([]);
+});
+
 test("a slab being laid is given up on with Esc, and walked back with ⌫", async ({
   page,
 }) => {

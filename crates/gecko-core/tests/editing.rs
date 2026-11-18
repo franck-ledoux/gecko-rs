@@ -205,11 +205,13 @@ mod slabs {
     #[test]
     fn four_points_make_a_block_with_a_thin_side() {
         let mut b = Blocking::new().unwrap();
-        let (block, outer, inner) = b.add_slab(SQUARE, 0.1).expect("a slab");
+        let slab = b.add_slab(SQUARE, 0.1).expect("a slab");
+        let (outer, inner) = (slab.outer, slab.inner);
 
         let seen = b.census();
         assert_eq!((seen.blocks, seen.nodes, seen.faces), (1, 8, 6));
-        assert!(b.is_block(block));
+        assert!(b.is_block(slab.block));
+        assert_eq!(slab.welded, 0, "the first slab has nothing to weld to");
 
         // The four points came back as the four points, in order.
         for (k, name) in outer.iter().enumerate() {
@@ -232,8 +234,7 @@ mod slabs {
     #[test]
     fn the_sign_picks_the_side_the_material_is_on() {
         let mut b = Blocking::new().unwrap();
-        let (_, _, inner) = b.add_slab(SQUARE, -0.1).expect("a slab");
-        for name in inner {
+        for name in b.add_slab(SQUARE, -0.1).expect("a slab").inner {
             assert!(b.position(name).unwrap()[2] < 0.0, "the other way");
         }
     }
@@ -250,5 +251,127 @@ mod slabs {
             b.add_slab(flat, 0.1),
             Err(BlockingError::LostFace)
         ));
+    }
+
+    /// The square next door, sharing the side from (1,0,0) to (1,1,0) and
+    /// wound the same way round.
+    const NEXT: [[f64; 3]; 4] = [
+        [1.0, 0.0, 0.0],
+        [2.0, 0.0, 0.0],
+        [2.0, 1.0, 0.0],
+        [1.0, 1.0, 0.0],
+    ];
+
+    #[test]
+    fn a_slab_laid_on_a_neighbors_corners_is_welded_to_its_thin_side() {
+        let mut b = Blocking::new().unwrap();
+        b.add_slab(SQUARE, 0.1).expect("the first slab");
+        let next = b.add_slab(NEXT, 0.1).expect("the second");
+
+        assert_eq!(next.welded, 1, "one shared side, one weld");
+        let seen = b.census();
+        // Four corners in common, and the face between them counted once:
+        // two free-standing slabs would be 16 nodes and 12 faces.
+        assert_eq!((seen.blocks, seen.nodes, seen.faces), (2, 12, 11));
+    }
+
+    #[test]
+    fn the_slab_being_laid_adopts_the_thickness_it_is_welded_to() {
+        let mut b = Blocking::new().unwrap();
+        b.add_slab(SQUARE, 0.1).expect("the first slab");
+        let next = b.add_slab(NEXT, 0.5).expect("the second");
+
+        assert_eq!(next.welded, 1);
+        // The two corners of the welded side came onto the old face, and the
+        // two at the far end kept the thickness they were asked for: the
+        // neighbor does not move, the slab being laid does.
+        let high = |k: usize| b.position(next.inner[k]).unwrap()[2];
+        assert!((high(0) - 0.1).abs() < 1e-9, "on the weld: {}", high(0));
+        assert!((high(3) - 0.1).abs() < 1e-9, "on the weld: {}", high(3));
+        assert!((high(1) - 0.5).abs() < 1e-9, "away from it: {}", high(1));
+        assert!((high(2) - 0.5).abs() < 1e-9, "away from it: {}", high(2));
+    }
+
+    #[test]
+    fn a_slab_thickened_the_other_way_is_not_welded_to() {
+        let mut b = Blocking::new().unwrap();
+        b.add_slab(SQUARE, 0.1).expect("the first slab");
+        // The same four points of the shared side, but the square wound the
+        // other way round, so its material is on the other side of the
+        // surface. Nothing there leans our way.
+        let back = [NEXT[0], NEXT[3], NEXT[2], NEXT[1]];
+        let next = b.add_slab(back, 0.1).expect("the second");
+
+        assert_eq!(next.welded, 0, "the two are back to back");
+        let seen = b.census();
+        assert_eq!((seen.blocks, seen.nodes, seen.faces), (2, 16, 12));
+    }
+
+    #[test]
+    fn the_fourth_slab_of_a_paving_is_welded_along_two_sides() {
+        let square = |x: f64, y: f64| {
+            [
+                [x, y, 0.0],
+                [x + 1.0, y, 0.0],
+                [x + 1.0, y + 1.0, 0.0],
+                [x, y + 1.0, 0.0],
+            ]
+        };
+        let mut b = Blocking::new().unwrap();
+        for (x, y, want) in [
+            (0.0, 0.0, 0),
+            (1.0, 0.0, 1),
+            (0.0, 1.0, 1),
+            // Two sides in common, and the corner they meet at is one the
+            // first weld has already merged — which is why the second side
+            // is looked for by where its two points **are** and not by which
+            // nodes this slab started with.
+            (1.0, 1.0, 2),
+        ] {
+            let laid = b.add_slab(square(x, y), 0.1).expect("a slab");
+            assert_eq!(laid.welded, want, "the slab at ({x}, {y})");
+        }
+        let seen = b.census();
+        assert_eq!((seen.blocks, seen.nodes), (4, 18), "one two-by-two grid");
+    }
+
+    #[test]
+    fn two_faces_leaning_the_same_way_leave_the_side_free() {
+        let mut b = Blocking::new().unwrap();
+        b.add_slab(SQUARE, 0.1).expect("the first slab");
+        // A block of its own, overlapping the first slab, whose face on the
+        // side from (1,0,0) to (1,1,0) leans the same way the slab's thin
+        // side does. Now that side has two things it could be welded to and
+        // no reason to prefer either, so it is welded to neither.
+        b.add_block([
+            [0.5, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.5, 1.0, 0.0],
+            [0.5, 0.0, 0.1],
+            [1.0, 0.0, 0.1],
+            [1.0, 1.0, 0.1],
+            [0.5, 1.0, 0.1],
+        ])
+        .expect("a block");
+
+        let next = b.add_slab(NEXT, 0.1).expect("the second slab");
+        assert_eq!(next.welded, 0, "nothing to prefer, so nothing welded");
+        assert_eq!(b.census().blocks, 3);
+    }
+
+    #[test]
+    fn a_slab_sharing_one_corner_only_is_welded_to_nothing() {
+        let mut b = Blocking::new().unwrap();
+        b.add_slab(SQUARE, 0.1).expect("the first slab");
+        // Corner to corner at (1,1,0), with no side in common.
+        let across = [
+            [1.0, 1.0, 0.0],
+            [2.0, 1.0, 0.0],
+            [2.0, 2.0, 0.0],
+            [1.0, 2.0, 0.0],
+        ];
+        assert_eq!(b.add_slab(across, 0.1).expect("the second").welded, 0);
+        assert_eq!(b.census().nodes, 16, "nothing merged");
     }
 }

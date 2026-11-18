@@ -21,8 +21,8 @@ pub mod mesh;
 pub use attributes::{BlockTag, EdgeTag, FaceTag, NodeTag, On};
 pub use blocking::{
     across, best_pairing, cube_corners, flatness, mitre, quad_normal, scaled_jacobian, BlockFace,
-    Blocking, BlockingError, ChordBlock, GroupMasks, Settling, SheetCells, SheetEdge, Smoothing,
-    Unmet, HEX_CORNER_EDGES, HEX_FACES, PILLOW_SHARE, SLAB_SHARE,
+    Blocking, BlockingError, ChordBlock, GroupMasks, Settling, SheetCells, SheetEdge, Slab,
+    Smoothing, Unmet, HEX_CORNER_EDGES, HEX_FACES, PILLOW_SHARE, SLAB_SHARE,
 };
 pub use ids::{CellId, CornerKey};
 pub use mesh::{Mesh, SEGMENTS};

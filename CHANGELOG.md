@@ -36,7 +36,7 @@ measurements that decided it.
   that lays one on a whole surface's own corners.
 
   Each click puts a corner where the pointer is: on an existing handle if it
-  is near one, so two slabs laid side by side meet rather than nearly meet;
+  is near one, which is how a slab comes to be laid *against* another;
   otherwise on the geometry, corners before curves before surfaces — which is
   what the tolerance is made of, a corner being a small ball and a curve a
   thin ribbon, so a click only reaches one by being near it. What is on
@@ -54,6 +54,21 @@ measurements that decided it.
   the material follow nothing, and the session is told so: each is next to a
   classified corner, and the settling that puts fresh nodes on the model would
   otherwise pull them onto the surface and leave the slab no thickness at all.
+
+  **And it is welded to what it was laid against**, so that paving a surface
+  builds one blocking and not a heap of blocks in the same place. A side is
+  welded when the two points it was laid on were both already nodes of the
+  model and an edge joins them — which clicking two of a neighbour's handles
+  makes true. A slab's edge has two faces of its own, the broad face it was
+  laid on and the thin side, and they are told apart by **which way they
+  lean**: from the middle of the shared edge toward the middle of their other
+  two corners. The thin side leans into the material, the way the new side
+  does; the broad face leans across. The neighbour does not move — the new
+  slab comes onto the old face and adopts its thickness, because two slabs a
+  tenth of their own diagonal thick are not equally thick and the one being
+  laid is the one with no claim. Where two faces lean the same way the side
+  is left free rather than welded to a guess, and so is a slab thickened the
+  other way: back to back is not the same as side by side.
 
 - **Several faces grow into blocks at once, welded where they meet.** Drag
   any one of the selected faces and they all go up, in one command.

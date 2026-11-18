@@ -19,6 +19,25 @@ use thiserror::Error;
 use crate::attributes::{BlockTag, EdgeTag, FaceTag, NodeTag, On};
 use crate::ids::{CellId, CornerKey, Counter};
 
+/// A slab laid on four points, and what it found there.
+///
+/// The names are the ones that **survived**: a side welded to a face
+/// already in the model merges two nodes into one, and what comes back is
+/// the node that remains. So a caller can go on to say what each corner is
+/// lying on without first asking whether its corner was swallowed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Slab {
+    /// The block.
+    pub block: CellId,
+    /// Its four outer corners — the points, in the order they were given.
+    pub outer: [CellId; 4],
+    /// Its four inner ones, inside the material. They follow nothing, and
+    /// the caller has to say so out loud: see [`Blocking::add_slab`].
+    pub inner: [CellId; 4],
+    /// How many of its four sides were welded to a face already there.
+    pub welded: usize,
+}
+
 /// One block, as the mesher needs it: its eight corners in VTK order, and
 /// the cells of the blocking they bound. All by name.
 pub struct Hex {
@@ -672,18 +691,21 @@ impl Blocking {
     /// the block grows the other way by `thickness` — signed, so the sign
     /// picks which side of the quadrangle the material is on.
     ///
-    /// What comes back is the block, its four outer corners and its four
-    /// inner ones, in the order the points were given. The caller wants both
-    /// lists and for opposite reasons: the outer four are to be told what
-    /// they are lying on, and the inner four are to be left **alone** — they
-    /// are inside the material, they follow nothing, and anything that
-    /// settles fresh nodes onto the geometry would otherwise flatten the
-    /// slab to nothing. See `Session::settle_fresh`.
-    pub fn add_slab(
-        &mut self,
-        quad: [[f64; 3]; 4],
-        thickness: f64,
-    ) -> Result<(CellId, [CellId; 4], [CellId; 4]), BlockingError> {
+    /// Whatever it was laid **against** it is welded to: see
+    /// [`weld_slab`][Self::weld_slab] for what that means and when it
+    /// happens. Laying slabs one after another along a surface therefore
+    /// builds one blocking rather than a heap of free-standing blocks in
+    /// the same place.
+    ///
+    /// What comes back is the block, its four outer corners, its four inner
+    /// ones in the order the points were given, and how many sides were
+    /// welded. The caller wants both lists of corners and for opposite
+    /// reasons: the outer four are to be told what they are lying on, and
+    /// the inner four are to be left **alone** — they are inside the
+    /// material, they follow nothing, and anything that settles fresh nodes
+    /// onto the geometry would otherwise flatten the slab to nothing. See
+    /// `Session::settle_fresh`.
+    pub fn add_slab(&mut self, quad: [[f64; 3]; 4], thickness: f64) -> Result<Slab, BlockingError> {
         if !thickness.is_finite() || thickness == 0.0 {
             return Err(BlockingError::BadHeight(thickness));
         }
@@ -702,17 +724,171 @@ impl Blocking {
             corners[4 + k] = [0, 1, 2].map(|axis| quad[k][axis] + step[axis]);
         }
         let (block, first) = self.build_block(corners)?;
+        let welded = self.weld_slab(first, quad)?;
 
         // By the dart each corner starts at, rather than by asking the block
         // for its corners in some order of its own: this is the only place
-        // that knows which of the eight was which of the four points.
+        // that knows which of the eight was which of the four points. Read
+        // **after** the welding, so that a corner swallowed by a weld comes
+        // back as the node that swallowed it.
         let named = |slot: usize| {
             self.node_tag_of(self.map.vertex_id(corner_dart(first, slot)))
                 .id
         };
         let outer = [0, 1, 2, 3].map(named);
         let inner = [4, 5, 6, 7].map(named);
-        Ok((block, outer, inner))
+        Ok(Slab {
+            block,
+            outer,
+            inner,
+            welded,
+        })
+    }
+
+    /// Weld a slab just laid to the faces it was laid against.
+    ///
+    /// A side of the slab is welded when the two points that side was laid
+    /// on were **both already nodes of the model**, and an edge joins them.
+    /// That is what "laid against" means, and the interface makes it true:
+    /// a click near a handle takes that handle's own place, so two slabs
+    /// laid corner to corner share the two points of a side exactly.
+    ///
+    /// Which face, of the ones along that edge? A slab's edge has two of
+    /// its own — the broad face it was laid on, and the thin side. They are
+    /// told apart by **which way they lean**: from the middle of the shared
+    /// edge toward the middle of their other two corners. The thin side of
+    /// the neighbour leans into the material, the same way this slab's side
+    /// does; the broad face leans along the surface, across it. So the
+    /// candidate kept is the one leaning within a right angle of ours, and
+    /// if more than one does the side is left alone rather than guessed at.
+    ///
+    /// The neighbour does not move: [`glue_onto`][Self::glue_onto] brings
+    /// the **new** side onto the old face, so the slab just laid adopts the
+    /// thickness of what was already there and the model keeps its shape.
+    /// Two slabs thickened by a tenth of their own diagonal are not quite
+    /// equally thick, and the one being laid is the one with no claim.
+    ///
+    /// Sides with nothing to weld to are left free, which is the ordinary
+    /// case: the first slab of a surface welds nothing.
+    fn weld_slab(
+        &mut self,
+        first: DartIdType,
+        quad: [[f64; 3]; 4],
+    ) -> Result<usize, BlockingError> {
+        // Two points are "the same point" relative to the size of the thing
+        // being laid, not to an absolute number — the same rule, and for the
+        // same reason, as the one `glue_faces` welds frozen corners by.
+        let reach = (0..4)
+            .map(|k| apart(quad[k], quad[(k + 1) % 4]))
+            .fold(0.0, f64::max);
+        let slack = 1e-6 * reach.max(f64::MIN_POSITIVE);
+
+        let mut welded = 0;
+        for slot in 0..4 {
+            // Recomputed each time round: a weld merges orbits, so which
+            // dart stands for a face can change under us.
+            let mine: [FaceIdType; 6] =
+                [0, 1, 2, 3, 4, 5].map(|f| self.map.face_id(first + 4 * f as DartIdType));
+            let side = self.lateral(first, slot);
+            let Some(face) = self.face_by_id(side) else {
+                continue;
+            };
+            let (here, there) = (
+                self.map.vertex_id(corner_dart(first, slot)),
+                self.map.vertex_id(corner_dart(first, (slot + 1) % 4)),
+            );
+            let Some(ours) = self.leaning(face, here, there) else {
+                continue;
+            };
+
+            // Every node sitting on either of the two points, this slab's
+            // own among them — a weld already done has merged ours into the
+            // neighbour's, and excluding them by name would then hide the
+            // edge the next side needs.
+            let (mut at_here, mut at_there) = (Vec::new(), Vec::new());
+            for v in self.map_vertices() {
+                let Some(p) = self.position_of(v) else {
+                    continue;
+                };
+                if apart(quad[slot], p) <= slack {
+                    at_here.push(v);
+                }
+                if apart(quad[(slot + 1) % 4], p) <= slack {
+                    at_there.push(v);
+                }
+            }
+
+            // The edges joining one point to the other. More than one when
+            // slabs lie coincident and unwelded.
+            let mut edges: Vec<EdgeIdType> = Vec::new();
+            for v in at_here {
+                for d in self.map.orbit(OrbitPolicy::Vertex, v) {
+                    let e = self.map.edge_id(d);
+                    let (a, b) = self.edge_endpoints_of(e);
+                    if at_there.contains(&a) || at_there.contains(&b) {
+                        edges.push(e);
+                    }
+                }
+            }
+            edges.sort_unstable();
+            edges.dedup();
+
+            let mut best: Option<(f64, CellId)> = None;
+            let mut leaning_our_way = 0;
+            for e in edges {
+                let (a, b) = self.edge_endpoints_of(e);
+                for f in self.faces_around(e) {
+                    if mine.contains(&f) || self.map.beta::<3>(f as DartIdType) != NULL_DART_ID {
+                        continue;
+                    }
+                    let Some(theirs) = self.leaning(f, a, b) else {
+                        continue;
+                    };
+                    let along = (0..3).map(|k| ours[k] * theirs[k]).sum::<f64>();
+                    if along <= 0.5 {
+                        continue;
+                    }
+                    leaning_our_way += 1;
+                    if best.is_none_or(|(most, _)| along > most) {
+                        best = Some((along, self.face_tag_of(f).id));
+                    }
+                }
+            }
+
+            // Nothing there, or no way to choose: leave the side free.
+            if leaning_our_way != 1 {
+                continue;
+            }
+            let (_, against) = best.expect("one face leaning our way");
+            self.glue_onto(against, side)?;
+            welded += 1;
+        }
+        Ok(welded)
+    }
+
+    /// Which way a face leans away from one of its edges: from the middle of
+    /// that edge toward the middle of the two corners that are not on it,
+    /// as a unit vector.
+    ///
+    /// What tells a slab's thin side from the broad face it was laid on,
+    /// when both run along the same edge.
+    fn leaning(&self, face: FaceIdType, from: VertexIdType, to: VertexIdType) -> Option<[f64; 3]> {
+        let mut on = Vec::with_capacity(2);
+        let mut off = Vec::with_capacity(2);
+        for c in self.face_corners(face) {
+            if c == from || c == to {
+                on.push(c);
+            } else {
+                off.push(c);
+            }
+        }
+        if on.len() != 2 {
+            return None;
+        }
+        let (a, b) = (self.middle(&on), self.middle(&off));
+        let v = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let length = (0..3).map(|k| v[k] * v[k]).sum::<f64>().sqrt();
+        (length > 0.0).then(|| v.map(|x| x / length))
     }
 
     /// A single quadrangular face, standing on its own.

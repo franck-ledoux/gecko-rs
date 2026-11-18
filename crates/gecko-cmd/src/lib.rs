@@ -906,13 +906,17 @@ impl Session {
                 };
                 let thickness = thickness
                     .unwrap_or_else(|| diagonal(0, 2).min(diagonal(1, 3)) * gecko_core::SLAB_SHARE);
-                let (block, outer, inner) = self.blocking.add_slab(corners, thickness)?;
+                let slab = self.blocking.add_slab(corners, thickness)?;
 
                 // What each point was lying on, told to the corner it
                 // became — in the same command, so that a slab laid on the
                 // model is one step of undo rather than two.
                 let mut followed = 0;
-                for (node, spot) in outer.iter().zip(on.iter().chain(std::iter::repeat(&None))) {
+                for (node, spot) in slab
+                    .outer
+                    .iter()
+                    .zip(on.iter().chain(std::iter::repeat(&None)))
+                {
                     let Some(spot) = spot else { continue };
                     self.blocking.set_node_class(
                         *node,
@@ -926,12 +930,17 @@ impl Session {
                 // And the four inside the material follow nothing, which is
                 // a decision and not an omission: said out loud, so that the
                 // settling below leaves them where they were put.
-                self.left_free = inner.to_vec();
+                self.left_free = slab.inner.to_vec();
 
+                let block = slab.block;
+                let welded = match slab.welded {
+                    0 => String::new(),
+                    n => format!(", welded along {n} side{}", if n == 1 { "" } else { "s" }),
+                };
                 Ok(Outcome {
                     script: None,
                     message: format!(
-                        "block {block:?} laid on {followed} point{} — {} thick, \
+                        "block {block:?} laid on {followed} point{} — {} thick{welded}, \
                          {} nodes, {} edges, {} faces, {} blocks",
                         if followed == 1 { "" } else { "s" },
                         format_args!("{thickness:.3}"),

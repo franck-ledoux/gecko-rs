@@ -28,3 +28,18 @@ for _, n in ipairs(gecko.nodes()) do
 end
 assert(math.abs(low + 0.25) < 1e-9, "the other way: " .. low)
 print(string.format("%d blocks, %d nodes", gecko.stats().blocks, gecko.stats().nodes))
+
+-- Laid *against* what is already there, a slab is welded to it: a side whose
+-- two points are both corners of something already in the model shares that
+-- face instead of lying coincident with it. Which is what makes paving a
+-- surface one blocking rather than a heap of blocks in the same place.
+gecko.undo()
+assert(gecko.stats().blocks == 0, "a clean sheet")
+gecko.add_slab({ {0,0,0}, {1,0,0}, {1,1,0}, {0,1,0} }, { thickness = 0.1 })
+gecko.add_slab({ {1,0,0}, {2,0,0}, {2,1,0}, {1,1,0} }, { thickness = 0.1 })
+local both = gecko.stats()
+assert(both.blocks == 2, "two blocks: " .. both.blocks)
+-- Sixteen corners less the four that met.
+assert(both.nodes == 12, "twelve nodes: " .. both.nodes)
+assert(both.faces == 11, "eleven faces: " .. both.faces)
+print(string.format("%d blocks, %d nodes", both.blocks, both.nodes))
