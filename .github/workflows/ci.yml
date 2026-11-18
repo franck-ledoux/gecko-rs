@@ -279,14 +279,31 @@ jobs:
             echo "no coverage in this run; the site goes out without the reports"
           fi
 
+      # Only on a tag, because only a tag deploys. On a branch and on
+      # `main` the site is built and thrown away, which is the point: the
+      # strict link check runs at the commit that broke a link.
       - name: Keep it for the deploy job
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-pages-artifact@v3
         with:
           path: site
 
-  # Waits for the repository to go public: GitHub Pages on a private repository
-  # needs a paid plan, and a deploy job that always fails is noise. The
-  # condition flips on its own — nothing to switch on by hand.
+  # **Only on a tag.** `actions/deploy-pages` names a deployment by the
+  # commit — `pages_build_version` is the SHA — so two runs over the same
+  # commit are one version to Pages, and the first one to claim it is the
+  # one served. A release tags a commit `main` has already pushed, so a
+  # deploy from `main` would always win over the deploy from its own tag,
+  # and the tag's run is the only one that measures the page's coverage.
+  # That is exactly what happened to 0.2.0: the site went out without the
+  # page's report, from a run that never had one.
+  #
+  # So the site means the last release, which is also what a reader
+  # following a badge should be looking at. `main` still builds it — the
+  # strict link check is the point of that — and throws it away.
+  #
+  # Waits for the repository to go public: GitHub Pages on a private
+  # repository needs a paid plan, and a deploy job that always fails is
+  # noise. The condition flips on its own — nothing to switch on by hand.
   #
   # `!cancelled()` and the explicit result, rather than letting the chain
   # decide: a failure anywhere upstream of `docs` otherwise skips this job
@@ -299,8 +316,7 @@ jobs:
     needs: docs
     if: >-
       ${{ !cancelled() && needs.docs.result == 'success'
-      && (github.ref == 'refs/heads/main'
-          || startsWith(github.ref, 'refs/tags/v'))
+      && startsWith(github.ref, 'refs/tags/v')
       && !github.event.repository.private }}
     runs-on: ubuntu-latest
     permissions:

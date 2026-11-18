@@ -21,11 +21,21 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-Pushing to `main` runs the tests and publishes the site. Pushing a `v*` tag
-does two things at once: it builds the binaries, and it is the run that
-measures the page's coverage and republishes the site carrying it — that
-measurement is a release-time one, for the minutes it costs. Nothing else
-triggers either.
+Pushing to `main` runs the tests and builds the site without publishing it:
+`docs.sh` passes `--strict`, so a dead link fails at the commit that wrote
+it rather than greeting a reader.
+
+Pushing a `v*` tag does everything else at once. It builds the binaries, it
+measures the page's coverage — a release-time measurement, for the seven
+minutes it costs — and **it is the only thing that publishes the site**.
+
+That last point is not a preference. `actions/deploy-pages` names a
+deployment by the commit, so two runs over one commit are one version to
+Pages and the first to claim it is the one served. A release tags a commit
+`main` has already pushed, so a deploy from `main` would always beat the
+deploy from the tag — and the tag's run is the one carrying the page's
+coverage report. The site therefore shows the last release, not the tip of
+`main`.
 
 ## What the workflow does
 
