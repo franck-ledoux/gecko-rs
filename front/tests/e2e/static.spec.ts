@@ -1747,36 +1747,40 @@ test("the nearer of two translucent blocks is the one you see", async ({
   await page.locator("[data-test=faces-mode]").selectOption("id");
   await page.locator("[data-test=faces-alpha]").fill("0.6");
 
-  // One cube, seen from +x: this is what that cube looks like on its own.
+  // One cube: what it looks like on its own, from each side. **Both
+  // sides**, because in this mode a face's colour comes from its name, so
+  // the +x face and the −x face of one cube are two different colours —
+  // and a view of the cube from one side is no baseline for a view of it
+  // from the other.
   await page.locator("#cube").click();
   await page.waitForFunction(
     () => (window as any).__gecko.counts().nodes === 8,
   );
-  await page.evaluate(() => (window as any).__gecko.snapTo("+x"));
-  await page.evaluate(() => (window as any).__gecko.settled());
-  const alone = await centerPixel(page);
+  const alone = async (axis: "+x" | "-x") => {
+    await page.evaluate((a) => (window as any).__gecko.snapTo(a), axis);
+    await page.evaluate(() => (window as any).__gecko.settled());
+    return centerPixel(page);
+  };
+  const alonePlus = await alone("+x");
+  const aloneMinus = await alone("-x");
 
-  // A second cube at a greater x, so it stands between that one and the
-  // camera. Along the row they cover each other exactly.
+  // A second cube at a greater x, so it stands between that one and a
+  // camera at +x. Along the row they cover each other exactly.
   await page.locator("#cube").click();
   await page.waitForFunction(
     () => (window as any).__gecko.counts().nodes === 16,
   );
-  await page.evaluate(() => (window as any).__gecko.snapTo("+x"));
-  await page.evaluate(() => (window as any).__gecko.settled());
-  const behindIt = await centerPixel(page);
+  const bothPlus = await alone("+x");
+  const bothMinus = await alone("-x");
 
-  // From the far side the first cube is the near one again.
-  await page.evaluate(() => (window as any).__gecko.snapTo("-x"));
-  await page.evaluate(() => (window as any).__gecko.settled());
-  const inFront = await centerPixel(page);
-
-  // No threshold to pick: whichever cube is nearer dominates, so the view
-  // that has the first one in front must land closer to how it looks alone.
+  // No threshold to pick: whichever cube is nearer dominates. Seen from
+  // −x the first cube is the near one, so that view stays near how the
+  // first cube looks alone from −x; seen from +x the second cube is in
+  // front of it, so that view leaves how the first looks alone from +x.
   expect(
-    apart(inFront, alone),
-    `alone ${alone}, behind ${behindIt}, in front ${inFront}`,
-  ).toBeLessThan(apart(behindIt, alone));
+    apart(bothMinus, aloneMinus),
+    `alone ${alonePlus} / ${aloneMinus}, both ${bothPlus} / ${bothMinus}`,
+  ).toBeLessThan(apart(bothPlus, alonePlus));
   expect(errors).toEqual([]);
 });
 
@@ -3564,12 +3568,18 @@ test("⌥ slides a selected face instead of growing a block from it", async ({
   )) as {
     nodes: number;
   };
+  // By the names the kernel hands out, not by the first eight numbers: a
+  // name is the kernel's to choose, and this test is about four corners of
+  // eight moving.
+  const named = (await page.evaluate(() =>
+    (window as any).__gecko.names(),
+  )) as number[];
+  expect(named).toHaveLength(8);
   const places = async () =>
     (await page.evaluate(
-      () =>
-        [...Array(8).keys()].map((n) =>
-          (window as any).__gecko.nodePosition(n),
-        ) as number[][],
+      (names) =>
+        names.map((n: number) => (window as any).__gecko.nodePosition(n)),
+      named,
     )) as number[][];
   const was = await places();
 
@@ -3749,9 +3759,9 @@ test("a quadrangle laid on a neighbor's corners is welded to it", async ({
 
   // The next one along, its first two corners clicked on this one's
   // handles — and clicked round **the same way**, which is the way that
-  // cannot be welded as it stands: β₂ joins two darts running opposite ways
-  // along one edge. A sheet has no inside, so the quadrangle is turned to
-  // agree with its neighbour rather than refused.
+  // cannot be welded as it stands: two adjacent faces of a sheet run
+  // opposite ways along the side they share. A sheet has no inside, so the
+  // quadrangle is turned to agree with its neighbour rather than refused.
   await lay([farA.on, farB.on, beyond(farB), beyond(farA)]);
 
   await expect(page.locator("#status")).toContainText("welded along 1 side");
@@ -5896,20 +5906,20 @@ test("a block that lends its faces to its neighbours is still shaded the right w
   //
   // The block's own center answers it, and the surface builder has that
   // from all six of its faces whether they are drawn or not.
+  //
+  // The script is a fixture rather than a literal here, and it chooses
+  // every cell by where it is: it was recorded by name, and the names
+  // moved when the block structure stopped being a combinatorial map. The
+  // Rust suite runs the same file and pins the shape it builds.
   const errors = await boot(page);
   await page.locator("#msh").setInputFiles({
     name: "boundary.lua",
     mimeType: "text/plain",
-    buffer: Buffer.from(
-      [
-        "gecko.create_cube{ origin = {0, 0, 0}, size = 1 }",
-        "gecko.extrude_face(4, 0, 0.4182381969483314)",
-        "gecko.extrude_face(0, 0, 0.4151222583184677)",
-        "gecko.split_sheet(18, 0.4839949382283461)",
-        "gecko.split_sheet(47, 0.263662443881934)",
-        "gecko.split_sheet(19, 0.28041743818831727)",
-        "gecko.split_sheet(99, 0.5251268070619435)",
-      ].join("\n"),
+    buffer: await readFile(
+      new URL(
+        "../../../crates/gecko-lua/tests/scripts/boundary.lua",
+        import.meta.url,
+      ),
     ),
   });
   await expect(page.locator("[data-test=blocks]")).toHaveText("21");

@@ -163,7 +163,7 @@ fn a_sheet_spanning_two_blocks_still_points_one_way() {
 
 #[test]
 fn the_answer_is_the_same_every_time() {
-    // Both modes ship this, and a walk over orbits is exactly where a hash
+    // Both modes ship this, and a walk across faces is exactly where a hash
     // map's order would leak out.
     let b = glued();
     let edge = edge_along(&b, 1, [0.0, 0.0, 0.0]);

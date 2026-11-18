@@ -13,16 +13,13 @@
 //!   on every insertion, and a slot that reaches 255 **retires** rather than
 //!   going back on the free list — so the pathological case costs a slot, not
 //!   a wrong answer.
-//! * **a journal of what was inserted.** The session clears it at the command
-//!   boundary and asks it what the command made, which is what
-//!   `settle_fresh` needs. The arena notes it rather than the operation
-//!   declaring it, so no operation can forget.
-
-// The whole surface the stages to come are written against — removal, the
-// journal, the mutable borrow — is here from the start, and the compiler
-// cannot see a user for all of it yet. Goes with the last `todo!()` in
-// `cellular.rs`.
-#![allow(dead_code)]
+//! * **a count of everything it has ever made**, never reset. A cell's own
+//!   birth number is compared against it to say whether an operation made
+//!   that cell or merely touched it, which is what `settle_fresh` needs.
+//!   The design note wanted a journal cleared at the command boundary and
+//!   zero bytes a node; four bytes and a read-only accessor turned out to
+//!   do the same job without the session having to say when a command
+//!   began.
 
 use std::marker::PhantomData;
 
@@ -59,8 +56,6 @@ pub struct Arena<I: Idx, T> {
     /// One per slot, so that a name carries which incarnation it meant.
     gen: Vec<u8>,
     free: Vec<u32>,
-    /// What has been inserted since this was last cleared.
-    made: Vec<I>,
     /// How many cells this arena has ever made. Monotone, never reset: it is
     /// what `corner_mark` reads, and a cell's own birth number is compared
     /// against it to say whether an operation made that cell or merely
@@ -75,7 +70,6 @@ impl<I: Idx, T> Default for Arena<I, T> {
             slots: Vec::new(),
             gen: Vec::new(),
             free: Vec::new(),
-            made: Vec::new(),
             handed: 0,
             kind: PhantomData,
         }
@@ -83,17 +77,9 @@ impl<I: Idx, T> Default for Arena<I, T> {
 }
 
 impl<I: Idx, T> Arena<I, T> {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// How many cells are live. Not how many slots there are.
     pub fn len(&self) -> usize {
         self.slots.len() - self.free.len() - self.retired()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
     }
 
     /// Slots emptied and never to be reused.
@@ -119,7 +105,6 @@ impl<I: Idx, T> Arena<I, T> {
         };
         self.slots[at as usize] = Some(value);
         let id = I::from_raw(at);
-        self.made.push(id);
         self.handed += 1;
         id
     }
@@ -162,18 +147,5 @@ impl<I: Idx, T> Arena<I, T> {
 
     pub fn ids(&self) -> impl Iterator<Item = I> + '_ {
         self.iter().map(|(id, _)| id)
-    }
-
-    /// What has been inserted since [`clear_journal`](Self::clear_journal),
-    /// minus whatever has since been removed again.
-    pub fn made(&self) -> impl Iterator<Item = I> + '_ {
-        self.made
-            .iter()
-            .copied()
-            .filter(|id| self.get(*id).is_some())
-    }
-
-    pub fn clear_journal(&mut self) {
-        self.made.clear();
     }
 }

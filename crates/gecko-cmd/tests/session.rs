@@ -624,7 +624,7 @@ mod gluing {
     #[test]
     fn two_sessions_glued_the_same_way_ship_the_same_bytes() {
         // The cross-mode test rests on this, and gluing is the first operation
-        // that walks an orbit to decide what to do.
+        // that goes looking round a cell to decide what to do.
         let build = || {
             let mut s = two_cubes();
             let (first, second) = (face_at(&s, 0, 1.0), face_at(&s, 1, 1.0));

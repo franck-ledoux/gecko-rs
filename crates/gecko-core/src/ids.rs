@@ -1,12 +1,15 @@
-//! The two identities a cell carries, and why one is not enough.
+//! The name a cell carries.
 //!
-//! A combinatorial map names its cells by darts: `vertex_id`, `edge_id`,
-//! `face_id` and `volume_id` all return the smallest dart of an orbit. That is
-//! cheap and it is exactly what topological code wants — and it is useless as a
-//! name to hold on to, because every insertion and removal rewrites it.
+//! There used to be two of them. A combinatorial map names its cells by
+//! darts — the smallest dart of an orbit — which is what topological code
+//! wants and useless as a name to hold on to, since every insertion and
+//! removal rewrites it; so cells carried a name of their own. And because
+//! the map **split** a node's attribute when the orbit behind it came
+//! apart, they carried a `CornerKey` as well, to say that two copies were
+//! still the same corner to the cells that had it.
 //!
-//! So cells carry names of their own, and there are two of them because they
-//! answer two different questions.
+//! An arena renames nothing, so the second question stopped being asked.
+//! `CornerKey` and the counter that handed out both went with the map.
 
 use std::fmt;
 
@@ -20,22 +23,6 @@ use std::fmt;
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CellId(u32);
 
-/// Which *corner* a node is, as against which node it is ([`CellId`]).
-///
-/// The two are different questions and only one field each can answer. A map
-/// splits a node's attribute when the vertex orbit behind it comes apart —
-/// deleting a neighboring block does exactly that: what was one attribute
-/// becomes two, and every cell that had that corner keeps one of them. Nothing
-/// was cut in two; geometrically, and to those cells, it is still the same
-/// corner. So the key is copied across and the cells go on recognizing it,
-/// while the [`CellId`] is cleared.
-///
-/// The price is the mirror image: a key is unique only *within a cell*, two
-/// copies of one original node never being two corners of the same cell. That
-/// is all anything asks of it.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct CornerKey(u32);
-
 macro_rules! sentinel_id {
     ($t:ty, $label:literal) => {
         impl $t {
@@ -48,11 +35,6 @@ macro_rules! sentinel_id {
             /// malformed value, it is a question whose answer is "no such
             /// cell", and that is for the lookup to say.
             pub fn from_raw(raw: u32) -> Self {
-                Self(raw)
-            }
-
-            pub(crate) fn new(raw: u32) -> Self {
-                debug_assert!(raw != u32::MAX, concat!($label, " counter exhausted"));
                 Self(raw)
             }
 
@@ -88,28 +70,3 @@ macro_rules! sentinel_id {
 }
 
 sentinel_id!(CellId, "CellId");
-sentinel_id!(CornerKey, "CornerKey");
-
-/// A monotonic source of names. It only ever counts up: a number handed out
-/// once is never handed out again, which is what makes a [`CellId`] safe to
-/// hold across edits.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct Counter(u32);
-
-impl Counter {
-    pub(crate) fn next_cell(&mut self) -> CellId {
-        let id = CellId::new(self.0);
-        self.0 += 1;
-        id
-    }
-
-    pub(crate) fn next_corner(&mut self) -> CornerKey {
-        let key = CornerKey::new(self.0);
-        self.0 += 1;
-        key
-    }
-
-    pub(crate) fn handed_out(&self) -> u32 {
-        self.0
-    }
-}

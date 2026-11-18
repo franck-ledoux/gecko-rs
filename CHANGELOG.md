@@ -10,6 +10,53 @@ an explicit complex of cells, and the mesher stops holding the mesh it
 writes. [The design note](developer-guide/cellular.md) says why, with the
 measurements that decided it.
 
+- **The block structure is an explicit complex of cells, and `honeycomb` is
+  out of the lock file.** The same model in **25 times less memory**:
+  19 903 bytes a block became 802, measured by the same counting allocator
+  over the same grid, with the cells alone 19 414 against 550.
+
+  The cause was never the combinatorial map as an idea. It was that **a cell
+  attribute is paid for by the dart**: ten `fast-stm` transactional
+  variables per dart, twenty-four darts a block, about eighty-four bytes and
+  two allocations each to hold a `u32`. The representation worked against
+  the one extension this project is heading for, which is attaching a curve
+  to every edge.
+
+  Four arenas now, and nothing else is state. A node, an edge, a face and a
+  block are plain data; everything that climbs — a node's edges, an edge's
+  faces, "does this edge exist already" — is derived and cached, and a cache
+  is not state, so `snapshot` is a derive where it was seventy lines of
+  hand-written dart copying. Three facts carry the rest:
+
+  - **a face has none, one or two sides**, and its corners are wound as side
+    0 sees them, outward. Side 1 reads the same list backwards, and that is
+    the whole of the orientation question — no twist byte, nothing stored
+    that can come to disagree with the structure it describes.
+  - **a name is a slot and the generation it was packed with**, so nothing
+    is ever renamed, and a name handed out before a slot was reused cannot
+    come back designating the cell that took its place.
+  - **welding two faces leaves one face that both blocks name.** Conformity
+    stops being something maintained and becomes something structural: there
+    is nothing to keep in agreement because there is nothing in two places.
+
+  Not a line of the test suite changed. That was the point of confining
+  honeycomb first: the suite spoke only of named cells, so it described the
+  structure being written as well as the one being replaced, and it is what
+  the nine stages were measured against — 43 of its tests passing at the
+  start, 330 of 330 at the end. A differential bench ran both engines on the
+  same scripts and compared every answer after every step, which caught five
+  divergences no test had thought to ask about.
+
+  **What this costs anyone outside the kernel:** `agree.lua`'s three pinned
+  numbers moved, and one of them is the mesh itself — 45 hexahedra where it
+  had 36. That script asks for whichever edge the structure lists first and
+  sets its sheet to two segments, and that is a different edge in an arena
+  from what it was in a map, so the sheet runs a different way. The mesh a
+  blocking produces is unchanged; what moved is a choice the script left to
+  the representation. [The design note](developer-guide/cellular.md) has the
+  measurements, the two conventions that had to be settled, and the three of
+  its own predictions that did not hold.
+
 - **The combinatorial map is reachable from nowhere but the one file that owns
   it.** Not a change to what the program does: a change to what the rest of it
   is allowed to know, and the precondition for replacing the representation

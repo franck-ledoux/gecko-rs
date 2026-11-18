@@ -6,6 +6,14 @@
 -- This file is run by the Rust suite **and** by a Playwright test that
 -- feeds it to the console. The assertion below is the agreement: if either
 -- host drifts, one of the two fails.
+--
+-- The three numbers were re-pinned at 0.2.0, when the block structure
+-- stopped being a combinatorial map. They are not a property of the mesh:
+-- `edges()[1]` below picks whichever edge the structure happens to list
+-- first, and that is a different edge in an arena from what it was in a
+-- map, so the sheet set to two segments runs a different way. Same script,
+-- same two hosts, a different mesh — and what this file is for is the two
+-- hosts agreeing, which it still says.
 
 gecko.create_cube()
 gecko.create_cube{ origin = {1, 0, 0} }
@@ -31,8 +39,8 @@ end
 
 local m = gecko.stats().mesh
 print(string.format("%d nodes, %d hexes, digest %d", m.nodes, m.hexes, sum))
-assert(m.hexes == 36, "the mesh is not the one this script makes: " .. m.hexes)
-assert(sum == 392026, "the two hosts do not agree on the bytes: " .. sum)
+assert(m.hexes == 45, "the mesh is not the one this script makes: " .. m.hexes)
+assert(sum == 558908, "the two hosts do not agree on the bytes: " .. sum)
 
 -- And again for **smoothing**, which has an order of its own to agree
 -- about: nodes are visited by name and each move is applied before the
@@ -102,4 +110,4 @@ end
 local grid = gecko.stats().mesh
 print(string.format("smoothed: %d nodes, %d hexes, digest %d", grid.nodes, grid.hexes, digest))
 assert(grid.hexes == 216, "two segments each way over twenty-seven blocks: " .. grid.hexes)
-assert(digest == 464002, "the two hosts do not agree on the smoothed bytes: " .. digest)
+assert(digest == 145834, "the two hosts do not agree on the smoothed bytes: " .. digest)

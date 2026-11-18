@@ -41,6 +41,31 @@ Two consequences worth stating plainly, because they decide what follows:
   `MAX_HISTORY_STEPS` is 50, and a measurement with five steps taken shows
   exactly x6.0. Ten thousand blocks is therefore **1.17 GB**, not 200 MB.
 
+## What it costs now, measured the same way
+
+`tests/footprint.rs`, the same counting allocator and grids cut out of one
+block by `split_sheet`, run over each engine in turn while both were still
+here. The map's 20 588 B/block at 7³ reproduces the table above to the byte,
+which is what says the two columns can be put side by side:
+
+|                             |     the map | cellular | factor |
+| --------------------------- | ----------: | -------: | -----: |
+| 7³ = 343 blocks, as built   | 20 588 B/bl | 884 B/bl |   23 x |
+| 7³, the cells alone         | 19 474 B/bl | 588 B/bl |   33 x |
+| 12³ = 1728 blocks, as built | 19 903 B/bl | 802 B/bl |   25 x |
+| 12³, the cells alone        | 19 414 B/bl | 550 B/bl |   35 x |
+
+"The cells alone" is a `snapshot`, which is exactly sized and carries no
+derived cache; the difference between the two rows is the slack in the
+arenas' vectors and the cache itself.
+
+The predicted ~400 B/block is **not** what was measured: 550 at 12³, and
+falling as the grid grows, because the figures below are the asymptotic
+ratios of a large grid — 1 node, 3 edges, 3 faces a block — while 12³ still
+has 1.27 nodes, 3.52 edges and 3.25 faces a block. The boundary dominates at
+these sizes. At 10^5 blocks this is some **50 MB** against the map's 2.0 GB:
+the blocking stops being the wall, which is what the rewrite was for.
+
 ## The three budgets
 
 A block is a thousand cells at `SEGMENTS = 10`, a hundred thousand at fifty
@@ -406,6 +431,51 @@ cells. That is what makes it an oracle for the steps below, rather than a
 description of the thing being replaced. And the mesh file is unchanged byte
 for byte: `agree.lua` keeps the digests it had.
 
+## What stage 9 took away
+
+The apparatus, once the suite passed over the cells: the `cellular` feature,
+`cellular.sh` and its ratchet, `tests/differential.rs`, `blocking.rs` — the
+map engine, five thousand lines — `hexahedron_tests.rs`, `naming_tests.rs`,
+and `attributes.rs`, whose four tag structs and `AttributeUpdate` impls were
+the whole contract with the map; `On` was the one thing in it that is about
+the geometry and it moved into `cells.rs`. With them went `CornerKey` and
+the counter that handed names out, five of `BlockingError`'s variants —
+the map's own failures put into words — `same_point`, and `honeycomb-core`
+from the lock file. `cellular.rs` became `blocking.rs`, the name having only
+ever been for the transition.
+
+Three things this note said did not happen, and each is better off:
+
+- **`CornerKey`'s replacement.** The note wanted a journal in the arena,
+  cleared by the session at the command boundary, for zero bytes a node.
+  Four bytes of birth number and a read-only accessor do the same job
+  without the session having to say when a command begins, so `corner_mark`
+  and `nodes_since` kept their signatures and nothing above the kernel
+  moved.
+- **`(block, axis)` for the sheet walk.** The chord is exactly that —
+  `OPPOSITE[slot]`, then the face's other side, one step and no search. The
+  sheet walk is not: the map's is "out of an edge through each face that
+  holds it, to the edge `across` that quadrangle", and `across` is four ids
+  and a cycle, so it ported with nothing changed but the types. The axis
+  tables earn their keep in `sheets_beside` and in the cut instead.
+- **~400 B a block.** See the measurements above.
+
+And one thing it had not foreseen at all: **`emplace_block`**, which puts a
+block on eight corners that already exist and finds its twelve edges and six
+faces by the nodes they hold, telling each which side of it this block is.
+Cutting, extruding and pillowing are all that, several times over — and
+between them it deleted every weld those operations used to have to perform
+afterwards, in an order they had to be careful about. Two blocks raised from
+faces that share an edge share the two corners of that edge and the two they
+rise to, so the face between them is found and the second block is handed
+its other side by nobody doing anything.
+
+What is left is the speed. `held_edge`, `held_node` and `known()` are
+sweeps, written honestly rather than cleverly while correctness was the
+question; the differential bench took ten seconds over a three-by-three
+grid, which says it plainly enough. `Up` is the cache that localises them
+and it is already there to be extended.
+
 ## The order of work
 
 1. **The streaming mesher** — the prefix-sum numbering, per-block generation,
@@ -414,31 +484,67 @@ for byte: `agree.lua` keeps the digests it had.
 
 1. **The cellular structure** — behind the current API, with the accessor
    discipline. **Taken first instead**, the mesher's own half of point 1
-   being already done: the prefix-sum numbering is in `mesh.rs` with the VTK
-   file unchanged byte for byte, and `hexes()` reads `Hex` rather than
-   walking betas. What is left of point 1 is file writing, and it would have
-   had to be written twice if the structure moved under it afterwards.
+   being already done: the prefix-sum numbering is in `mesh.rs` and
+   `hexes()` reads `Hex` rather than walking betas. What was left of point 1
+   is file writing, and it would have had to be written twice if the
+   structure moved under it afterwards.
 
-   How it is being done, since a five-thousand-line engine cannot be
-   swapped in one commit:
+   **Done, in nine stages**, and this is how, since a five-thousand-line
+   engine cannot be swapped in one commit:
 
-   - `cells.rs` holds the vocabulary two engines agree on, owned by neither.
-   - a `cellular` feature chooses which module the crate exports as
-     `Blocking`. Both are always compiled, so one of each can be held at
+   - `cells.rs` held the vocabulary the two engines agreed on, owned by
+     neither.
+   - a `cellular` feature chose which module the crate exported as
+     `Blocking`. Both were always compiled, so one of each could be held at
      once.
-   - **the suite is the oracle.** Not a line of it changes. `./cellular.sh`
-     runs it under the feature, counts what passes, and fails if the count
-     falls below `cellular.ratchet` — which is bumped in the commit that
-     earns it. It started at 43 of 314; stage 1 — construction, the reads, the settling,
-     the invariants — took it to 123, and stage 2 — the welding — to 164 of
-     319\.
-   - `tests/differential.rs` runs a script of operations on **both** engines
-     and compares every answer after every step, which is the part no test
-     written by hand can do: a test says what its author thought to ask.
-   - `hexahedron_tests.rs` and `naming_tests.rs` name `blocking::Blocking`
-     outright. They are about the map and they go with it.
+   - **the suite was the oracle.** Not a line of it changed. `./cellular.sh`
+     ran it under the feature, counted what passed, and failed if the count
+     fell below `cellular.ratchet` — bumped in the commit that earned it.
+     43 of 314 at the start; 123 after the cells existed, 164 after the
+     welding, 194 after the sheet and chord walks, 213 after the cut, 252
+     after the removals, and **330 of 330** after the extrusions and the
+     pillow, with nothing left `todo!()`.
+   - `tests/differential.rs` ran a script of operations on **both** engines
+     and compared every answer after every step, which is the part no test
+     written by hand can do: a test says what its author thought to ask. It
+     caught five divergences before any test did — `faces()` handing back a
+     face's corners where the contract is its edges, a `census` field never
+     wired up, `block_faces` leaving out the faces of patches and then
+     listing them face by face where a caller reads them block by block,
+     and a pillow that walked a hash map and so shipped different bytes
+     from one run to the next.
+   - `hexahedron_tests.rs` and `naming_tests.rs` named `blocking::Blocking`
+     outright. They were about the map and they went with it.
    - the mesher needed one line: it is written against the public surface
-     and names no dart, so it compiles over either engine unchanged.
+     and names no dart, so it compiled over either engine unchanged.
+
+   **Two conventions came out of it**, both of the same kind — something the
+   map settled by accident and the arena settles on purpose, with the two
+   answers equally right:
+
+   - **which way round a sheet points.** The map read an edge the way its
+     dart ran, the arena reads it the way `HEX_EDGES` lists it. What is not
+     a convention is that every edge of one sheet points the same way across
+     it — an orientation that flipped half way through comes out as a
+     concertina — so the bench canonicalised the sign and compared the
+     coherence. The cut parameter rides on this, and the contract that
+     matters is that `t` runs the way `edge_ends` reports, which is what the
+     page computes it in.
+   - **which face of a cut block is its bottom.** The map's frame came out
+     of dart arithmetic, the arena's out of `SPLIT_FRAME`, and both describe
+     the same box. What is not a convention is which way the block is turned
+     out, so the bench compared a block's corners as a set and its faces'
+     windings as cycles.
+
+   The second had a consequence that landed at stage 9 rather than being
+   discovered there: the mesher numbers its nodes along the block's own
+   frame, so the VTK file is not byte-identical to the map's. `agree.lua`
+   held three pinned numbers and all three moved — and not only in the
+   bytes: that script picks `edges()[1]`, whichever edge the structure lists
+   first, so the sheet it sets to two segments runs a different way and the
+   mesh has 45 hexahedra where it had 36. Same script, same two hosts, a
+   different mesh. What the file is for is the two hosts agreeing, which it
+   still says.
 
 1. **The curved cells** — the arenas, the carrying rule, interned bases, knot
    insertion for the cut, and the refitting question settled.

@@ -384,7 +384,7 @@ fn smoothing_never_leaves_the_worst_corner_worse_than_it_found_it() {
 #[test]
 fn the_same_blocking_smooths_the_same_way_every_time() {
     // Nodes are visited by name and each move is applied before the next is
-    // worked out, so the answer cannot depend on how the map laid its darts
+    // worked out, so the answer cannot depend on where the arenas put
     // out — which both façades have to agree about.
     let run = || {
         let mut b = grid();

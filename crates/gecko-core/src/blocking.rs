@@ -1,250 +1,1774 @@
-//! The block structure.
+//! The block structure: an explicit complex of cells.
 //!
-//! A thin, deliberate layer over [`CMap3`]: the map owns the topology, this
-//! owns the naming. Nothing here reimplements what a combinatorial map already
-//! does — sewing, orbits, attribute merge and split are the map's business, and
-//! the one thing it cannot do for us is hand out names that survive its own
-//! renumbering.
+//! **The only state is four arenas.** Everything that climbs — a node's
+//! edges, an edge's faces, "does this edge exist already" — is derived and
+//! cached, and a cache is not state: the undo stack carries the arenas and
+//! nothing else, and `snapshot` is a derive.
+//!
+//! This replaced a 3-dimensional combinatorial map, which cost some twenty
+//! thousand bytes a block because a cell attribute was paid for by the dart.
+//! It was written behind the same public surface, so that the whole test
+//! suite was an oracle for it rather than a description of the thing it
+//! replaced: not a line of the suite changed, and a differential bench ran
+//! both at once on the same scripts until the last of them agreed.
+//! `docs/developer-guide/cellular.md` is the account of it, measurements
+//! and all.
+//!
+//! What the structure promises about itself is in [`Blocking::validate`],
+//! which the tests call after every operation. Three facts shape everything
+//! else:
+//!
+//! * **a face has none, one or two sides**, and `nodes` is wound as side 0
+//!   sees it — outward. Side 1 reads the same list backwards, and that is
+//!   the whole of the orientation question: no twist byte, no stored
+//!   invariant that can rot. None is a face of a patch.
+//! * **a name is a slot and the generation it was packed with**, so nothing
+//!   is ever renamed and a name handed out before a slot was reused cannot
+//!   come back designating the cell that took its place.
+//! * **welding two faces leaves one face that both blocks name.** There is
+//!   nothing to keep in agreement, because there is nothing in two places.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use honeycomb_core::attributes::AttributeError;
-use honeycomb_core::cmap::{
-    CMap3, CMapBuilder, DartIdType, DartReleaseError, EdgeIdType, FaceIdType, LinkError,
-    OrbitPolicy, SewError, VertexIdType, VolumeIdType, NULL_DART_ID,
-};
-use honeycomb_core::stm::atomically;
-
-use crate::attributes::{BlockTag, EdgeTag, FaceTag, NodeTag, On};
-use crate::ids::{CellId, CornerKey, Counter};
-
-// The vocabulary two engines share, which this one speaks and does not own.
+use crate::arena::{index, Arena};
 use crate::cells::{
-    across, apart, best_pairing, flatness, mitre, quad_normal, same_point, scaled_jacobian,
-    BlockFace, BlockingError, Census, ChordBlock, GroupMasks, Hex, Settling, Sheet, SheetCells,
-    SheetEdge, Slab, Smoothing, Unmet, HEX_CORNER_EDGES, HEX_EDGES, HEX_FACES, PILLOW_SHARE,
+    across, apart, best_pairing, flatness, mitre, quad_normal, scaled_jacobian, BlockFace,
+    BlockingError, Census, ChordBlock, GroupMasks, Hex, On, Settling, Sheet, SheetCells, SheetEdge,
+    Slab, Smoothing, Unmet, EDGE_AXIS, FACE_AXIS, HEX_CORNER_EDGES, HEX_EDGES, HEX_FACES, OPPOSITE,
+    PILLOW_SHARE, SPLIT_FRAME,
 };
+use crate::ids::CellId;
 
-/// Darts per block: four per face, six faces.
-const DARTS_PER_BLOCK: usize = 24;
+index!(NodeId);
+index!(EdgeId);
+index!(FaceId);
+index!(BlockId);
 
-/// The dart a corner of a freshly built block starts at.
+/// Which block is on one side of a face, and which of its six slots this is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Side {
+    pub block: BlockId,
+    pub slot: u8,
+}
+
+#[derive(Clone, Debug)]
+pub struct Node {
+    pub at: [f64; 3],
+    pub on: Option<On>,
+    pub frozen: bool,
+    /// How many nodes the arena had made when this one was. What
+    /// `nodes_since` compares against, and the reason it is here rather
+    /// than derived: the map needed a `corner_key` because it **renames**,
+    /// and nothing here is ever renamed, so four bytes of birth number
+    /// replace an eight-byte key and the two hash tables that resolved it.
+    pub born: u32,
+}
+
+#[derive(Clone, Debug)]
+pub struct Edge {
+    pub ends: [NodeId; 2],
+    pub segments: u32,
+    pub on: Option<On>,
+}
+
+/// A face, wound as **side 0** sees it, outward. Side 1 reads the same list
+/// backwards, and that is the whole of the orientation question.
 ///
-/// [`Blocking::build_block`] lays the darts out face by face, four to a
-/// face, in [`HEX_FACES`] order — so a corner is found by looking for it
-/// in that table. Any of the three faces it is on will do: they all begin
-/// a dart there.
-fn corner_dart(base: DartIdType, corner: usize) -> DartIdType {
-    HEX_FACES
-        .iter()
-        .enumerate()
-        .find_map(|(face, corners)| {
-            corners
-                .iter()
-                .position(|c| *c == corner)
-                .map(|slot| base + (face * 4 + slot) as DartIdType)
-        })
-        .expect("every corner of a hexahedron is on some face")
+/// `sides` holds none, one or two. None is a face of a patch — a sheet that
+/// bounds no block at all — which is why the note's first decision had to be
+/// overturned: laying a quadrangle by hand is the only interactive way onto
+/// a surface that works, so an open sheet has to be legal.
+#[derive(Clone, Debug)]
+pub struct Face {
+    pub nodes: [NodeId; 4],
+    pub edges: [EdgeId; 4],
+    pub sides: [Option<Side>; 2],
+    pub on: Option<On>,
 }
 
-/// The map's own failures, as words. Carrying the types themselves would put
-/// honeycomb in the signature of everything that can fail, which is the one
-/// thing this layer is for keeping out.
-impl From<LinkError> for BlockingError {
-    fn from(e: LinkError) -> Self {
-        BlockingError::Link(e.to_string())
-    }
+#[derive(Clone, Debug)]
+pub struct Block {
+    pub nodes: [NodeId; 8],
+    pub edges: [EdgeId; 12],
+    pub faces: [FaceId; 6],
+    pub groups: u64,
 }
 
-impl From<AttributeError> for BlockingError {
-    fn from(e: AttributeError) -> Self {
-        BlockingError::Attribute(e.to_string())
-    }
-}
-
-impl From<SewError> for BlockingError {
-    fn from(e: SewError) -> Self {
-        BlockingError::Sew(e.to_string())
-    }
-}
-
-impl From<DartReleaseError> for BlockingError {
-    fn from(e: DartReleaseError) -> Self {
-        BlockingError::Release(e.0)
-    }
-}
-
-pub struct Blocking {
-    map: CMap3<f64>,
-    /// One counter per dimension: names are unique among cells of the same
-    /// dimension, not across dimensions.
-    names: [Counter; 4],
-    corners: Counter,
-    /// Where each name was last seen, so that finding a cell by its name
-    /// is a lookup rather than a walk of the whole map.
-    ///
-    /// A **hint**, not a register: every answer is checked against the
-    /// cell's own tag before it is given, and a miss falls back to the
-    /// walk. That is what makes it safe to leave alone — a stale entry
-    /// costs one scan, which is what the lookup cost before there were any
-    /// hints, and never a wrong answer.
-    ///
-    /// Written where names are handed out, one entry per cell named, and
-    /// nowhere else. Rebuilding the whole thing there instead was tried
-    /// and was worse: it walks the four dimensions on every operation,
-    /// which cost more on a model being built than the walks it saves.
-    ///
-    /// Why it had to exist: `pull_onto_class` is called once per node a
-    /// cut makes, and each call began by finding its node by name. At a
-    /// hundred and twenty-five blocks that was twelve milliseconds a node
-    /// and half a second a cut.
-    seen: Seen,
-}
-
-/// Where each name was last seen. See [`Blocking::seen`].
+/// What climbs, derived from the arenas and dropped when they change.
+///
+/// Nothing in here is state: it is all re-derivable from the four arenas,
+/// which is why `snapshot` does not copy it and the undo stack does not
+/// carry it. Built on first use and dropped by [`Blocking::forget`].
+///
+/// The note draws these as CSR arrays. A map of vectors holds the same
+/// information and is what they will be built from; the arrays matter when
+/// the cost of the hashing starts to show, and it does not yet.
 #[derive(Clone, Debug, Default)]
-struct Seen {
-    nodes: HashMap<CellId, VertexIdType>,
-    edges: HashMap<CellId, EdgeIdType>,
-    faces: HashMap<CellId, FaceIdType>,
-    blocks: HashMap<CellId, VolumeIdType>,
+pub struct Up {
+    pub node_edges: HashMap<NodeId, Vec<EdgeId>>,
+    pub edge_faces: HashMap<EdgeId, Vec<FaceId>>,
+    pub edge_blocks: HashMap<EdgeId, Vec<BlockId>>,
+    pub node_faces: HashMap<NodeId, Vec<FaceId>>,
+}
+
+/// Whether one cycle of four is a rotation of another — which is what
+/// "wound the same way round" means when nobody gets to choose where the
+/// reading starts.
+fn rotation_of(here: &[NodeId; 4], want: &[NodeId]) -> bool {
+    (0..4).any(|turn| (0..4).all(|k| here[(turn + k) % 4] == want[k]))
+}
+
+/// Where to find a cell by the nodes it holds, while an operation makes
+/// several of them.
+///
+/// Kept by the operation and not in [`Up`], because the cache is dropped on
+/// every change and an operation that makes fifty blocks would otherwise
+/// rebuild it fifty times. Invariant 5 — no two faces on the same four
+/// nodes — is what makes the quad a key at all.
+struct Known {
+    by_pair: HashMap<[NodeId; 2], EdgeId>,
+    by_quad: HashMap<[NodeId; 4], FaceId>,
+}
+
+/// What a cut makes of one face: the two halves as node quads, the edge it
+/// laid across the whole, and what the whole was classified on.
+type Halved = ([[NodeId; 4]; 2], [NodeId; 2], Option<On>);
+
+/// One face a pillow draws in: the face, the block drawing it, the four
+/// corners as that block winds them, the way in, and how far.
+type Drawn = (FaceId, BlockId, [NodeId; 4], [f64; 3], f64);
+
+/// A cycle of four, read the other way round.
+fn reversed(cycle: [NodeId; 4]) -> [NodeId; 4] {
+    [cycle[3], cycle[2], cycle[1], cycle[0]]
+}
+
+/// What a weld decided about one pair of corners.
+#[derive(Clone, Copy, Debug)]
+struct Welded {
+    at: [f64; 3],
+    on: Option<On>,
+    frozen: bool,
+}
+
+/// An invariant that does not hold.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Breach(pub String);
+
+#[derive(Clone, Debug, Default)]
+pub struct Blocking {
+    nodes: Arena<NodeId, Node>,
+    edges: Arena<EdgeId, Edge>,
+    faces: Arena<FaceId, Face>,
+    blocks: Arena<BlockId, Block>,
+    /// Not state: never copied by `snapshot`, dropped on any removal.
+    up: RefCell<Option<Up>>,
+}
+
+/// The slots a packed name has for the index, leaving eight for the
+/// generation. Sixteen million cells of a kind, which is a hundred and sixty
+/// times the 10^5 blocks the budget is drawn for.
+const INDEX_BITS: u32 = 24;
+const INDEX_MASK: u32 = (1 << INDEX_BITS) - 1;
+
+/// An arena index and its generation, as the one number a client holds.
+///
+/// Bare indices inside, packed at the boundary — the note's third decision.
+/// The point is not compactness: it is that a name handed out before a slot
+/// was reused cannot come back and designate the cell that took its place.
+/// Inside the engine a stale id would be a bug; across the boundary, where
+/// the page and a script hold names between commands, it is ordinary.
+fn pack<I: crate::arena::Idx>(id: I, generation: u8) -> CellId {
+    debug_assert!(id.raw() <= INDEX_MASK, "the arena outgrew a packed name");
+    CellId::from_raw((id.raw() << 8) | generation as u32)
+}
+
+/// The index a packed name holds, and the generation it was packed with.
+fn unpack<I: crate::arena::Idx>(name: CellId) -> Option<(I, u8)> {
+    if name.is_none() {
+        return None;
+    }
+    let raw = name.get()?;
+    Some((I::from_raw(raw >> 8), (raw & 0xff) as u8))
+}
+
+/// The name a client holds for a cell, and the cell a name stands for.
+///
+/// Both ways round for each of the four kinds, and the same four lines each
+/// time, so they are written once: a name is the slot and the generation it
+/// was packed with, and resolving it checks the generation — which is the
+/// answer "no such cell" for a name whose slot has since been reused.
+macro_rules! named {
+    ($name:ident, $at:ident, $arena:ident, $id:ty) => {
+        fn $name(&self, id: $id) -> CellId {
+            self.$arena
+                .generation(id)
+                .map_or(CellId::NONE, |gen| pack(id, gen))
+        }
+
+        fn $at(&self, name: CellId) -> Option<$id> {
+            let (id, generation) = unpack::<$id>(name)?;
+            (self.$arena.generation(id)? == generation).then_some(id)
+        }
+    };
+}
+
+impl Blocking {
+    named!(node_name, node_at, nodes, NodeId);
+    named!(edge_name, edge_at, edges, EdgeId);
+    named!(face_name, face_at, faces, FaceId);
+    named!(block_name, block_at, blocks, BlockId);
+
+    fn node(&self, name: CellId) -> Result<&Node, BlockingError> {
+        self.node_at(name)
+            .and_then(|id| self.nodes.get(id))
+            .ok_or(BlockingError::NoSuchNode(name))
+    }
+
+    fn node_mut(&mut self, name: CellId) -> Result<&mut Node, BlockingError> {
+        let id = self.node_at(name).ok_or(BlockingError::NoSuchNode(name))?;
+        self.nodes
+            .get_mut(id)
+            .ok_or(BlockingError::NoSuchNode(name))
+    }
+
+    fn edge(&self, name: CellId) -> Result<&Edge, BlockingError> {
+        self.edge_at(name)
+            .and_then(|id| self.edges.get(id))
+            .ok_or(BlockingError::NoSuchEdge(name))
+    }
+
+    fn face(&self, name: CellId) -> Result<&Face, BlockingError> {
+        self.face_at(name)
+            .and_then(|id| self.faces.get(id))
+            .ok_or(BlockingError::NoSuchFace(name))
+    }
+
+    /// Weld a slab just laid to the faces it was laid against.
+    ///
+    /// The rule is the map's, unchanged, because it is about geometry and
+    /// not about representation: a side is welded when the two points it
+    /// was laid on were both already nodes and an edge joins them, and the
+    /// face welded to is the one **leaning the same way** — a slab's edge
+    /// carries both the broad face it was laid on and the thin side, and
+    /// which way they lean from the middle of that edge is what tells them
+    /// apart. Two leaning our way and the side is left free.
+    fn weld_slab(&mut self, block: CellId, quad: [[f64; 3]; 4]) -> Result<usize, BlockingError> {
+        let reach = (0..4)
+            .map(|k| apart(quad[k], quad[(k + 1) % 4]))
+            .fold(0.0, f64::max);
+        let slack = 1e-6 * reach.max(f64::MIN_POSITIVE);
+        let id = self
+            .block_at(block)
+            .ok_or(BlockingError::NoSuchBlock(block))?;
+
+        let mut welded = 0;
+        for slot in 0..4 {
+            let mine = self.blocks.get(id).expect("live").faces;
+            // The slab's own thin side between corners `slot` and `slot+1`:
+            // the face of the block holding those two and their two
+            // opposites, which `HEX_FACES` names without anything being
+            // looked for by where it is.
+            let want = [slot, (slot + 1) % 4, 4 + (slot + 1) % 4, 4 + slot];
+            let at = HEX_FACES
+                .iter()
+                .position(|face| want.iter().all(|c| face.contains(c)))
+                .expect("every edge of a hexahedron is on two side faces");
+            let side = mine[at];
+            if self.faces.get(side).expect("live").sides[1].is_some() {
+                continue;
+            }
+            let Some(ours) = self.leaning(side, quad[slot], quad[(slot + 1) % 4], slack) else {
+                continue;
+            };
+
+            let mut best: Option<(f64, FaceId)> = None;
+            let mut leaning_our_way = 0;
+            for (face, _) in self.faces.iter() {
+                if mine.contains(&face) {
+                    continue;
+                }
+                let holder = self.faces.get(face).expect("live");
+                if holder.sides[0].is_none() || holder.sides[1].is_some() {
+                    continue;
+                }
+                let Some(theirs) = self.leaning(face, quad[slot], quad[(slot + 1) % 4], slack)
+                else {
+                    continue;
+                };
+                let along = (0..3).map(|k| ours[k] * theirs[k]).sum::<f64>();
+                if along <= 0.5 {
+                    continue;
+                }
+                leaning_our_way += 1;
+                if best.is_none_or(|(most, _)| along > most) {
+                    best = Some((along, face));
+                }
+            }
+
+            // Nothing there, or no way to choose: leave the side free.
+            if leaning_our_way != 1 {
+                continue;
+            }
+            let (_, against) = best.expect("one face leaning our way");
+            let (against, side) = (self.face_name(against), self.face_name(side));
+            self.glue_onto(against, side)?;
+            welded += 1;
+        }
+        Ok(welded)
+    }
+
+    /// Which way a face leans away from the side between two points: from
+    /// the middle of that side toward the middle of its other two corners,
+    /// as a unit vector. Nothing when the face does not hold both points.
+    fn leaning(&self, id: FaceId, from: [f64; 3], to: [f64; 3], slack: f64) -> Option<[f64; 3]> {
+        let face = self.faces.get(id)?;
+        let places = face.nodes.map(|n| self.nodes.get(n).expect("live").at);
+        let (mut on, mut off) = (Vec::with_capacity(2), Vec::with_capacity(2));
+        for at in places {
+            if apart(at, from) <= slack || apart(at, to) <= slack {
+                on.push(at);
+            } else {
+                off.push(at);
+            }
+        }
+        if on.len() != 2 {
+            return None;
+        }
+        let (a, b) = (self.middle(&on), self.middle(&off));
+        let v = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let length = (0..3).map(|k| v[k] * v[k]).sum::<f64>().sqrt();
+        (length > 0.0).then(|| v.map(|x| x / length))
+    }
+
+    /// The side of this face joining those two corners.
+    fn edge_between(&self, face: FaceId, from: NodeId, to: NodeId) -> Option<EdgeId> {
+        let f = self.faces.get(face)?;
+        (0..4)
+            .find(|k| {
+                let (a, b) = (f.nodes[*k], f.nodes[(*k + 1) % 4]);
+                (a, b) == (from, to) || (a, b) == (to, from)
+            })
+            .map(|k| f.edges[k])
+    }
+
+    /// Which faces hold this edge.
+    fn faces_on(&self, edge: EdgeId) -> Vec<FaceId> {
+        self.climbing(|up| up.edge_faces.get(&edge).cloned().unwrap_or_default())
+    }
+
+    /// Which blocks hold this edge.
+    fn blocks_on(&self, edge: EdgeId) -> Vec<BlockId> {
+        self.climbing(|up| up.edge_blocks.get(&edge).cloned().unwrap_or_default())
+    }
+
+    /// The slot a face occupies in a block, and which of its two sides that
+    /// is.
+    fn slot_of(&self, face: FaceId, block: BlockId) -> Option<(u8, usize)> {
+        let b = self.blocks.get(block)?;
+        let slot = b.faces.iter().position(|f| *f == face)? as u8;
+        let f = self.faces.get(face)?;
+        let which = f
+            .sides
+            .iter()
+            .position(|side| side.is_some_and(|s| s.block == block && s.slot == slot))?;
+        Some((slot, which))
+    }
+
+    /// What is on the other side of a face from the side given.
+    ///
+    /// Compared as a whole `Side`, block **and** slot, and not by the block
+    /// alone: two faces of one block welded to each other leave a face with
+    /// the same block on both sides, and a chord that walked out of it by
+    /// asking for "a different block" would find nothing and stop short.
+    /// That case is a test of its own, and it is why this is not three
+    /// lines shorter.
+    fn beyond(&self, face: FaceId, from: Side) -> Option<Side> {
+        let f = self.faces.get(face)?;
+        f.sides
+            .iter()
+            .flatten()
+            .find(|side| **side != from)
+            .copied()
+    }
+
+    /// The edge a quadrangle being laid could share along one of its sides,
+    /// and which way the face that already holds it traverses it.
+    ///
+    /// Shareable means: an edge joins the two points, exactly one face
+    /// holds it, and that face bounds no block. Where the map asked whether
+    /// β₂ was null, this asks the structure the same question in its own
+    /// terms — an edge of a block is held by two faces of that block, so it
+    /// is not shareable, and two sheets already welded along an edge hold it
+    /// twice, so neither is.
+    ///
+    /// More than one such edge between the same two points — two sheets
+    /// lying coincident and unwelded — and the answer is none: the side is
+    /// left free rather than welded to a guess.
+    fn shareable(
+        &self,
+        from: [f64; 3],
+        to: [f64; 3],
+        slack: f64,
+    ) -> Option<(EdgeId, NodeId, NodeId, bool)> {
+        let at = |p: [f64; 3]| -> Vec<NodeId> {
+            self.nodes
+                .iter()
+                .filter(|(_, node)| apart(node.at, p) <= slack)
+                .map(|(id, _)| id)
+                .collect()
+        };
+        let (here, there) = (at(from), at(to));
+        if here.is_empty() || there.is_empty() {
+            return None;
+        }
+        let mut found: Vec<(EdgeId, NodeId, NodeId, bool)> = Vec::new();
+        for (id, edge) in self.edges.iter() {
+            let [a, b] = edge.ends;
+            let forward = here.contains(&a) && there.contains(&b);
+            let backward = here.contains(&b) && there.contains(&a);
+            if !forward && !backward {
+                continue;
+            }
+            let holders = self.faces_on(id);
+            let [holder] = holders[..] else { continue };
+            let face = self.faces.get(holder).expect("live");
+            if face.sides.iter().any(|side| side.is_some()) {
+                continue;
+            }
+            // Which way that face runs along it, which is what says whether
+            // the quadrangle being laid should be turned.
+            let k = face
+                .edges
+                .iter()
+                .position(|e| *e == id)
+                .expect("the holder holds it");
+            let same = face.nodes[k] == if forward { a } else { b };
+            let (p, q) = if forward { (a, b) } else { (b, a) };
+            found.push((id, p, q, same));
+        }
+        match found[..] {
+            [one] => Some(one),
+            _ => None,
+        }
+    }
+
+    /// The blocks and loose faces a node is a corner of.
+    fn around_node(&self, node: NodeId) -> (Vec<BlockId>, Vec<FaceId>) {
+        self.climbing(|up| {
+            let faces: Vec<FaceId> = up.node_faces.get(&node).cloned().unwrap_or_default();
+            let mut blocks: Vec<BlockId> = faces
+                .iter()
+                .filter_map(|f| self.faces.get(*f))
+                .flat_map(|f| f.sides.iter().flatten().map(|side| side.block))
+                .collect();
+            blocks.sort_unstable();
+            blocks.dedup();
+            let loose: Vec<FaceId> = faces
+                .into_iter()
+                .filter(|f| {
+                    self.faces
+                        .get(*f)
+                        .is_some_and(|face| face.sides.iter().all(|side| side.is_none()))
+                })
+                .collect();
+            (blocks, loose)
+        })
+    }
+
+    /// The worst corner of anything this node is a corner of.
+    ///
+    /// What a smoothing step is judged by: a Laplacian on a concave
+    /// boundary would happily turn a cell inside out, and this is how it is
+    /// told not to.
+    fn worst_corner_at(&self, node: NodeId) -> f64 {
+        let mut worst = f64::INFINITY;
+        let (blocks, loose) = self.around_node(node);
+        for id in blocks {
+            let corners = self.blocks.get(id).expect("live").nodes;
+            let at = corners.map(|c| self.nodes.get(c).expect("live").at);
+            for (corner, sides) in HEX_CORNER_EDGES.iter().enumerate() {
+                worst = worst.min(scaled_jacobian(at[corner], sides.map(|s| at[s])));
+            }
+        }
+        // The faces of a patch, which can fold without any block being
+        // involved at all.
+        for id in loose {
+            let at = self
+                .faces
+                .get(id)
+                .expect("live")
+                .nodes
+                .map(|c| self.nodes.get(c).expect("live").at);
+            for k in 0..4 {
+                worst = worst.min(flatness(at[k], at[(k + 3) % 4], at[(k + 1) % 4]));
+            }
+        }
+        if worst.is_finite() {
+            worst
+        } else {
+            // A node that is a corner of nothing cannot be made worse.
+            0.0
+        }
+    }
+
+    /// Say where some of the nodes are, and put them there.
+    fn classify_some(
+        &mut self,
+        which: impl Fn(NodeId, &Node) -> bool,
+        pick: impl Fn(Option<On>, [f64; 3]) -> Option<On>,
+        project: impl Fn(On, [f64; 3]) -> Option<[f64; 3]>,
+    ) {
+        let found: Vec<(NodeId, Option<On>, Option<[f64; 3]>)> = self
+            .nodes
+            .iter()
+            .filter(|(id, node)| !node.frozen && which(*id, node))
+            .map(|(id, node)| {
+                let on = pick(node.on, node.at);
+                (id, on, on.and_then(|on| project(on, node.at)))
+            })
+            .collect();
+        for (id, on, onto) in found {
+            let node = self.nodes.get_mut(id).expect("live");
+            node.on = on;
+            if let Some(at) = onto {
+                node.at = at;
+            }
+        }
+    }
+
+    /// Let the two sides of a patch of faces go, so that drawing one in does
+    /// not drag the other with it.
+    ///
+    /// Where the map unsewed β₃ and left honeycomb to split whatever vertex
+    /// orbits came apart, here it is said outright. The blocks are grouped
+    /// by whether they can reach each other **without crossing the patch**;
+    /// the group holding the chosen blocks keeps the cells of the patch,
+    /// and every other group is handed its own copy of them.
+    ///
+    /// A group that can reach the chosen blocks anyway — two blocks joined
+    /// along another face as well — is refused, because there is no space
+    /// to open up between them.
+    ///
+    /// Returns where each node of the patch went on the far side, which is
+    /// what a caller laying a layer into the gap needs: the far copy did
+    /// not move, so it is where the layer's own far face belongs.
+    fn separate(
+        &mut self,
+        picked: &[(FaceId, BlockId)],
+    ) -> Result<HashMap<NodeId, NodeId>, BlockingError> {
+        let cut: HashSet<FaceId> = picked.iter().map(|(face, _)| *face).collect();
+        let front: HashSet<BlockId> = picked.iter().map(|(_, block)| *block).collect();
+
+        // Which blocks can reach which without crossing the patch.
+        let mut group: HashMap<BlockId, BlockId> = HashMap::new();
+        fn root(group: &HashMap<BlockId, BlockId>, mut b: BlockId) -> BlockId {
+            while let Some(up) = group.get(&b) {
+                if *up == b {
+                    break;
+                }
+                b = *up;
+            }
+            b
+        }
+        for (id, _) in self.blocks.iter() {
+            group.insert(id, id);
+        }
+        for (id, face) in self.faces.iter() {
+            if cut.contains(&id) {
+                continue;
+            }
+            if let [Some(a), Some(b)] = face.sides {
+                let (ra, rb) = (root(&group, a.block), root(&group, b.block));
+                if ra != rb {
+                    group.insert(rb, ra);
+                }
+            }
+        }
+        let ours: HashSet<BlockId> = front.iter().map(|b| root(&group, *b)).collect();
+
+        // The far side of each face of the patch, and what it holds.
+        let mut behind: Vec<(FaceId, Side)> = Vec::new();
+        for (face, block) in picked {
+            let f = self.faces.get(*face).expect("live");
+            let Some(other) = f.sides.iter().flatten().find(|s| s.block != *block) else {
+                continue;
+            };
+            if ours.contains(&root(&group, other.block)) {
+                // Still the same group: the two blocks are joined somewhere
+                // else as well, so drawing one in would drag the other.
+                return Err(BlockingError::NotOnTheSurface(self.face_name(*face)));
+            }
+            behind.push((*face, *other));
+        }
+        if behind.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        // A copy of every node and edge of the patch, for the far side.
+        let mut node_copy: HashMap<NodeId, NodeId> = HashMap::new();
+        let mut edge_copy: HashMap<EdgeId, EdgeId> = HashMap::new();
+        for (face, _) in &behind {
+            let f = self.faces.get(*face).expect("live").clone();
+            for node in f.nodes {
+                if node_copy.contains_key(&node) {
+                    continue;
+                }
+                let was = self.nodes.get(node).expect("live").clone();
+                let born = self.nodes.handed_out();
+                let copy = self.nodes.insert(Node { born, ..was });
+                node_copy.insert(node, copy);
+            }
+            for edge in f.edges {
+                if edge_copy.contains_key(&edge) {
+                    continue;
+                }
+                let was = self.edges.get(edge).expect("live").clone();
+                let ends = was.ends.map(|n| node_copy[&n]);
+                let copy = self.edges.insert(Edge { ends, ..was });
+                edge_copy.insert(edge, copy);
+            }
+        }
+
+        // Everything on the far side now names the copies.
+        let theirs: Vec<BlockId> = self
+            .blocks
+            .ids()
+            .filter(|b| !ours.contains(&root(&group, *b)))
+            .collect();
+        let over: HashSet<BlockId> = theirs.iter().copied().collect();
+        for id in &theirs {
+            let block = self.blocks.get_mut(*id).expect("live");
+            for node in block.nodes.iter_mut() {
+                if let Some(copy) = node_copy.get(node) {
+                    *node = *copy;
+                }
+            }
+            for edge in block.edges.iter_mut() {
+                if let Some(copy) = edge_copy.get(edge) {
+                    *edge = *copy;
+                }
+            }
+        }
+        for id in self.faces.ids().collect::<Vec<_>>() {
+            if cut.contains(&id) {
+                continue;
+            }
+            let face = self.faces.get(id).expect("live");
+            // Only a face wholly on the far side: one with a side on each
+            // is a face of the patch, and those are split below.
+            if !face
+                .sides
+                .iter()
+                .flatten()
+                .all(|side| over.contains(&side.block))
+                || face.sides.iter().flatten().count() == 0
+            {
+                continue;
+            }
+            let face = self.faces.get_mut(id).expect("live");
+            for node in face.nodes.iter_mut() {
+                if let Some(copy) = node_copy.get(node) {
+                    *node = *copy;
+                }
+            }
+            for edge in face.edges.iter_mut() {
+                if let Some(copy) = edge_copy.get(edge) {
+                    *edge = *copy;
+                }
+            }
+        }
+
+        // And each face of the patch becomes two: the one that was there
+        // for this side, and a copy of it for the far side.
+        for (face, side) in behind {
+            let f = self.faces.get(face).expect("live").clone();
+            let which = f
+                .sides
+                .iter()
+                .position(|s| *s == Some(side))
+                .expect("the far side");
+            let mut nodes = f.nodes.map(|n| node_copy[&n]);
+            let mut edges = f.edges.map(|e| edge_copy[&e]);
+            if which == 1 {
+                // The copy is this block's own face now, so it is wound the
+                // way that block sees it — which is side 0's way round.
+                nodes = reversed(nodes);
+                edges = [edges[2], edges[1], edges[0], edges[3]];
+            }
+            let copy = self.faces.insert(Face {
+                nodes,
+                edges,
+                sides: [Some(side), None],
+                on: f.on,
+            });
+            self.blocks.get_mut(side.block).expect("live").faces[side.slot as usize] = copy;
+            let f = self.faces.get_mut(face).expect("live");
+            f.sides[which] = None;
+            if which == 0 {
+                f.sides[0] = f.sides[1].take();
+                f.nodes = reversed(f.nodes);
+                f.edges = [f.edges[2], f.edges[1], f.edges[0], f.edges[3]];
+            }
+        }
+        self.forget();
+        Ok(node_copy)
+    }
+
+    /// Raise a block out of each of these faces at once.
+    ///
+    /// The shared half of all three extrusions. Each side is a face and the
+    /// four corners **as the thing growing out of it sees them**; the faces
+    /// are consumed, becoming the bottoms of the blocks and carrying what
+    /// they were classified on, because they are the same cells.
+    ///
+    /// Two things make the blocks fit together, and in this structure both
+    /// are free:
+    ///
+    /// * **one step per node, not per face.** A corner on several of the
+    ///   faces is one node, so it raises to one new node — and the map
+    ///   needed a corner key to say that two faces shared a corner, where
+    ///   here they share the `NodeId` itself. The step is the mitre of the
+    ///   normals meeting there, so a ridge rises straight up the fold's own
+    ///   plane of symmetry.
+    /// * **no welding at all.** Two blocks raised from faces that share an
+    ///   edge share the two corners of that edge and the two they raise to,
+    ///   so `emplace_block` finds the face between them by its four nodes
+    ///   and hands the second block its other side. What the map did with a
+    ///   `glue_onto` per seam, in an order it had to be careful about,
+    ///   happens here by nobody doing anything.
+    fn raise_faces(
+        &mut self,
+        sides: &[(FaceId, [NodeId; 4])],
+        height: f64,
+        back: bool,
+    ) -> Result<Vec<CellId>, BlockingError> {
+        // Where every corner goes, by the node itself.
+        let mut around: HashMap<NodeId, Vec<[f64; 3]>> = HashMap::new();
+        for (_, winding) in sides {
+            let points = winding.map(|n| self.nodes.get(n).expect("live").at);
+            let normal = quad_normal(points);
+            let length = (0..3).map(|k| normal[k] * normal[k]).sum::<f64>().sqrt();
+            if length < 1e-12 {
+                return Err(BlockingError::LostFace);
+            }
+            let unit = normal.map(|x| if back { -x / length } else { x / length });
+            for node in winding {
+                around.entry(*node).or_default().push(unit);
+            }
+        }
+        let mut risen: HashMap<NodeId, NodeId> = HashMap::new();
+        for (node, normals) in &around {
+            let step = mitre(normals, height);
+            let at = self.nodes.get(*node).expect("live").at;
+            let born = self.nodes.handed_out();
+            let up = self.nodes.insert(Node {
+                at: [0, 1, 2].map(|k| at[k] + step[k]),
+                // A node raised off the model follows nothing: it is not on
+                // the boundary any more.
+                on: None,
+                frozen: false,
+                born,
+            });
+            risen.insert(*node, up);
+        }
+
+        let mut known = self.known();
+        let mut out = Vec::with_capacity(sides.len());
+        for (_, winding) in sides {
+            // The block's own bottom is this face wound the other way: what
+            // is outside the face is inside the block growing out of it.
+            let base = if back {
+                [winding[0], winding[3], winding[2], winding[1]]
+            } else {
+                [winding[3], winding[0], winding[1], winding[2]]
+            };
+            let corners = [
+                base[0],
+                base[1],
+                base[2],
+                base[3],
+                risen[&base[0]],
+                risen[&base[1]],
+                risen[&base[2]],
+                risen[&base[3]],
+            ];
+            let block = self.emplace_block(corners, &mut known)?;
+            out.push(self.block_name(block));
+        }
+        self.forget();
+        Ok(out)
+    }
+
+    /// A face of a block, with the four corners that block winds it by —
+    /// and only if it is on the surface, since a face with a block on each
+    /// side has no room to grow into.
+    fn free_side(
+        &self,
+        face: CellId,
+        block: CellId,
+    ) -> Result<(FaceId, [NodeId; 4]), BlockingError> {
+        let id = self.face_at(face).ok_or(BlockingError::NoSuchFace(face))?;
+        let at = self
+            .block_at(block)
+            .ok_or(BlockingError::NoSuchBlock(block))?;
+        let (_, which) = self
+            .slot_of(id, at)
+            .ok_or(BlockingError::FaceNotOnBlock(face, block))?;
+        let f = self.faces.get(id).expect("live");
+        if f.sides.iter().flatten().count() > 1 {
+            return Err(BlockingError::NotOnTheSurface(face));
+        }
+        let winding = if which == 1 {
+            reversed(f.nodes)
+        } else {
+            f.nodes
+        };
+        Ok((id, winding))
+    }
+
+    /// Whether anything still holds this edge.
+    fn held_edge(&self, id: EdgeId) -> bool {
+        self.faces.iter().any(|(_, f)| f.edges.contains(&id))
+            || self.blocks.iter().any(|(_, b)| b.edges.contains(&id))
+    }
+
+    /// Whether anything still holds this node.
+    fn held_node(&self, id: NodeId) -> bool {
+        self.edges.iter().any(|(_, e)| e.ends.contains(&id))
+            || self.faces.iter().any(|(_, f)| f.nodes.contains(&id))
+            || self.blocks.iter().any(|(_, b)| b.nodes.contains(&id))
+    }
+
+    /// Take a block away, and with it whatever only it was holding.
+    ///
+    /// A face it shared with a neighbour stays — that is the neighbour's
+    /// boundary now — and one it alone held goes, with any edge and node
+    /// left holding nothing. Where the map unsewed β₃ so that the
+    /// neighbour could be handed its own copy of the shared cells, there
+    /// is nothing to copy here: the neighbour already names them, and that
+    /// is the whole of what the cellular structure is for.
+    fn drop_block(&mut self, id: BlockId) -> Result<(), BlockingError> {
+        let block = self
+            .blocks
+            .get(id)
+            .cloned()
+            .ok_or(BlockingError::NoSuchBlock(self.block_name(id)))?;
+        for face in block.faces {
+            self.detach(face, id);
+        }
+        self.blocks.remove(id);
+        for face in block.faces {
+            if self
+                .faces
+                .get(face)
+                .is_some_and(|f| f.sides.iter().all(|side| side.is_none()))
+            {
+                self.faces.remove(face);
+            }
+        }
+        for edge in block.edges {
+            if !self.held_edge(edge) {
+                self.edges.remove(edge);
+            }
+        }
+        for node in block.nodes {
+            if !self.held_node(node) {
+                self.nodes.remove(node);
+            }
+        }
+        self.forget();
+        Ok(())
+    }
+
+    /// Put every group of nodes a set of seams is about to merge where the
+    /// merge would leave them: at their own average.
+    ///
+    /// A corner two seams share belongs to both, so the groups are the
+    /// connected components of the pairs and not the pairs themselves —
+    /// otherwise what each seam did would depend on what the one before it
+    /// did, and the answer would depend on the order. Settled first, the
+    /// two faces of a seam coincide exactly and no later seam can pull
+    /// them apart.
+    ///
+    /// Nowhere does this decide **which** node meets which: that is read
+    /// off the structure, which is why a removal works on a model however
+    /// distorted.
+    fn settle_seams(&mut self, pairs: &[(NodeId, NodeId)]) {
+        fn root(parent: &HashMap<NodeId, NodeId>, mut v: NodeId) -> NodeId {
+            while let Some(&up) = parent.get(&v) {
+                if up == v {
+                    break;
+                }
+                v = up;
+            }
+            v
+        }
+        let mut parent: HashMap<NodeId, NodeId> = HashMap::new();
+        for (a, b) in pairs {
+            for v in [a, b] {
+                parent.entry(*v).or_insert(*v);
+            }
+            let (ra, rb) = (root(&parent, *a), root(&parent, *b));
+            if ra != rb {
+                parent.insert(rb, ra);
+            }
+        }
+        let mut together: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
+        for v in parent.keys() {
+            together.entry(root(&parent, *v)).or_default().push(*v);
+        }
+        for (_, mut nodes) in together {
+            nodes.sort_unstable();
+            let known: Vec<[f64; 3]> = nodes
+                .iter()
+                .filter_map(|v| self.nodes.get(*v).map(|n| n.at))
+                .collect();
+            if known.is_empty() {
+                continue;
+            }
+            let share = known.len() as f64;
+            let at = [0, 1, 2].map(|k| known.iter().map(|p| p[k]).sum::<f64>() / share);
+            for v in nodes {
+                if let Some(node) = self.nodes.get_mut(v) {
+                    node.at = at;
+                }
+            }
+        }
+    }
+
+    /// Take out the whole layer of blocks through an edge.
+    ///
+    /// `close` says whether the gap closes: the two caps of each block the
+    /// layer crosses are welded to each other once it is gone, which is
+    /// what makes a layer removal leave a model with sound walls rather
+    /// than a hole.
+    ///
+    /// **Which cap meets which is a question about the structure, not
+    /// about where anything is.** The two caps of a block are the two ends
+    /// of its own axis, and corner `k` of one answers to corner `k + 4` of
+    /// the other in the frame that axis names — so a layer comes out of a
+    /// model however distorted.
+    fn take_sheet(&mut self, edge: CellId, close: bool) -> Result<(), BlockingError> {
+        let sheet = self.sheet_through(edge)?;
+        let crossed: HashSet<EdgeId> = sheet.iter().filter_map(|s| self.edge_at(s.edge)).collect();
+
+        let mut doomed: Vec<BlockId> = Vec::new();
+        for id in &crossed {
+            doomed.extend(self.blocks_on(*id));
+        }
+        doomed.sort_unstable();
+        doomed.dedup();
+
+        // What each doomed block's two caps are, and which of their corners
+        // answer to which — read before anything is taken away.
+        struct Seam {
+            caps: [FaceId; 2],
+            pairs: [(NodeId, NodeId); 4],
+        }
+        let mut seams: Vec<Seam> = Vec::new();
+        for id in &doomed {
+            let block = self.blocks.get(*id).expect("live").clone();
+            let along: Vec<usize> = (0..12)
+                .filter(|k| crossed.contains(&block.edges[*k]))
+                .collect();
+            let axis = EDGE_AXIS[along[0]];
+            if along.len() != 4 || along.iter().any(|k| EDGE_AXIS[*k] != axis) {
+                return Err(BlockingError::BrokenSheet(edge));
+            }
+            let frame = SPLIT_FRAME[axis as usize].map(|c| block.nodes[c]);
+            let low: HashSet<NodeId> = frame[..4].iter().copied().collect();
+            let high: HashSet<NodeId> = frame[4..].iter().copied().collect();
+            let cap = |want: &HashSet<NodeId>| -> Option<(u8, FaceId)> {
+                block.faces.iter().enumerate().find_map(|(slot, face)| {
+                    let f = self.faces.get(*face)?;
+                    f.nodes
+                        .iter()
+                        .all(|n| want.contains(n))
+                        .then_some((slot as u8, *face))
+                })
+            };
+            let (Some((slot_low, cap_low)), Some((slot_high, cap_high))) = (cap(&low), cap(&high))
+            else {
+                return Err(BlockingError::BrokenSheet(edge));
+            };
+            if !close {
+                continue;
+            }
+            let (below, above) = (
+                self.beyond(
+                    cap_low,
+                    Side {
+                        block: *id,
+                        slot: slot_low,
+                    },
+                ),
+                self.beyond(
+                    cap_high,
+                    Side {
+                        block: *id,
+                        slot: slot_high,
+                    },
+                ),
+            );
+            let (Some(below), Some(above)) = (below, above) else {
+                // A cap with nothing behind it is a cap on the model's
+                // surface: there is nothing to close against, so the model
+                // simply loses that layer.
+                continue;
+            };
+            // A sheet that comes back round onto itself has no outside to
+            // close against.
+            if doomed.contains(&below.block) || doomed.contains(&above.block) {
+                return Err(BlockingError::BrokenSheet(edge));
+            }
+            seams.push(Seam {
+                caps: [cap_low, cap_high],
+                pairs: [0, 1, 2, 3].map(|k| (frame[k], frame[k + 4])),
+            });
+        }
+
+        // The seams are settled while the layer still holds the two sides
+        // apart, and welded once it is gone.
+        let pairs: Vec<(NodeId, NodeId)> = seams.iter().flat_map(|seam| seam.pairs).collect();
+        self.settle_seams(&pairs);
+        for id in doomed {
+            self.drop_block(id)?;
+        }
+        // A corner two seams share is merged by the first of them, so the
+        // second has to be told where it went. Nine blocks in a layer and
+        // the caps of neighbouring ones share their corners, which a layer
+        // one block wide never shows.
+        let mut moved: HashMap<NodeId, NodeId> = HashMap::new();
+        let follow = |moved: &HashMap<NodeId, NodeId>, mut n: NodeId| {
+            while let Some(to) = moved.get(&n) {
+                if *to == n {
+                    break;
+                }
+                n = *to;
+            }
+            n
+        };
+        for seam in seams {
+            let [keep, gone] = seam.caps;
+            let (Some(here), Some(there)) =
+                (self.faces.get(keep).cloned(), self.faces.get(gone).cloned())
+            else {
+                continue;
+            };
+            // Which quarter turn lines the two up is read off the pairs,
+            // not off where the corners are.
+            let partner: HashMap<NodeId, NodeId> = seam
+                .pairs
+                .iter()
+                .map(|(a, b)| (follow(&moved, *a), follow(&moved, *b)))
+                .flat_map(|(a, b)| [(a, b), (b, a)])
+                .collect();
+            let want = partner
+                .get(&here.nodes[0])
+                .copied()
+                .ok_or(BlockingError::BrokenSheet(edge))?;
+            let turn = there
+                .nodes
+                .iter()
+                .position(|n| *n == want)
+                .ok_or(BlockingError::BrokenSheet(edge))?;
+            let decided = [0, 1, 2, 3].map(|i| {
+                let mine = self.nodes.get(here.nodes[i]).expect("live");
+                let theirs = self
+                    .nodes
+                    .get(there.nodes[(turn + 4 - i) % 4])
+                    .expect("live");
+                Welded {
+                    at: mine.at,
+                    on: mine.on.or(theirs.on),
+                    frozen: mine.frozen || theirs.frozen,
+                }
+            });
+            for (from, to) in self.join_faces(keep, gone, turn, decided)? {
+                moved.insert(from, to);
+            }
+        }
+        self.forget();
+        Ok(())
+    }
+
+    /// Where every edge and face is, by the nodes it holds.
+    fn known(&self) -> Known {
+        let mut by_pair = HashMap::new();
+        for (id, edge) in self.edges.iter() {
+            let mut key = edge.ends;
+            key.sort_unstable();
+            by_pair.insert(key, id);
+        }
+        let mut by_quad = HashMap::new();
+        for (id, face) in self.faces.iter() {
+            let mut key = face.nodes;
+            key.sort_unstable();
+            by_quad.insert(key, id);
+        }
+        Known { by_pair, by_quad }
+    }
+
+    /// The edge between two nodes, made if nobody holds it.
+    ///
+    /// `like` is what a fresh one inherits — what a cut edge was classified
+    /// on and how finely it was divided — so that cutting an edge along a
+    /// curve leaves two edges along that curve.
+    fn edge_on(
+        &mut self,
+        from: NodeId,
+        to: NodeId,
+        known: &mut Known,
+        like: (Option<On>, u32),
+    ) -> EdgeId {
+        let mut key = [from, to];
+        key.sort_unstable();
+        if let Some(id) = known.by_pair.get(&key) {
+            return *id;
+        }
+        let id = self.edges.insert(Edge {
+            ends: [from, to],
+            segments: like.1,
+            on: like.0,
+        });
+        known.by_pair.insert(key, id);
+        id
+    }
+
+    /// A face on four nodes, made if nobody holds it, with no side taken.
+    fn face_on(&mut self, winding: [NodeId; 4], known: &mut Known) -> FaceId {
+        let mut key = winding;
+        key.sort_unstable();
+        if let Some(id) = known.by_quad.get(&key) {
+            return *id;
+        }
+        let edges =
+            [0, 1, 2, 3].map(|k| self.edge_on(winding[k], winding[(k + 1) % 4], known, (None, 0)));
+        let id = self.faces.insert(Face {
+            nodes: winding,
+            edges,
+            sides: [None, None],
+            on: None,
+        });
+        known.by_quad.insert(key, id);
+        id
+    }
+
+    /// Put a block on eight corners that already exist, sharing whatever is
+    /// already there.
+    ///
+    /// The primitive the cellular structure makes easy and the map made
+    /// hard: twelve edges and six faces found by the nodes they hold, or
+    /// made if nobody holds them, and each told which side of it this block
+    /// is. A face already bounding another block gains its **second** side
+    /// and nothing is sewn.
+    ///
+    /// Cutting, extruding and pillowing are all this, several times over,
+    /// which is most of what those operations were.
+    fn emplace_block(
+        &mut self,
+        nodes: [NodeId; 8],
+        known: &mut Known,
+    ) -> Result<BlockId, BlockingError> {
+        let edges: [EdgeId; 12] =
+            HEX_EDGES.map(|[a, b]| self.edge_on(nodes[a], nodes[b], known, (None, 0)));
+
+        // Found or made before the block exists to be named as a side, and
+        // which side each is settled here: a face wound the way this block
+        // winds it is this block's side 0, and one wound the other way is
+        // its side 1. Anything else is two blocks on one side of a face,
+        // which is not a blocking.
+        let mut wanted = [(FaceId(0), 0usize); 6];
+        for (slot, want) in wanted.iter_mut().enumerate() {
+            let winding = HEX_FACES[slot].map(|c| nodes[c]);
+            let id = self.face_on(winding, known);
+            let face = self.faces.get(id).expect("found or made");
+            let which = if face.sides[0].is_none() {
+                0
+            } else if face.sides[1].is_none() && rotation_of(&face.nodes, &reversed(winding)) {
+                1
+            } else {
+                return Err(BlockingError::AlreadyGlued(self.face_name(id)));
+            };
+            *want = (id, which);
+        }
+
+        let block = self.blocks.insert(Block {
+            nodes,
+            edges,
+            faces: wanted.map(|(id, _)| id),
+            groups: 0,
+        });
+        for (slot, (id, which)) in wanted.into_iter().enumerate() {
+            let winding = HEX_FACES[slot].map(|c| nodes[c]);
+            if which == 0 {
+                // Side 0 reads `nodes` forward, so a face that had no side
+                // yet is wound this block's way — and its sides with it.
+                let edges = [0, 1, 2, 3]
+                    .map(|k| self.edge_on(winding[k], winding[(k + 1) % 4], known, (None, 0)));
+                let face = self.faces.get_mut(id).expect("found or made");
+                face.nodes = winding;
+                face.edges = edges;
+            }
+            self.faces.get_mut(id).expect("found or made").sides[which] = Some(Side {
+                block,
+                slot: slot as u8,
+            });
+        }
+        self.forget();
+        Ok(block)
+    }
+
+    /// Take a block's claim off one of its faces.
+    ///
+    /// A face that loses its **first** side while keeping its second has to
+    /// be turned round, because side 0 is the one `nodes` is wound for and
+    /// invariant 6 says there is no second side without a first. Which is
+    /// four lines here and was a β₃ unsew there.
+    fn detach(&mut self, face: FaceId, block: BlockId) {
+        let Some(f) = self.faces.get_mut(face) else {
+            return;
+        };
+        for side in f.sides.iter_mut() {
+            if side.is_some_and(|s| s.block == block) {
+                *side = None;
+            }
+        }
+        if f.sides[0].is_none() && f.sides[1].is_some() {
+            f.sides[0] = f.sides[1].take();
+            f.nodes = reversed(f.nodes);
+            // Side `k` of a cycle read backwards is side `2 - k` of the
+            // cycle read forwards.
+            f.edges = [f.edges[2], f.edges[1], f.edges[0], f.edges[3]];
+        }
+        self.forget();
+    }
+
+    /// Two faces that may be welded to each other: live, distinct, and each
+    /// with one side taken and one free.
+    ///
+    /// A face of a patch — no side at all — is refused rather than welded
+    /// face to face. In the map it was not refused, because β₃ did not ask;
+    /// here the structure does ask, and what two open sheets laid back to
+    /// back would be is not a question anything needs answered.
+    fn two_free_faces(
+        &self,
+        first: CellId,
+        second: CellId,
+    ) -> Result<(FaceId, FaceId), BlockingError> {
+        // Asked **before** the names are resolved: gluing a face to itself
+        // is a complaint about the request and not about the structure, and
+        // it is the same complaint whether or not the name is one anything
+        // answers to.
+        if first == second {
+            return Err(BlockingError::SameFace);
+        }
+        let a = self
+            .face_at(first)
+            .ok_or(BlockingError::NoSuchFace(first))?;
+        let b = self
+            .face_at(second)
+            .ok_or(BlockingError::NoSuchFace(second))?;
+        if a == b {
+            return Err(BlockingError::SameFace);
+        }
+        for (name, id) in [(first, a), (second, b)] {
+            let face = self.faces.get(id).expect("live");
+            if face.sides[1].is_some() || face.sides[0].is_none() {
+                return Err(BlockingError::AlreadyGlued(name));
+            }
+        }
+        Ok((a, b))
+    }
+
+    /// Where each corner of a face is.
+    fn corners_of(&self, id: FaceId) -> [[f64; 3]; 4] {
+        self.faces
+            .get(id)
+            .expect("live")
+            .nodes
+            .map(|n| self.nodes.get(n).expect("live").at)
+    }
+
+    /// Every reference to one node becomes a reference to another, and the
+    /// first is gone.
+    ///
+    /// A sweep of the three arenas that can hold a node. The cache that
+    /// makes this local — `node_edges` and `node_blocks` — arrives with the
+    /// sheet walks; until then this is correct and slow rather than clever
+    /// and wrong, and the suite is what says which it is.
+    fn rewrite_node(&mut self, from: NodeId, to: NodeId) {
+        for id in self.edges.ids().collect::<Vec<_>>() {
+            let edge = self.edges.get_mut(id).expect("live");
+            for end in edge.ends.iter_mut() {
+                if *end == from {
+                    *end = to;
+                }
+            }
+        }
+        for id in self.faces.ids().collect::<Vec<_>>() {
+            let face = self.faces.get_mut(id).expect("live");
+            for node in face.nodes.iter_mut() {
+                if *node == from {
+                    *node = to;
+                }
+            }
+        }
+        for id in self.blocks.ids().collect::<Vec<_>>() {
+            let block = self.blocks.get_mut(id).expect("live");
+            for node in block.nodes.iter_mut() {
+                if *node == from {
+                    *node = to;
+                }
+            }
+        }
+        self.nodes.remove(from);
+    }
+
+    /// The same for an edge, which only faces and blocks can hold.
+    fn rewrite_edge(&mut self, from: EdgeId, to: EdgeId) {
+        for id in self.faces.ids().collect::<Vec<_>>() {
+            let face = self.faces.get_mut(id).expect("live");
+            for edge in face.edges.iter_mut() {
+                if *edge == from {
+                    *edge = to;
+                }
+            }
+        }
+        for id in self.blocks.ids().collect::<Vec<_>>() {
+            let block = self.blocks.get_mut(id).expect("live");
+            for edge in block.edges.iter_mut() {
+                if *edge == from {
+                    *edge = to;
+                }
+            }
+        }
+        self.edges.remove(from);
+    }
+
+    /// Weld two faces into **one** face with a block on each side.
+    ///
+    /// Where the map sewed two faces together and left them two, here there
+    /// is one cell that both blocks name — which is what makes conformity
+    /// structural rather than maintained: there is nothing to keep in
+    /// agreement, because there is nothing in two places.
+    ///
+    /// `turn` is the quarter turn that lines the two up, from
+    /// [`best_pairing`]: corner `i` of the first meets corner
+    /// `(turn - i) mod 4` of the second. The pairing is necessarily
+    /// orientation-reversing, which is exactly what the structure wants —
+    /// side 0 reads `nodes` forward and side 1 backward — so invariant 3
+    /// comes out true without anything being done about it.
+    ///
+    /// `decided` says, per pair, where the welded node goes, what it is on
+    /// and whether it is frozen. Both callers work that out differently and
+    /// everything after it is the same, which is why it is a parameter.
+    fn join_faces(
+        &mut self,
+        keep: FaceId,
+        gone: FaceId,
+        turn: usize,
+        decided: [Welded; 4],
+    ) -> Result<Vec<(NodeId, NodeId)>, BlockingError> {
+        let here = self.faces.get(keep).expect("live").clone();
+        let there = self.faces.get(gone).expect("live").clone();
+        let side = there.sides[0].expect("a face being welded has one side");
+
+        let mut merged: Vec<(NodeId, NodeId)> = Vec::new();
+        for (i, told) in decided.iter().enumerate() {
+            let (a, b) = (here.nodes[i], there.nodes[(turn + 4 - i) % 4]);
+            {
+                let node = self.nodes.get_mut(a).expect("live");
+                node.at = told.at;
+                node.on = told.on;
+                node.frozen = told.frozen;
+            }
+            if a != b {
+                self.rewrite_node(b, a);
+                merged.push((b, a));
+            }
+        }
+
+        // The sides, paired through the corners they now share rather than
+        // by arithmetic on `turn`: the same answer, and it cannot be out by
+        // one.
+        for i in 0..4 {
+            let keep_edge = here.edges[i];
+            let (from, to) = (here.nodes[i], here.nodes[(i + 1) % 4]);
+            let Some(gone_edge) = there.edges.into_iter().find(|e| {
+                self.edges
+                    .get(*e)
+                    .is_some_and(|edge| edge.ends == [from, to] || edge.ends == [to, from])
+            }) else {
+                continue;
+            };
+            if gone_edge == keep_edge {
+                continue;
+            }
+            let (on, segments) = {
+                let a = self.edges.get(keep_edge).expect("live");
+                let b = self.edges.get(gone_edge).expect("live");
+                // The finer of two discretisations is the safe one: it can
+                // represent what either side was asking for.
+                (a.on.or(b.on), a.segments.max(b.segments))
+            };
+            let edge = self.edges.get_mut(keep_edge).expect("live");
+            edge.on = on;
+            edge.segments = segments;
+            self.rewrite_edge(gone_edge, keep_edge);
+        }
+
+        // One face, with a block on each side.
+        {
+            let face = self.faces.get_mut(keep).expect("live");
+            face.sides[1] = Some(side);
+            face.on = here.on.or(there.on);
+        }
+        self.blocks.get_mut(side.block).expect("live").faces[side.slot as usize] = keep;
+        self.faces.remove(gone);
+        self.forget();
+        Ok(merged)
+    }
+
+    /// The middle of a few points.
+    fn middle(&self, places: &[[f64; 3]]) -> [f64; 3] {
+        let mut at = [0.0; 3];
+        for p in places {
+            for k in 0..3 {
+                at[k] += p[k] / places.len() as f64;
+            }
+        }
+        at
+    }
+
+    /// Drop the derived cache. Called by everything that changes the
+    /// arenas, because a cache is not state and a stale one is worse than
+    /// none.
+    fn forget(&mut self) {
+        *self.up.borrow_mut() = None;
+    }
+
+    /// Read what climbs, building it if it has been dropped.
+    ///
+    /// A closure rather than a returned reference, because the cache lives
+    /// behind a `RefCell` and handing out a borrow across it would make
+    /// every caller responsible for not holding it. One sweep of the
+    /// arenas, amortised over everything that asks.
+    fn climbing<T>(&self, ask: impl FnOnce(&Up) -> T) -> T {
+        if self.up.borrow().is_none() {
+            let mut built = Up::default();
+            for (id, edge) in self.edges.iter() {
+                for end in edge.ends {
+                    built.node_edges.entry(end).or_default().push(id);
+                }
+            }
+            for (id, face) in self.faces.iter() {
+                for edge in face.edges {
+                    built.edge_faces.entry(edge).or_default().push(id);
+                }
+                for node in face.nodes {
+                    built.node_faces.entry(node).or_default().push(id);
+                }
+            }
+            for (id, block) in self.blocks.iter() {
+                for edge in block.edges {
+                    built.edge_blocks.entry(edge).or_default().push(id);
+                }
+            }
+            *self.up.borrow_mut() = Some(built);
+        }
+        ask(self.up.borrow().as_ref().expect("just built"))
+    }
+
+    /// One face as one of its blocks sees it.
+    ///
+    /// Side 0 reads `face.nodes` forward and side 1 reads it backwards, and
+    /// that is the whole of the orientation question — no twist byte, no
+    /// stored invariant that can rot.
+    fn seen_from(&self, id: FaceId, face: &Face, which: usize, side: Side) -> BlockFace {
+        let mut nodes = face.nodes.map(|n| self.node_name(n));
+        if which == 1 {
+            nodes.reverse();
+        }
+        BlockFace {
+            face: self.face_name(id),
+            block: self.block_name(side.block),
+            groups: self.blocks.get(side.block).map_or(0, |b| b.groups),
+            nodes,
+            on: face.on,
+        }
+    }
+
+    /// The patches: connected components of the faces that bound no block.
+    ///
+    /// A patch has no cell of its own to be named by. The note's first
+    /// decision was overturned, so an open sheet is legal — but giving it an
+    /// identity would mean a fifth arena and a union-find kept true through
+    /// every weld and every removal. So it is derived, and the operations
+    /// that work on one take a **face** and walk the component themselves.
+    /// The representative a listing hands back is the component's lowest
+    /// face, which is stable for as long as that face is.
+    fn patch_components(&self) -> Vec<Vec<FaceId>> {
+        let loose: Vec<FaceId> = self
+            .faces
+            .iter()
+            .filter(|(_, face)| face.sides.iter().all(|side| side.is_none()))
+            .map(|(id, _)| id)
+            .collect();
+        if loose.is_empty() {
+            return Vec::new();
+        }
+        // Which of them meet along each edge. Only among the loose ones: a
+        // sheet welded to a block is that block's face and no part of a
+        // patch.
+        let mut along: HashMap<EdgeId, Vec<FaceId>> = HashMap::new();
+        for id in &loose {
+            for edge in self.faces.get(*id).expect("live").edges {
+                along.entry(edge).or_default().push(*id);
+            }
+        }
+
+        let mut seen: HashSet<FaceId> = HashSet::new();
+        let mut out: Vec<Vec<FaceId>> = Vec::new();
+        for start in loose {
+            if !seen.insert(start) {
+                continue;
+            }
+            let mut component = vec![start];
+            let mut todo = vec![start];
+            while let Some(id) = todo.pop() {
+                for edge in self.faces.get(id).expect("live").edges {
+                    for next in along.get(&edge).into_iter().flatten() {
+                        if seen.insert(*next) {
+                            component.push(*next);
+                            todo.push(*next);
+                        }
+                    }
+                }
+            }
+            component.sort_unstable();
+            out.push(component);
+        }
+        out.sort_unstable();
+        out
+    }
+
+    /// Everything the structure promises about itself, checked. Called by the
+    /// tests after every operation; the invariants are listed in the design
+    /// note, and invariant 2 — that `block.faces[s]` and `face.sides[i]`
+    /// agree both ways round — is the one that catches a weld bug.
+    pub fn validate(&self) -> Result<(), Vec<Breach>> {
+        let mut out: Vec<Breach> = Vec::new();
+        macro_rules! say {
+            ($($arg:tt)*) => {
+                out.push(Breach(format!($($arg)*)))
+            };
+        }
+
+        // 1. every stored id designates a live cell.
+        for (id, edge) in self.edges.iter() {
+            for end in edge.ends {
+                if self.nodes.get(end).is_none() {
+                    say!("edge {id:?} has a dead end {end:?}");
+                }
+            }
+        }
+        for (id, face) in self.faces.iter() {
+            for node in face.nodes {
+                if self.nodes.get(node).is_none() {
+                    say!("face {id:?} has a dead corner {node:?}");
+                }
+            }
+            for edge in face.edges {
+                if self.edges.get(edge).is_none() {
+                    say!("face {id:?} has a dead side {edge:?}");
+                }
+            }
+            for side in face.sides.iter().flatten() {
+                if self.blocks.get(side.block).is_none() {
+                    say!("face {id:?} has a dead side block {:?}", side.block);
+                }
+            }
+        }
+        for (id, block) in self.blocks.iter() {
+            for node in block.nodes {
+                if self.nodes.get(node).is_none() {
+                    say!("block {id:?} has a dead corner {node:?}");
+                }
+            }
+            for edge in block.edges {
+                if self.edges.get(edge).is_none() {
+                    say!("block {id:?} has a dead edge {edge:?}");
+                }
+            }
+            for face in block.faces {
+                if self.faces.get(face).is_none() {
+                    say!("block {id:?} has a dead face {face:?}");
+                }
+            }
+        }
+        // Everything below dereferences, so stop while a dangling id could
+        // be what is wrong: one breach reported honestly beats a panic.
+        if !out.is_empty() {
+            return Err(out);
+        }
+
+        for (id, block) in self.blocks.iter() {
+            for (slot, face) in block.faces.iter().enumerate() {
+                let f = self.faces.get(*face).expect("live");
+
+                // 2. the link holds in both directions.
+                let want = Side {
+                    block: id,
+                    slot: slot as u8,
+                };
+                let which = f.sides.iter().position(|side| *side == Some(want));
+                let Some(which) = which else {
+                    say!(
+                        "block {id:?} slot {slot} names face {face:?}, which does not name it back"
+                    );
+                    continue;
+                };
+
+                // 3. the face is wound as that side sees it: a rotation of
+                //    the block's own four corners for side 0, and of their
+                //    reverse for side 1.
+                let mut want: Vec<NodeId> =
+                    HEX_FACES[slot].iter().map(|c| block.nodes[*c]).collect();
+                if which == 1 {
+                    want.reverse();
+                }
+                if !rotation_of(&f.nodes, &want) {
+                    say!("face {face:?} is not wound as block {id:?} slot {slot} sees it");
+                }
+            }
+
+            // 7. the twelve edges are in canonical order.
+            for (k, edge) in block.edges.iter().enumerate() {
+                let e = self.edges.get(*edge).expect("live");
+                let [a, b] = HEX_EDGES[k].map(|c| block.nodes[c]);
+                if e.ends != [a, b] && e.ends != [b, a] {
+                    say!("block {id:?} edge {k} is {edge:?}, which joins the wrong two corners");
+                }
+            }
+        }
+
+        for (id, face) in self.faces.iter() {
+            // 4. each side of a face joins the two corners it runs between.
+            for k in 0..4 {
+                let e = self.edges.get(face.edges[k]).expect("live");
+                let (from, to) = (face.nodes[k], face.nodes[(k + 1) % 4]);
+                if e.ends != [from, to] && e.ends != [to, from] {
+                    say!("face {id:?} side {k} does not join its two corners");
+                }
+            }
+            // 6. a face has none, one or two sides, and side 0 before side 1.
+            if face.sides[0].is_none() && face.sides[1].is_some() {
+                say!("face {id:?} has a second side and no first");
+            }
+            if let [Some(a), Some(b)] = face.sides {
+                if a == b {
+                    say!("face {id:?} has the same block on both sides");
+                }
+            }
+        }
+
+        // 5. no two faces carry the same four nodes.
+        let mut by_quad: HashMap<[NodeId; 4], FaceId> = HashMap::new();
+        for (id, face) in self.faces.iter() {
+            let mut key = face.nodes;
+            key.sort_unstable();
+            if let Some(other) = by_quad.insert(key, id) {
+                say!("faces {id:?} and {other:?} carry the same four corners");
+            }
+        }
+
+        if out.is_empty() {
+            Ok(())
+        } else {
+            Err(out)
+        }
+    }
 }
 
 impl Blocking {
     pub fn new() -> Result<Self, BlockingError> {
-        let map = CMapBuilder::<3>::from_n_darts(0)
-            .add_attribute::<NodeTag>()
-            .add_attribute::<EdgeTag>()
-            .add_attribute::<FaceTag>()
-            .add_attribute::<BlockTag>()
-            .build()
-            .map_err(|e| BlockingError::Build(e.to_string()))?;
-        Ok(Blocking {
-            map,
-            names: Default::default(),
-            corners: Counter::default(),
-            seen: Seen::default(),
+        Ok(Self::default())
+    }
+
+    /// Four arenas and a derive, where the map took seventy lines of
+    /// hand-written dart copying. The cache is not copied: it is derived.
+    pub fn snapshot(&self) -> Result<Blocking, BlockingError> {
+        Ok(Self {
+            up: RefCell::new(None),
+            ..self.clone()
         })
     }
 
-    /// A copy of the whole structure, to put back later.
-    ///
-    /// Written out by hand because [`CMap3`] is not `Clone`, and it is worth
-    /// saying what that costs and what it does not. The map is four things —
-    /// the β functions, the vertex positions, the attribute storages, and the
-    /// record of which darts are in use — and all four can be read and written
-    /// from outside, so this is a copy and not a reconstruction: nothing is
-    /// re-sewn, nothing is re-derived, no operation is replayed.
-    ///
-    /// That is what makes it usable as an undo state. Every dart keeps its own
-    /// number, so every cell keeps the identifier the map derives from its
-    /// orbit; the name counters come across as they stand, so a [`CellId`] a
-    /// caller is still holding means the cell it meant; and the used-and-unused
-    /// pattern is reproduced position by position, so the next dart the map
-    /// hands out is the one it would have handed out anyway. A state put back
-    /// is indistinguishable from the state that was taken, rather than merely
-    /// the same shape.
-    ///
-    /// Attributes of cells that no longer exist are the one thing left behind.
-    /// No orbit names them and nothing reads them.
-    pub fn snapshot(&self) -> Result<Blocking, BlockingError> {
-        let mut copy = Blocking::new()?;
-        let total = self.map.n_darts() as DartIdType;
-
-        // Darts in runs of one kind, so each one lands on its own number.
-        // Dart 0 is the null dart: it belongs to the map, and a fresh one
-        // has it already.
-        let mut d: DartIdType = 1;
-        while d < total {
-            let unused = self.map.is_unused(d);
-            let mut run = 1;
-            while d + run < total && self.map.is_unused(d + run) == unused {
-                run += 1;
-            }
-            if unused {
-                copy.map.allocate_unused_darts(run as usize);
-            } else {
-                copy.map.allocate_used_darts(run as usize);
-            }
-            d += run;
-        }
-
-        // The topology before anything that hangs off it: a cell is named by
-        // the smallest dart of its orbit, and until β is in place there are
-        // no orbits to name.
-        //
-        // Read in one transaction, because a single `beta` is a transaction
-        // of its own and there are four of them per dart.
-        let betas: Vec<[DartIdType; 4]> = atomically(|t| {
-            let mut out = Vec::with_capacity(total as usize);
-            for d in 1..total {
-                out.push([
-                    self.map.beta_tx::<0>(t, d)?,
-                    self.map.beta_tx::<1>(t, d)?,
-                    self.map.beta_tx::<2>(t, d)?,
-                    self.map.beta_tx::<3>(t, d)?,
-                ]);
-            }
-            Ok(out)
-        });
-        for (d, beta) in (1..total).zip(betas) {
-            copy.map.set_betas(d, beta);
-        }
-
-        for v in self.map_vertices() {
-            if let Some(at) = self.map.read_vertex(v) {
-                copy.map.write_vertex(v, at);
-            }
-            copy.map.write_attribute(v, self.node_tag_of(v));
-        }
-        for e in self.map_edges() {
-            copy.map.write_attribute(e, self.edge_tag_of(e));
-        }
-        for f in self.map_faces() {
-            copy.map.write_attribute(f, self.face_tag_of(f));
-        }
-        for b in self.map_volumes() {
-            copy.map.write_attribute(b, self.block_tag_of(b));
-        }
-
-        copy.names = self.names.clone();
-        copy.corners = self.corners.clone();
-        // The darts land on the same numbers as the original's, so where
-        // each name was seen is still where it is.
-        copy.seen = self.seen.clone();
-        Ok(copy)
-    }
-
-    /// Add one hexahedral block from its eight corner points, in the usual
-    /// VTK/Gmsh order.
-    ///
-    /// The block is built free-standing: every β₃ is left unset, so it is a
-    /// closed volume bounded by the model's exterior until something is sewn to
-    /// it. Joining blocks is a separate operation, and a later step.
     pub fn add_block(&mut self, corners: [[f64; 3]; 8]) -> Result<CellId, BlockingError> {
-        Ok(self.build_block(corners)?.0)
+        let nodes: [NodeId; 8] = corners.map(|at| {
+            let born = self.nodes.handed_out();
+            self.nodes.insert(Node {
+                at,
+                on: None,
+                frozen: false,
+                born,
+            })
+        });
+        let edges: [EdgeId; 12] = HEX_EDGES.map(|[a, b]| {
+            self.edges.insert(Edge {
+                ends: [nodes[a], nodes[b]],
+                // Nought meaning nobody has said, as everywhere else.
+                segments: 0,
+                on: None,
+            })
+        });
+        // The faces first, with no side filled in: the block they belong to
+        // does not exist yet, and a `Side` naming a block before the block
+        // is there would be a stored id resolving to nothing — which is
+        // what invariant 1 is about.
+        let faces: [FaceId; 6] = HEX_FACES.map(|corners_of| {
+            let fnodes = corners_of.map(|c| nodes[c]);
+            let fedges = [0, 1, 2, 3].map(|k| {
+                let (from, to) = (fnodes[k], fnodes[(k + 1) % 4]);
+                let at = HEX_EDGES
+                    .iter()
+                    .position(|[a, b]| {
+                        let (p, q) = (nodes[*a], nodes[*b]);
+                        (p, q) == (from, to) || (p, q) == (to, from)
+                    })
+                    .expect("every side of a face of a hexahedron is one of its edges");
+                edges[at]
+            });
+            self.faces.insert(Face {
+                nodes: fnodes,
+                edges: fedges,
+                sides: [None, None],
+                on: None,
+            })
+        });
+        let block = self.blocks.insert(Block {
+            nodes,
+            edges,
+            faces,
+            groups: 0,
+        });
+        // And now each face learns which block is on which side of it. Side
+        // 0, because `HEX_FACES` is wound anticlockwise seen from outside
+        // and this block is inside it: the other side is free, which is
+        // what a free-standing block means.
+        for (slot, face) in faces.iter().enumerate() {
+            self.faces.get_mut(*face).expect("just made").sides[0] = Some(Side {
+                block,
+                slot: slot as u8,
+            });
+        }
+        self.forget();
+        Ok(self.block_name(block))
     }
 
-    /// A block of small thickness, laid on four points.
-    ///
-    /// The points are its **outer** face, in the order they are given, and
-    /// the block grows the other way by `thickness` — signed, so the sign
-    /// picks which side of the quadrangle the material is on.
-    ///
-    /// Whatever it was laid **against** it is welded to: see
-    /// [`weld_slab`][Self::weld_slab] for what that means and when it
-    /// happens. Laying slabs one after another along a surface therefore
-    /// builds one blocking rather than a heap of free-standing blocks in
-    /// the same place.
-    ///
-    /// What comes back is the block, its four outer corners, its four inner
-    /// ones in the order the points were given, and how many sides were
-    /// welded. The caller wants both lists of corners and for opposite
-    /// reasons: the outer four are to be told what they are lying on, and
-    /// the inner four are to be left **alone** — they are inside the
-    /// material, they follow nothing, and anything that settles fresh nodes
-    /// onto the geometry would otherwise flatten the slab to nothing. See
-    /// `Session::settle_fresh`.
     pub fn add_slab(&mut self, quad: [[f64; 3]; 4], thickness: f64) -> Result<Slab, BlockingError> {
         if !thickness.is_finite() || thickness == 0.0 {
             return Err(BlockingError::BadHeight(thickness));
@@ -263,243 +1787,50 @@ impl Blocking {
         for k in 0..4 {
             corners[4 + k] = [0, 1, 2].map(|axis| quad[k][axis] + step[axis]);
         }
-        let (block, first) = self.build_block(corners)?;
-        let welded = self.weld_slab(first, quad)?;
+        let block = self.add_block(corners)?;
+        let welded = self.weld_slab(block, quad)?;
 
-        // By the dart each corner starts at, rather than by asking the block
-        // for its corners in some order of its own: this is the only place
-        // that knows which of the eight was which of the four points. Read
-        // **after** the welding, so that a corner swallowed by a weld comes
-        // back as the node that swallowed it.
-        let named = |slot: usize| {
-            self.node_tag_of(self.map.vertex_id(corner_dart(first, slot)))
-                .id
-        };
-        let outer = [0, 1, 2, 3].map(named);
-        let inner = [4, 5, 6, 7].map(named);
+        // Read after the welding: a corner swallowed by a weld comes back as
+        // the node that swallowed it.
+        let frame = self.hex_corners(block).expect("just made");
         Ok(Slab {
             block,
-            outer,
-            inner,
+            outer: [frame[0], frame[1], frame[2], frame[3]],
+            inner: [frame[4], frame[5], frame[6], frame[7]],
             welded,
         })
     }
 
-    /// Weld a slab just laid to the faces it was laid against.
-    ///
-    /// A side of the slab is welded when the two points that side was laid
-    /// on were **both already nodes of the model**, and an edge joins them.
-    /// That is what "laid against" means, and the interface makes it true:
-    /// a click near a handle takes that handle's own place, so two slabs
-    /// laid corner to corner share the two points of a side exactly.
-    ///
-    /// Which face, of the ones along that edge? A slab's edge has two of
-    /// its own — the broad face it was laid on, and the thin side. They are
-    /// told apart by **which way they lean**: from the middle of the shared
-    /// edge toward the middle of their other two corners. The thin side of
-    /// the neighbour leans into the material, the same way this slab's side
-    /// does; the broad face leans along the surface, across it. So the
-    /// candidate kept is the one leaning within a right angle of ours, and
-    /// if more than one does the side is left alone rather than guessed at.
-    ///
-    /// The neighbour does not move: [`glue_onto`][Self::glue_onto] brings
-    /// the **new** side onto the old face, so the slab just laid adopts the
-    /// thickness of what was already there and the model keeps its shape.
-    /// Two slabs thickened by a tenth of their own diagonal are not quite
-    /// equally thick, and the one being laid is the one with no claim.
-    ///
-    /// Sides with nothing to weld to are left free, which is the ordinary
-    /// case: the first slab of a surface welds nothing.
-    fn weld_slab(
-        &mut self,
-        first: DartIdType,
-        quad: [[f64; 3]; 4],
-    ) -> Result<usize, BlockingError> {
-        // Two points are "the same point" relative to the size of the thing
-        // being laid, not to an absolute number — the same rule, and for the
-        // same reason, as the one `glue_faces` welds frozen corners by.
-        let reach = (0..4)
-            .map(|k| apart(quad[k], quad[(k + 1) % 4]))
-            .fold(0.0, f64::max);
-        let slack = 1e-6 * reach.max(f64::MIN_POSITIVE);
-
-        let mut welded = 0;
-        for slot in 0..4 {
-            // Recomputed each time round: a weld merges orbits, so which
-            // dart stands for a face can change under us.
-            let mine: [FaceIdType; 6] =
-                [0, 1, 2, 3, 4, 5].map(|f| self.map.face_id(first + 4 * f as DartIdType));
-            let side = self.lateral(first, slot);
-            let Some(face) = self.face_by_id(side) else {
-                continue;
-            };
-            let (here, there) = (
-                self.map.vertex_id(corner_dart(first, slot)),
-                self.map.vertex_id(corner_dart(first, (slot + 1) % 4)),
-            );
-            let Some(ours) = self.leaning(face, here, there) else {
-                continue;
-            };
-
-            // Every node sitting on either of the two points, this slab's
-            // own among them — a weld already done has merged ours into the
-            // neighbour's, and excluding them by name would then hide the
-            // edge the next side needs.
-            let (mut at_here, mut at_there) = (Vec::new(), Vec::new());
-            for v in self.map_vertices() {
-                let Some(p) = self.position_of(v) else {
-                    continue;
-                };
-                if apart(quad[slot], p) <= slack {
-                    at_here.push(v);
-                }
-                if apart(quad[(slot + 1) % 4], p) <= slack {
-                    at_there.push(v);
-                }
-            }
-
-            // The edges joining one point to the other. More than one when
-            // slabs lie coincident and unwelded.
-            let mut edges: Vec<EdgeIdType> = Vec::new();
-            for v in at_here {
-                for d in self.map.orbit(OrbitPolicy::Vertex, v) {
-                    let e = self.map.edge_id(d);
-                    let (a, b) = self.edge_endpoints_of(e);
-                    if at_there.contains(&a) || at_there.contains(&b) {
-                        edges.push(e);
-                    }
-                }
-            }
-            edges.sort_unstable();
-            edges.dedup();
-
-            let mut best: Option<(f64, CellId)> = None;
-            let mut leaning_our_way = 0;
-            for e in edges {
-                let (a, b) = self.edge_endpoints_of(e);
-                for f in self.faces_around(e) {
-                    if mine.contains(&f) || self.map.beta::<3>(f as DartIdType) != NULL_DART_ID {
-                        continue;
-                    }
-                    let Some(theirs) = self.leaning(f, a, b) else {
-                        continue;
-                    };
-                    let along = (0..3).map(|k| ours[k] * theirs[k]).sum::<f64>();
-                    if along <= 0.5 {
-                        continue;
-                    }
-                    leaning_our_way += 1;
-                    if best.is_none_or(|(most, _)| along > most) {
-                        best = Some((along, self.face_tag_of(f).id));
-                    }
-                }
-            }
-
-            // Nothing there, or no way to choose: leave the side free.
-            if leaning_our_way != 1 {
-                continue;
-            }
-            let (_, against) = best.expect("one face leaning our way");
-            self.glue_onto(against, side)?;
-            welded += 1;
-        }
-        Ok(welded)
-    }
-
-    /// Which way a face leans away from one of its edges: from the middle of
-    /// that edge toward the middle of the two corners that are not on it,
-    /// as a unit vector.
-    ///
-    /// What tells a slab's thin side from the broad face it was laid on,
-    /// when both run along the same edge.
-    fn leaning(&self, face: FaceIdType, from: VertexIdType, to: VertexIdType) -> Option<[f64; 3]> {
-        let mut on = Vec::with_capacity(2);
-        let mut off = Vec::with_capacity(2);
-        for c in self.face_corners(face) {
-            if c == from || c == to {
-                on.push(c);
-            } else {
-                off.push(c);
-            }
-        }
-        if on.len() != 2 {
-            return None;
-        }
-        let (a, b) = (self.middle(&on), self.middle(&off));
-        let v = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-        let length = (0..3).map(|k| v[k] * v[k]).sum::<f64>().sqrt();
-        (length > 0.0).then(|| v.map(|x| x / length))
-    }
-
-    /// A single quadrangular face, standing on its own.
-    ///
-    /// Not a block: four darts, a β₁ cycle, and β₂ left **null** all the way
-    /// round, which is what an open sheet of faces is made of. β₃ is never
-    /// touched — in a 3-map β₂ joins two faces *of one volume* and β₃ joins
-    /// two volumes, so faces welded edge to edge are welded by β₂ and are
-    /// therefore, in the map's eyes, one volume.
-    ///
-    /// That is not a trick played on the map; it is what the map already
-    /// says. A connected component of faces **is** a volume orbit, which is
-    /// why it has a name of its own without anybody keeping a list, and why
-    /// [`is_block`][Self::is_block_of] can tell the two apart by asking whether
-    /// the shell closes.
-    ///
-    /// The corners are taken anticlockwise seen from the side the face
-    /// faces; [`quad_normal`] is what that means in arithmetic.
-    ///
-    /// Whatever it was laid **against** it is welded to: see
-    /// [`weld_sheet`][Self::weld_sheet]. Laying one quadrangle after another
-    /// along a surface therefore builds one patch, which
-    /// [`extrude_patch`][Self::extrude_patch] raises into blocks of a single
-    /// height.
     pub fn add_face(&mut self, corners: [[f64; 3]; 4]) -> Result<CellId, BlockingError> {
-        let base = self.build_face(corners)?;
-        self.assign_missing_ids();
-        Ok(self.face_tag_of(self.map.face_id(base)).id)
+        let nodes: [NodeId; 4] = corners.map(|at| {
+            let born = self.nodes.handed_out();
+            self.nodes.insert(Node {
+                at,
+                on: None,
+                frozen: false,
+                born,
+            })
+        });
+        let edges: [EdgeId; 4] = [0, 1, 2, 3].map(|k| {
+            self.edges.insert(Edge {
+                ends: [nodes[k], nodes[(k + 1) % 4]],
+                segments: 0,
+                on: None,
+            })
+        });
+        // No side at all, which is what an open sheet is: a face that
+        // bounds no block. `Face.sides` holding none is the whole of what
+        // overturning the note's first decision cost the structure.
+        let face = self.faces.insert(Face {
+            nodes,
+            edges,
+            sides: [None, None],
+            on: None,
+        });
+        self.forget();
+        Ok(self.face_name(face))
     }
 
-    /// The quadrangle itself: four darts, a β₁ cycle, β₂ null all round,
-    /// positions and corner keys written, and nothing named yet.
-    fn build_face(&mut self, corners: [[f64; 3]; 4]) -> Result<DartIdType, BlockingError> {
-        let base = self.map.allocate_used_darts(4);
-        for slot in 0..4 {
-            self.map.link::<1>(
-                base + slot as DartIdType,
-                base + ((slot + 1) % 4) as DartIdType,
-            )?;
-        }
-        for (slot, point) in corners.iter().enumerate() {
-            let vertex = self.map.vertex_id(base + slot as DartIdType);
-            self.map
-                .write_vertex(vertex, (point[0], point[1], point[2]));
-            self.map.write_attribute(
-                vertex,
-                NodeTag {
-                    id: CellId::NONE,
-                    corner_key: self.corners.next_corner(),
-                    on: None,
-                    frozen: false,
-                },
-            );
-        }
-        Ok(base)
-    }
-
-    /// A quadrangle laid on four points, **welded to what it was laid
-    /// against**.
-    ///
-    /// [`add_face`][Self::add_face] is the same quadrangle standing on its
-    /// own, which is what `Q` builds from a surface's own corners: welding
-    /// those to each other would make six of them a closed shell, and a
-    /// closed shell is a block, so a user who laid one per face of a box
-    /// could no longer extrude any of them. Laying one by hand is the other
-    /// case — it is laid *against* the model on purpose — and that is this.
-    ///
-    /// Lay one after another along a surface and what grows is one patch,
-    /// which [`extrude_patch`][Self::extrude_patch] raises into blocks of a
-    /// single height, one step per node along the mitre, welded along every
-    /// shared edge.
     pub fn lay_face(&mut self, corners: [[f64; 3]; 4]) -> Result<Sheet, BlockingError> {
         // Two points are "the same point" relative to the size of the thing
         // being laid, as everywhere else here.
@@ -508,283 +1839,126 @@ impl Blocking {
             .fold(0.0, f64::max);
         let slack = 1e-6 * reach.max(f64::MIN_POSITIVE);
 
-        // Wound to agree with whatever it is laid against, before a dart
-        // exists. β₂ joins two darts traversing one edge in **opposite**
-        // directions, so a quadrangle wound the other way from its neighbour
-        // cannot be welded to it at all — and a sheet has no inside, so
-        // which way round it is says nothing anybody meant. The clicks
-        // therefore do not decide it: the neighbours do.
-        let order = if self.facing(corners, slack) {
+        // Wound to agree with whatever it is laid against, before a cell
+        // exists. Two adjacent faces of a consistently wound sheet traverse
+        // the side they share in **opposite** directions, so a neighbour
+        // running the same way as this quadrangle would is a vote for
+        // turning it. A sheet has no inside, so which way round it is says
+        // nothing anybody meant: the clicks do not decide it, the
+        // neighbours do.
+        let (mut given, mut turned) = (0, 0);
+        for k in 0..4 {
+            if let Some((_, _, _, same)) = self.shareable(corners[k], corners[(k + 1) % 4], slack) {
+                if same {
+                    turned += 1;
+                } else {
+                    given += 1;
+                }
+            }
+        }
+        let order = if turned > given {
             [0, 3, 2, 1]
         } else {
             [0, 1, 2, 3]
         };
         let wound = order.map(|k| corners[k]);
 
-        let base = self.build_face(wound)?;
-        // Named before the welding, and not only after: a weld merges this
-        // quadrangle's edge and volume with the neighbour's, and honeycomb
-        // refuses to merge an attribute one of the two sides has not got.
-        self.assign_missing_ids();
-        let welded = self.weld_sheet(base, wound, slack)?;
-        self.assign_missing_ids();
+        // What each side shares, if anything. Found before anything is
+        // made, so that the corners can be the neighbour's own.
+        let shared: [Option<(EdgeId, NodeId, NodeId, bool)>; 4] =
+            [0, 1, 2, 3].map(|k| self.shareable(wound[k], wound[(k + 1) % 4], slack));
 
-        // Read after the welding, so that a corner swallowed by a weld comes
-        // back as the node that swallowed it and a caller may go straight on
-        // to say what each of them is lying on — and in the order the
-        // **points** were given, whichever way round the quadrangle ended up
-        // wound, because that is the order the caller counts in.
-        let face = self.face_tag_of(self.map.face_id(base)).id;
+        // A corner is the neighbour's node when either side at it is
+        // shared; otherwise it is new.
+        let mut nodes = [None; 4];
+        for k in 0..4 {
+            if let Some((_, from, to, _)) = shared[k] {
+                nodes[k] = Some(from);
+                nodes[(k + 1) % 4] = Some(to);
+            }
+        }
+        let nodes: [NodeId; 4] = [0, 1, 2, 3].map(|k| {
+            nodes[k].unwrap_or_else(|| {
+                let born = self.nodes.handed_out();
+                self.nodes.insert(Node {
+                    at: wound[k],
+                    on: None,
+                    frozen: false,
+                    born,
+                })
+            })
+        });
+        let edges: [EdgeId; 4] = [0, 1, 2, 3].map(|k| match shared[k] {
+            Some((edge, _, _, _)) => edge,
+            None => self.edges.insert(Edge {
+                ends: [nodes[k], nodes[(k + 1) % 4]],
+                segments: 0,
+                on: None,
+            }),
+        });
+        let welded = shared.iter().flatten().count();
+
+        let face = self.faces.insert(Face {
+            nodes,
+            edges,
+            sides: [None, None],
+            on: None,
+        });
+        self.forget();
+
+        // In the order the **points** were given, whichever way round the
+        // quadrangle ended up wound, because that is the order the caller
+        // counts in.
         let mut by_point = [CellId::NONE; 4];
-        for (slot, &point) in order.iter().enumerate() {
-            by_point[point] = self
-                .node_tag_of(self.map.vertex_id(base + slot as DartIdType))
-                .id;
+        for (slot, point) in order.iter().enumerate() {
+            by_point[*point] = self.node_name(nodes[slot]);
         }
         Ok(Sheet {
-            face,
+            face: self.face_name(face),
             corners: by_point,
             welded,
         })
     }
 
-    /// Whether a quadrangle about to be laid should be wound the other way
-    /// round to agree with its neighbours.
-    ///
-    /// Each side that has a free edge between its two points votes: one
-    /// running the other way wants the quadrangle as it was given, one
-    /// running the same way wants it turned. The majority carries, and a tie
-    /// — no neighbours at all, or a sheet that cannot be oriented — leaves
-    /// it as it was given.
-    fn facing(&self, quad: [[f64; 3]; 4], slack: f64) -> bool {
-        let (mut given, mut turned) = (0, 0);
-        for slot in 0..4 {
-            for (_, opposite) in self.free_along(quad[slot], quad[(slot + 1) % 4], slack, &[]) {
-                if opposite {
-                    given += 1;
-                } else {
-                    turned += 1;
-                }
-            }
-        }
-        turned > given
-    }
-
-    /// The model's free darts running along an edge between two points, each
-    /// with whether it runs **the other way** round — from `to` to `from`,
-    /// which is the way β₂ wants.
-    ///
-    /// Free meaning β₂ is null: an edge with a face on each side already has
-    /// everything it can be welded to. The points are matched by where they
-    /// are rather than by name, because a weld already done has merged one
-    /// of the caller's own corners into a neighbour's.
-    fn free_along(
-        &self,
-        from: [f64; 3],
-        to: [f64; 3],
-        slack: f64,
-        mine: &[DartIdType],
-    ) -> Vec<(DartIdType, bool)> {
-        let (mut at_from, mut at_to) = (Vec::new(), Vec::new());
-        for v in self.map_vertices() {
-            let Some(p) = self.position_of(v) else {
-                continue;
-            };
-            if apart(from, p) <= slack {
-                at_from.push(v);
-            }
-            if apart(to, p) <= slack {
-                at_to.push(v);
-            }
-        }
-
-        let mut out: Vec<(DartIdType, bool)> = Vec::new();
-        for v in at_from.iter().chain(at_to.iter()) {
-            for d in self.map.orbit(OrbitPolicy::Vertex, *v) {
-                if mine.contains(&d) || self.map.beta::<2>(d) != NULL_DART_ID {
-                    continue;
-                }
-                let (a, b) = (
-                    self.map.vertex_id(d),
-                    self.map.vertex_id(self.map.beta::<1>(d)),
-                );
-                if at_to.contains(&a) && at_from.contains(&b) {
-                    out.push((d, true));
-                } else if at_from.contains(&a) && at_to.contains(&b) {
-                    out.push((d, false));
-                }
-            }
-        }
-        out.sort_unstable();
-        out.dedup();
-        out
-    }
-
-    /// Weld a quadrangle just laid to the edges it was laid against.
-    ///
-    /// A side is welded when the two points it was laid on were **both
-    /// already nodes of the model**, an edge joins them, and that edge has
-    /// **no face on its other side**. Clicking two of a neighbour's handles
-    /// makes all three true.
-    ///
-    /// There is no question of *which* face to weld to, and that is why this
-    /// is simpler than the same thing for a slab
-    /// ([`weld_slab`][Self::weld_slab]): a side of an open sheet carries one
-    /// face, so a free edge between two given points is the answer or there
-    /// is none. The refusal survives as a count — two coincident sheets put
-    /// two free edges between the same two points, and then the side is left
-    /// free rather than welded to a guess — but no geometry is consulted to
-    /// choose, and no threshold.
-    ///
-    /// β₂, not β₃: in a 3-map β₂ joins two faces of one volume, so faces
-    /// welded edge to edge are, in the map's eyes, one volume. Which is what
-    /// a patch is.
-    ///
-    /// The quadrangle just laid is the one that gives way. Its two corners
-    /// take the positions of the nodes they are meeting — honeycomb merges
-    /// two vertices by averaging them, so without that the model would be
-    /// pulled half a rounding error on every weld — and the merged node and
-    /// edge are written back with the **old** cell's name, class and freeze,
-    /// rather than left to a merge policy that would hand a neighbour's
-    /// corner a fresh name.
-    fn weld_sheet(
-        &mut self,
-        base: DartIdType,
-        quad: [[f64; 3]; 4],
-        slack: f64,
-    ) -> Result<usize, BlockingError> {
-        let mine: Vec<DartIdType> = (0..4).map(|k| base + k as DartIdType).collect();
-        let mut welded = 0;
-        for slot in 0..4 {
-            let along = self.free_along(quad[slot], quad[(slot + 1) % 4], slack, &mine);
-            // Only the ones running the other way are candidates at all; a
-            // free edge running the same way cannot be sewn to this one
-            // whatever anybody wants.
-            let facing: Vec<DartIdType> = along
-                .into_iter()
-                .filter(|(_, opposite)| *opposite)
-                .map(|(d, _)| d)
-                .collect();
-            // Nothing there, or no way to choose: leave the side free.
-            let [against] = facing[..] else {
-                continue;
-            };
-
-            // Everything the old cells say, read before anything moves.
-            let ours = base + slot as DartIdType;
-            let theirs = self.map.beta::<1>(against);
-            let (tag_from, tag_to) = (
-                self.node_tag_of(self.map.vertex_id(theirs)),
-                self.node_tag_of(self.map.vertex_id(against)),
-            );
-            let edge = self.edge_tag_of(self.map.edge_id(against));
-            let (p_from, p_to) = (
-                self.position_of(self.map.vertex_id(theirs)),
-                self.position_of(self.map.vertex_id(against)),
-            );
-
-            // The new corners come onto the old ones before the sew, so that
-            // the averaging the merge does lands back where the model was.
-            for (dart, at) in [(ours, p_from), (self.map.beta::<1>(ours), p_to)] {
-                if let Some(at) = at {
-                    self.map
-                        .write_vertex(self.map.vertex_id(dart), (at[0], at[1], at[2]));
-                }
-            }
-            self.map.sew::<2>(ours, against)?;
-
-            // And what the old cells said, said again over whatever the
-            // merge decided.
-            self.map.write_attribute(self.map.vertex_id(ours), tag_from);
-            self.map
-                .write_attribute(self.map.vertex_id(self.map.beta::<1>(ours)), tag_to);
-            self.map.write_attribute(self.map.edge_id(ours), edge);
-            welded += 1;
-        }
-        Ok(welded)
-    }
-
-    /// A face's four corners and four edges, in the order β₁ walks them.
-    ///
-    /// Edge `k` joins corner `k` to corner `k + 1`, which is what lets a
-    /// caller that built the face from a list of points say what each of
-    /// its sides is on without going looking for one by where it is.
     pub fn face_cells(&self, face: CellId) -> Option<([CellId; 4], [CellId; 4])> {
-        let f = self.face_by_id(face)?;
-        let darts = self.face_darts(f);
+        let id = self.face_at(face)?;
+        let f = self.faces.get(id)?;
         Some((
-            darts.map(|d| self.node_tag_of(self.map.vertex_id(d)).id),
-            darts.map(|d| self.edge_tag_of(self.map.edge_id(d)).id),
+            f.nodes.map(|n| self.node_name(n)),
+            f.edges.map(|e| self.edge_name(e)),
         ))
     }
 
-    /// A mark for "every node that exists now".
-    ///
-    /// Read before a command and handed back to [`nodes_since`] after it,
-    /// which is how the session tells a node an operation **made** from one
-    /// it merely renamed. The name is no good for that: taking a block out
-    /// splits the vertex orbits around it, and every copy comes out
-    /// unnamed and is given a fresh name afterwards, though nothing new
-    /// was created. The corner key is the identity that survives exactly
-    /// that, which is what it was written for.
-    ///
-    /// [`nodes_since`]: Self::nodes_since
     pub fn corner_mark(&self) -> u32 {
-        self.corners.handed_out()
+        self.nodes.handed_out()
     }
 
-    /// The nodes whose corner was made at or after `mark`.
     pub fn nodes_since(&self, mark: u32) -> Vec<CellId> {
         let mut out: Vec<CellId> = self
-            .map_vertices()
-            .into_iter()
-            .filter(|v| {
-                self.node_tag_of(*v)
-                    .corner_key
-                    .get()
-                    .is_some_and(|key| key >= mark)
-            })
-            .map(|v| self.node_tag_of(v).id)
-            .filter(|id| id.is_some())
+            .nodes
+            .iter()
+            .filter(|(_, node)| node.born >= mark)
+            .map(|(id, _)| self.node_name(id))
             .collect();
-        // By name, so that two hosts walking the same model reach the same
-        // answers in the same order.
-        out.sort();
+        out.sort_unstable();
         out
     }
 
-    /// Every block of the structure, by name. Patches are left out: an
-    /// open sheet of faces is not a block and cannot be in a group.
     pub fn blocks(&self) -> Vec<CellId> {
-        let mut out: Vec<CellId> = self
-            .map_volumes()
-            .into_iter()
-            .filter(|v| self.is_block_of(*v))
-            .map(|v| self.block_tag_of(v).id)
-            .filter(|id| id.is_some())
-            .collect();
-        out.sort();
-        out
+        self.blocks.ids().map(|id| self.block_name(id)).collect()
     }
 
-    /// Which groups a block is in.
     pub fn block_groups(&self, block: CellId) -> u64 {
-        self.block_by_id(block)
-            .map(|v| self.block_tag_of(v).groups)
-            .unwrap_or(0)
+        self.block_at(block)
+            .and_then(|id| self.blocks.get(id))
+            .map_or(0, |b| b.groups)
     }
 
-    /// How many blocks are in each group, by bit: one walk of the volumes
-    /// rather than one per group or one per block.
     pub fn counted_in_groups(&self) -> [usize; 64] {
         let mut out = [0usize; 64];
-        for volume in self.map_volumes() {
-            if !self.is_block_of(volume) {
-                continue;
-            }
-            let groups = self.block_tag_of(volume).groups;
+        for (_, block) in self.blocks.iter() {
             for (bit, count) in out.iter_mut().enumerate() {
-                if groups & (1u64 << bit) != 0 {
+                if block.groups & (1 << bit) != 0 {
                     *count += 1;
                 }
             }
@@ -792,150 +1966,73 @@ impl Blocking {
         out
     }
 
-    /// Put blocks into a group, or take them out of it.
-    ///
-    /// By bit rather than by name: what a group is **called** is no
-    /// business of a block structure, which holds the model and not the
-    /// words for it.
     pub fn set_in_group(
         &mut self,
         blocks: &[CellId],
         bit: u8,
         inside: bool,
     ) -> Result<(), BlockingError> {
-        let mask = 1u64 << bit;
-        let found: Vec<VolumeIdType> = blocks
+        // Every name resolved before anything is written: a refused call
+        // leaves the grouping exactly as it was.
+        let ids = blocks
             .iter()
-            .map(|b| {
-                self.block_by_id(*b)
-                    .filter(|v| self.is_block_of(*v))
-                    .ok_or(BlockingError::NoSuchBlock(*b))
+            .map(|name| {
+                self.block_at(*name)
+                    .ok_or(BlockingError::NoSuchBlock(*name))
             })
-            .collect::<Result<_, _>>()?;
-        for volume in found {
-            let tag = self.block_tag_of(volume);
-            let groups = if inside {
-                tag.groups | mask
+            .collect::<Result<Vec<_>, _>>()?;
+        for id in ids {
+            let block = self.blocks.get_mut(id).expect("just resolved");
+            if inside {
+                block.groups |= 1u64 << bit;
             } else {
-                tag.groups & !mask
-            };
-            self.map.write_attribute(volume, BlockTag { groups, ..tag });
+                block.groups &= !(1u64 << bit);
+            }
         }
         Ok(())
     }
 
-    /// Take one group away from every block that is in it.
     pub fn drop_group(&mut self, bit: u8) {
         let mask = !(1u64 << bit);
-        let blocks: Vec<VolumeIdType> = self.map_volumes();
-        for volume in blocks {
-            let tag = self.block_tag_of(volume);
-            if tag.groups & !mask != 0 {
-                self.map.write_attribute(
-                    volume,
-                    BlockTag {
-                        groups: tag.groups & mask,
-                        ..tag
-                    },
-                );
-            }
+        for id in self.blocks.ids().collect::<Vec<_>>() {
+            self.blocks.get_mut(id).expect("live").groups &= mask;
         }
     }
 
-    /// Which groups every cell of the blocking is in.
-    ///
-    /// A face, an edge or a node is in a group when a block it bounds is
-    /// in it — the transitivity, computed here rather than marked on each
-    /// cell, so that there is one place to write and none to forget. The
-    /// walk skips blocks that are in no group at all, which is every block
-    /// of a model where nobody has made one: the whole pass then costs a
-    /// look at each volume's tag.
     pub fn group_masks(&self) -> GroupMasks {
+        // Nothing grouped means every mask is nought, and that says it
+        // already: the loose sets exist only to answer "does this cell also
+        // bound a block in no group", which is a question nobody asks until
+        // something is grouped.
         let mut out = GroupMasks::default();
-        let mut grouped = false;
-        for volume in self.map_volumes() {
-            let groups = self.block_tag_of(volume).groups;
-            if groups == 0 {
-                continue;
-            }
-            grouped = true;
-            for dart in self.map.orbit(OrbitPolicy::Volume, volume as DartIdType) {
-                let node = self.node_tag_of(self.map.vertex_id(dart)).id;
-                let edge = self.edge_tag_of(self.map.edge_id(dart)).id;
-                *out.nodes.entry(node).or_default() |= groups;
-                *out.edges.entry(edge).or_default() |= groups;
-            }
+        if self.blocks.iter().all(|(_, b)| b.groups == 0) {
+            return out;
         }
-        // A second pass, and only when there is something to tell apart:
-        // which cells touch a block that is in no group. Without it, an
-        // edge between a grouped block and an ungrouped one would go when
-        // the group did, taking a side off the block left behind.
-        if grouped {
-            for volume in self.map_volumes() {
-                if self.block_tag_of(volume).groups != 0 {
-                    continue;
+        for (_, block) in self.blocks.iter() {
+            for node in block.nodes {
+                let name = self.node_name(node);
+                *out.nodes.entry(name).or_default() |= block.groups;
+                if block.groups == 0 {
+                    out.loose_nodes.insert(name);
                 }
-                for dart in self.map.orbit(OrbitPolicy::Volume, volume as DartIdType) {
-                    out.loose_nodes
-                        .insert(self.node_tag_of(self.map.vertex_id(dart)).id);
-                    out.loose_edges
-                        .insert(self.edge_tag_of(self.map.edge_id(dart)).id);
+            }
+            for edge in block.edges {
+                let name = self.edge_name(edge);
+                *out.edges.entry(name).or_default() |= block.groups;
+                if block.groups == 0 {
+                    out.loose_edges.insert(name);
                 }
             }
         }
         out
     }
 
-    /// Is this node joined by an edge to one that is on the geometry?
-    ///
-    /// What tells a node made **into** a classified model from one that
-    /// arrived with a block of its own.
     pub fn beside_the_classified(&self, node: CellId) -> bool {
-        let Some(vertex) = self.node_by_id(node) else {
-            return false;
-        };
-        self.neighbors_of(vertex)
+        self.neighbors(node)
             .into_iter()
-            .any(|other| self.node_tag_of(other).on.is_some())
+            .any(|other| self.node_class(other).is_some())
     }
 
-    /// Move the nodes towards the middle of their neighbors, as far as
-    /// what they are classified on allows.
-    ///
-    /// A **smart Laplacian**, and both halves of that name earn their keep:
-    ///
-    /// * each node goes a **share** of the way to the average of its
-    ///   one-ring, rather than all of it. All of it is what makes a
-    ///   Laplacian oscillate between the two sides of a crease.
-    /// * a move is **taken only if it does not make the worst corner of the
-    ///   cells round that node any worse**. Laplacian smoothing on a
-    ///   concave boundary happily turns cells inside out; this is what
-    ///   stops it, and it is why the operation can be handed to somebody
-    ///   who has not studied it.
-    ///
-    /// Who may move at all, and how far, is the **classification**:
-    ///
-    /// | the node | what it does |
-    /// | --- | --- |
-    /// | frozen | stays |
-    /// | on a geometric corner | stays, its entity being a point |
-    /// | on a curve, or a side | moves, then is projected onto it |
-    /// | on a surface | moves, then is projected onto it |
-    /// | on the blocking's boundary, classified on nothing | stays |
-    /// | inside, classified on nothing | moves freely |
-    ///
-    /// The last two are the pair that matters. An interior node has blocks
-    /// all round it and nothing to fall off; a boundary node with no
-    /// classification has no surface to be kept on, and moving it would
-    /// pull the blocking away from the model it is meant to follow.
-    ///
-    /// Nodes are visited **by name**, and each move is applied before the
-    /// next is worked out — Gauss-Seidel, which settles faster than
-    /// averaging everything first and, because the order is the naming
-    /// order, gives the same answer in both façades.
-    ///
-    /// Returns the furthest any one node moved, which is what tells a
-    /// caller whether another round is worth it.
     pub fn smooth(
         &mut self,
         how: Smoothing<'_>,
@@ -947,44 +2044,44 @@ impl Blocking {
         }
         let held: HashSet<CellId> = how.held.iter().copied().collect();
 
-        // By name, so the order does not depend on how the map happened to
-        // lay its darts out.
-        let mut movable: Vec<(CellId, VertexIdType)> = self
-            .map_vertices()
-            .into_iter()
-            .map(|v| (self.node_tag_of(v).id, v))
-            .filter(|(name, v)| {
-                let tag = self.node_tag_of(*v);
-                !tag.frozen
-                    && !held.contains(name)
+        // By name, so the order does not depend on where anything happens
+        // to sit in an arena.
+        let mut movable: Vec<(CellId, NodeId)> = self
+            .nodes
+            .iter()
+            .filter(|(_, node)| {
+                !node.frozen
                     // A point is a point: a node on a geometric corner has
                     // one place to be.
-                    && tag.on.is_none_or(|on| on.dim > 0)
-                    // And the pair above: free inside, held on the boundary.
-                    && (tag.on.is_some() || !self.on_the_surface_of(*v))
+                    && node.on.is_none_or(|on| on.dim > 0)
+            })
+            .map(|(id, _)| (self.node_name(id), id))
+            .filter(|(name, id)| {
+                !held.contains(name)
+                    // Free inside, held on the boundary.
+                    && (self.nodes.get(*id).expect("live").on.is_some()
+                        || !self.on_the_surface(*name))
             })
             .collect();
         movable.sort_by_key(|(name, _)| *name);
 
         let mut furthest = 0.0f64;
         for _ in 0..how.rounds {
-            for &(_, v) in &movable {
-                let ring = self.neighbors_of(v);
+            for &(name, id) in &movable {
+                let ring: Vec<[f64; 3]> = self
+                    .neighbors(name)
+                    .into_iter()
+                    .filter_map(|other| self.position(other))
+                    .collect();
                 if ring.is_empty() {
                     continue;
                 }
-                let from = self.position_of(v).unwrap_or([0.0; 3]);
-                let mut middle = [0.0; 3];
-                for other in &ring {
-                    let p = self.position_of(*other).unwrap_or([0.0; 3]);
-                    for k in 0..3 {
-                        middle[k] += p[k] / ring.len() as f64;
-                    }
-                }
+                let from = self.nodes.get(id).expect("live").at;
+                let middle = self.middle(&ring);
                 let mut to = [0, 1, 2].map(|k| from[k] + (middle[k] - from[k]) * share);
                 // Back onto whatever it follows, before anybody judges it:
                 // the point to weigh is the one the node would end up at.
-                if let Some(on) = self.node_tag_of(v).on {
+                if let Some(on) = self.nodes.get(id).expect("live").on {
                     if let Some(onto) = project(on, to) {
                         to = onto;
                     }
@@ -994,13 +2091,13 @@ impl Blocking {
                     continue;
                 }
 
-                let before = self.worst_corner_at(v);
-                self.map.write_vertex(v, (to[0], to[1], to[2]));
-                if self.worst_corner_at(v) < before {
+                let before = self.worst_corner_at(id);
+                self.nodes.get_mut(id).expect("live").at = to;
+                if self.worst_corner_at(id) < before {
                     // Not an improvement. A Laplacian on a concave
                     // boundary would have taken it and turned a cell
                     // inside out.
-                    self.map.write_vertex(v, (from[0], from[1], from[2]));
+                    self.nodes.get_mut(id).expect("live").at = from;
                     continue;
                 }
                 furthest = furthest.max(step);
@@ -1009,662 +2106,192 @@ impl Blocking {
         furthest
     }
 
-    /// The worst corner of everything this node is a corner of.
-    ///
-    /// For a block, the **scaled Jacobian** at each of its eight corners:
-    /// the volume of the three edges leaving a corner over the product of
-    /// their lengths, which is 1 at a right-angled corner, 0 where three
-    /// edges fall into a plane, and negative where the cell is inside out.
-    /// For a face of a patch, the same thing a dimension down.
-    ///
-    /// All eight corners of each block, not just this node's: moving one
-    /// corner changes the shape at every other.
-    fn worst_corner_at(&self, node: VertexIdType) -> f64 {
-        let mut worst = f64::INFINITY;
-        let mut blocks: Vec<VolumeIdType> = self
-            .map
-            .orbit(OrbitPolicy::Vertex, node as DartIdType)
-            .map(|d| self.map.volume_id(d))
-            .collect();
-        blocks.sort_unstable();
-        blocks.dedup();
-        for volume in blocks {
-            if let Some(corners) = self.hex_corners_of(volume) {
-                let at = corners.map(|c| self.position_of(c).unwrap_or([0.0; 3]));
-                for (corner, sides) in HEX_CORNER_EDGES.iter().enumerate() {
-                    worst = worst.min(scaled_jacobian(at[corner], sides.map(|s| at[s])));
-                }
-            }
-        }
-        // The faces of a patch, which can fold without any block being
-        // involved at all.
-        let mut faces: Vec<FaceIdType> = self
-            .map
-            .orbit(OrbitPolicy::Vertex, node as DartIdType)
-            .map(|d| self.map.face_id(d))
-            .collect();
-        faces.sort_unstable();
-        faces.dedup();
-        for face in faces {
-            if self.is_block_of(self.map.volume_id(face as DartIdType)) {
-                continue;
-            }
-            let corners = self.face_corners(face);
-            let at = corners.map(|c| self.position_of(c).unwrap_or([0.0; 3]));
-            for k in 0..4 {
-                worst = worst.min(flatness(at[k], at[(k + 3) % 4], at[(k + 1) % 4]));
-            }
-        }
-        if worst.is_finite() {
-            worst
-        } else {
-            // A node that is a corner of nothing cannot be made worse.
-            0.0
-        }
-    }
-
-    /// The eight corners of a block, in [`HEX_FACES`] order.
-    ///
-    /// The walk the mesher does to read a hexahedron, which smoothing needs
-    /// as well: it has to look at what a move would do to the blocks round
-    /// a node, and it cannot ask for every block in the model to find four
-    /// of them.
-    ///
-    /// Nothing for a patch: the walk crosses β₂ to find the corner above
-    /// one of its own, and an open sheet has none.
-    fn hex_corners_of(&self, volume: VolumeIdType) -> Option<[VertexIdType; 8]> {
-        if !self.is_block_of(volume) {
-            return None;
-        }
-        let mut ring = [volume as DartIdType; 4];
-        for k in 1..4 {
-            ring[k] = self.map.beta::<1>(ring[k - 1]);
-        }
-        let up = ring.map(|d| self.map.beta::<1>(self.map.beta::<2>(d)));
-        let at = |d| self.map.vertex_id(d);
-        let end = |d| self.map.vertex_id(self.map.beta::<1>(d));
-        Some([
-            at(ring[0]),
-            at(ring[3]),
-            at(ring[2]),
-            at(ring[1]),
-            end(up[0]),
-            end(up[3]),
-            end(up[2]),
-            end(up[1]),
-        ])
-    }
-
-    /// The nodes an edge of the blocking joins to this one — its one-ring.
-    ///
-    /// What a Laplacian averages. Read off the vertex's own orbit, so a
-    /// node shared by several blocks has each of its neighbors once
-    /// however many blocks it is shared by.
-    fn neighbors_of(&self, node: VertexIdType) -> Vec<VertexIdType> {
-        let mut out: Vec<VertexIdType> = self
-            .map
-            .orbit(OrbitPolicy::Vertex, node as DartIdType)
-            .map(|d| self.map.vertex_id(self.map.beta::<1>(d)))
-            .collect();
-        out.sort_unstable();
-        out.dedup();
-        out.retain(|v| *v != node);
-        out
-    }
-
-    /// Whether this node is on the **blocking's** own boundary: some face
-    /// at it has nothing glued behind.
-    ///
-    /// Read off the map, not off the geometry. It is what tells a node that
-    /// may be smoothed freely from one that may not: an interior node has
-    /// blocks all round it and nowhere to go wrong, while one on the
-    /// boundary and classified on nothing has no surface to be kept on, so
-    /// moving it would pull the blocking off the model.
-    ///
-    /// Every node of a patch is one, which is the right answer: an open
-    /// sheet of faces is all boundary.
-    fn on_the_surface_of(&self, node: VertexIdType) -> bool {
-        self.map
-            .orbit(OrbitPolicy::Vertex, node as DartIdType)
-            .any(|d| self.map.beta::<3>(d) == NULL_DART_ID)
-    }
-
-    /// Whether this volume is a **block** — a shell that closes — rather
-    /// than a **patch**: an open sheet of faces.
-    ///
-    /// Asked of the topology rather than kept in a flag, because a flag can
-    /// come to disagree with the structure it describes and this cannot. A
-    /// block has a β₂ partner for every one of its darts; an open sheet has
-    /// a boundary, and a boundary is exactly where β₂ is null.
-    ///
-    /// Six faces welded into a closed box therefore *are* a block, which is
-    /// the right answer rather than a loophole.
-    pub(crate) fn is_block_of(&self, volume: VolumeIdType) -> bool {
-        self.map
-            .orbit(OrbitPolicy::Volume, volume as DartIdType)
-            .all(|d| self.map.beta::<2>(d) != NULL_DART_ID)
-    }
-
-    /// Every patch: the connected components of faces that are not blocks.
     pub fn patches(&self) -> Vec<CellId> {
-        self.map_volumes()
+        self.patch_components()
             .into_iter()
-            .filter(|v| !self.is_block_of(*v))
-            .map(|v| self.block_tag_of(v).id)
+            .map(|faces| self.face_name(faces[0]))
             .collect()
     }
 
-    /// The same, and **which dart each face starts at**.
-    ///
-    /// The darts are allocated in one run, [`HEX_FACES`] in order, four to a
-    /// face — so a caller that built the corners itself knows which of the
-    /// six faces is which without going looking for one by where it is. That
-    /// matters: matching a face by position is what the sheet removal got
-    /// wrong, and it was wrong for the same reason it would be wrong here.
-    fn build_block(
-        &mut self,
-        corners: [[f64; 3]; 8],
-    ) -> Result<(CellId, DartIdType), BlockingError> {
-        let base = self.map.allocate_used_darts(DARTS_PER_BLOCK);
-        let dart = |face: usize, slot: usize| base + (face * 4 + slot) as DartIdType;
-
-        // β₁ walks each face round its four darts.
-        for face in 0..6 {
-            for slot in 0..4 {
-                self.map
-                    .link::<1>(dart(face, slot), dart(face, (slot + 1) % 4))?;
-            }
-        }
-
-        // β₂ joins the two darts that traverse one edge in opposite directions.
-        // Each is visited once, by only acting on the half with the lower
-        // corner first.
-        let mut by_edge: HashMap<(usize, usize), DartIdType> = HashMap::new();
-        for (face, corners) in HEX_FACES.iter().enumerate() {
-            for slot in 0..4 {
-                by_edge.insert((corners[slot], corners[(slot + 1) % 4]), dart(face, slot));
-            }
-        }
-        for (face, corners) in HEX_FACES.iter().enumerate() {
-            for slot in 0..4 {
-                let (from, to) = (corners[slot], corners[(slot + 1) % 4]);
-                if from < to {
-                    self.map.link::<2>(dart(face, slot), by_edge[&(to, from)])?;
-                }
-            }
-        }
-
-        // Positions and corner keys, once the orbits they belong to exist.
-        for (corner, point) in corners.iter().enumerate() {
-            let d = HEX_FACES
-                .iter()
-                .enumerate()
-                .find_map(|(f, corners)| {
-                    corners
-                        .iter()
-                        .position(|c| *c == corner)
-                        .map(|s| dart(f, s))
-                })
-                .expect("every corner of a hexahedron is on some face");
-            let vertex = self.map.vertex_id(d);
-            self.map
-                .write_vertex(vertex, (point[0], point[1], point[2]));
-            self.map.write_attribute(
-                vertex,
-                NodeTag {
-                    id: CellId::NONE,
-                    corner_key: self.corners.next_corner(),
-                    on: None,
-                    frozen: false,
-                },
-            );
-        }
-
-        // Only the new block can be unnamed: nothing else was touched.
-        self.name_cells_near(OrbitPolicy::Volume, base);
-        Ok((self.block_tag_of(self.map.volume_id(base)).id, base))
-    }
-
-    /// Hand a name to every cell that does not have one.
-    ///
-    /// Separate from the operations that create cells, because that is the only
-    /// arrangement that stays correct: an edit splits and merges cells as a side
-    /// effect of changing topology, and asking each edit to name what it
-    /// happened to create is how a cell ends up with two names or none.
     pub fn assign_missing_ids(&mut self) {
-        self.name_cells(None);
+        // Nothing is ever unnamed: a cell's name is the slot it is in. The
+        // map needed this because sewing and unsewing split and merged
+        // orbits as a side effect, leaving cells nobody had named.
     }
 
-    /// The same naming, but only among the cells one orbit runs through —
-    /// which is all that laying one block or sewing one face can have left
-    /// unnamed.
-    ///
-    /// Those two are called once per block and once per face glued: a
-    /// pillow along a chord of a hundred-and-fifty-block grid does eighty
-    /// of them, and a sweep of the whole map apiece is where its time went.
-    ///
-    /// The lists are in ascending order, as a sweep of the whole map would
-    /// hand them over, so the **names come out the same** either way. That
-    /// matters: a name is what a script says, and renumbering would make
-    /// every script written before mean something else.
-    fn name_cells_near(&mut self, policy: OrbitPolicy, dart: DartIdType) {
-        self.name_cells(Some((policy, dart)));
-    }
-
-    /// The cells of each dimension that one orbit runs through, each named
-    /// by the dart the map names it by, in ascending order.
-    fn cells_near(&self, policy: OrbitPolicy, dart: DartIdType) -> [Vec<DartIdType>; 4] {
-        atomically(|t| {
-            // The orbit's own iterator holds the transaction while it runs,
-            // so the walk comes first and the questions after.
-            let mut darts: Vec<DartIdType> = Vec::new();
-            for d in self.map.orbit_tx(t, policy.clone(), dart) {
-                darts.push(d?);
-            }
-            let mut out: [Vec<DartIdType>; 4] = Default::default();
-            for d in darts {
-                let cells = [
-                    self.map.vertex_id_tx(t, d)?,
-                    self.map.edge_id_tx(t, d)?,
-                    self.map.face_id_tx(t, d)?,
-                    self.map.volume_id_tx(t, d)?,
-                ];
-                for (slot, cell) in out.iter_mut().zip(cells) {
-                    if !slot.contains(&cell) {
-                        slot.push(cell);
-                    }
-                }
-            }
-            for slot in out.iter_mut() {
-                slot.sort_unstable();
-            }
-            Ok(out)
-        })
-    }
-
-    fn name_cells(&mut self, near: Option<(OrbitPolicy, DartIdType)>) {
-        let [every_node, every_edge, every_face, every_block] = match near {
-            Some((policy, dart)) => self.cells_near(policy, dart),
-            None => [
-                self.map_vertices(),
-                self.map_edges(),
-                self.map_faces(),
-                self.map_volumes(),
-            ],
-        };
-        let nodes: Vec<_> = every_node
-            .into_iter()
-            .filter(|v| self.node_tag_of(*v).id.is_none())
-            .collect();
-        for v in nodes {
-            let tag = self.node_tag_of(v);
-            let id = self.names[0].next_cell();
-            self.map.write_attribute(v, NodeTag { id, ..tag });
-            self.seen.nodes.insert(id, v);
-        }
-
-        let edges: Vec<_> = every_edge
-            .into_iter()
-            .filter(|e| self.edge_tag_of(*e).id.is_none())
-            .collect();
-        for e in edges {
-            let tag = self.edge_tag_of(e);
-            let id = self.names[1].next_cell();
-            // `..tag`, not a fresh one: naming a cell must not quietly undo
-            // what it was classified on.
-            self.map.write_attribute(e, EdgeTag { id, ..tag });
-            self.seen.edges.insert(id, e);
-        }
-
-        let faces: Vec<_> = every_face
-            .into_iter()
-            .filter(|f| self.face_tag_of(*f).id.is_none())
-            .collect();
-        for f in faces {
-            let tag = self.face_tag_of(f);
-            let id = self.names[2].next_cell();
-            self.map.write_attribute(f, FaceTag { id, ..tag });
-            self.seen.faces.insert(id, f);
-        }
-
-        let blocks: Vec<_> = every_block
-            .into_iter()
-            .filter(|b| self.block_tag_of(*b).id.is_none())
-            .collect();
-        for b in blocks {
-            let id = self.names[3].next_cell();
-            let tag = self.block_tag_of(b);
-            self.map.write_attribute(b, BlockTag { id, ..tag });
-            self.seen.blocks.insert(id, b);
-        }
-    }
-
-    /// Move one node.
-    ///
-    /// The node is named by its stable [`CellId`], never by the identifier the
-    /// map derives from darts: that one is rewritten by every edit, so a caller
-    /// holding it between two operations would be pointing at something else.
     pub fn set_position(&mut self, node: CellId, to: [f64; 3]) -> Result<(), BlockingError> {
-        let vertex = self
-            .node_by_id(node)
-            .ok_or(BlockingError::NoSuchNode(node))?;
+        let at = self.node_mut(node)?;
         // A frozen node does not move for anybody. Refused rather than
         // silently ignored: a caller that asked for a move and got nothing
         // back would go on believing it happened.
-        if self.node_tag_of(vertex).frozen {
+        if at.frozen {
             return Err(BlockingError::Frozen(node));
         }
-        self.map.write_vertex(vertex, (to[0], to[1], to[2]));
+        at.at = to;
         Ok(())
     }
 
-    /// Where a node is classified, if anywhere.
     pub fn node_class(&self, node: CellId) -> Option<On> {
-        self.node_by_id(node).and_then(|v| self.node_tag_of(v).on)
+        self.node(node).ok().and_then(|n| n.on)
     }
 
-    /// Put a node on a geometric entity, or take it off one.
-    ///
-    /// The kernel does not check that the node is anywhere near it: what a
-    /// cell is classified on is a statement of intent, and it is the
-    /// projection — which lives where the triangles are — that makes it
-    /// true.
     pub fn set_node_class(&mut self, node: CellId, on: Option<On>) -> Result<(), BlockingError> {
-        self.update_node(node, |tag| tag.on = on)
+        self.node_mut(node)?.on = on;
+        Ok(())
     }
 
     pub fn is_frozen(&self, node: CellId) -> bool {
-        self.node_by_id(node)
-            .map(|v| self.node_tag_of(v).frozen)
-            .unwrap_or(false)
+        self.node(node).map(|n| n.frozen).unwrap_or(false)
     }
 
     pub fn set_frozen(&mut self, node: CellId, frozen: bool) -> Result<(), BlockingError> {
-        self.update_node(node, |tag| tag.frozen = frozen)
-    }
-
-    fn update_node(
-        &mut self,
-        node: CellId,
-        change: impl FnOnce(&mut NodeTag),
-    ) -> Result<(), BlockingError> {
-        let vertex = self
-            .node_by_id(node)
-            .ok_or(BlockingError::NoSuchNode(node))?;
-        let mut tag = self.node_tag_of(vertex);
-        change(&mut tag);
-        self.map.write_attribute(vertex, tag);
+        self.node_mut(node)?.frozen = frozen;
         Ok(())
     }
 
-    /// Where an edge is classified, if anywhere.
     pub fn edge_class(&self, edge: CellId) -> Option<On> {
-        self.edge_by_id(edge).and_then(|e| self.edge_tag_of(e).on)
+        self.edge(edge).ok().and_then(|e| e.on)
     }
 
-    /// Put an edge on a geometric entity, or take it off one.
-    ///
-    /// Never called with something measured: an edge's classification is
-    /// inferred from its two ends, which is the only rule that keeps it
-    /// coherent with them.
     pub fn set_edge_class(&mut self, edge: CellId, on: Option<On>) -> Result<(), BlockingError> {
-        let id = self
-            .edge_by_id(edge)
-            .ok_or(BlockingError::NoSuchEdge(edge))?;
-        let tag = self.edge_tag_of(id);
-        self.map.write_attribute(id, EdgeTag { on, ..tag });
+        let id = self.edge_at(edge).ok_or(BlockingError::NoSuchEdge(edge))?;
+        self.edges
+            .get_mut(id)
+            .ok_or(BlockingError::NoSuchEdge(edge))?
+            .on = on;
         Ok(())
     }
 
-    /// Where a face is classified, if anywhere.
     pub fn face_class(&self, face: CellId) -> Option<On> {
-        self.face_by_id(face).and_then(|f| self.face_tag_of(f).on)
+        self.face(face).ok().and_then(|f| f.on)
     }
 
-    /// Put a face on a geometric entity, or take it off one. Inferred from
-    /// its four edges, never measured.
     pub fn set_face_class(&mut self, face: CellId, on: Option<On>) -> Result<(), BlockingError> {
-        let id = self
-            .face_by_id(face)
-            .ok_or(BlockingError::NoSuchFace(face))?;
-        let tag = self.face_tag_of(id);
-        self.map.write_attribute(id, FaceTag { on, ..tag });
+        let id = self.face_at(face).ok_or(BlockingError::NoSuchFace(face))?;
+        self.faces
+            .get_mut(id)
+            .ok_or(BlockingError::NoSuchFace(face))?
+            .on = on;
         Ok(())
     }
 
-    /// Every face by name, with the names of its four edges.
     pub fn faces(&self) -> impl Iterator<Item = (CellId, [CellId; 4])> + '_ {
-        self.map_faces().into_iter().map(move |f| {
-            let edges = self
-                .face_darts(f)
-                .map(|d| self.edge_tag_of(self.map.edge_id(d)).id);
-            (self.face_tag_of(f).id, edges)
-        })
+        self.faces
+            .iter()
+            .map(|(id, face)| (self.face_name(id), face.edges.map(|e| self.edge_name(e))))
     }
 
-    /// Every edge by name, with the names of its two ends and what it is
-    /// classified on.
     pub fn edges(&self) -> impl Iterator<Item = (CellId, CellId, CellId, Option<On>)> + '_ {
-        self.map_edges().into_iter().map(move |e| {
-            let (a, b) = self.edge_endpoints_of(e);
-            let tag = self.edge_tag_of(e);
+        self.edges.iter().map(|(id, edge)| {
             (
-                tag.id,
-                self.node_tag_of(a).id,
-                self.node_tag_of(b).id,
-                tag.on,
+                self.edge_name(id),
+                self.node_name(edge.ends[0]),
+                self.node_name(edge.ends[1]),
+                edge.on,
             )
         })
     }
 
-    /// Every node by name, with where it is, what it is classified on and
-    /// whether it is frozen.
-    ///
-    /// Everything about a node in one pass. The alternative — a name, then
-    /// `node_class(name)`, then `is_frozen(name)` — is three scans of the
-    /// whole map per node, which is quadratic and was: `nodes_json` took
-    /// six seconds on sixty-four blocks.
     pub fn nodes_in_full(&self) -> impl Iterator<Item = (CellId, [f64; 3], Option<On>, bool)> + '_ {
-        self.map_vertices().into_iter().map(move |v| {
-            let tag = self.node_tag_of(v);
-            (
-                tag.id,
-                self.position_of(v).unwrap_or([0.0; 3]),
-                tag.on,
-                tag.frozen,
-            )
-        })
+        self.nodes
+            .iter()
+            .map(|(id, node)| (self.node_name(id), node.at, node.on, node.frozen))
     }
 
-    /// How many cells there are, and how much of them is pinned to a
-    /// geometry — everything the readout says, counted in **one pass per
-    /// dimension**.
-    ///
-    /// Walking the map is the expensive thing this crate does: a vertex
-    /// is found by taking the smallest dart of its orbit, so iterating
-    /// them costs a dart-orbit walk apiece, and those orbits grow as more
-    /// blocks meet at a node. Asking separately for the nodes, the
-    /// classified nodes and the frozen ones was three of those walks
-    /// where one does.
     pub fn census(&self) -> Census {
-        let mut out = Census::default();
-        for v in self.map_vertices() {
-            let tag = self.node_tag_of(v);
-            out.nodes += 1;
-            out.classified_nodes += usize::from(tag.on.is_some());
-            out.frozen += usize::from(tag.frozen);
+        Census {
+            nodes: self.nodes.len(),
+            edges: self.edges.len(),
+            faces: self.faces.len(),
+            blocks: self.blocks.len(),
+            patches: self.patch_components().len(),
+            classified_nodes: self.nodes.iter().filter(|(_, n)| n.on.is_some()).count(),
+            classified_edges: self.edges.iter().filter(|(_, e)| e.on.is_some()).count(),
+            classified_faces: self.faces.iter().filter(|(_, f)| f.on.is_some()).count(),
+            frozen: self.nodes.iter().filter(|(_, n)| n.frozen).count(),
         }
-        for e in self.map_edges() {
-            out.edges += 1;
-            out.classified_edges += usize::from(self.edge_tag_of(e).on.is_some());
-        }
-        for f in self.map_faces() {
-            out.faces += 1;
-            out.classified_faces += usize::from(self.face_tag_of(f).on.is_some());
-        }
-        for v in self.map_volumes() {
-            if self.is_block_of(v) {
-                out.blocks += 1;
-            } else {
-                out.patches += 1;
-            }
-        }
-        out
     }
 
-    /// Put every node on an entity, and then where that entity says it is.
-    ///
-    /// `pick` is the proximity search and `project` the pull onto what it
-    /// found — both questions only the geometry can answer, and both
-    /// passed in rather than reached for, so that the block structure goes
-    /// on knowing nothing about triangles.
-    ///
-    /// Frozen nodes are skipped entirely: a projection is a move.
-    ///
-    /// One pass, no names resolved. Going through `set_node_class` and
-    /// `set_position` instead is two scans of the whole map per node.
     pub fn classify_nodes(
         &mut self,
         pick: impl Fn(Option<On>, [f64; 3]) -> Option<On>,
         project: impl Fn(On, [f64; 3]) -> Option<[f64; 3]>,
     ) {
-        self.classify_some(|_| true, pick, project);
+        self.classify_some(|_, _| true, pick, project)
     }
 
-    /// The same, for the nodes a caller names.
-    ///
-    /// `pick` is given **what the node already claims** as well as where it
-    /// is, for the same reason the edge and face settling is: proximity
-    /// answers with entities of the model, and some of what a node can be
-    /// on — a side, which is several curves under one name — is not one of
-    /// them. A caller that wants a fresh start ignores the argument; one
-    /// settling nodes that merely moved can keep a name that still holds.
-    ///
-    /// What an operation that **moves** nodes needs afterwards: a node
-    /// somewhere new is on something new, and the only way to find out
-    /// what is to look. Pillowing is the case that wants it — the corner
-    /// of a box drawn in off the rim of a disc is still on that disc —
-    /// and reaching for the blanket version instead would undo every
-    /// classification anybody had made by hand.
     pub fn classify_named(
         &mut self,
         nodes: &[CellId],
         pick: impl Fn(Option<On>, [f64; 3]) -> Option<On>,
         project: impl Fn(On, [f64; 3]) -> Option<[f64; 3]>,
     ) {
-        let wanted: HashSet<CellId> = nodes.iter().copied().collect();
-        self.classify_some(|tag| wanted.contains(&tag.id), pick, project);
+        let wanted: HashSet<NodeId> = nodes.iter().filter_map(|n| self.node_at(*n)).collect();
+        self.classify_some(|id, _| wanted.contains(&id), pick, project)
     }
 
-    fn classify_some(
-        &mut self,
-        which: impl Fn(&NodeTag) -> bool,
-        pick: impl Fn(Option<On>, [f64; 3]) -> Option<On>,
-        project: impl Fn(On, [f64; 3]) -> Option<[f64; 3]>,
-    ) {
-        let found: Vec<(VertexIdType, Option<On>, Option<[f64; 3]>)> = self
-            .map_vertices()
-            .into_iter()
-            .filter(|v| {
-                let tag = self.node_tag_of(*v);
-                !tag.frozen && which(&tag)
-            })
-            .map(|v| {
-                let at = self.position_of(v).unwrap_or([0.0; 3]);
-                let on = pick(self.node_tag_of(v).on, at);
-                (v, on, on.and_then(|on| project(on, at)))
-            })
-            .collect();
-        for (v, on, onto) in found {
-            let tag = self.node_tag_of(v);
-            self.map.write_attribute(v, NodeTag { on, ..tag });
-            if let Some(p) = onto {
-                self.map.write_vertex(v, (p[0], p[1], p[2]));
-            }
-        }
-    }
-
-    /// Settle every edge's classification from its two ends, and then
-    /// every face's from its four edges.
-    ///
-    /// In that order, because each level consumes the one below it.
-    ///
-    /// `settle` answers the one question the block structure cannot. It is
-    /// given what the cells of the boundary are on, the dimension this
-    /// cell may not go below, **what the cell already claims**, and where
-    /// the cell is — and it needs all four, because a boundary says which
-    /// entities a cell could be on and never which one it is.
-    ///
-    /// No name is resolved anywhere in here. It runs after everything that
-    /// touches the model, so quadratic was not an option: at sixty-four
-    /// blocks it had moving one node taking a tenth of a second.
     pub fn reclassify(&mut self, settle: impl Fn(Settling<'_>) -> Option<On>) {
-        let edges: Vec<(EdgeIdType, Option<On>)> = self
-            .map_edges()
-            .into_iter()
-            .map(|e| {
-                let (a, b) = self.edge_endpoints_of(e);
-                let already = self.edge_tag_of(e).on;
-                let on = match (self.node_tag_of(a).on, self.node_tag_of(b).on) {
+        // Edges from their two ends, then faces from their four edges — in
+        // that order, because each level consumes the one below it. Decided
+        // first and written after, so that a face reads the edges as this
+        // pass has just left them and not as they were half way through.
+        let settled: Vec<(EdgeId, Option<On>)> = self
+            .edges
+            .iter()
+            .map(|(id, edge)| {
+                let [a, b] = edge.ends.map(|n| self.nodes.get(n).expect("live"));
+                let already = edge.on;
+                let middle = self.middle(&[a.at, b.at]);
+                let on = match (a.on, b.on) {
                     // An edge is never pinned to a point, which would
                     // over-constrain it.
                     (Some(x), Some(y)) => settle(Settling {
                         boundary: &[x, y],
                         at_least: 1,
                         already,
-                        middle: self.middle(&[a, b]),
+                        middle,
                     }),
-                    // One end left to go on. Nothing is **handed out** from
-                    // a single end — the diagonal of a face has one end on
-                    // a curve too, and it is not on that curve — but what
-                    // the edge already had stays while the end that is
-                    // still classified allows it.
-                    //
-                    // Without this a session bleeds: a pillow draws four
-                    // nodes into the material, rightly letting go of the
-                    // geometry on the way in, and every edge that touches
-                    // one of them is cleared though it has not moved. Then
-                    // a cut of one of *those* inherits nothing, and so on.
-                    // Measured on one session: a fifth of the edges had
-                    // lost a classification nothing had contradicted.
+                    // One end left to go on. Nothing is handed out from a
+                    // single end — the diagonal of a face has one end on a
+                    // curve too, and it is not on that curve — but what the
+                    // edge already had stays while that end allows it.
                     (Some(x), None) | (None, Some(x)) => {
                         let kept = settle(Settling {
                             boundary: &[x],
                             at_least: 1,
                             already,
-                            middle: self.middle(&[a, b]),
+                            middle,
                         });
                         already.filter(|on| kept == Some(*on))
                     }
-                    // Neither end on anything is the inside of the model:
-                    // an edge drawn in by a pillow or raised by an
-                    // extrusion is not on the boundary any more, and
-                    // keeping what it used to follow is what tears a mesh
-                    // out through the surface.
+                    // Neither end on anything is the inside of the model.
                     (None, None) => None,
                 };
-                (e, on)
+                (id, on)
             })
             .collect();
-        for (e, on) in edges {
-            let tag = self.edge_tag_of(e);
-            self.map.write_attribute(e, EdgeTag { on, ..tag });
+        for (id, on) in settled {
+            self.edges.get_mut(id).expect("live").on = on;
         }
 
-        let faces: Vec<(FaceIdType, Option<On>)> = self
-            .map_faces()
-            .into_iter()
-            .map(|f| {
-                let darts = self.face_darts(f);
-                let edges: Vec<Option<On>> = darts
+        let settled: Vec<(FaceId, Option<On>)> = self
+            .faces
+            .iter()
+            .map(|(id, face)| {
+                let sides: Vec<Option<On>> = face
+                    .edges
                     .iter()
-                    .map(|d| self.edge_tag_of(self.map.edge_id(*d)).on)
+                    .map(|e| self.edges.get(*e).expect("live").on)
                     .collect();
-                let corners = darts.map(|d| self.map.vertex_id(d));
-                let already = self.face_tag_of(f).on;
-                let middle = self.middle(&corners);
-                let known: Vec<On> = edges.iter().flatten().copied().collect();
-                let on = if known.len() == edges.len() {
+                let places: Vec<[f64; 3]> = face
+                    .nodes
+                    .iter()
+                    .map(|n| self.nodes.get(*n).expect("live").at)
+                    .collect();
+                let middle = self.middle(&places);
+                let already = face.on;
+                let known: Vec<On> = sides.iter().flatten().copied().collect();
+                let on = if known.len() == sides.len() {
                     settle(Settling {
                         boundary: &known,
                         // Nor a face to a curve.
@@ -1675,10 +2302,7 @@ impl Blocking {
                 } else if known.is_empty() {
                     None
                 } else {
-                    // The same rule as an edge's, one dimension up: what
-                    // the face already had stays while the edges that are
-                    // still classified allow it, and nothing is handed to
-                    // a face whose boundary is only partly known.
+                    // The same rule as an edge's, one dimension up.
                     let kept = settle(Settling {
                         boundary: &known,
                         at_least: 2,
@@ -1687,131 +2311,29 @@ impl Blocking {
                     });
                     already.filter(|on| kept == Some(*on))
                 };
-                (f, on)
+                (id, on)
             })
             .collect();
-        for (f, on) in faces {
-            let tag = self.face_tag_of(f);
-            self.map.write_attribute(f, FaceTag { on, ..tag });
+        for (id, on) in settled {
+            self.faces.get_mut(id).expect("live").on = on;
         }
     }
 
-    /// Forget what every edge and face is classified on.
-    ///
-    /// What makes a global `Session::classify` a fresh start rather
-    /// than a confirmation of what is already there: the settling keeps a
-    /// classification that is still consistent with its boundary, which is
-    /// right while editing and wrong when the whole point is to decide
-    /// again.
     pub fn unclassify_cells(&mut self) {
-        for e in self.map_edges() {
-            let tag = self.edge_tag_of(e);
-            self.map.write_attribute(e, EdgeTag { on: None, ..tag });
+        for id in self.edges.ids().collect::<Vec<_>>() {
+            self.edges.get_mut(id).expect("live").on = None;
         }
-        for f in self.map_faces() {
-            let tag = self.face_tag_of(f);
-            self.map.write_attribute(f, FaceTag { on: None, ..tag });
+        for id in self.faces.ids().collect::<Vec<_>>() {
+            self.faces.get_mut(id).expect("live").on = None;
         }
     }
 
-    fn middle(&self, nodes: &[VertexIdType]) -> [f64; 3] {
-        let mut at = [0.0; 3];
-        for n in nodes {
-            let p = self.position_of(*n).unwrap_or([0.0; 3]);
-            for k in 0..3 {
-                at[k] += p[k] / nodes.len() as f64;
-            }
-        }
-        at
-    }
-
-    /// The cell a stable name currently stands for.
-    ///
-    /// A scan. An index would have to be invalidated by every topological
-    /// change, and getting that wrong is silent; at this size the scan is not
-    /// worth the hazard. It goes here when it starts to matter.
-    fn node_by_id(&self, node: CellId) -> Option<VertexIdType> {
-        if node.is_none() {
-            return None;
-        }
-        if let Some(v) = self.seen.nodes.get(&node) {
-            if self.node_tag_of(*v).id == node {
-                return Some(*v);
-            }
-        }
-        self.map_vertices()
-            .into_iter()
-            .find(|v| self.node_tag_of(*v).id == node)
-    }
-
-    /// Every node, by stable name and position.
     pub fn nodes(&self) -> impl Iterator<Item = (CellId, [f64; 3])> + '_ {
-        self.map_vertices().into_iter().map(move |v| {
-            (
-                self.node_tag_of(v).id,
-                self.position_of(v).unwrap_or([0.0; 3]),
-            )
-        })
+        self.nodes
+            .iter()
+            .map(|(id, node)| (self.node_name(id), node.at))
     }
 
-    /// Two faces that may legally be glued to each other: both exist, they
-    /// are not the same one, and neither is already welded to something.
-    fn two_free_faces(
-        &self,
-        first: CellId,
-        second: CellId,
-    ) -> Result<(FaceIdType, FaceIdType), BlockingError> {
-        let a = self
-            .face_by_id(first)
-            .ok_or(BlockingError::NoSuchFace(first))?;
-        let b = self
-            .face_by_id(second)
-            .ok_or(BlockingError::NoSuchFace(second))?;
-        if a == b {
-            return Err(BlockingError::SameFace);
-        }
-        for (name, face) in [(first, a), (second, b)] {
-            if self.map.beta::<3>(face as DartIdType) != NULL_DART_ID {
-                return Err(BlockingError::AlreadyGlued(name));
-            }
-        }
-        Ok((a, b))
-    }
-
-    /// Glue two faces together, welding each pair of corners **at the point
-    /// between them**.
-    ///
-    /// The operation a user asks for. Neither block is the privileged one:
-    /// two blocks brought together meet in the middle, so each gives way by
-    /// half instead of one of them being dragged the whole distance onto the
-    /// other.
-    ///
-    /// Classification overrides that, because it says something the glue does
-    /// not know. Per pair of corners:
-    ///
-    /// * **both frozen** — somebody has pinned both. If they coincide there is
-    ///   nothing to decide; if they do not, there is no legal answer and the
-    ///   glue is refused rather than moving a node somebody froze.
-    /// * **one frozen** — it does not move, and the other comes to it.
-    /// * **neither** — the midpoint, projected onto whatever the welded node
-    ///   turns out to be classified on. A node on a circle must end up on the
-    ///   circle, and the midpoint of two points on a circle is not on it.
-    ///
-    /// and the classification of the welded node is the **more constrained**
-    /// of the two: a corner is on a curve, and it is also on both surfaces
-    /// that meet there, so the curve is what it must stay on. That is what
-    /// `common` is asked for — the geometry's `meet`, not its common
-    /// container — because the honest answer is often neither of the
-    /// two: gluing a node on one surface to a node on another welds it onto
-    /// the curve where they meet. When they share nothing at all, the lower
-    /// dimension wins and the pair is reported in the return so the caller
-    /// can say what it dropped.
-    ///
-    /// Both closures come from the geometry, which lives a layer up: the
-    /// block structure holds no triangles and cannot project anything by
-    /// itself. With no geometry loaded, `|_, _| None` twice degrades this to
-    /// the midpoint rule, which is the right answer when nothing is
-    /// classified.
     pub fn glue_faces(
         &mut self,
         first: CellId,
@@ -1820,45 +2342,36 @@ impl Blocking {
         project: impl Fn(On, [f64; 3]) -> Option<[f64; 3]>,
     ) -> Result<Vec<Unmet>, BlockingError> {
         let (a, b) = self.two_free_faces(first, second)?;
-        let (da, db) = (self.face_darts(a), self.face_darts(b));
-        let corner = |d: DartIdType| {
-            self.position_of(self.map.vertex_id(d))
-                .unwrap_or([f64::NAN; 3])
-        };
-        let (pa, pb) = (da.map(corner), db.map(corner));
+        let (pa, pb) = (self.corners_of(a), self.corners_of(b));
         let turn = best_pairing(&pa, &pb);
+        let here = self.faces.get(a).expect("live").nodes;
+        let there = self.faces.get(b).expect("live").nodes;
 
-        // Two frozen corners "coincide" relative to the size of what is being
-        // glued, not to an absolute number: a blocking of a turbine blade and
-        // one of a building are the same shape to a thousandth of a side.
+        // Two frozen corners "coincide" relative to the size of what is
+        // being glued, not to an absolute number: a blocking of a turbine
+        // blade and one of a building are the same shape to a thousandth of
+        // a side.
         let side = (0..4)
             .map(|i| apart(pa[i], pa[(i + 1) % 4]))
             .fold(0.0, f64::max);
         let slack = 1e-6 * side.max(f64::MIN_POSITIVE);
 
-        // Decide all four pairs before a single node moves. A refused glue
-        // has to leave the blocking exactly as it was, and the only way to
+        // Every pair decided before a single node moves. A refused glue has
+        // to leave the blocking exactly as it was, and the only way to
         // promise that is to find out everything first.
-        struct Welded {
-            here: VertexIdType,
-            there: VertexIdType,
-            at: [f64; 3],
-            on: Option<On>,
-            frozen: bool,
-        }
-        let mut welds: Vec<Welded> = Vec::with_capacity(4);
+        let mut decided: Vec<Welded> = Vec::with_capacity(4);
         let mut unmet: Vec<Unmet> = Vec::new();
         for i in 0..4 {
-            let (here, there) = (
-                self.map.vertex_id(da[i]),
-                self.map.vertex_id(db[(turn + 4 - i) % 4]),
+            let (mine, partner) = (here[i], there[(turn + 4 - i) % 4]);
+            let (ta, tb) = (
+                self.nodes.get(mine).expect("live").clone(),
+                self.nodes.get(partner).expect("live").clone(),
             );
-            let (ta, tb) = (self.node_tag_of(here), self.node_tag_of(there));
             let (qa, qb) = (pa[i], pb[(turn + 4 - i) % 4]);
 
-            // Where this corner is heading, as far as can be said before the
-            // classification is settled — and that is what settles it, when
-            // two entities share more than one thing.
+            // Where this corner is heading, as far as can be said before
+            // the classification is settled — and that is what settles it,
+            // when two entities share more than one thing.
             let hint = match (ta.frozen, tb.frozen) {
                 (true, _) => qa,
                 (false, true) => qb,
@@ -1875,12 +2388,12 @@ impl Blocking {
                 (Some(x), Some(y)) if x == y => Some(x),
                 (Some(x), Some(y)) => Some(common(x, y, hint).unwrap_or_else(|| {
                     // Nothing in common. The more constrained entity is the
-                    // one a node can be on while being near the other, so it
-                    // is the one to keep — and a tie goes to the first face,
-                    // as its name does when the two nodes merge.
+                    // one a node can be on while being near the other, so
+                    // it is the one to keep — and a tie goes to the first
+                    // face, as its name does when the two nodes merge.
                     let (kept, dropped) = if y.dim < x.dim { (y, x) } else { (x, y) };
                     unmet.push(Unmet {
-                        node: ta.id,
+                        node: self.node_name(mine),
                         kept,
                         dropped,
                     });
@@ -1890,638 +2403,235 @@ impl Blocking {
 
             let at = match (ta.frozen, tb.frozen) {
                 (true, true) if apart(qa, qb) > slack => {
-                    return Err(BlockingError::FrozenApart(ta.id, tb.id))
+                    return Err(BlockingError::FrozenApart(
+                        self.node_name(mine),
+                        self.node_name(partner),
+                    ))
                 }
-                // A frozen node is where somebody put it: `hint` is
-                // already that point, and no projection may move it off.
+                // A frozen node is where somebody put it: `hint` is already
+                // that point, and no projection may move it off.
                 (true, _) | (false, true) => hint,
                 // Here there is nobody to contradict.
                 (false, false) => on.and_then(|o| project(o, hint)).unwrap_or(hint),
             };
 
-            welds.push(Welded {
-                here,
-                there,
+            decided.push(Welded {
                 at,
                 on,
                 frozen: ta.frozen || tb.frozen,
             });
         }
 
-        for w in &welds {
-            for v in [w.here, w.there] {
-                self.map.write_vertex(v, (w.at[0], w.at[1], w.at[2]));
-            }
-        }
-
-        self.map.sew::<3>(da[0], db[(turn + 3) % 4])?;
-        self.name_cells_near(OrbitPolicy::Face, da[0]);
-
-        // The map's own merge keeps "either of the two, and the first when
-        // both" — a reasonable default everywhere else, and not the rule for
-        // a glue. What this operation decided is written over it.
-        for (i, w) in welds.iter().enumerate() {
-            let v = self.map.vertex_id(da[i]);
-            let mut tag = self.node_tag_of(v);
-            tag.on = w.on;
-            tag.frozen = w.frozen;
-            self.map.write_attribute(v, tag);
-        }
-
+        let decided: [Welded; 4] = decided.try_into().expect("four corners");
+        self.join_faces(a, b, turn, decided)?;
         Ok(unmet)
     }
 
-    /// Glue two faces together, welding the blocks they belong to, and
-    /// **move the second onto the first**.
-    ///
-    /// For a caller that has already put the two faces in the same place:
-    /// pillowing and extrusion both build a block against a face and then
-    /// glue it there, so the corners coincide already and which one survives
-    /// cannot be told apart. [`glue_faces`][Self::glue_faces] is the
-    /// operation a user asks for, and it welds at the midpoint instead.
-    ///
-    /// The position has to be settled one way or the other before the sew:
-    /// honeycomb merges two vertices by **averaging** them, so sewing faces
-    /// that are apart leaves the shared corners half way between the two,
-    /// whatever anybody intended. Deciding it here keeps the rule where it
-    /// can be read, instead of in a merge policy that belongs to the map.
-    ///
-    /// Only the four corners of the face move. The rest of the second block
-    /// stays where it is, so gluing blocks that are far apart deforms one of
-    /// them rather than carrying it over.
     pub fn glue_onto(&mut self, first: CellId, second: CellId) -> Result<(), BlockingError> {
         let (a, b) = self.two_free_faces(first, second)?;
-        let (da, db) = (self.face_darts(a), self.face_darts(b));
-        let corner = |d: DartIdType| {
-            self.position_of(self.map.vertex_id(d))
-                .unwrap_or([f64::NAN; 3])
-        };
-        let (pa, pb) = (da.map(corner), db.map(corner));
+        let (pa, pb) = (self.corners_of(a), self.corners_of(b));
         let turn = best_pairing(&pa, &pb);
 
-        for i in 0..4 {
-            let vertex = self.map.vertex_id(db[(turn + 4 - i) % 4]);
-            self.map
-                .write_vertex(vertex, (pa[i][0], pa[i][1], pa[i][2]));
-        }
-
-        // One call. `three_sew` walks the face orbit itself — β₁ down one side
-        // and β₀ up the other — so it links all four pairs and merges the
-        // faces, edges and vertices along the way.
-        //
-        // `da[0]` runs from corner A₀ to A₁, so its partner must run from the
-        // B corner now sitting on A₁ back to the one on A₀. That is the dart
-        // starting at `b[(turn + 3) % 4]`.
-        self.map.sew::<3>(da[0], db[(turn + 3) % 4])?;
-        // A sew touches the face it joins, its four edges and their nodes,
-        // and nothing else.
-        self.name_cells_near(OrbitPolicy::Face, da[0]);
+        // The caller has already put the two in the same place, so there is
+        // nothing to decide about where the corners go: the first face's
+        // place is the answer, and which of the two nodes survives cannot
+        // be told apart. What each node **claims** still has to be carried
+        // over, and that is what a merge policy used to do silently.
+        let there = self.faces.get(b).expect("live").nodes;
+        let here = self.faces.get(a).expect("live").nodes;
+        let decided = [0, 1, 2, 3].map(|i| {
+            let partner = self.nodes.get(there[(turn + 4 - i) % 4]).expect("live");
+            let mine = self.nodes.get(here[i]).expect("live");
+            Welded {
+                at: pa[i],
+                on: mine.on.or(partner.on),
+                frozen: mine.frozen || partner.frozen,
+            }
+        });
+        self.join_faces(a, b, turn, decided)?;
         Ok(())
     }
 
-    /// How many blocks a sheet runs through — what a removal would take.
     pub fn sheet_blocks(&self, sheet: &[SheetEdge]) -> usize {
-        let index = self.edge_index();
-        let mut blocks: Vec<VolumeIdType> = sheet
+        let mut blocks: Vec<BlockId> = sheet
             .iter()
-            .filter_map(|side| index.get(&side.edge))
-            .flat_map(|at| {
-                self.map
-                    .orbit(OrbitPolicy::Edge, *at as DartIdType)
-                    .map(|d| self.map.volume_id(d))
-                    .collect::<Vec<_>>()
-            })
+            .filter_map(|side| self.edge_at(side.edge))
+            .flat_map(|edge| self.blocks_on(edge))
             .collect();
-        blocks.sort();
+        blocks.sort_unstable();
         blocks.dedup();
         blocks.len()
     }
 
-    /// Everything the layer through an edge is made of.
-    ///
-    /// The blocks the sheet runs through, and every cell that bounds one of
-    /// them — named, so a client can say "show me these and nothing else"
-    /// in the only vocabulary it has.
     pub fn sheet_cells(&self, edge: CellId) -> Result<SheetCells, BlockingError> {
         let sheet = self.sheet_through(edge)?;
-        let index = self.edge_index();
-        let mut at: Vec<DartIdType> = Vec::with_capacity(sheet.len());
+        let mut blocks: Vec<BlockId> = Vec::new();
         for side in &sheet {
-            at.push(
-                *index
-                    .get(&side.edge)
-                    .ok_or(BlockingError::NoSuchEdge(side.edge))? as DartIdType,
-            );
+            let id = self
+                .edge_at(side.edge)
+                .ok_or(BlockingError::NoSuchEdge(side.edge))?;
+            blocks.extend(self.blocks_on(id));
         }
+        blocks.sort_unstable();
+        blocks.dedup();
 
-        // One transaction for the whole walk: a single β lookup in this map
-        // is a transaction of its own, and that is where the time goes.
-        let found = atomically(|t| {
-            let mut blocks: BTreeSet<VolumeIdType> = BTreeSet::new();
-            for dart in &at {
-                // The orbit's own iterator holds the transaction while it
-                // runs, so the walk comes first and the questions after.
-                let mut around: Vec<DartIdType> = Vec::new();
-                for d in self.map.orbit_tx(t, OrbitPolicy::Edge, *dart) {
-                    around.push(d?);
-                }
-                for d in around {
-                    blocks.insert(self.map.volume_id_tx(t, d)?);
-                }
-            }
-            let mut nodes: BTreeSet<VertexIdType> = BTreeSet::new();
-            let mut edges: BTreeSet<EdgeIdType> = BTreeSet::new();
-            let mut faces: BTreeSet<FaceIdType> = BTreeSet::new();
-            for volume in &blocks {
-                let mut darts: Vec<DartIdType> = Vec::new();
-                for d in self
-                    .map
-                    .orbit_tx(t, OrbitPolicy::Volume, *volume as DartIdType)
-                {
-                    darts.push(d?);
-                }
-                for d in darts {
-                    nodes.insert(self.map.vertex_id_tx(t, d)?);
-                    edges.insert(self.map.edge_id_tx(t, d)?);
-                    faces.insert(self.map.face_id_tx(t, d)?);
-                }
-            }
-            Ok((nodes, edges, faces, blocks))
-        });
-
-        let (nodes, edges, faces, blocks) = found;
-        // A cell with no name is one nothing can ask for, so it is left out
-        // rather than reported as zero.
-        let named =
-            |ids: Vec<CellId>| -> Vec<CellId> { ids.into_iter().filter(|c| c.is_some()).collect() };
+        // Everything that bounds one of them. Sorted by name, which is what
+        // makes the answer the same whatever order the walk found things in.
+        let mut nodes: BTreeSet<CellId> = BTreeSet::new();
+        let mut edges: BTreeSet<CellId> = BTreeSet::new();
+        let mut faces: BTreeSet<CellId> = BTreeSet::new();
+        for id in &blocks {
+            let block = self.blocks.get(*id).expect("live");
+            nodes.extend(block.nodes.iter().map(|n| self.node_name(*n)));
+            edges.extend(block.edges.iter().map(|e| self.edge_name(*e)));
+            faces.extend(block.faces.iter().map(|f| self.face_name(*f)));
+        }
+        let named = |ids: BTreeSet<CellId>| -> Vec<CellId> {
+            ids.into_iter().filter(|c| c.is_some()).collect()
+        };
         Ok(SheetCells {
             sheet: sheet.iter().map(|s| s.edge).min().unwrap_or(edge),
-            nodes: named(nodes.iter().map(|n| self.node_tag_of(*n).id).collect()),
-            edges: named(edges.iter().map(|e| self.edge_tag_of(*e).id).collect()),
-            faces: named(faces.iter().map(|f| self.face_tag_of(*f).id).collect()),
-            blocks: named(blocks.iter().map(|b| self.block_tag_of(*b).id).collect()),
+            nodes: named(nodes),
+            edges: named(edges),
+            faces: named(faces),
+            blocks: blocks.iter().map(|b| self.block_name(*b)).collect(),
         })
     }
 
-    /// The two layers lying against this one, each named by an edge of its
-    /// own.
-    ///
-    /// A layer is capped at either end by a face the sheet does not cross.
-    /// Through a cap is the block next door, and the edge of **that** block
-    /// running out of the face they share names the layer it belongs to —
-    /// the one parallel to this one and touching it.
-    ///
-    /// Each is named the way [`SheetCells::sheet`] names a layer — by the
-    /// least of its own edges — because that is what makes the answer
-    /// comparable with where you came from. Named by the edge that happens
-    /// to cross the block next door, two readings of the same layer would
-    /// disagree about which layer it is.
-    ///
-    /// `None` where the cap is on the model's surface: there is no layer
-    /// that way. The two are in no particular order, and what they are good
-    /// for is stepping from one layer to the next: the one to step to is
-    /// whichever is not where you came from.
-    ///
-    /// Read from the block the named edge is in, which is the one whoever
-    /// asked was pointing at.
     pub fn sheets_beside(&self, edge: CellId) -> Result<[Option<CellId>; 2], BlockingError> {
         let sheet = self.sheet_through(edge)?;
         let crossed: HashSet<CellId> = sheet.iter().map(|s| s.edge).collect();
-        let index = self.edge_index();
-        let at = *index.get(&edge).ok_or(BlockingError::NoSuchEdge(edge))? as DartIdType;
-        let volume = self.map.volume_id(at);
-
-        let caps: Vec<DartIdType> = self
-            .block_face_darts(volume)
-            .into_iter()
-            .filter(|d| {
-                self.face_darts(self.map.face_id(*d))
-                    .iter()
-                    .all(|e| !crossed.contains(&self.edge_tag_of(self.map.edge_id(*e)).id))
-            })
-            .collect();
-        if caps.len() != 2 {
+        let start = self.edge_at(edge).ok_or(BlockingError::NoSuchEdge(edge))?;
+        let holding = self.blocks_on(start);
+        let [block] = holding[..1] else {
             return Err(BlockingError::BrokenSheet(edge));
-        }
+        };
+
+        // The caps: the two faces of this block that the sheet does not
+        // cross. Which is the same as the two perpendicular to the sheet's
+        // own axis, and asking it this way needs no axis to be worked out.
+        let faces = self.blocks.get(block).expect("live").faces;
+        let caps: Vec<(u8, FaceId)> = faces
+            .iter()
+            .enumerate()
+            .filter(|(_, face)| {
+                self.faces
+                    .get(**face)
+                    .expect("live")
+                    .edges
+                    .iter()
+                    .all(|e| !crossed.contains(&self.edge_name(*e)))
+            })
+            .map(|(slot, face)| (slot as u8, *face))
+            .collect();
+        let [first, second] = caps[..] else {
+            return Err(BlockingError::BrokenSheet(edge));
+        };
 
         let mut out = [None, None];
-        for (slot, cap) in out.iter_mut().zip(caps) {
-            let beyond = self.map.beta::<3>(cap);
-            if beyond == NULL_DART_ID {
+        for (slot, (at, cap)) in out.iter_mut().zip([first, second]) {
+            let Some(there) = self.beyond(cap, Side { block, slot: at }) else {
                 continue;
-            }
-            // Out of the shared face and into the block beyond it: round
-            // the lateral face beside this dart by one, which is the edge
-            // that leaves the face.
-            let crossing = self.map.beta::<1>(self.map.beta::<2>(beyond));
-            let id = self.edge_tag_of(self.map.edge_id(crossing)).id;
-            if id.is_none() {
+            };
+            let (next, there) = (there.block, there.slot);
+            // In the block beyond, an edge running the way the sheet does:
+            // the cap is flat in one axis, and the edges of that axis are
+            // the ones that cross it. Where the map walked darts, the
+            // tables say it.
+            let axis = FACE_AXIS[there as usize];
+            let along = self.blocks.get(next).expect("live").edges;
+            let Some(at) = (0..12).find(|k| EDGE_AXIS[*k] == axis) else {
+                continue;
+            };
+            let name = self.edge_name(along[at]);
+            if name.is_none() {
                 continue;
             }
             // A layer that cannot be read is a layer there is no stepping
             // to, which is the same answer as a cap on the surface.
             *slot = self
-                .sheet_through(id)
+                .sheet_through(name)
                 .ok()
                 .and_then(|sheet| sheet.iter().map(|s| s.edge).min());
         }
         Ok(out)
     }
 
-    /// Take out the whole sheet of blocks through an edge, closing the gap.
-    ///
-    /// The sheet is a layer: each of its blocks is capped at either end by
-    /// a face the sheet does not cross, and whatever was glued to those two
-    /// caps ends up glued to each other once the layer is gone.
-    ///
-    /// **Which face meets which is a question about the map, not about
-    /// where anything is.** From a dart of one cap, crossing into the
-    /// lateral face beside it and out the far side lands on the cap at the
-    /// other end, on the matching edge. Taking the β₃ of both gives the two
-    /// darts the neighbors will have to be sewn along — read before the
-    /// layer goes, since they are what the layer was holding together.
-    ///
-    /// Nothing is moved by hand either. The seam is settled before it is
-    /// sewn — see [`settle_seams`][Self::settle_seams] — so it lands half
-    /// way between the caps, and the gap closes from both sides.
-    ///
-    /// A cap with nothing behind it is a cap on the model's surface; there
-    /// is nothing to close against, so the model simply loses that layer.
     pub fn remove_sheet(&mut self, edge: CellId) -> Result<(), BlockingError> {
         self.take_sheet(edge, true)
     }
 
-    /// Take out the whole sheet of blocks through an edge and **leave the
-    /// gap open**.
-    ///
-    /// The two walls the layer was between stay exactly where they are,
-    /// unglued, and the model has a slot through it. That is the whole
-    /// difference, and it is sometimes the point: a slot is where a crack,
-    /// a seal or a second part goes, and a layer closed over is a layer you
-    /// have to cut again to get one.
-    ///
-    /// It also asks less of the sheet, since nothing has to meet anything:
-    /// the caps are counted, to say that the sheet really is a layer, and
-    /// what lies behind them is not looked at at all.
     pub fn remove_sheet_leaving_a_gap(&mut self, edge: CellId) -> Result<(), BlockingError> {
         self.take_sheet(edge, false)
     }
 
-    /// Both removals. `close` says whether what the layer was holding
-    /// apart is sewn together behind it.
-    fn take_sheet(&mut self, edge: CellId, close: bool) -> Result<(), BlockingError> {
-        let sheet = self.sheet_through(edge)?;
-
-        // Which blocks the sheet runs through, and which of their edges it
-        // is made of. A hexahedron the sheet crosses has four.
-        let index = self.edge_index();
-        let mut crossing: BTreeMap<VolumeIdType, Vec<CellId>> = BTreeMap::new();
-        for side in &sheet {
-            let at = *index
-                .get(&side.edge)
-                .ok_or(BlockingError::NoSuchEdge(side.edge))?;
-            let mut blocks: Vec<VolumeIdType> = self
-                .map
-                .orbit(OrbitPolicy::Edge, at as DartIdType)
-                .map(|d| self.map.volume_id(d))
-                .collect();
-            blocks.sort();
-            blocks.dedup();
-            for block in blocks {
-                crossing.entry(block).or_default().push(side.edge);
-            }
-        }
-
-        let doomed: Vec<VolumeIdType> = crossing.keys().copied().collect();
-        let mut rejoin: Vec<(DartIdType, DartIdType)> = Vec::new();
-
-        for (volume, edges) in &crossing {
-            if edges.len() != 4 {
-                return Err(BlockingError::BrokenSheet(edge));
-            }
-            let crossed: HashSet<CellId> = edges.iter().copied().collect();
-            // A cap is a face of this block that the sheet does not cross.
-            let caps: Vec<DartIdType> = self
-                .block_face_darts(*volume)
-                .into_iter()
-                .filter(|d| {
-                    self.face_darts(self.map.face_id(*d))
-                        .iter()
-                        .all(|e| !crossed.contains(&self.edge_tag_of(self.map.edge_id(*e)).id))
-                })
-                .collect();
-            if caps.len() != 2 {
-                return Err(BlockingError::BrokenSheet(edge));
-            }
-            if !close {
-                continue;
-            }
-
-            // One dart of one cap, and the dart it answers to on the other.
-            let here = caps[0];
-            let there = self.across_the_block(here);
-            if self.map.face_id(there) != self.map.face_id(caps[1]) {
-                return Err(BlockingError::BrokenSheet(edge));
-            }
-            let (above, below) = (self.map.beta::<3>(here), self.map.beta::<3>(there));
-            if above == NULL_DART_ID || below == NULL_DART_ID {
-                continue;
-            }
-            // A sheet that comes back round onto itself has no outside to
-            // close against.
-            for neighbor in [above, below] {
-                if crossing.contains_key(&self.map.volume_id(neighbor)) {
-                    return Err(BlockingError::BrokenSheet(edge));
-                }
-            }
-            rejoin.push((above, below));
-        }
-
-        for volume in doomed {
-            self.drop_volume(volume)?;
-        }
-        // The darts belong to the blocks that stayed, so they outlived the
-        // layer that was between them.
-        self.settle_seams(&rejoin);
-        for (above, below) in rejoin {
-            self.map.sew::<3>(above, below)?;
-        }
-
-        self.assign_missing_ids();
-        Ok(())
-    }
-
-    /// Put every pair of nodes the seams are about to merge where the
-    /// merge would leave them: half way.
-    ///
-    /// A sew merges as it goes, so a corner two seams share has already
-    /// moved by the time the second one is asked — and the map's own sew
-    /// measures the two faces before it joins them, to refuse a pair that
-    /// does not run opposite ways. A seam it would have taken on its own
-    /// therefore gets refused for where its neighbor left it, and by then
-    /// the layer is gone and the model has a hole in it.
-    ///
-    /// Settled first, the two faces of a seam coincide exactly, and no
-    /// later seam can pull them apart: a corner belongs to both seams and
-    /// is already where both want it, or it belongs to one and nothing
-    /// else touches it. What each seam does no longer depends on what the
-    /// one before it did.
-    ///
-    /// Nowhere does this decide **which** face meets which — that is read
-    /// off the map above, and is the whole reason a removal works on a
-    /// model however distorted. It is the same step `glue_onto` takes
-    /// before its own sew.
-    fn settle_seams(&mut self, seams: &[(DartIdType, DartIdType)]) {
-        // Which node meets which, walked the way the sew walks it: down
-        // one face by β₁ and the other by β₀, pairing the node ahead of
-        // the dart on one side with the node behind it on the other.
-        let pairs: Vec<(VertexIdType, VertexIdType)> = atomically(|t| {
-            let mut out = Vec::with_capacity(seams.len() * 4);
-            for (above, below) in seams {
-                let (mut l, mut r) = (*above, *below);
-                for _ in 0..4 {
-                    let ahead = self.map.beta_tx::<1>(t, l)?;
-                    out.push((
-                        self.map.vertex_id_tx(t, ahead)?,
-                        self.map.vertex_id_tx(t, r)?,
-                    ));
-                    l = ahead;
-                    r = self.map.beta_tx::<0>(t, r)?;
-                }
-            }
-            Ok(out)
-        });
-
-        // A node may be in several pairs — a corner where four seams meet
-        // is in four of them — so the pairs are grouped before anything is
-        // averaged. Otherwise the answer would depend on the order again,
-        // which is the thing being fixed.
-        fn root(parent: &HashMap<VertexIdType, VertexIdType>, mut v: VertexIdType) -> VertexIdType {
-            while let Some(&up) = parent.get(&v) {
-                if up == v {
-                    break;
-                }
-                v = up;
-            }
-            v
-        }
-        let mut parent: HashMap<VertexIdType, VertexIdType> = HashMap::new();
-        for (a, b) in &pairs {
-            for v in [a, b] {
-                parent.entry(*v).or_insert(*v);
-            }
-            let (ra, rb) = (root(&parent, *a), root(&parent, *b));
-            if ra != rb {
-                parent.insert(rb, ra);
-            }
-        }
-        let mut together: BTreeMap<VertexIdType, Vec<VertexIdType>> = BTreeMap::new();
-        for v in parent.keys() {
-            together.entry(root(&parent, *v)).or_default().push(*v);
-        }
-
-        for (_, mut nodes) in together {
-            nodes.sort_unstable();
-            let known: Vec<[f64; 3]> = nodes.iter().filter_map(|v| self.position_of(*v)).collect();
-            if known.is_empty() {
-                continue;
-            }
-            let share = known.len() as f64;
-            let at = [0, 1, 2].map(|k| known.iter().map(|p| p[k]).sum::<f64>() / share);
-            for v in nodes {
-                self.map.write_vertex(v, (at[0], at[1], at[2]));
-            }
-        }
-    }
-
-    /// One dart per face of a block, on that block's own side.
-    fn block_face_darts(&self, volume: VolumeIdType) -> Vec<DartIdType> {
-        let mut seen: Vec<FaceIdType> = Vec::new();
-        let mut out = Vec::new();
-        for dart in self.map.orbit(OrbitPolicy::Volume, volume as DartIdType) {
-            let face = self.map.face_id(dart);
-            if !seen.contains(&face) {
-                seen.push(face);
-                out.push(dart);
-            }
-        }
-        out
-    }
-
-    /// From a dart of one face of a hexahedron to the matching dart of the
-    /// face opposite.
-    ///
-    /// Out through the lateral face beside this edge — β₂ — along it twice,
-    /// and back in through the far side. The dart that comes out runs the
-    /// other way round, which is exactly what a sew wants of a pair.
-    fn across_the_block(&self, dart: DartIdType) -> DartIdType {
-        let beside = self.map.beta::<2>(dart);
-        let along = self.map.beta::<1>(self.map.beta::<1>(beside));
-        self.map.beta::<2>(along)
-    }
-
-    /// Remove one block, leaving whatever it was glued to intact.
-    ///
-    /// Three steps, in this order because each needs what the previous one
-    /// has not yet destroyed:
-    ///
-    /// 1. **unsew β₃**, while the orbits that walk takes still exist. This is
-    ///    where a neighbor gets its own copy of the shared cells back — and
-    ///    it is the case [`CornerKey`][crate::ids::CornerKey] was written
-    ///    for: the names on both sides are cleared, but the neighbor goes on
-    ///    recognizing the corner.
-    /// 2. **unlink β₂ then β₁** — the raw operations, not the sewing ones.
-    ///    There is no cell left to split by then; what is left is a block
-    ///    being taken apart.
-    /// 3. **release the darts**, which the map only allows once every β of
-    ///    theirs is null — hence the order.
     pub fn remove_block(&mut self, block: CellId) -> Result<(), BlockingError> {
-        let volume = self
-            .block_by_id(block)
+        let id = self
+            .block_at(block)
             .ok_or(BlockingError::NoSuchBlock(block))?;
-        self.drop_volume(volume)?;
-        // The neighbor's cells came out of the split unnamed.
-        self.assign_missing_ids();
-        Ok(())
+        self.drop_block(id)
     }
 
-    /// The same, by the map's own identifier and **without** naming what is
-    /// left over.
-    ///
-    /// Naming walks every cell of every dimension. Doing it once per block
-    /// is what made taking a sheet out of a large grid slow: a layer of
-    /// twenty-five blocks paid for twenty-five whole passes over the model
-    /// where one at the end will do.
-    fn drop_volume(&mut self, volume: VolumeIdType) -> Result<(), BlockingError> {
-        // Collected first: the orbit is about to stop being walkable. β₃ is
-        // not one of its generators, so this is one block's darts, never a
-        // neighbor's.
-        let darts: Vec<DartIdType> = self
-            .map
-            .orbit(OrbitPolicy::Volume, volume as DartIdType)
-            .collect();
-
-        for &dart in &darts {
-            if self.map.beta::<3>(dart) != NULL_DART_ID {
-                self.map.unsew::<3>(dart)?;
-            }
-        }
-        for &dart in &darts {
-            if self.map.beta::<2>(dart) != NULL_DART_ID {
-                self.map.unlink::<2>(dart)?;
-            }
-        }
-        for &dart in &darts {
-            if self.map.beta::<1>(dart) != NULL_DART_ID {
-                self.map.unlink::<1>(dart)?;
-            }
-        }
-        for &dart in &darts {
-            self.map.release_dart(dart)?;
-        }
-        Ok(())
-    }
-
-    /// Take away one face of a patch.
-    ///
-    /// The mirror of [`remove_block`][Self::remove_block], a dimension
-    /// down, and it unsews for the same reason: whatever the face was
-    /// welded to keeps its own cells. They are **split off** on the way
-    /// out, not deleted with it, so a face taken out of the middle of a
-    /// patch leaves the ones around it whole, with the edges that were
-    /// shared back on their own boundary and free to be welded to
-    /// something else.
-    ///
-    /// A face of a **block** is refused. Taking one side out of a shell
-    /// would leave a volume that is neither open nor closed, and what the
-    /// caller means is [`remove_block`][Self::remove_block].
     pub fn remove_face(&mut self, face: CellId) -> Result<(), BlockingError> {
-        let f = self
-            .face_by_id(face)
-            .ok_or(BlockingError::NoSuchFace(face))?;
-        let volume = self.map.volume_id(f as DartIdType);
-        if self.is_block_of(volume) {
+        let id = self.face_at(face).ok_or(BlockingError::NoSuchFace(face))?;
+        let f = self.faces.get(id).expect("live");
+        // A face of a block is how you point at the block; taking it away
+        // on its own would leave a block with a hole in it.
+        if f.sides.iter().any(|side| side.is_some()) {
             return Err(BlockingError::NotAPatch(face));
         }
-
-        let darts = self.face_darts(f).to_vec();
-        for &dart in &darts {
-            if self.map.beta::<2>(dart) != NULL_DART_ID {
-                // Unsewn rather than unlinked: this is where the neighbor
-                // gets its own copy of the edge and corners back.
-                self.map.unsew::<2>(dart)?;
+        let (nodes, edges) = (f.nodes, f.edges);
+        self.faces.remove(id);
+        // Whatever it alone was holding. A neighbour in the same patch
+        // keeps the side and the corners they shared, which is where the
+        // map had to unsew β₂ to hand them back.
+        for edge in edges {
+            if !self.held_edge(edge) {
+                self.edges.remove(edge);
             }
         }
-        for &dart in &darts {
-            if self.map.beta::<1>(dart) != NULL_DART_ID {
-                self.map.unlink::<1>(dart)?;
+        for node in nodes {
+            if !self.held_node(node) {
+                self.nodes.remove(node);
             }
         }
-        for &dart in &darts {
-            self.map.release_dart(dart)?;
-        }
-        self.assign_missing_ids();
+        self.forget();
         Ok(())
     }
 
-    /// The block a stable name currently stands for. A scan, for the same
-    /// reason [`node_by_id`][Self::node_by_id] is one.
-    fn block_by_id(&self, block: CellId) -> Option<VolumeIdType> {
-        if block.is_none() {
-            return None;
-        }
-        if let Some(v) = self.seen.blocks.get(&block) {
-            if self.block_tag_of(*v).id == block {
-                return Some(*v);
-            }
-        }
-        self.map_volumes()
-            .into_iter()
-            .find(|v| self.block_tag_of(*v).id == block)
-    }
-
-    /// Every edge of the sheet through this one, oriented to agree with it.
-    ///
-    /// A sheet is the transitive closure of "the opposite edge in a
-    /// quadrangle". On a lone block that is the four edges parallel to the
-    /// one you name; across glued blocks it runs on through them.
-    ///
-    /// The orientation is carried along with the walk, so that one cut
-    /// parameter means the same thing everywhere on the sheet. If the closure
-    /// ever comes back to an edge it has already seen and disagrees about
-    /// which way round it runs, the sheet is not orientable — it meets itself
-    /// — and that is refused rather than cut badly.
     pub fn sheet_through(&self, edge: CellId) -> Result<Vec<SheetEdge>, BlockingError> {
-        let start = self
-            .edge_by_id(edge)
-            .ok_or(BlockingError::NoSuchEdge(edge))?;
-        let (from, to) = self.edge_endpoints_of(start);
+        let start = self.edge_at(edge).ok_or(BlockingError::NoSuchEdge(edge))?;
+        let ends = self.edges.get(start).expect("live").ends;
 
-        // Keyed by name and walked in order, so the answer does not depend on
-        // the order a hash map happened to hand things back in.
+        // The same walk the map did, and in the same words: out of an edge
+        // through each face that holds it, to the edge **across** that
+        // quadrangle — the one opposite, oriented to match. `across` is
+        // four ids and a cycle, which is why it needed no porting at all.
+        //
+        // Keyed by name and walked in order, so the answer does not depend
+        // on the order anything happened to hand things back in.
         let mut found: BTreeMap<CellId, SheetEdge> = BTreeMap::new();
         found.insert(
             edge,
             SheetEdge {
                 edge,
-                from: self.node_tag_of(from).id,
-                to: self.node_tag_of(to).id,
+                from: self.node_name(ends[0]),
+                to: self.node_name(ends[1]),
             },
         );
-        let mut pending = vec![(start, from, to)];
+        let mut pending = vec![(start, ends[0], ends[1])];
 
         while let Some((current, from, to)) = pending.pop() {
-            for face in self.faces_around(current) {
-                let quad = self.face_corners(face);
+            for face in self.faces_on(current) {
+                let quad = self.faces.get(face).expect("live").nodes;
                 let Some((next_from, next_to)) = across(quad, from, to) else {
                     continue;
                 };
                 let Some(next) = self.edge_between(face, next_from, next_to) else {
                     continue;
                 };
-                let name = self.edge_tag_of(next).id;
-                let (named_from, named_to) =
-                    (self.node_tag_of(next_from).id, self.node_tag_of(next_to).id);
+                let name = self.edge_name(next);
+                let (named_from, named_to) = (self.node_name(next_from), self.node_name(next_to));
                 if let Some(seen) = found.get(&name) {
                     if (seen.from, seen.to) != (named_from, named_to) {
                         return Err(BlockingError::TangledSheet(edge));
@@ -2542,64 +2652,46 @@ impl Blocking {
         Ok(found.into_values().collect())
     }
 
-    /// A dart of `face`, on `block`'s own side of it.
-    ///
-    /// A glued face has one on each side, and which side is being spoken
-    /// about is the whole content of a pick: the same face belongs to two
-    /// blocks and the chord through it runs a different way in each.
-    fn side_dart(&self, face: CellId, block: CellId) -> Result<DartIdType, BlockingError> {
-        let f = self
-            .face_by_id(face)
-            .ok_or(BlockingError::NoSuchFace(face))?;
-        let v = self
-            .block_by_id(block)
-            .ok_or(BlockingError::NoSuchBlock(block))?;
-        self.block_face_darts(v)
-            .into_iter()
-            .find(|&d| self.map.face_id(d) == f)
-            .ok_or(BlockingError::FaceNotOnBlock(face, block))
-    }
-
-    /// The chord of blocks through this face, in order.
-    ///
-    /// A **chord** is a dual curve: in at one face of a block, out at the
-    /// face opposite, and on through whatever is glued there. Exactly one
-    /// chord runs through any face — a face has one pair of opposite faces
-    /// across its own block — which is why one click names one.
-    ///
-    /// It is walked both ways from the face it was asked about, so the
-    /// answer does not depend on which end was clicked. It stops at the
-    /// model's boundary, where there is nothing glued on to go to, or when
-    /// it closes into a ring.
-    ///
-    /// A chord that meets **itself** — back through a block it has already
-    /// crossed, by a different pair of faces — is refused. Removing it would
-    /// take one block away twice, and inserting a layer along it would ask a
-    /// block to shrink in four directions it has already shrunk in.
     pub fn chord_through(
         &self,
         face: CellId,
         block: CellId,
     ) -> Result<Vec<ChordBlock>, BlockingError> {
-        let start = self.side_dart(face, block)?;
-        // A chord steps out of a block through the face opposite, which an
-        // open sheet of faces does not have: it would walk out of the map.
-        if !self.is_block(block) {
-            return Err(BlockingError::NotABlock(block));
-        }
+        let id = self.face_at(face).ok_or(BlockingError::NoSuchFace(face))?;
+        let start = match self.block_at(block) {
+            Some(start) => start,
+            None => {
+                // A chord steps out of a block through the face opposite,
+                // which an open sheet of faces does not have: it would walk
+                // out of the structure. A patch being named by a face of
+                // its own, that is what a name no block answers to and some
+                // loose face does means.
+                let loose = self.face_at(block).is_some_and(|f| {
+                    self.faces
+                        .get(f)
+                        .is_some_and(|face| face.sides[0].is_none())
+                });
+                return Err(if loose {
+                    BlockingError::NotABlock(block)
+                } else {
+                    BlockingError::NoSuchBlock(block)
+                });
+            }
+        };
+        let (slot, _) = self
+            .slot_of(id, start)
+            .ok_or(BlockingError::FaceNotOnBlock(face, block))?;
 
-        // One block of the chord, read from a dart of the face it is entered
-        // by: the block, the face in, the face out, and the dart that leaves
-        // it — which is the way on to the next block.
-        let step = |d: DartIdType| {
-            let out = self.across_the_block(d);
+        // One block of the chord, entered at a slot: the block, the face
+        // in, the face out, and what is beyond the far face — which is the
+        // way on. `OPPOSITE` is where the map walked three betas.
+        let step = |at: BlockId, slot: u8| {
+            let faces = self.blocks.get(at).expect("live").faces;
+            let out = faces[OPPOSITE[slot as usize] as usize];
             (
                 ChordBlock {
-                    block: self.block_tag_of(self.map.volume_id(d)).id,
-                    through: [
-                        self.face_tag_of(self.map.face_id(d)).id,
-                        self.face_tag_of(self.map.face_id(out)).id,
-                    ],
+                    block: self.block_name(at),
+                    through: [self.face_name(faces[slot as usize]), self.face_name(out)],
                 },
                 out,
             )
@@ -2607,30 +2699,39 @@ impl Blocking {
 
         let mut ahead: Vec<ChordBlock> = Vec::new();
         let mut closed = false;
-        let mut d = start;
+        let mut here = Side { block: start, slot };
         loop {
-            let (here, out) = step(d);
-            ahead.push(here);
-            let next = self.map.beta::<3>(out);
-            if next == NULL_DART_ID {
+            let (crossing, out) = step(here.block, here.slot);
+            ahead.push(crossing);
+            let leaving = Side {
+                block: here.block,
+                slot: OPPOSITE[here.slot as usize],
+            };
+            let Some(next) = self.beyond(out, leaving) else {
                 break;
-            }
-            if next == start {
+            };
+            if next == (Side { block: start, slot }) {
                 // A ring: going on would walk it for ever, and going back
                 // would walk it again the other way.
                 closed = true;
                 break;
             }
-            d = next;
+            here = next;
         }
 
         let mut behind: Vec<ChordBlock> = Vec::new();
         if !closed {
-            let mut d = self.map.beta::<3>(start);
-            while d != NULL_DART_ID {
-                let (here, out) = step(d);
-                behind.push(here);
-                d = self.map.beta::<3>(out);
+            let mut back = self.beyond(id, Side { block: start, slot });
+            while let Some(side) = back {
+                let (crossing, out) = step(side.block, side.slot);
+                behind.push(crossing);
+                back = self.beyond(
+                    out,
+                    Side {
+                        block: side.block,
+                        slot: OPPOSITE[side.slot as usize],
+                    },
+                );
             }
         }
         behind.reverse();
@@ -2646,31 +2747,23 @@ impl Blocking {
         Ok(behind)
     }
 
-    /// The edges to draw to show a chord: the outline of every face it
-    /// crosses.
-    ///
-    /// A sheet is lit by its own edges, which is what a sheet *is*. A chord
-    /// is a thread through faces, and the readable picture of one is those
-    /// faces' outlines — a ladder of slices through the blocking, which is
-    /// exactly what a removal would take out. Consecutive blocks share a
-    /// face, so each edge comes back once.
     pub fn chord_wire(&self, chord: &[ChordBlock]) -> Vec<(CellId, CellId, CellId)> {
         let mut out: Vec<(CellId, CellId, CellId)> = Vec::new();
         for step in chord {
             for name in step.through {
-                let Some(face) = self.face_by_id(name) else {
+                let Some(id) = self.face_at(name) else {
                     continue;
                 };
-                for dart in self.face_darts(face) {
-                    let edge = self.edge_tag_of(self.map.edge_id(dart)).id;
+                let face = self.faces.get(id).expect("live");
+                for k in 0..4 {
+                    let edge = self.edge_name(face.edges[k]);
                     if out.iter().any(|(seen, ..)| *seen == edge) {
                         continue;
                     }
                     out.push((
                         edge,
-                        self.node_tag_of(self.map.vertex_id(dart)).id,
-                        self.node_tag_of(self.map.vertex_id(self.map.beta::<1>(dart)))
-                            .id,
+                        self.node_name(face.nodes[k]),
+                        self.node_name(face.nodes[(k + 1) % 4]),
                     ));
                 }
             }
@@ -2678,395 +2771,267 @@ impl Blocking {
         out
     }
 
-    /// Take away every block of the chord through this face.
-    ///
-    /// One [`remove_block`][Self::remove_block] after another, in the order
-    /// the chord runs in. Each removal leaves whatever the block was glued to
-    /// closed again, so a chord taken out of the middle of a blocking leaves
-    /// a tunnel with sound walls rather than anything needing repair.
     pub fn remove_chord(
         &mut self,
         face: CellId,
         block: CellId,
     ) -> Result<Vec<CellId>, BlockingError> {
+        // One `remove_block` after another, in the order the chord runs
+        // in. Each removal leaves whatever the block was glued to closed
+        // again, so a chord taken out of the middle leaves a tunnel with
+        // sound walls rather than anything needing repair.
         let chord = self.chord_through(face, block)?;
-        let gone: Vec<CellId> = chord.iter().map(|c| c.block).collect();
-        for block in &gone {
-            self.remove_block(*block)?;
+        let mut gone = Vec::with_capacity(chord.len());
+        for step in &chord {
+            self.remove_block(step.block)?;
+            gone.push(step.block);
         }
         Ok(gone)
     }
 
-    /// Insert a layer of hexahedra all the way along a chord — an **o-grid**.
-    ///
-    /// The chord is a tube of blocks, and what is pillowed is its **side**:
-    /// the four faces of each of its blocks that the chord does not cross.
-    /// Each block of the chord draws those four in and a ring of four new
-    /// blocks is laid into the space that opens up, so a cross-section of the
-    /// chord goes from one block to five — which is the o-grid.
-    ///
-    /// The faces at the two **ends** are deliberately left out, so the tube
-    /// stays open. A node on an end face belongs to two of the side faces and
-    /// to no other, so it moves along the mitre of those two: inwards across
-    /// the chord, and not one bit along it. The ends stay exactly where they
-    /// were, flush with whatever they were on.
     pub fn pillow_chord(
         &mut self,
         face: CellId,
         block: CellId,
     ) -> Result<Vec<(CellId, Option<On>)>, BlockingError> {
+        // The chord is a tube of blocks, and what is pillowed is its
+        // **side**: the four faces of each of its blocks that the chord
+        // does not cross. The two at the ends are deliberately left out, so
+        // the tube stays open — a node on an end face belongs to two side
+        // faces and to no other, so it moves along the mitre of those two,
+        // inwards across the chord and not one bit along it.
         let chord = self.chord_through(face, block)?;
-        let sides = self.block_faces();
-        let patch: Vec<(CellId, CellId)> = chord
-            .iter()
-            .flat_map(|step| {
-                sides
-                    .iter()
-                    .filter(|s| s.block == step.block && !step.through.contains(&s.face))
-                    .map(|s| (s.face, s.block))
-            })
-            .collect();
-        self.pillow(&patch)
-    }
-
-    /// Cut one edge in two, putting a node at `at`.
-    ///
-    /// An edge in a 3-map is a ring of darts — one per face-side around it —
-    /// and every one of them has to become two. For a dart running A→B the
-    /// original keeps A→P and a new one takes P→B.
-    ///
-    /// The β₂ and β₃ partners are then re-paired **crosswise**. If `d` runs
-    /// A→B its partner `g` runs B→A, so after the cut `d` is A→P and `g`'s
-    /// new half is P→A: those two are the pair. Pairing `d` with `g` again
-    /// would join A→P to B→P, which share no edge at all.
-    ///
-    /// Both halves come out unnamed, as a split should: what comes out of
-    /// one is two new cells, not a cell and a claimant to the old name.
-    ///
-    /// # Why the raw setters
-    ///
-    /// `link` and `unlink` are not the per-dart operations they look like.
-    /// `one_link` also links the β₃ mirror, to keep β₃∘β₁ = β₀∘β₃; `three_link`
-    /// walks whole faces and refuses a pair of different lengths. Both are
-    /// right for editing a finished map and wrong here: halfway through a
-    /// split the two sides of a face genuinely are different lengths, and the
-    /// mirror is something this already knows how to wire. Judged by those
-    /// operators, every intermediate state is invalid.
-    ///
-    /// So the wiring is set outright, and `is_coherent` in the tests below
-    /// checks afterwards what they would have checked throughout.
-    fn split_edge(
-        &mut self,
-        edge: EdgeIdType,
-        at: [f64; 3],
-    ) -> Result<VertexIdType, BlockingError> {
-        let darts: Vec<DartIdType> = self
-            .map
-            .orbit(OrbitPolicy::Edge, edge as DartIdType)
-            .collect();
-        let base = self.map.allocate_used_darts(darts.len());
-        let fresh: HashMap<DartIdType, DartIdType> = darts
-            .iter()
-            .enumerate()
-            .map(|(i, d)| (*d, base + i as DartIdType))
-            .collect();
-
-        // Read every pairing before any of it is disturbed.
-        let after: HashMap<DartIdType, DartIdType> =
-            darts.iter().map(|&d| (d, self.map.beta::<1>(d))).collect();
-        let two: HashMap<DartIdType, DartIdType> =
-            darts.iter().map(|&d| (d, self.map.beta::<2>(d))).collect();
-        let three: HashMap<DartIdType, DartIdType> =
-            darts.iter().map(|&d| (d, self.map.beta::<3>(d))).collect();
-
-        for &d in &darts {
-            let (n, next) = (fresh[&d], after[&d]);
-            self.map.set_beta::<1>(d, n);
-            self.map.set_beta::<0>(n, d);
-            self.map.set_beta::<1>(n, next);
-            self.map.set_beta::<0>(next, n);
-
-            // Crosswise, and only where there was a partner to begin with.
-            for (i, partner) in [(2u8, two[&d]), (3u8, three[&d])] {
-                if partner == NULL_DART_ID {
-                    continue;
-                }
-                let mirror = fresh[&partner];
-                if i == 2 {
-                    self.map.set_beta::<2>(d, mirror);
-                    self.map.set_beta::<2>(n, partner);
-                } else {
-                    self.map.set_beta::<3>(d, mirror);
-                    self.map.set_beta::<3>(n, partner);
+        let mut patch: Vec<(CellId, CellId)> = Vec::new();
+        for step in &chord {
+            for side in self.faces_of(step.block) {
+                if !step.through.contains(&side.face) {
+                    patch.push((side.face, side.block));
                 }
             }
         }
-
-        // The node in the middle, and the two halves left to be named.
-        //
-        // All three **inherit what the edge was classified on**. For the
-        // node that is the load-bearing one: an edge lying along a curve
-        // is cut into two edges along that curve and a point on it, and a
-        // point on it is what the new node has to be. The caller projects
-        // it, this crate having no idea where the curve goes.
-        //
-        // The two halves could be left to the inference — their ends now
-        // agree about the same entity, so it would reach the same answer
-        // — but there is no reason to make them wait for it.
-        let parent = self.edge_tag_of(self.map.edge_id(darts[0]));
-        let was = parent.on;
-        let middle = self.map.vertex_id(fresh[&darts[0]]);
-        self.map.write_vertex(middle, (at[0], at[1], at[2]));
-        self.map.write_attribute(
-            middle,
-            NodeTag {
-                id: CellId::NONE,
-                corner_key: self.corners.next_corner(),
-                on: was,
-                frozen: false,
-            },
-        );
-        for &d in &[darts[0], fresh[&darts[0]]] {
-            let half = self.map.edge_id(d);
-            self.map.write_attribute(
-                half,
-                EdgeTag {
-                    id: CellId::NONE,
-                    on: was,
-                    // Both halves keep the parent's number, so a cut
-                    // doubles the nodes along this direction — which is
-                    // what cutting is for.
-                    segments: parent.segments,
-                },
-            );
-        }
-        Ok(middle)
+        self.pillow(&patch)
     }
 
-    /// Cut the whole sheet through an edge, at `t` along it.
-    ///
-    /// Three passes, in this order, because each needs the one before it
-    /// finished across the **whole** sheet rather than cell by cell: split
-    /// every edge, then every face the sheet crosses, then every block.
-    /// Doing one block at a time would leave its neighbor's shared face
-    /// half-cut, and nothing downstream could tell that from a mistake.
-    ///
-    /// `t` runs along the direction [`sheet_through`][Self::sheet_through]
-    /// reports, which is the same way round on every edge of the sheet —
-    /// otherwise one parameter would mean `t` on some cells and `1 - t` on
-    /// the next.
     pub fn split_sheet(&mut self, edge: CellId, t: f64) -> Result<Vec<CellId>, BlockingError> {
         if !t.is_finite() || t <= 0.0 || t >= 1.0 {
             return Err(BlockingError::BadParameter(t));
         }
         let sheet = self.sheet_through(edge)?;
-        let from_nodes: HashSet<VertexIdType> = sheet
-            .iter()
-            .filter_map(|s| self.node_by_id(s.from))
-            .collect();
 
-        // --- the edges ------------------------------------------------
-        // Splitting one edge leaves the others' identifiers alone — their
-        // darts are not touched — so one index serves the whole pass.
-        let index = self.edge_index();
-        let mut fresh: HashSet<VertexIdType> = HashSet::new();
+        // --- the new nodes, and the two halves of every edge -----------
+        //
+        // All three inherit what the edge was classified on, and the node
+        // is the load-bearing one: an edge lying along a curve is cut into
+        // two edges along that curve and a **point on it**, and the caller
+        // projects it because this crate has no idea where the curve goes.
+        // Both halves keep the parent's segment count, so a cut doubles the
+        // nodes along this direction — which is what cutting is for.
+        let mut known = self.known();
+        let mut cut: HashMap<EdgeId, NodeId> = HashMap::new();
+        let mut made: Vec<NodeId> = Vec::new();
+        let mut gone: Vec<EdgeId> = Vec::new();
         for side in &sheet {
-            let target = *index
-                .get(&side.edge)
+            let id = self
+                .edge_at(side.edge)
                 .ok_or(BlockingError::NoSuchEdge(side.edge))?;
-            let p = self.position(side.from).unwrap_or([0.0; 3]);
-            let q = self.position(side.to).unwrap_or([0.0; 3]);
-            let at = [0, 1, 2].map(|k| p[k] + (q[k] - p[k]) * t);
-            fresh.insert(self.split_edge(target, at)?);
-        }
-
-        // --- the faces ------------------------------------------------
-        // Every cycle read first: splitting one face leaves the others
-        // alone, so the list taken now is still the list to work through.
-        let sides = self.face_sides();
-        let mut cuts: Vec<(DartIdType, DartIdType)> = Vec::new();
-        for cycle in &sides {
-            if let Some(pair) = self.split_face_side(cycle, &fresh, &from_nodes) {
-                cuts.push(pair);
-            }
-        }
-        if cuts.is_empty() {
-            return Err(BlockingError::BrokenSheet(edge));
-        }
-
-        // The new darts' β₃, from the invariant β₃∘β₁ = β₀∘β₃: both sides of
-        // a shared face have their new dart by now, so each can find its
-        // opposite number through the dart it was inserted after.
-        for &(u, v) in &cuts {
-            for x in [u, v] {
-                let behind = self.map.beta::<0>(x);
-                let mirror = self.map.beta::<3>(behind);
-                if mirror != NULL_DART_ID {
-                    let partner = self.map.beta::<0>(mirror);
-                    self.map.set_beta::<3>(x, partner);
-                    self.map.set_beta::<3>(partner, x);
-                }
-            }
-        }
-
-        // --- the blocks -----------------------------------------------
-        // Grouped before any of them is split, since splitting one rewrites
-        // its own identifier.
-        let mut rings: BTreeMap<VolumeIdType, Vec<(DartIdType, DartIdType)>> = BTreeMap::new();
-        for &(u, v) in &cuts {
-            rings.entry(self.map.volume_id(u)).or_default().push((u, v));
-        }
-        for (volume, ring) in rings {
-            // Blocks only, and this is the one step that is about volumes
-            // at all. A block is cut in two by closing a new face between
-            // its halves, along the ring of four new edges the sheet left
-            // round it. A **patch** has no ring and needs none: cutting its
-            // β₁ cycle in two already made two faces, welded to each other
-            // along the new edge by the β₂ the cut itself set. In two
-            // dimensions the cut is finished when the faces are.
-            if self.is_block_of(volume) {
-                self.insert_cut_face(&ring, edge)?;
-            }
-        }
-
-        // What was split is gone: two new cells each, named afresh, and
-        // each still lying where the whole did until the inference says
-        // otherwise.
-        for &(u, v) in &cuts {
-            for x in [u, v] {
-                let face = self.map.face_id(x);
-                let on = self.face_tag_of(face).on;
-                self.map.write_attribute(
-                    face,
-                    FaceTag {
-                        id: CellId::NONE,
-                        on,
-                    },
-                );
-            }
-        }
-        self.assign_missing_ids();
-
-        // The nodes the cut made, now that they have names. The caller
-        // wants them because each has inherited a classification and is
-        // still sitting on the straight line between the ends of the edge
-        // it came from — and only the caller knows where the geometry
-        // says it should be instead.
-        let mut made: Vec<CellId> = fresh.iter().map(|v| self.node_tag_of(*v).id).collect();
-        made.sort();
-        Ok(made)
-    }
-
-    /// Close one block off along its ring of new edges, making two.
-    ///
-    /// The ring is the new edge of each side face the sheet crossed. Until
-    /// now the two halves of the block are still joined, through the β₂ that
-    /// pairs each ring edge's two darts across its own face. The cut face
-    /// goes between them: `u` loses `v` as a partner and gains a dart of the
-    /// new face, and `v` likewise, and the two new faces are β₃ to each
-    /// other — which is what two blocks sharing a face are.
-    fn insert_cut_face(
-        &mut self,
-        ring: &[(DartIdType, DartIdType)],
-        edge: CellId,
-    ) -> Result<(), BlockingError> {
-        // Walk the ring by its geometry: the next edge starts where this one
-        // ends. A block the sheet crosses has four, in one closed loop.
-        let starts: HashMap<VertexIdType, usize> = ring
-            .iter()
-            .enumerate()
-            .map(|(k, &(u, _))| (self.map.vertex_id(u), k))
-            .collect();
-        let mut order = vec![0usize];
-        for _ in 1..ring.len() {
-            let last = *order.last().unwrap();
-            let ends_at = self.map.vertex_id(self.map.beta::<1>(ring[last].0));
-            match starts.get(&ends_at) {
-                Some(&next) if !order.contains(&next) => order.push(next),
-                _ => return Err(BlockingError::BrokenSheet(edge)),
-            }
-        }
-        let closes = self
-            .map
-            .vertex_id(self.map.beta::<1>(ring[*order.last().unwrap()].0));
-        if closes != self.map.vertex_id(ring[order[0]].0) {
-            return Err(BlockingError::BrokenSheet(edge));
-        }
-
-        // What the block being cut is part of, read before it becomes two.
-        // The halves keep it: cutting a block of the fluid in two gives
-        // two blocks of the fluid.
-        let groups = self
-            .block_tag_of(self.map.volume_id(ring[order[0]].0))
-            .groups;
-
-        let n = order.len();
-        let base = self.map.allocate_used_darts(n * 2);
-        let (a, b): (Vec<_>, Vec<_>) = (
-            (0..n).map(|k| base + k as DartIdType).collect(),
-            (0..n).map(|k| base + (n + k) as DartIdType).collect(),
-        );
-
-        for k in 0..n {
-            let (u, v) = ring[order[k]];
-            // `a` runs against `u`, so its cycle runs backwards round the
-            // ring; `b` runs with it, so its cycle runs forwards.
-            let behind = a[(k + n - 1) % n];
-            self.map.set_beta::<1>(a[k], behind);
-            self.map.set_beta::<0>(behind, a[k]);
-            let ahead = b[(k + 1) % n];
-            self.map.set_beta::<1>(b[k], ahead);
-            self.map.set_beta::<0>(ahead, b[k]);
-
-            self.map.set_beta::<2>(a[k], u);
-            self.map.set_beta::<2>(u, a[k]);
-            self.map.set_beta::<2>(b[k], v);
-            self.map.set_beta::<2>(v, b[k]);
-            self.map.set_beta::<3>(a[k], b[k]);
-            self.map.set_beta::<3>(b[k], a[k]);
-        }
-
-        // Both halves are new blocks; neither inherits the name, and both
-        // inherit the groups.
-        for &d in &[a[0], b[0]] {
-            let block = self.map.volume_id(d);
-            self.map.write_attribute(
-                block,
-                BlockTag {
-                    id: CellId::NONE,
-                    groups,
-                },
+            let (from, to) = (
+                self.node_at(side.from)
+                    .ok_or(BlockingError::NoSuchNode(side.from))?,
+                self.node_at(side.to)
+                    .ok_or(BlockingError::NoSuchNode(side.to))?,
             );
+            let was = self.edges.get(id).expect("live").clone();
+            let (p, q) = (
+                self.nodes.get(from).expect("live").at,
+                self.nodes.get(to).expect("live").at,
+            );
+            let at = [0, 1, 2].map(|k| p[k] + (q[k] - p[k]) * t);
+            let born = self.nodes.handed_out();
+            let middle = self.nodes.insert(Node {
+                at,
+                on: was.on,
+                frozen: false,
+                born,
+            });
+            // Registered as the halves of this edge **before** the parent
+            // is forgotten, so that everything built below finds them
+            // rather than making a third copy.
+            self.edge_on(from, middle, &mut known, (was.on, was.segments));
+            self.edge_on(middle, to, &mut known, (was.on, was.segments));
+            cut.insert(id, middle);
+            made.push(middle);
+            gone.push(id);
         }
-        Ok(())
+
+        // --- what the cut makes, read off the structure as it stands ----
+        //
+        // Every block and every loose face the sheet crosses, worked out
+        // before any of them is touched: one block at a time would leave
+        // its neighbour's shared face half cut, and nothing downstream
+        // could tell that from a mistake.
+        let mut halves: Vec<([[NodeId; 8]; 2], u64)> = Vec::new();
+        let mut blocks: Vec<BlockId> = Vec::new();
+        for (id, block) in self.blocks.iter() {
+            let crossed: Vec<usize> = (0..12)
+                .filter(|k| cut.contains_key(&block.edges[*k]))
+                .collect();
+            if crossed.is_empty() {
+                continue;
+            }
+            // A block the sheet crosses is crossed along all four edges of
+            // one axis. Anything else is a sheet that does not close, and
+            // cutting it would leave a block with a face half there.
+            let axis = EDGE_AXIS[crossed[0]];
+            if crossed.len() != 4 || crossed.iter().any(|k| EDGE_AXIS[*k] != axis) {
+                return Err(BlockingError::BrokenSheet(edge));
+            }
+            let frame = SPLIT_FRAME[axis as usize].map(|c| block.nodes[c]);
+            // In that frame the four cut edges are the uprights, joining
+            // the low cap to the high one.
+            let middle: [NodeId; 4] = [0, 1, 2, 3].map(|k| {
+                let pair = [frame[k], frame[k + 4]];
+                let mut key = pair;
+                key.sort_unstable();
+                let id = known
+                    .by_pair
+                    .get(&key)
+                    .copied()
+                    .expect("the upright is an edge of the block");
+                cut[&id]
+            });
+            halves.push((
+                [
+                    [
+                        frame[0], frame[1], frame[2], frame[3], middle[0], middle[1], middle[2],
+                        middle[3],
+                    ],
+                    [
+                        middle[0], middle[1], middle[2], middle[3], frame[4], frame[5], frame[6],
+                        frame[7],
+                    ],
+                ],
+                // Both halves are in whatever the block was in: a cut does
+                // not take anything out of a group.
+                block.groups,
+            ));
+            blocks.push(id);
+        }
+
+        let mut sheets: Vec<Halved> = Vec::new();
+        let mut loose: Vec<FaceId> = Vec::new();
+        for (id, face) in self.faces.iter() {
+            let crossed: Vec<usize> = (0..4)
+                .filter(|k| cut.contains_key(&face.edges[*k]))
+                .collect();
+            if crossed.is_empty() {
+                continue;
+            }
+            let [first, second] = crossed[..] else {
+                return Err(BlockingError::BrokenSheet(edge));
+            };
+            if (second - first) % 2 != 0 {
+                // Two sides of a quadrangle that meet at a corner: a sheet
+                // crossing those is not a sheet.
+                return Err(BlockingError::BrokenSheet(edge));
+            }
+            // The two halves, as node quads, whether this face bounds a
+            // block or not: either way they inherit what the whole was
+            // classified on.
+            let (p, q) = (cut[&face.edges[first]], cut[&face.edges[second]]);
+            let (a, b) = (first, second);
+            sheets.push((
+                [
+                    [face.nodes[a], p, q, face.nodes[(b + 1) % 4]],
+                    [p, face.nodes[(a + 1) % 4], face.nodes[b], q],
+                ],
+                [p, q],
+                face.on,
+            ));
+            // A face of a block is cut by cutting the block; a face of a
+            // patch has no block to cut, and cutting it in two **is** the
+            // whole of the job. In two dimensions the cut is finished when
+            // the faces are.
+            if face.sides.iter().all(|side| side.is_none()) {
+                loose.push(id);
+            }
+        }
+        if halves.is_empty() && loose.is_empty() {
+            return Err(BlockingError::BrokenSheet(edge));
+        }
+
+        // --- out with the old ------------------------------------------
+        //
+        // Before the new, and not after: a cap the sheet does not cross is
+        // shared with the block being replaced, and a face cannot have
+        // three sides. Detaching first is also what turns a cap that keeps
+        // a neighbour the right way round.
+        let dropped: Vec<(BlockId, [FaceId; 6])> = blocks
+            .iter()
+            .map(|id| (*id, self.blocks.get(*id).expect("live").faces))
+            .collect();
+        for (id, faces) in dropped {
+            for face in faces {
+                self.detach(face, id);
+            }
+            self.blocks.remove(id);
+        }
+        // The faces the sheet crossed are gone with it: what comes out of a
+        // cut is two cells, not a cell and a claimant to the old name.
+        let crossed: Vec<FaceId> = self
+            .faces
+            .iter()
+            .filter(|(_, face)| face.edges.iter().any(|e| cut.contains_key(e)))
+            .map(|(id, _)| id)
+            .collect();
+        for id in &crossed {
+            self.faces.remove(*id);
+        }
+        for id in gone {
+            self.edges.remove(id);
+        }
+
+        // --- and in with the new ---------------------------------------
+        let mut known = Known {
+            by_pair: known.by_pair,
+            by_quad: self.known().by_quad,
+        };
+        known.by_pair.retain(|_, id| self.edges.get(*id).is_some());
+        for (pair, groups) in halves {
+            for nodes in pair {
+                let block = self.emplace_block(nodes, &mut known)?;
+                self.blocks.get_mut(block).expect("just made").groups = groups;
+            }
+        }
+        // Every half of every face the cut crossed, told what the whole was
+        // on — so a cut along a surface stays on that surface. The halves
+        // that bound a block were made by the blocks above and are found
+        // here; the ones that bound nothing are made here, a patch having
+        // no block to cut.
+        //
+        // And **the edge the cut laid across each of them** inherits it
+        // too, which is the one thing that knows a new edge runs across
+        // the inside of a disc rather than round its edge. Its two ends
+        // are both on the rim, so the settling asked afterwards would put
+        // it on the rim: the boundary of a cell says which entities it
+        // could be on and never which one it is.
+        for (pair, middle, on) in &sheets {
+            for nodes in pair {
+                let id = self.face_on(*nodes, &mut known);
+                self.faces.get_mut(id).expect("found or made").on = *on;
+            }
+            if on.is_none() {
+                continue;
+            }
+            let across = self.edge_on(middle[0], middle[1], &mut known, (*on, 0));
+            self.edges.get_mut(across).expect("found or made").on = *on;
+        }
+
+        self.forget();
+        let mut out: Vec<CellId> = made.iter().map(|n| self.node_name(*n)).collect();
+        out.sort();
+        Ok(out)
     }
 
-    /// Grow a block out of **every** face of a patch, all at once.
-    ///
-    /// A patch is extruded whole or not at all. Raising one face of it and
-    /// leaving its neighbors behind would weld a block to an open sheet of
-    /// faces, and in a 3-map that is not a thing: β₂ joins the faces of one
-    /// volume, so the sheet and the block would have to be the same volume
-    /// and a different one at once.
-    ///
-    /// Three things make the blocks fit together:
-    ///
-    /// * **one offset per node**, not per face. Each node moves along the
-    ///   mitre of the normals of the faces meeting there, so two blocks
-    ///   raised from two faces sharing an edge raise that edge to the *same*
-    ///   two corners rather than to two pairs that happen to be close.
-    /// * **a glue along every shared edge**, so the two blocks end up
-    ///   sharing the face that edge was raised into — which is what makes
-    ///   the result one object rather than a heap of boxes.
-    /// * **the patch is consumed.** Its faces are now the bottoms of the
-    ///   blocks, carrying what they were classified on, and the sheet
-    ///   itself is gone.
-    ///
-    /// Built from [`add_block`][Self::add_block] and
-    /// [`glue_onto`][Self::glue_onto], like everything else that makes
-    /// blocks here.
-    ///
-    /// Returns the blocks, in the order their faces were read.
     pub fn extrude_patch(
         &mut self,
         face: CellId,
@@ -3081,233 +3046,30 @@ impl Blocking {
         }
         let back = height < 0.0;
         let height = height.abs();
-        let start = self
-            .face_by_id(face)
-            .ok_or(BlockingError::NoSuchFace(face))?;
-        let volume = self.map.volume_id(start as DartIdType);
-        if self.is_block_of(volume) {
+        let start = self.face_at(face).ok_or(BlockingError::NoSuchFace(face))?;
+        if self
+            .faces
+            .get(start)
+            .is_some_and(|f| f.sides.iter().any(|side| side.is_some()))
+        {
             return Err(BlockingError::NotAPatch(face));
         }
 
-        // --- read the whole patch before anything is built ---------------
-        // One face of it per entry: the darts round it, the corners they
-        // start at, and what every cell of it is classified on.
-        struct Side {
-            darts: [DartIdType; 4],
-            points: [[f64; 3]; 4],
-            nodes: [NodeTag; 4],
-            edges: [EdgeTag; 4],
-            on: Option<On>,
-        }
-        let mut faces: Vec<FaceIdType> = self
-            .map
-            .orbit(OrbitPolicy::Volume, volume as DartIdType)
-            .map(|d| self.map.face_id(d))
-            .collect();
-        faces.sort_unstable();
-        faces.dedup();
-
-        let sides: Vec<Side> = faces
+        // All of it or none of it, and that is not a convenience: half a
+        // patch raised would leave the other half welded to a block along
+        // an edge, which is a sheet with a block hanging off it.
+        let component = self
+            .patch_components()
+            .into_iter()
+            .find(|faces| faces.contains(&start))
+            .ok_or(BlockingError::NotAPatch(face))?;
+        let sides: Vec<(FaceId, [NodeId; 4])> = component
             .iter()
-            .map(|&f| {
-                let darts = self.face_darts(f);
-                Side {
-                    darts,
-                    points: darts
-                        .map(|d| self.position_of(self.map.vertex_id(d)).unwrap_or([0.0; 3])),
-                    nodes: darts.map(|d| self.node_tag_of(self.map.vertex_id(d))),
-                    edges: darts.map(|d| self.edge_tag_of(self.map.edge_id(d))),
-                    on: self.face_tag_of(f).on,
-                }
-            })
+            .map(|id| (*id, self.faces.get(*id).expect("live").nodes))
             .collect();
-
-        // Where each dart's neighbor is, as (face, slot) — the pairs that
-        // have to end up sharing a face once the blocks are up.
-        let mut slot_of: HashMap<DartIdType, (usize, usize)> = HashMap::new();
-        for (k, side) in sides.iter().enumerate() {
-            for (slot, &d) in side.darts.iter().enumerate() {
-                slot_of.insert(d, (k, slot));
-            }
-        }
-        let mut seams: Vec<((usize, usize), (usize, usize))> = Vec::new();
-        for (k, side) in sides.iter().enumerate() {
-            for (slot, &d) in side.darts.iter().enumerate() {
-                let partner = self.map.beta::<2>(d);
-                if partner == NULL_DART_ID {
-                    continue;
-                }
-                let Some(&(other, other_slot)) = slot_of.get(&partner) else {
-                    // Welded to something outside the patch, which cannot
-                    // happen while β₂ stays inside one volume.
-                    return Err(BlockingError::LostFace);
-                };
-                if k < other {
-                    seams.push(((k, slot), (other, other_slot)));
-                }
-            }
-        }
-
-        // --- where every node goes ---------------------------------------
-        // By corner key rather than by position: two faces of a patch share
-        // the node itself, and the map says so without anything being
-        // measured.
-        let mut normals: HashMap<CornerKey, Vec<[f64; 3]>> = HashMap::new();
-        for side in &sides {
-            let normal = quad_normal(side.points);
-            let length = (0..3).map(|k| normal[k] * normal[k]).sum::<f64>().sqrt();
-            if length < 1e-12 {
-                return Err(BlockingError::LostFace);
-            }
-            let unit = normal.map(|x| if back { -x / length } else { x / length });
-            for tag in &side.nodes {
-                normals.entry(tag.corner_key).or_default().push(unit);
-            }
-        }
-        let steps: HashMap<CornerKey, [f64; 3]> = normals
-            .iter()
-            .map(|(key, around)| (*key, mitre(around, height)))
-            .collect();
-
-        // --- out with the sheet, up with the blocks ----------------------
-        self.drop_volume(volume)?;
-
-        // Going the other way, a face is read round the other way: the
-        // first four corners of a block are the face whose own outward
-        // normal points back the way the block was grown from, so reading
-        // them forwards while stepping backwards would build every block
-        // inside out.
-        let corner_at = if back { [0, 3, 2, 1] } else { [0, 1, 2, 3] };
-        let edge_at = |k: usize| if back { 3 - k } else { k };
-
-        let mut raised: Vec<(CellId, DartIdType)> = Vec::with_capacity(sides.len());
-        for side in &sides {
-            let mut corners = [[0.0; 3]; 8];
-            for k in 0..4 {
-                let from = side.points[corner_at[k]];
-                let step = steps
-                    .get(&side.nodes[corner_at[k]].corner_key)
-                    .copied()
-                    .unwrap_or([0.0; 3]);
-                corners[k] = from;
-                corners[4 + k] = [0, 1, 2].map(|axis| from[axis] + step[axis]);
-            }
-            let built = self.build_block(corners)?;
-            raised.push(built);
-        }
-
-        // What the sheet was on, handed to the faces that took its place.
-        for (side, &(_, first)) in sides.iter().zip(&raised) {
-            let bottom = self.map.face_id(first);
-            let tag = self.face_tag_of(bottom);
-            self.map
-                .write_attribute(bottom, FaceTag { on: side.on, ..tag });
-            let darts = self.face_darts(bottom);
-            // `HEX_FACES[0]` is read [0, 3, 2, 1], so the bottom face runs
-            // backwards round the corners the patch's face ran forwards.
-            for (slot, &d) in darts.iter().enumerate() {
-                // Through the block's corner, and then through whichever
-                // of the sheet's corners that was.
-                let was = corner_at[[0, 3, 2, 1][slot]];
-                let vertex = self.map.vertex_id(d);
-                let node = self.node_tag_of(vertex);
-                self.map.write_attribute(
-                    vertex,
-                    NodeTag {
-                        on: side.nodes[was].on,
-                        frozen: side.nodes[was].frozen,
-                        ..node
-                    },
-                );
-                // The edge of the bottom face leaving this corner is the
-                // one the patch's face entered it by.
-                let edge = self.map.edge_id(d);
-                let tag = self.edge_tag_of(edge);
-                let from = side.edges[edge_at(([0, 3, 2, 1][slot] + 3) % 4)];
-                self.map.write_attribute(
-                    edge,
-                    EdgeTag {
-                        on: from.on,
-                        segments: from.segments,
-                        ..tag
-                    },
-                );
-            }
-        }
-
-        // --- and the blocks to each other --------------------------------
-        for ((a, a_slot), (b, b_slot)) in seams {
-            // A seam was written down in the sheet's own numbering; the
-            // block's sides are numbered the way its base was read.
-            //
-            // Derived from `corner_at`, and **not pinned by a test**: one
-            // face, two faces evenly and unevenly cut, and three in a row
-            // all come out identical whether this mapping is applied or
-            // not, going either way. Whoever finds the case that tells
-            // them apart should put it in `tests/patches.rs`.
-            let slot_of = |slot: usize| (0..4).find(|k| edge_at(*k) == slot).expect("a slot");
-            let first = self.lateral(raised[a].1, slot_of(a_slot));
-            let second = self.lateral(raised[b].1, slot_of(b_slot));
-            self.glue_onto(first, second)?;
-        }
-
-        self.assign_missing_ids();
-        Ok(raised.iter().map(|(name, _)| *name).collect())
+        self.raise_faces(&sides, height, back)
     }
 
-    /// The face of a block raised from slot `k` of the face it was built
-    /// on: the one whose corners are `k`, `k + 1` and those two moved up.
-    ///
-    /// Found in [`HEX_FACES`] rather than by looking at where it is, and
-    /// then by arithmetic on the base dart, because `build_block` lays the
-    /// faces out in that order and knowing which is which is the whole
-    /// reason it hands the dart back.
-    fn lateral(&self, first: DartIdType, slot: usize) -> CellId {
-        let want = [slot, (slot + 1) % 4, 4 + (slot + 1) % 4, 4 + slot];
-        let found = HEX_FACES
-            .iter()
-            .position(|face| want.iter().all(|c| face.contains(c)))
-            .expect("every edge of a hexahedron is on two side faces");
-        self.face_tag_of(self.map.face_id(first + 4 * found as DartIdType))
-            .id
-    }
-
-    /// Grow a new block out of a face, along the normal at its center.
-    ///
-    /// The face stays exactly where it is and the new block is laid against
-    /// it: four corners copied, four more `height` away along the outward
-    /// normal, and the two welded together. Which is literally what it does
-    /// — [`add_block`](Self::add_block) then
-    /// [`glue_faces`](Self::glue_faces), two operations that were already
-    /// here and already tested, rather than a third piece of dart surgery to
-    /// get wrong.
-    ///
-    /// The weld moves nothing: the new block's own corners were built *on*
-    /// the old face's, so averaging each pair lands back where it started.
-    ///
-    /// Only a face on the surface can be grown from. One with a block on
-    /// each side already has everything it can be glued to.
-    ///
-    /// Returns the new block.
-    /// Grow a block out of each of these faces at once, welded to each other
-    /// wherever two of them share an edge.
-    ///
-    /// Not a loop over [`extrude_face`][Self::extrude_face], and the
-    /// difference is the whole point. Two faces that meet along an edge
-    /// raise that edge **once**: the corners it holds are shared, so the
-    /// copies they go to are shared, and the two new blocks therefore have
-    /// a face in common rather than two faces in the same place. That face
-    /// is then welded, and the result is a corner that holds together
-    /// instead of two slabs leaning on each other.
-    ///
-    /// Each face grows along **its own** normal, which is what an extrusion
-    /// means — and a corner on several of them goes along the [`mitre`], so
-    /// that it ends up `height` clear of every face it was on. On a flat
-    /// patch that is the plain normal; on a right-angled crease it is the
-    /// diagonal, which is what makes the two copies meet.
-    ///
-    /// Outward only, for the reason one face is: the other side of a face
-    /// of a block is the block.
     pub fn extrude_faces(
         &mut self,
         picked: &[(CellId, CellId)],
@@ -3331,109 +3093,27 @@ impl Blocking {
                 wanted.push(*pair);
             }
         }
-
-        // --- read every face before anything is built --------------------
-        struct Side {
-            points: [[f64; 3]; 4],
-            keys: [CornerKey; 4],
-            edges: [EdgeIdType; 4],
-            face: CellId,
-        }
-        let all = self.block_faces();
-        let mut sides: Vec<Side> = Vec::with_capacity(wanted.len());
-        for &(face, block) in &wanted {
-            // On the outside, as one face has to be: a face with a block on
-            // each side has no room to grow into.
-            if all.iter().any(|s| s.face == face && s.block != block) {
-                return Err(BlockingError::NotOnTheSurface(face));
-            }
-            // The darts on **this block's** side, so the four corners come
-            // in the winding that block sees as outward.
-            let first = self.side_dart(face, block)?;
-            let mut darts = [first; 4];
-            for k in 1..4 {
-                darts[k] = self.map.beta::<1>(darts[k - 1]);
-            }
-            sides.push(Side {
-                points: darts.map(|d| self.position_of(self.map.vertex_id(d)).unwrap_or([0.0; 3])),
-                keys: darts.map(|d| self.node_tag_of(self.map.vertex_id(d)).corner_key),
-                edges: darts.map(|d| self.map.edge_id(d)),
-                face,
-            });
-        }
-
-        // --- where every corner goes -------------------------------------
-        // By corner key: two faces that meet share the node itself, and the
-        // map says so without anything being measured.
-        let mut normals: HashMap<CornerKey, Vec<[f64; 3]>> = HashMap::new();
-        for side in &sides {
-            let normal = quad_normal(side.points);
-            let length = (0..3).map(|k| normal[k] * normal[k]).sum::<f64>().sqrt();
-            if length < 1e-12 {
-                return Err(BlockingError::LostFace);
-            }
-            let unit = normal.map(|x| x / length);
-            for key in &side.keys {
-                normals.entry(*key).or_default().push(unit);
-            }
-        }
-        let steps: HashMap<CornerKey, [f64; 3]> = normals
+        let sides = wanted
             .iter()
-            .map(|(key, around)| (*key, mitre(around, height)))
-            .collect();
+            .map(|(face, block)| self.free_side(*face, *block))
+            .collect::<Result<Vec<_>, _>>()?;
 
-        // --- which pairs will have to be welded --------------------------
-        // An edge held by two of the chosen faces becomes a face held by the
-        // two blocks they raise. Written down now, in the selection's own
-        // numbering, because the names will not survive what follows.
-        let mut along: HashMap<EdgeIdType, Vec<(usize, usize)>> = HashMap::new();
-        for (k, side) in sides.iter().enumerate() {
-            for (slot, edge) in side.edges.iter().enumerate() {
-                along.entry(*edge).or_default().push((k, slot));
+        // Three chosen faces on one edge would raise three blocks round it,
+        // and which two of them meet is not a question with an answer.
+        // Refused rather than welded arbitrarily — and refused **here**,
+        // because what `emplace_block` would say about it is that some face
+        // already has two sides, which is true and unhelpful.
+        let mut along: HashMap<EdgeId, usize> = HashMap::new();
+        for (id, _) in &sides {
+            for edge in self.faces.get(*id).expect("live").edges {
+                *along.entry(edge).or_default() += 1;
             }
         }
-        let mut seams: Vec<((usize, usize), (usize, usize))> = Vec::new();
-        for (_, holders) in along {
-            // Three chosen faces on one edge would raise three blocks round
-            // it, and which two of them meet is not a question with an
-            // answer. Refused rather than welded arbitrarily.
-            if holders.len() > 2 {
-                return Err(BlockingError::NotOnTheSurface(sides[holders[0].0].face));
-            }
-            if let [first, second] = holders[..] {
-                seams.push((first, second));
-            }
-        }
-        seams.sort_unstable();
-
-        // --- up with the blocks ------------------------------------------
-        let mut raised: Vec<(CellId, DartIdType)> = Vec::with_capacity(sides.len());
-        for side in &sides {
-            let mut corners = [[0.0; 3]; 8];
-            for k in 0..4 {
-                let from = side.points[k];
-                let step = steps.get(&side.keys[k]).copied().unwrap_or([0.0; 3]);
-                corners[k] = from;
-                corners[4 + k] = [0, 1, 2].map(|axis| from[axis] + step[axis]);
-            }
-            raised.push(self.build_block(corners)?);
+        if along.values().any(|holders| *holders > 2) {
+            return Err(BlockingError::NotOnTheSurface(wanted[0].0));
         }
 
-        // Each onto the face it grew from, and then to each other. In that
-        // order: a block welded to its neighbor first would be welded by a
-        // face whose corners the base weld is about to move.
-        for (side, &(_, first)) in sides.iter().zip(&raised) {
-            let against = self.face_tag_of(self.map.face_id(first)).id;
-            self.glue_onto(side.face, against)?;
-        }
-        for ((a, a_slot), (b, b_slot)) in seams {
-            let first = self.lateral(raised[a].1, a_slot);
-            let second = self.lateral(raised[b].1, b_slot);
-            self.glue_onto(first, second)?;
-        }
-
-        self.assign_missing_ids();
-        Ok(raised.iter().map(|(name, _)| *name).collect())
+        self.raise_faces(&sides, height, false)
     }
 
     pub fn extrude_face(
@@ -3449,81 +3129,15 @@ impl Blocking {
         }
         // And one way only, which is not the same rule as for a patch: the
         // other side of a face of a block is **the block**. Growing into it
-        // would lay a second block inside the first and weld the two along
-        // a face they are both behind, which is not a structure, it is a
-        // mistake with a name.
+        // would lay a second block inside the first.
         if height < 0.0 {
             return Err(BlockingError::Inwards(height));
         }
-
-        let sides = self.block_faces();
-        let side = sides
-            .iter()
-            .find(|s| s.face == face && s.block == block)
-            .ok_or(BlockingError::FaceNotOnBlock(face, block))?;
-        if sides.iter().any(|s| s.face == face && s.block != block) {
-            return Err(BlockingError::NotOnTheSurface(face));
-        }
-
-        let base = side.nodes.map(|n| self.position(n).unwrap_or([0.0; 3]));
-        let normal = quad_normal(base);
-        let length = (normal[0].powi(2) + normal[1].powi(2) + normal[2].powi(2)).sqrt();
-        // A face with no area has no normal to grow along, and nothing
-        // sensible to do about it.
-        if length < 1e-12 {
-            return Err(BlockingError::LostFace);
-        }
-        let step = normal.map(|x| x * height / length);
-
-        // `block_faces` winds a face outward from its own block, so the four
-        // corners in that order are the new block's **first** face — the one
-        // `HEX_FACES[0]` describes, whose own outward normal points back the
-        // way we came. The other four are those, moved along.
-        let mut corners = [[0.0; 3]; 8];
-        corners[..4].copy_from_slice(&base);
-        for k in 0..4 {
-            corners[4 + k] = [0, 1, 2].map(|axis| base[k][axis] + step[axis]);
-        }
-
-        let (grown, first) = self.build_block(corners)?;
-        // Which face to weld is known because we built the block: it is the
-        // one the first dart is on. Nothing is searched for by position.
-        let against = self.face_tag_of(self.map.face_id(first)).id;
-        self.glue_onto(face, against)?;
-        Ok(grown)
+        let side = self.free_side(face, block)?;
+        let raised = self.raise_faces(&[side], height, false)?;
+        raised.into_iter().next().ok_or(BlockingError::LostFace)
     }
 
-    /// Insert a layer of hexahedra along a patch of faces.
-    ///
-    /// Each selected face is given as the pair a click gives: the face, and
-    /// the block it was clicked on. That block's own nodes are drawn
-    /// inwards and one hexahedron is laid into the space that opens up, so
-    /// **nothing on the far side of the patch moves** — which is the point
-    /// of pillowing.
-    ///
-    /// A face on the model's surface needs only that. A face **inside** the
-    /// model needs the two blocks to stop sharing their nodes first, or
-    /// drawing one block in would drag the other with it and leave no space
-    /// at all. Unsewing the face is exactly that: the map splits the shared
-    /// vertices and each side comes away with its own copy.
-    ///
-    /// Built from unsewing, [`add_block`][Self::add_block],
-    /// [`glue_faces`][Self::glue_faces] and moving nodes, rather than from
-    /// dart surgery. The topology is the same either way, and these already
-    /// have tests behind them.
-    ///
-    /// A node on the **rim** of the patch is shared with blocks outside it,
-    /// and moving it takes them with it. The mesh stays conforming and those
-    /// blocks are deformed a little; that is the honest consequence of a
-    /// shared node being shared.
-    ///
-    /// Returns the nodes that were drawn in, each with **what it was
-    /// following** before it let go. The node itself is on nothing now and
-    /// free to move: it is inside the material, and a node pinned to a
-    /// curve it is no longer near drags the mesh out through the boundary.
-    /// But a rim node has often only slid *along* what it was on, and the
-    /// caller — which holds the triangles — cannot notice that without
-    /// being told what to look for.
     pub fn pillow(
         &mut self,
         patch: &[(CellId, CellId)],
@@ -3532,1313 +3146,387 @@ impl Blocking {
             return Err(BlockingError::EmptyPatch);
         }
         // Drawing a block inwards means there is an inward: a patch of free
-        // faces has no inside to give way.
-        // A name nothing answers to is a different complaint, and the code
-        // below makes it: this one is only about a block that exists and is
-        // an open sheet.
-        for &(_, block) in patch {
-            if self
-                .block_by_id(block)
-                .is_some_and(|v| !self.is_block_of(v))
-            {
-                return Err(BlockingError::NotABlock(block));
+        // faces has no inside to give way. A name nothing answers to is a
+        // different complaint, and the resolving below makes it.
+        for (_, block) in patch {
+            if self.block_at(*block).is_none() && self.face_at(*block).is_some() {
+                return Err(BlockingError::NotABlock(*block));
             }
         }
 
         // --- read everything before a single node moves ----------------
-        struct Plan {
-            block: CellId,
-            behind: Option<CellId>,
-            points: [[f64; 3]; 4],
-            inward: [f64; 3],
-            depth: f64,
-        }
-        let sides = self.block_faces();
-        let mut plans: Vec<Plan> = Vec::new();
-        for &(face, block) in patch {
-            let side = sides
-                .iter()
-                .find(|s| s.face == face && s.block == block)
-                .ok_or(BlockingError::FaceNotOnBlock(face, block))?;
-            let behind = sides
-                .iter()
-                .find(|s| s.face == face && s.block != block)
-                .map(|s| s.block);
-
-            let points = side.nodes.map(|n| self.position(n).unwrap_or([0.0; 3]));
+        let mut picked: Vec<(FaceId, BlockId)> = Vec::new();
+        let mut plans: Vec<Drawn> = Vec::new();
+        for (face, block) in patch {
+            // A pair, and the complaint is about the pair: a face that is
+            // not this block's and a name nothing answers to are the same
+            // mistake from here, which is what the map said too.
+            let (id, at) = self
+                .face_at(*face)
+                .zip(self.block_at(*block))
+                .ok_or(BlockingError::FaceNotOnBlock(*face, *block))?;
+            let (_, which) = self
+                .slot_of(id, at)
+                .ok_or(BlockingError::FaceNotOnBlock(*face, *block))?;
+            let f = self.faces.get(id).expect("live");
+            let winding = if which == 1 {
+                reversed(f.nodes)
+            } else {
+                f.nodes
+            };
+            let points = winding.map(|n| self.nodes.get(n).expect("live").at);
             let normal = quad_normal(points);
-            let length = (normal[0].powi(2) + normal[1].powi(2) + normal[2].powi(2)).sqrt();
+            let length = (0..3).map(|k| normal[k] * normal[k]).sum::<f64>().sqrt();
             if length < 1e-12 {
                 return Err(BlockingError::LostFace);
             }
-            // The block's own extent in that direction, from its center to
+            // The block's own extent in that direction, from its centre to
             // the face and back again; a third of it is the layer.
-            let center = self.block_center(&sides, block);
-            let middle = [0, 1, 2].map(|k| points.iter().map(|p| p[k]).sum::<f64>() / 4.0);
+            let corners = self.blocks.get(at).expect("live").nodes;
+            let centre = self.middle(
+                &corners
+                    .iter()
+                    .map(|n| self.nodes.get(*n).expect("live").at)
+                    .collect::<Vec<_>>(),
+            );
+            let middle = self.middle(&points);
             let reach = (0..3)
-                .map(|k| (middle[k] - center[k]).powi(2))
+                .map(|k| (middle[k] - centre[k]).powi(2))
                 .sum::<f64>()
                 .sqrt();
-            plans.push(Plan {
-                block,
-                behind,
-                points,
-                inward: normal.map(|x| -x / length),
-                depth: 2.0 * reach * PILLOW_SHARE,
-            });
+            picked.push((id, at));
+            plans.push((
+                id,
+                at,
+                winding,
+                normal.map(|x| -x / length),
+                2.0 * reach * PILLOW_SHARE,
+            ));
+        }
+
+        // What each node of the patch is, where it is and what it follows,
+        // read before anything moves: the node that moves is **not** the
+        // one that ends up where it is now. The layer leaves one there, and
+        // that one is the one on the geometry.
+        let mut was: HashMap<NodeId, ([f64; 3], Option<On>, bool)> = HashMap::new();
+        let mut facing: HashMap<NodeId, (Vec<[f64; 3]>, f64)> = HashMap::new();
+        for (_, _, winding, inward, depth) in &plans {
+            for node in winding {
+                let n = self.nodes.get(*node).expect("live");
+                was.insert(*node, (n.at, n.on, n.frozen));
+                let entry = facing.entry(*node).or_insert((Vec::new(), f64::INFINITY));
+                entry.0.push(*inward);
+                entry.1 = entry.1.min(*depth);
+            }
         }
 
         // --- let go of the far side ------------------------------------
-        // All of them before anything is read again: two blocks joined
-        // along several faces keep sharing their nodes until the last of
-        // those is undone, so one at a time would see a half-detached map.
-        for &(face, _) in patch {
-            if let Some(at) = self.face_by_id(face) {
-                if self.map.beta::<3>(at as DartIdType) != NULL_DART_ID {
-                    self.map.unsew::<3>(at as DartIdType)?;
-                }
-            }
-        }
-        // The split left the cells it touched unnamed, and the faces have
-        // to be findable again below.
-        self.assign_missing_ids();
+        let far = self.separate(&picked)?;
 
-        // --- where each node of the patch goes --------------------------
-        let sides = self.block_faces();
-        let mut facing: HashMap<VertexIdType, (Vec<[f64; 3]>, f64)> = HashMap::new();
-        let mut near: Vec<BlockFace> = Vec::new();
-        for plan in &plans {
-            let side = self
-                .side_at(&sides, plan.block, &plan.points)
-                .ok_or(BlockingError::LostFace)?;
-            if let Some(behind) = plan.behind {
-                let other = self
-                    .side_at(&sides, behind, &plan.points)
-                    .ok_or(BlockingError::LostFace)?;
-                // Still the same nodes: the two blocks are joined somewhere
-                // else as well, so drawing one in would drag the other.
-                if side.nodes.iter().any(|n| other.nodes.contains(n)) {
-                    return Err(BlockingError::NotOnTheSurface(side.face));
-                }
-            }
-            for node in side.nodes {
-                let Some(vertex) = self.node_by_id(node) else {
-                    continue;
-                };
-                let entry = facing.entry(vertex).or_insert((Vec::new(), f64::INFINITY));
-                entry.0.push(plan.inward);
-                entry.1 = entry.1.min(plan.depth);
-            }
-            near.push(side);
-        }
-
-        // What each node of the patch is pinned to, and where it is.
-        //
-        // Read before anything moves, because the node that is about to
-        // move is **not** the one that ends up where it is now: the layer
-        // puts a new node there, and that new one is the one on the
-        // geometry. See the hand-over below.
-        let was: Vec<([f64; 3], Option<On>, bool)> = facing
-            .keys()
-            .map(|node| {
-                let tag = self.node_tag_of(*node);
-                (
-                    self.position_of(*node).unwrap_or([0.0; 3]),
-                    tag.on,
-                    tag.frozen,
-                )
-            })
-            .collect();
-
-        // What each of them was following, kept to hand back. The node
-        // itself lets go below — it is inside the material now — but the
-        // caller holds the triangles and may well decide it is still on
-        // the same thing, which it cannot do without being told what that
-        // was. A node sliding along the rim of the patch is the case.
-        let followed: HashMap<VertexIdType, Option<On>> = facing
-            .keys()
-            .map(|node| (*node, self.node_tag_of(*node).on))
-            .collect();
-
-        let mut moved: HashMap<VertexIdType, [f64; 3]> = HashMap::new();
-        for (node, (inward, depth)) in &facing {
-            let from = self.position_of(*node).unwrap_or([0.0; 3]);
+        // --- in with the patch -----------------------------------------
+        // In a settled order throughout, because a hash map's order is not
+        // one: two sessions pillowed the same way have to ship the same
+        // bytes, and the names handed out depend on the order the nodes are
+        // made in.
+        let mut patch: Vec<NodeId> = facing.keys().copied().collect();
+        patch.sort_unstable();
+        for node in &patch {
+            let (inward, depth) = &facing[node];
             let step = mitre(inward, *depth);
-            moved.insert(*node, [0, 1, 2].map(|k| from[k] + step[k]));
-        }
-        for (node, to) in &moved {
-            self.map.write_vertex(*node, (to[0], to[1], to[2]));
-            // And it lets go of the geometry on the way in. This node is
-            // **inside the material** now; what it used to follow is the
-            // business of the copy the layer leaves on the surface, and a
-            // node pinned to a curve it is no longer anywhere near drags
-            // the mesh out through the boundary when it is projected.
-            let tag = self.node_tag_of(*node);
-            self.map.write_attribute(
-                *node,
-                NodeTag {
-                    on: None,
-                    frozen: false,
-                    ..tag
-                },
-            );
+            let n = self.nodes.get_mut(*node).expect("live");
+            let from = n.at;
+            n.at = [0, 1, 2].map(|k| from[k] + step[k]);
+            // And it lets go of the geometry on the way in: this node is
+            // inside the material now, and what it used to follow is the
+            // business of the copy the layer leaves on the surface.
+            n.on = None;
+            n.frozen = false;
         }
 
         // --- a block per face, laid into the space that opened ----------
-        struct Layer {
-            block: CellId,
-            shrunk: [[f64; 3]; 4],
-        }
-        let mut layers: Vec<Layer> = Vec::new();
-        for (plan, side) in plans.iter().zip(&near) {
-            let shrunk = side.nodes.map(|n| {
-                self.node_by_id(n)
-                    .and_then(|v| moved.get(&v).copied())
-                    .unwrap_or([0.0; 3])
-            });
-            // `add_block` wants the far face first, wound so that its own
-            // normal points away from the block. The patch face is wound
-            // away from **its** block, which is the other way round, and
-            // listing the shrunk corners first puts that right.
-            let mut corners = [[0.0; 3]; 8];
-            corners[..4].copy_from_slice(&shrunk);
-            corners[4..].copy_from_slice(&plan.points);
-            let (block, base) = self.build_block(corners)?;
-
-            // The far four of the new block are where the patch was, so
-            // they are the nodes on the geometry now. They take what the
-            // nodes that moved in were carrying — the classification and
-            // the freeze both, since a frozen node was frozen where it
-            // stood rather than wherever it is pushed to.
-            for (c, at) in corners.iter().enumerate().skip(4) {
-                let Some((_, on, frozen)) = was.iter().find(|(p, _, _)| same_point(*p, *at)) else {
-                    continue;
-                };
-                let vertex = self.map.vertex_id(corner_dart(base, c));
-                let tag = self.node_tag_of(vertex);
-                self.map.write_attribute(
-                    vertex,
-                    NodeTag {
-                        on: *on,
-                        frozen: *frozen,
-                        ..tag
-                    },
-                );
-            }
-            layers.push(Layer { block, shrunk });
-        }
-
-        // Each layer onto the block it came off, the existing face named
-        // first so that its nodes keep the names they had — and then onto
-        // whatever was on the far side, which has not moved.
-        for ((plan, side), layer) in plans.iter().zip(&near).zip(&layers) {
-            let under = self
-                .face_at(layer.block, &layer.shrunk)
-                .ok_or(BlockingError::LostFace)?;
-            self.glue_onto(side.face, under)?;
-            if let Some(behind) = plan.behind {
-                let far = self
-                    .side_of(behind, &plan.points)
-                    .ok_or(BlockingError::LostFace)?;
-                let over = self
-                    .face_at(layer.block, &plan.points)
-                    .ok_or(BlockingError::LostFace)?;
-                self.glue_onto(far.face, over)?;
-            }
-        }
-
-        // And to each other, wherever two selected faces met along an edge.
-        for a in 0..plans.len() {
-            for b in (a + 1)..plans.len() {
-                for i in 0..4 {
-                    let edge = [plans[a].points[i], plans[a].points[(i + 1) % 4]];
-                    let shared = (0..4).any(|j| {
-                        let other = [plans[b].points[j], plans[b].points[(j + 1) % 4]];
-                        same_point(edge[0], other[0]) && same_point(edge[1], other[1])
-                            || same_point(edge[0], other[1]) && same_point(edge[1], other[0])
-                    });
-                    if !shared {
-                        continue;
-                    }
-                    let wall = |n: usize, i: usize| {
-                        [
-                            plans[n].points[i],
-                            plans[n].points[(i + 1) % 4],
-                            layers[n].shrunk[(i + 1) % 4],
-                            layers[n].shrunk[i],
-                        ]
-                    };
-                    let here = self.face_at(layers[a].block, &wall(a, i));
-                    let there = (0..4).find_map(|j| {
-                        self.face_at(layers[b].block, &wall(b, j)).filter(|_| {
-                            let (w, m) = (wall(b, j), wall(a, i));
-                            (0..4).all(|k| m.iter().any(|p| same_point(*p, w[k])))
-                        })
-                    });
-                    if let (Some(x), Some(y)) = (here, there) {
-                        self.glue_onto(x, y)?;
-                    }
-                }
-            }
-        }
-
-        self.assign_missing_ids();
-
-        // The nodes that were drawn in, now that the gluing has settled
-        // which vertex is which. The caller wants them because each is
-        // somewhere new and so may be **on** something new: the corner of
-        // a box drawn in off the rim of a disc is still on that disc, and
-        // only the caller holds the triangles that say so.
-        let mut drawn: Vec<(CellId, Option<On>)> = Vec::new();
-        for v in self.map_vertices() {
-            let at = self.position_of(v).unwrap_or([0.0; 3]);
-            let Some((from, _)) = moved.iter().find(|(_, to)| same_point(**to, at)) else {
-                continue;
-            };
-            drawn.push((
-                self.node_tag_of(v).id,
-                followed.get(from).copied().unwrap_or(None),
-            ));
-        }
-        // By name, which is all that orders them: two entries for one node
-        // cannot disagree about what it was following.
-        drawn.sort_by_key(|(name, _)| *name);
-        drawn.dedup_by_key(|(name, _)| *name);
-        Ok(drawn)
-    }
-
-    /// The side of `block` whose four corners are these four points.
-    fn side_at(
-        &self,
-        sides: &[BlockFace],
-        block: CellId,
-        points: &[[f64; 3]; 4],
-    ) -> Option<BlockFace> {
-        sides
-            .iter()
-            .filter(|s| s.block == block)
-            .find(|s| {
-                s.nodes.iter().all(|n| {
-                    let p = self.position(*n).unwrap_or([0.0; 3]);
-                    points.iter().any(|q| same_point(p, *q))
+        //
+        // Its far four are the **far side's own** nodes, which did not
+        // move: nothing beyond the patch moves, which is the whole point
+        // of pillowing. Where there is no far side the layer makes them,
+        // and they take what the node that moved in was carrying — the
+        // classification and the freeze both, a frozen node having been
+        // frozen where it stood and not wherever it is pushed to.
+        let mut over: HashMap<NodeId, NodeId> = HashMap::new();
+        for node in &patch {
+            let (at, on, frozen) = was[node];
+            let copy = far.get(node).copied().unwrap_or_else(|| {
+                let born = self.nodes.handed_out();
+                self.nodes.insert(Node {
+                    at,
+                    on,
+                    frozen,
+                    born,
                 })
-            })
-            .copied()
-    }
-
-    /// The center of a block: the mean of the corners its faces list, each
-    /// of the eight counted once per face it is on, which weighs them all
-    /// the same.
-    fn block_center(&self, sides: &[BlockFace], block: CellId) -> [f64; 3] {
-        let mut sum = [0.0; 3];
-        let mut n = 0.0_f64;
-        for side in sides.iter().filter(|s| s.block == block) {
-            for node in side.nodes {
-                let p = self.position(node).unwrap_or([0.0; 3]);
-                for k in 0..3 {
-                    sum[k] += p[k];
-                }
-                n += 1.0;
-            }
+            });
+            over.insert(*node, copy);
         }
-        sum.map(|x| x / n.max(1.0))
-    }
 
-    /// The face of a block whose four corners are these four points.
-    fn face_at(&self, block: CellId, points: &[[f64; 3]; 4]) -> Option<CellId> {
-        self.side_of(block, points).map(|s| s.face)
-    }
-
-    /// The side of `block` whose four corners are these four points, read
-    /// from that one block rather than from every face in the map.
-    fn side_of(&self, block: CellId, points: &[[f64; 3]; 4]) -> Option<BlockFace> {
-        let volume = self.block_by_id(block)?;
-        self.side_at(&self.faces_of_volume(volume), block, points)
-    }
-
-    /// Every β₁ cycle in the map: one per face side.
-    fn face_sides(&self) -> Vec<Vec<DartIdType>> {
-        let mut seen = vec![false; self.map.n_darts()];
-        let mut sides = Vec::new();
-        for start in 1..self.map.n_darts() as DartIdType {
-            if self.map.is_unused(start) || seen[start as usize] {
-                continue;
-            }
-            let mut cycle = Vec::new();
-            let mut d = start;
-            loop {
-                seen[d as usize] = true;
-                cycle.push(d);
-                d = self.map.beta::<1>(d);
-                if d == start || d == NULL_DART_ID {
-                    break;
-                }
-            }
-            sides.push(cycle);
+        let mut known = self.known();
+        for (_, _, winding, _, _) in &plans {
+            // As for an extrusion: what is outside the face is inside the
+            // block laid against it.
+            let base = [winding[3], winding[0], winding[1], winding[2]];
+            let corners = [
+                base[0],
+                base[1],
+                base[2],
+                base[3],
+                over[&base[0]],
+                over[&base[1]],
+                over[&base[2]],
+                over[&base[3]],
+            ];
+            self.emplace_block(corners, &mut known)?;
         }
-        sides
-    }
+        self.forget();
 
-    /// Cut one face side in two, along a new edge between its two new nodes.
-    ///
-    /// Returns the pair of darts on that new edge: the first lies on the
-    /// **`from`** side of the sheet, the second on the `to` side. Which is
-    /// which is not a detail — it is what tells the block split which half
-    /// of itself each quadrangle belongs to.
-    fn split_face_side(
-        &mut self,
-        cycle: &[DartIdType],
-        fresh: &HashSet<VertexIdType>,
-        from_nodes: &HashSet<VertexIdType>,
-    ) -> Option<(DartIdType, DartIdType)> {
-        let starts: Vec<VertexIdType> = cycle.iter().map(|&d| self.map.vertex_id(d)).collect();
-        let marks: Vec<usize> = (0..cycle.len())
-            .filter(|&k| fresh.contains(&starts[k]))
+        // The nodes that were drawn in, each with what it was following
+        // before it let go. The caller holds the triangles and may well
+        // decide it is still on the same thing — a node sliding along the
+        // rim of the patch is the case — which it cannot do without being
+        // told what that was.
+        let mut out: Vec<(CellId, Option<On>)> = patch
+            .iter()
+            .map(|node| (self.node_name(*node), was[node].1))
             .collect();
-        // Two new nodes, opposite each other: anything else is not a face
-        // this cut touches.
-        if marks.len() != 2
-            || !cycle.len().is_multiple_of(2)
-            || marks[1] - marks[0] != cycle.len() / 2
-        {
-            return None;
-        }
-        // The half that keeps the `from` side is the one entered from a
-        // `from` node, and exactly one of the two is.
-        let n = cycle.len();
-        let i = if from_nodes.contains(&starts[(marks[0] + n - 1) % n]) {
-            marks[0]
-        } else {
-            marks[1]
-        };
-        let j = (i + n / 2) % n;
-
-        // What the face was on, read before the surgery takes it apart.
-        // The new edge runs across the inside of that face, so that is
-        // where it is — and nothing about its two ends would say so: both
-        // of them are on the boundary of the face, which the face shares
-        // with whatever else that boundary bounds.
-        let was = self.face_tag_of(self.map.face_id(cycle[0])).on;
-
-        let base = self.map.allocate_used_darts(2);
-        let (u, v) = (base, base + 1);
-        let (before_i, before_j) = (cycle[(i + n - 1) % n], cycle[(j + n - 1) % n]);
-
-        self.map.set_beta::<1>(before_i, u);
-        self.map.set_beta::<0>(u, before_i);
-        self.map.set_beta::<1>(u, cycle[j]);
-        self.map.set_beta::<0>(cycle[j], u);
-
-        self.map.set_beta::<1>(before_j, v);
-        self.map.set_beta::<0>(v, before_j);
-        self.map.set_beta::<1>(v, cycle[i]);
-        self.map.set_beta::<0>(cycle[i], v);
-
-        self.map.set_beta::<2>(u, v);
-        self.map.set_beta::<2>(v, u);
-        let fresh = self.map.edge_id(u);
-        self.map.write_attribute(
-            fresh,
-            EdgeTag {
-                id: CellId::NONE,
-                on: was,
-                // Left unsaid: this edge runs **across** the face, so it
-                // belongs to a sheet of its own, and that sheet's other
-                // edges carry its number already. The mesher resolves a
-                // sheet to one number, so it picks this one up from them.
-                segments: 0,
-            },
-        );
-        Some((u, v))
+        out.sort_by_key(|(name, _)| *name);
+        Ok(out)
     }
 
-    /// How many segments the sheet through this edge is divided into when
-    /// the blocking is meshed, and 0 for "nobody has said".
-    ///
-    /// Read per sheet rather than per edge: every edge of a sheet has to
-    /// carry the same number or the mesh does not match across the faces
-    /// between them. What is found is resolved to the **largest** number on
-    /// the sheet, so a sheet made by gluing two that were set differently
-    /// is still answered conformingly, and a new edge nobody has set picks
-    /// up the number its sheet already had.
     pub fn sheet_segments(&self, edge: CellId) -> Result<u32, BlockingError> {
-        let index = self.edge_index();
         Ok(self
             .sheet_through(edge)?
             .iter()
-            .filter_map(|s| index.get(&s.edge))
-            .map(|e| self.edge_tag_of(*e).segments)
+            .filter_map(|s| self.edge_at(s.edge))
+            .filter_map(|e| self.edges.get(e))
+            .map(|e| e.segments)
             .max()
             .unwrap_or(0))
     }
 
-    /// Say how many segments the sheet through this edge is divided into.
-    ///
-    /// On every edge of the sheet, which is the only way it can mean
-    /// anything: an edge divided into four against its neighbor's five
-    /// leaves a face with nothing to match along.
     pub fn set_sheet_segments(&mut self, edge: CellId, segments: u32) -> Result<(), BlockingError> {
-        let index = self.edge_index();
         for side in self.sheet_through(edge)? {
-            let Some(e) = index.get(&side.edge) else {
+            let Some(id) = self.edge_at(side.edge) else {
                 continue;
             };
-            let tag = self.edge_tag_of(*e);
-            self.map.write_attribute(*e, EdgeTag { segments, ..tag });
+            self.edges.get_mut(id).expect("live").segments = segments;
         }
         Ok(())
     }
 
-    /// The faces an edge belongs to, by identifier, without repeats.
-    fn faces_around(&self, edge: EdgeIdType) -> Vec<FaceIdType> {
-        let mut faces: Vec<FaceIdType> = self
-            .map
-            .orbit(OrbitPolicy::Edge, edge as DartIdType)
-            .map(|d| self.map.face_id(d))
-            .collect();
-        faces.sort_unstable();
-        faces.dedup();
-        faces
-    }
-
-    /// A face's four corners, in the order β₁ walks them.
-    fn face_corners(&self, face: FaceIdType) -> [VertexIdType; 4] {
-        self.face_darts(face).map(|d| self.map.vertex_id(d))
-    }
-
-    /// The edge of this face joining those two corners.
-    fn edge_between(
-        &self,
-        face: FaceIdType,
-        from: VertexIdType,
-        to: VertexIdType,
-    ) -> Option<EdgeIdType> {
-        self.face_darts(face).into_iter().find_map(|d| {
-            let (a, b) = self.edge_endpoints_of(self.map.edge_id(d));
-            ((a, b) == (from, to) || (a, b) == (to, from)).then(|| self.map.edge_id(d))
-        })
-    }
-
-    /// Every edge's name, in one pass.
-    ///
-    /// For when a whole sheet has to be resolved: asking one at a time is a
-    /// scan each, and a sheet across a large grid has as many edges as the
-    /// grid has rows. Built fresh for each operation and thrown away — the
-    /// hazard a standing index carries is that an edit invalidates it
-    /// silently, and this one never outlives the loop it was made for.
-    fn edge_index(&self) -> HashMap<CellId, EdgeIdType> {
-        self.map_edges()
-            .into_iter()
-            .map(|e| (self.edge_tag_of(e).id, e))
-            .collect()
-    }
-
-    /// The edge a stable name currently stands for. A scan, for the same
-    /// reason [`node_by_id`][Self::node_by_id] is one.
-    fn edge_by_id(&self, edge: CellId) -> Option<EdgeIdType> {
-        if edge.is_none() {
-            return None;
-        }
-        if let Some(e) = self.seen.edges.get(&edge) {
-            if self.edge_tag_of(*e).id == edge {
-                return Some(*e);
-            }
-        }
-        self.map_edges()
-            .into_iter()
-            .find(|e| self.edge_tag_of(*e).id == edge)
-    }
-
-    /// The four darts of a face, in the order β₁ walks them.
-    ///
-    /// Only meaningful for a face with one side: for a glued face the
-    /// identifier is the smallest dart of an orbit spanning both blocks, and
-    /// which of the two you would get is not something a caller should have to
-    /// reason about. [`glue_faces`][Self::glue_faces] refuses those anyway.
-    pub(crate) fn face_darts(&self, face: FaceIdType) -> [DartIdType; 4] {
-        let mut out = [0; 4];
-        let mut dart = face as DartIdType;
-        for slot in out.iter_mut() {
-            *slot = dart;
-            dart = self.map.beta::<1>(dart);
-        }
-        out
-    }
-
-    /// The face a stable name currently stands for. A scan, for the same
-    /// reason [`node_by_id`][Self::node_by_id] is one.
-    fn face_by_id(&self, face: CellId) -> Option<FaceIdType> {
-        if face.is_none() {
-            return None;
-        }
-        if let Some(f) = self.seen.faces.get(&face) {
-            if self.face_tag_of(*f).id == face {
-                return Some(*f);
-            }
-        }
-        self.map_faces()
-            .into_iter()
-            .find(|f| self.face_tag_of(*f).id == face)
-    }
-
-    /// Every face of every block.
-    ///
-    /// Listed per block *side* rather than per face. Today that is the same
-    /// thing — `add_block` leaves β₃ unset, so no face is shared and this
-    /// yields six entries per block — but once blocks are sewn a face between
-    /// two of them belongs to both, with opposite windings, and each block
-    /// still wants a closed surface of its own. Having the shape right now
-    /// costs nothing and saves a format change then.
     pub fn block_faces(&self) -> Vec<BlockFace> {
-        self.map_volumes()
-            .into_iter()
-            .flat_map(|volume| self.faces_of_volume(volume))
-            .collect()
-    }
-
-    /// The faces of **one** volume, exactly as
-    /// [`block_faces`][Self::block_faces] lists them for the whole map.
-    ///
-    /// Asking about one block is the common case — which face of this one
-    /// is at these four corners — and the whole map is a thousand times
-    /// the work for it.
-    fn faces_of_volume(&self, volume: VolumeIdType) -> Vec<BlockFace> {
-        let tag = self.block_tag_of(volume);
-        let (block, groups) = (tag.id, tag.groups);
-        // One transaction for the lot: every β lookup, every cell name and
-        // every attribute this map hands out is a transaction of its own
-        // otherwise.
-        atomically(|t| {
-            // The first dart of each face **on this block's side**.
-            // `face_id` alone would not do: it is the smallest dart of the
-            // whole face orbit, which once β₃ is set may well be the other
-            // block's.
-            // The orbit's own iterator holds the transaction while it
-            // runs, so the walk comes first and the questions after.
-            let mut darts: Vec<DartIdType> = Vec::new();
-            for dart in self
-                .map
-                .orbit_tx(t, OrbitPolicy::Volume, volume as DartIdType)
-            {
-                darts.push(dart?);
-            }
-            let mut seen: Vec<FaceIdType> = Vec::new();
-            let mut out: Vec<(FaceIdType, [VertexIdType; 4])> = Vec::new();
-            for dart in darts {
-                let face = self.map.face_id_tx(t, dart)?;
-                if seen.contains(&face) {
+        // **Grouped by what each face bounds**, block by block and then
+        // patch by patch, and not face by face. A caller that reads the
+        // list to find out what there is relies on that: `dedup` on the
+        // block of each entry gives the blocks, and it only does so while
+        // one block's faces are together.
+        let mut out: Vec<BlockFace> = self
+            .blocks
+            .ids()
+            .flat_map(|id| self.faces_of(self.block_name(id)))
+            .collect();
+        // A face bounding no block is still listed, against the patch it is
+        // part of: the page draws a patch, and a face missing from this
+        // listing is a face missing from the screen.
+        for component in self.patch_components() {
+            let name = self.face_name(component[0]);
+            for id in component {
+                let Some(face) = self.faces.get(id) else {
                     continue;
-                }
-                seen.push(face);
-                let mut nodes = [0; 4];
-                let mut walk = dart;
-                for slot in nodes.iter_mut() {
-                    *slot = self.map.vertex_id_tx(t, walk)?;
-                    walk = self.map.beta_tx::<1>(t, walk)?;
-                }
-                debug_assert_eq!(walk, dart, "a block face that is not a quadrangle");
-                out.push((face, nodes));
-            }
-            // Sorted, so the order cannot depend on how the orbit happened
-            // to be walked. Both modes ship these bytes and compare them.
-            out.sort_by_key(|(face, _)| *face);
-
-            // The names, read **inside the same transaction**. Asked for
-            // afterwards they are one transaction apiece, and at five
-            // hundred blocks that is thirty thousand of them for a redraw:
-            // measured at ten milliseconds a frame, which is a tenth of the
-            // budget for a gesture that has to keep up with a pointer.
-            let mut sides = Vec::with_capacity(out.len());
-            for (face, nodes) in out {
-                let tag: FaceTag = self.map.read_attribute_tx(t, face)?.unwrap_or_default();
-                let mut named = [CellId::NONE; 4];
-                for (slot, node) in named.iter_mut().zip(nodes) {
-                    let at: NodeTag = self.map.read_attribute_tx(t, node)?.unwrap_or_default();
-                    *slot = at.id;
-                }
-                sides.push(BlockFace {
-                    face: tag.id,
-                    block,
-                    groups,
-                    nodes: named,
-                    on: tag.on,
+                };
+                // An open sheet has no inside, so there is no "as that
+                // block sees it": the face's own winding is all there is,
+                // and it is handed over as it stands.
+                out.push(BlockFace {
+                    face: self.face_name(id),
+                    block: name,
+                    groups: 0,
+                    nodes: face.nodes.map(|n| self.node_name(n)),
+                    on: face.on,
                 });
             }
-            Ok(sides)
-        })
-    }
-
-    // --- reading ----------------------------------------------------------
-
-    /// Every block as a hexahedron: its corners in VTK order, and the cells
-    /// that bound it.
-    ///
-    /// The frame is recovered from the map rather than remembered from the
-    /// construction, because by now the block may have been cut, glued and
-    /// cut again. Any face may serve as the bottom one: the result is the
-    /// same hexahedron seen from another of its corners, and a rotation of
-    /// a hexahedron is still that hexahedron.
-    pub fn hexes(&self) -> Vec<Hex> {
-        let map = &self.map;
-        let mut out = Vec::new();
-        for volume in self.map_volumes() {
-            // Blocks only. A patch — an open sheet of faces on its way to
-            // being extruded — has no inside to fill, and the walk below
-            // would step off the end of it: finding the corner above one of
-            // its own means crossing β₂, which is null at a boundary.
-            if !self.is_block_of(volume) {
-                continue;
-            }
-            // A face of this block, and the four darts round it. Every face
-            // of a block is wound anticlockwise **seen from outside**, so
-            // this cycle plays the part of `HEX_FACES[0]`, which is the
-            // bottom face read [0, 3, 2, 1].
-            let d0 = volume;
-            let mut ring = [d0; 4];
-            for k in 1..4 {
-                ring[k] = map.beta::<1>(ring[k - 1]);
-            }
-            // The corner above each of them: across the edge into the side
-            // face, then one step on, which lands on the upright.
-            let up = ring.map(|d| map.beta::<1>(map.beta::<2>(d)));
-
-            let at = |d| map.vertex_id(d);
-            let end = |d| map.vertex_id(map.beta::<1>(d));
-            let corners = [
-                at(ring[0]),
-                at(ring[3]),
-                at(ring[2]),
-                at(ring[1]),
-                end(up[0]),
-                end(up[3]),
-                end(up[2]),
-                end(up[1]),
-            ];
-
-            // The edges and faces by the corners they join, which needs no
-            // orientation reasoning at all: both lists are short, and the
-            // map says which cell has which corners.
-            let darts = self.orbit(OrbitPolicy::Volume, volume);
-            let mut edges = [0; 12];
-            for (slot, [a, b]) in HEX_EDGES.iter().enumerate() {
-                let (p, q) = (corners[*a], corners[*b]);
-                edges[slot] = darts
-                    .iter()
-                    .map(|d| map.edge_id(*d))
-                    .find(|e| {
-                        let (x, y) = self.edge_endpoints_of(*e);
-                        (x == p && y == q) || (x == q && y == p)
-                    })
-                    .expect("every edge of a hexahedron is one of its edges");
-            }
-            let mut faces = [0; 6];
-            for (slot, four) in HEX_FACES.iter().enumerate() {
-                let want: Vec<VertexIdType> = {
-                    let mut v: Vec<_> = four.iter().map(|c| corners[*c]).collect();
-                    v.sort_unstable();
-                    v
-                };
-                faces[slot] = darts
-                    .iter()
-                    .map(|d| map.face_id(*d))
-                    .find(|f| {
-                        let mut v: Vec<_> = self
-                            .orbit(OrbitPolicy::Custom(&[1]), *f)
-                            .iter()
-                            .map(|d| map.vertex_id(*d))
-                            .collect();
-                        v.sort_unstable();
-                        v == want
-                    })
-                    .expect("every face of a hexahedron is one of its faces");
-            }
-
-            out.push(Hex {
-                block: self.block_tag_of(volume).id,
-                corners: corners.map(|v| self.node_tag_of(v).id),
-                edges: edges.map(|e| self.edge_tag_of(e).id),
-                faces: faces.map(|f| self.face_tag_of(f).id),
-            });
         }
         out
     }
 
-    // --- the map's own language -------------------------------------------
-    //
-    // `pub(crate)` and not a line more. These are the representation's own
-    // terms: a cell named by the smallest dart of its orbit, which every edit
-    // rewrites. Nothing outside this crate can see them, and the only things
-    // inside it that use them are the tests that are about the representation
-    // and will go with it.
-
-    /// The map itself, for the tests that are about the map.
-    #[cfg(test)]
-    pub(crate) fn map(&self) -> &CMap3<f64> {
-        &self.map
+    pub fn hexes(&self) -> Vec<Hex> {
+        self.blocks
+            .iter()
+            .map(|(id, b)| Hex {
+                block: self.block_name(id),
+                corners: b.nodes.map(|n| self.node_name(n)),
+                edges: b.edges.map(|e| self.edge_name(e)),
+                faces: b.faces.map(|f| self.face_name(f)),
+            })
+            .collect()
     }
 
-    // --- reading, by name -------------------------------------------------
-    //
-    // Everything a caller can reach speaks [`CellId`] and nothing else. The
-    // map's own identifiers do not leave this file, for two reasons: they are
-    // derived from orbits, so every edit rewrites them and a caller holding
-    // one would be holding a cell it did not mean; and keeping them in is
-    // what lets the representation underneath be replaced without a line
-    // changing anywhere above.
-
-    /// Every node, by name.
     pub fn node_names(&self) -> Vec<CellId> {
-        self.map_vertices()
-            .into_iter()
-            .map(|v| self.node_tag_of(v).id)
-            .filter(|id| id.is_some())
-            .collect()
+        self.nodes.ids().map(|id| self.node_name(id)).collect()
     }
 
-    /// Every edge, by name.
     pub fn edge_names(&self) -> Vec<CellId> {
-        self.map_edges()
-            .into_iter()
-            .map(|e| self.edge_tag_of(e).id)
-            .filter(|id| id.is_some())
-            .collect()
+        self.edges.ids().map(|id| self.edge_name(id)).collect()
     }
 
-    /// Every face, by name.
     pub fn face_names(&self) -> Vec<CellId> {
-        self.map_faces()
-            .into_iter()
-            .map(|f| self.face_tag_of(f).id)
-            .filter(|id| id.is_some())
-            .collect()
+        self.faces.ids().map(|id| self.face_name(id)).collect()
     }
 
-    /// Every component, by name: a block or a patch, which
-    /// [`is_block`][Self::is_block] tells apart.
     pub fn component_names(&self) -> Vec<CellId> {
-        self.map_volumes()
-            .into_iter()
-            .map(|v| self.block_tag_of(v).id)
-            .filter(|id| id.is_some())
-            .collect()
+        let mut out: Vec<CellId> = self.blocks();
+        out.extend(self.patches());
+        out
     }
 
-    /// Where a node is.
     pub fn position(&self, node: CellId) -> Option<[f64; 3]> {
-        self.node_by_id(node).and_then(|v| self.position_of(v))
+        self.node(node).ok().map(|n| n.at)
     }
 
-    /// The two nodes an edge joins, by name.
     pub fn edge_ends(&self, edge: CellId) -> Option<(CellId, CellId)> {
-        let e = self.edge_by_id(edge)?;
-        let (from, to) = self.edge_endpoints_of(e);
-        Some((self.node_tag_of(from).id, self.node_tag_of(to).id))
+        let e = self.edge(edge).ok()?;
+        Some((self.node_name(e.ends[0]), self.node_name(e.ends[1])))
     }
 
-    /// A block's eight corners, by name, in VTK order.
     pub fn hex_corners(&self, block: CellId) -> Option<[CellId; 8]> {
-        let v = self.block_by_id(block)?;
-        self.hex_corners_of(v)
-            .map(|c| c.map(|n| self.node_tag_of(n).id))
+        let id = self.block_at(block)?;
+        let b = self.blocks.get(id)?;
+        Some(b.nodes.map(|n| self.node_name(n)))
     }
 
-    /// The nodes an edge joins this one to.
     pub fn neighbors(&self, node: CellId) -> Vec<CellId> {
-        let Some(v) = self.node_by_id(node) else {
+        let Some(id) = self.node_at(node) else {
             return Vec::new();
         };
-        self.neighbors_of(v)
-            .into_iter()
-            .map(|n| self.node_tag_of(n).id)
+        let mut out: Vec<CellId> = self.climbing(|up| {
+            up.node_edges
+                .get(&id)
+                .into_iter()
+                .flatten()
+                .filter_map(|e| {
+                    let edge = self.edges.get(*e)?;
+                    match edge.ends {
+                        [a, b] if a == id => Some(self.node_name(b)),
+                        [a, b] if b == id => Some(self.node_name(a)),
+                        _ => None,
+                    }
+                })
+                .collect()
+        });
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    pub fn on_the_surface(&self, node: CellId) -> bool {
+        let Some(id) = self.node_at(node) else {
+            return false;
+        };
+        self.climbing(|up| {
+            up.node_faces.get(&id).into_iter().flatten().any(|f| {
+                self.faces
+                    .get(*f)
+                    .is_some_and(|face| face.sides[1].is_none())
+            })
+        })
+    }
+
+    pub fn is_block(&self, block: CellId) -> bool {
+        self.block_at(block).is_some()
+    }
+
+    pub fn faces_of(&self, block: CellId) -> Vec<BlockFace> {
+        // A **component** name, which is a block or a patch: the map's
+        // `faces_of` took a volume and a patch was a volume, so both have
+        // to answer here too. A patch is named by a face of its own (see
+        // `patch_components`), so a name that is not a block's is looked
+        // for among them.
+        let Some(block) = self.block_at(block) else {
+            let Some(id) = self.face_at(block) else {
+                return Vec::new();
+            };
+            let Some(component) = self
+                .patch_components()
+                .into_iter()
+                .find(|faces| faces.contains(&id))
+            else {
+                return Vec::new();
+            };
+            let name = self.face_name(component[0]);
+            return component
+                .into_iter()
+                .filter_map(|id| {
+                    let face = self.faces.get(id)?;
+                    Some(BlockFace {
+                        face: self.face_name(id),
+                        block: name,
+                        groups: 0,
+                        nodes: face.nodes.map(|n| self.node_name(n)),
+                        on: face.on,
+                    })
+                })
+                .collect();
+        };
+        let Some(b) = self.blocks.get(block) else {
+            return Vec::new();
+        };
+        b.faces
+            .iter()
+            .filter_map(|id| {
+                let face = self.faces.get(*id)?;
+                let which = face
+                    .sides
+                    .iter()
+                    .position(|side| side.is_some_and(|s| s.block == block))?;
+                Some(self.seen_from(*id, face, which, face.sides[which]?))
+            })
             .collect()
     }
 
-    /// Whether a node is on the outside of the blocking.
-    pub fn on_the_surface(&self, node: CellId) -> bool {
-        self.node_by_id(node)
-            .is_some_and(|v| self.on_the_surface_of(v))
-    }
-
-    /// Whether this component is a **block** — a shell that closes — rather
-    /// than a **patch**, an open sheet of faces.
-    pub fn is_block(&self, block: CellId) -> bool {
-        self.block_by_id(block).is_some_and(|v| self.is_block_of(v))
-    }
-
-    /// Every face of one block, each with the four nodes that block sees it
-    /// by.
-    pub fn faces_of(&self, block: CellId) -> Vec<BlockFace> {
-        self.block_by_id(block)
-            .map(|v| self.faces_of_volume(v))
-            .unwrap_or_default()
-    }
-
-    /// Every edge, with its two ends, how many segments it carries, and what
-    /// it is classified on.
-    ///
-    /// In bulk, because everything that wants one edge's details wants them
-    /// all: a name resolved one at a time is a search of the map per name,
-    /// where this is one walk for the lot.
     pub fn edges_in_full(
         &self,
     ) -> impl Iterator<Item = (CellId, [CellId; 2], u32, Option<On>)> + '_ {
-        self.map_edges().into_iter().map(move |e| {
-            let tag = self.edge_tag_of(e);
-            let (from, to) = self.edge_endpoints_of(e);
+        self.edges.iter().map(|(id, edge)| {
             (
-                tag.id,
-                [self.node_tag_of(from).id, self.node_tag_of(to).id],
-                tag.segments,
-                tag.on,
+                self.edge_name(id),
+                edge.ends.map(|n| self.node_name(n)),
+                edge.segments,
+                edge.on,
             )
         })
     }
 
-    /// Every cell of one dimension, each named by the dart the map names it
-    /// by: the smallest of its orbit.
-    ///
-    /// `iter_vertices` and its siblings ask the map, **for every dart**,
-    /// which cell that dart belongs to, and each of those questions walks
-    /// the whole orbit over again. One walk per cell is enough. Going up the
-    /// darts in order, the first dart of an orbit that has not been marked
-    /// yet *is* the smallest of that orbit, which is exactly the name the
-    /// map would give it; walking the orbit once to mark the rest off leaves
-    /// one walk per cell where there were as many as the cell has darts.
-    ///
-    /// Several blocks meeting at a node is what makes that difference grow:
-    /// the orbit is long, and the map was walking it once per dart of it.
-    fn cells(&self, policy: OrbitPolicy) -> Vec<DartIdType> {
-        let darts = self.map.n_darts();
-        // One transaction for the whole sweep, rather than one per β
-        // lookup: in this map every single `beta` is a transaction of its
-        // own, and that — not the walking — is where the time went.
-        atomically(|t| {
-            let mut seen = vec![false; darts];
-            let mut out = Vec::new();
-            for start in 1..darts as DartIdType {
-                if seen[start as usize] || self.map.is_unused(start) {
-                    continue;
-                }
-                for d in self.map.orbit_tx(t, policy.clone(), start) {
-                    seen[d? as usize] = true;
-                }
-                out.push(start);
-            }
-            Ok(out)
-        })
-    }
-
-    /// The map's vertices, as [`CMap3::iter_vertices`] names them.
-    pub(crate) fn map_vertices(&self) -> Vec<VertexIdType> {
-        self.cells(OrbitPolicy::Vertex)
-    }
-
-    /// The map's edges, as [`CMap3::iter_edges`] names them.
-    pub(crate) fn map_edges(&self) -> Vec<EdgeIdType> {
-        self.cells(OrbitPolicy::Edge)
-    }
-
-    /// The map's faces, as [`CMap3::iter_faces`] names them.
-    pub(crate) fn map_faces(&self) -> Vec<FaceIdType> {
-        self.cells(OrbitPolicy::Face)
-    }
-
-    /// The map's volumes, as [`CMap3::iter_volumes`] names them.
-    pub(crate) fn map_volumes(&self) -> Vec<VolumeIdType> {
-        self.cells(OrbitPolicy::Volume)
-    }
-
-    pub(crate) fn node_tag_of(&self, node: VertexIdType) -> NodeTag {
-        self.map.read_attribute(node).unwrap_or_default()
-    }
-
-    pub(crate) fn edge_tag_of(&self, edge: EdgeIdType) -> EdgeTag {
-        self.map.read_attribute(edge).unwrap_or_default()
-    }
-
-    pub(crate) fn face_tag_of(&self, face: FaceIdType) -> FaceTag {
-        self.map.read_attribute(face).unwrap_or_default()
-    }
-
-    pub(crate) fn block_tag_of(&self, block: VolumeIdType) -> BlockTag {
-        self.map.read_attribute(block).unwrap_or_default()
-    }
-
-    /// The two nodes an edge joins.
-    ///
-    /// An edge is named by one of its darts; that dart starts at one end, and
-    /// β₁ takes it to the other.
-    pub(crate) fn edge_endpoints_of(&self, edge: EdgeIdType) -> (VertexIdType, VertexIdType) {
-        let dart = edge as DartIdType;
-        (
-            self.map.vertex_id(dart),
-            self.map.vertex_id(self.map.beta::<1>(dart)),
-        )
-    }
-
-    pub(crate) fn position_of(&self, node: VertexIdType) -> Option<[f64; 3]> {
-        self.map.read_vertex(node).map(|v| [v.0, v.1, v.2])
-    }
-
     pub fn nb_nodes(&self) -> usize {
-        self.map_vertices().len()
+        self.nodes.len()
     }
 
     pub fn nb_edges(&self) -> usize {
-        self.map_edges().len()
+        self.edges.len()
     }
 
     pub fn nb_faces(&self) -> usize {
-        self.map_faces().len()
+        self.faces.len()
     }
 
-    /// How many **blocks** — shells that close. A patch is not one.
     pub fn nb_blocks(&self) -> usize {
-        self.map_volumes()
-            .into_iter()
-            .filter(|v| self.is_block_of(*v))
-            .count()
+        self.blocks.len()
     }
 
-    /// How many patches: open sheets of faces, each one a connected
-    /// component.
     pub fn nb_patches(&self) -> usize {
-        self.map_volumes()
-            .into_iter()
-            .filter(|v| !self.is_block_of(*v))
-            .count()
+        self.patch_components().len()
     }
 
-    /// Darts of the orbit a cell stands for.
-    pub(crate) fn orbit(&self, policy: OrbitPolicy, dart: DartIdType) -> Vec<DartIdType> {
-        self.map.orbit(policy, dart).collect()
-    }
-
-    /// How many names have been handed out at each dimension. Only ever goes
-    /// up, which is what makes a [`CellId`] safe to keep.
     pub fn names_handed_out(&self) -> [u32; 4] {
         [
-            self.names[0].handed_out(),
-            self.names[1].handed_out(),
-            self.names[2].handed_out(),
-            self.names[3].handed_out(),
+            self.nodes.handed_out(),
+            self.edges.handed_out(),
+            self.faces.handed_out(),
+            self.blocks.handed_out(),
         ]
-    }
-}
-
-#[cfg(test)]
-mod surgery {
-    //! The dart surgery, tested where it lives.
-    //!
-    //! These reach into private operations on purpose. A sheet cut is three
-    //! of them stacked, and finding out which one is wrong from the shape of
-    //! the finished mesh is exactly the debugging session worth avoiding.
-
-    use super::*;
-    use crate::cells::cube_corners;
-
-    fn cube() -> Blocking {
-        let mut b = Blocking::new().unwrap();
-        b.add_block(cube_corners([0.0, 0.0, 0.0], 1.0)).unwrap();
-        b
-    }
-
-    /// Everything a well-formed map owes us, checked over every used dart.
-    pub(super) fn is_coherent(b: &Blocking) {
-        for d in 1..b.map.n_darts() as DartIdType {
-            if b.map.is_unused(d) {
-                continue;
-            }
-            let next = b.map.beta::<1>(d);
-            assert_ne!(next, NULL_DART_ID, "dart {d} has no β₁");
-            assert_eq!(b.map.beta::<0>(next), d, "β₀ does not undo β₁ at {d}");
-            for (i, partner) in [(2, b.map.beta::<2>(d)), (3, b.map.beta::<3>(d))] {
-                if partner == NULL_DART_ID {
-                    continue;
-                }
-                let back = if i == 2 {
-                    b.map.beta::<2>(partner)
-                } else {
-                    b.map.beta::<3>(partner)
-                };
-                assert_eq!(back, d, "β{i} is not an involution at {d}");
-                // And it joins the same two nodes, the other way round.
-                let (u, v) = b.edge_endpoints_of(b.map.edge_id(d));
-                let (x, y) = b.edge_endpoints_of(b.map.edge_id(partner));
-                assert_eq!((u, v), (x, y), "β{i} at {d} joins a different edge");
-            }
-        }
-    }
-
-    #[test]
-    fn splitting_an_edge_adds_a_node_and_an_edge() {
-        let mut b = cube();
-        let edge = b.map.iter_edges().next().unwrap();
-        let (u, v) = b.edge_endpoints_of(edge);
-        let (p, q) = (b.position_of(u).unwrap(), b.position_of(v).unwrap());
-        let middle = [0, 1, 2].map(|k| (p[k] + q[k]) / 2.0);
-
-        b.split_edge(edge, middle).unwrap();
-        b.assign_missing_ids();
-
-        assert_eq!(
-            (b.nb_nodes(), b.nb_edges(), b.nb_faces(), b.nb_blocks()),
-            (9, 13, 6, 1)
-        );
-        is_coherent(&b);
-        assert!(
-            b.nodes()
-                .any(|(_, at)| (0..3).all(|k| (at[k] - middle[k]).abs() < 1e-9)),
-            "the new node is not where it was asked for"
-        );
-    }
-
-    #[test]
-    fn the_faces_either_side_grow_by_one() {
-        // The edge's two faces become pentagons. They are still those two
-        // faces: splitting an edge does not split a face.
-        let mut b = cube();
-        let edge = b.map.iter_edges().next().unwrap();
-        let before: Vec<usize> = b
-            .faces_around(edge)
-            .iter()
-            .map(|f| b.map.orbit(OrbitPolicy::Face, *f as DartIdType).count())
-            .collect();
-        assert_eq!(before, vec![4, 4]);
-
-        let (u, v) = b.edge_endpoints_of(edge);
-        let (p, q) = (b.position_of(u).unwrap(), b.position_of(v).unwrap());
-        b.split_edge(edge, [0, 1, 2].map(|k| (p[k] + q[k]) / 2.0))
-            .unwrap();
-        b.assign_missing_ids();
-
-        let after: Vec<usize> = b
-            .map
-            .iter_faces()
-            .map(|f| b.map.orbit(OrbitPolicy::Face, f as DartIdType).count())
-            .collect();
-        assert_eq!(after.iter().filter(|n| **n == 5).count(), 2);
-        assert_eq!(after.iter().filter(|n| **n == 4).count(), 4);
-    }
-
-    #[test]
-    fn both_halves_come_out_unnamed_and_are_then_named_afresh() {
-        let mut b = cube();
-        let edge = b.map.iter_edges().next().unwrap();
-        let was = b.edge_tag_of(edge).id;
-        let (u, v) = b.edge_endpoints_of(edge);
-        let (p, q) = (b.position_of(u).unwrap(), b.position_of(v).unwrap());
-
-        b.split_edge(edge, [0, 1, 2].map(|k| (p[k] + q[k]) / 2.0))
-            .unwrap();
-        b.assign_missing_ids();
-
-        // What comes out of a split is two new cells, not one of them
-        // inheriting the name.
-        let names: Vec<_> = b.map.iter_edges().map(|e| b.edge_tag_of(e).id).collect();
-        assert!(!names.contains(&was), "the old name survived the split");
-        assert!(names.iter().all(|n| n.is_some()));
-    }
-
-    #[test]
-    fn an_edge_shared_by_two_blocks_splits_on_both_sides() {
-        // The β₃ path: the ring of darts round the edge spans both blocks,
-        // and every one of them has to be cut.
-        let mut b = cube();
-        b.add_block(cube_corners([1.0, 0.0, 0.0], 1.0)).unwrap();
-        let mut names: Vec<_> = b.block_faces().iter().map(|s| s.block).collect();
-        names.dedup();
-        let seam = |b: &Blocking, block: CellId| {
-            b.block_faces()
-                .iter()
-                .filter(|s| s.block == block)
-                .find(|s| {
-                    s.nodes
-                        .iter()
-                        .all(|n| (b.position(*n).unwrap()[0] - 1.0).abs() < 1e-9)
-                })
-                .unwrap()
-                .face
-        };
-        let (first, second) = (seam(&b, names[0]), seam(&b, names[1]));
-        b.glue_onto(first, second).unwrap();
-
-        // An edge lying in the seam belongs to both blocks: four darts.
-        let shared = b
-            .map
-            .iter_edges()
-            .find(|e| {
-                let (u, v) = b.edge_endpoints_of(*e);
-                [u, v]
-                    .iter()
-                    .all(|n| (b.position_of(*n).unwrap()[0] - 1.0).abs() < 1e-9)
-            })
-            .expect("an edge in the seam");
-        assert_eq!(
-            b.map.orbit(OrbitPolicy::Edge, shared as DartIdType).count(),
-            4
-        );
-
-        let (u, v) = b.edge_endpoints_of(shared);
-        let (p, q) = (b.position_of(u).unwrap(), b.position_of(v).unwrap());
-        b.split_edge(shared, [0, 1, 2].map(|k| (p[k] + q[k]) / 2.0))
-            .unwrap();
-        b.assign_missing_ids();
-
-        // One node and one edge more, and the blocks still share what they
-        // shared: the two halves each have four darts round them.
-        assert_eq!((b.nb_nodes(), b.nb_edges(), b.nb_blocks()), (13, 21, 2));
-        is_coherent(&b);
-    }
-}
-
-#[cfg(test)]
-mod cutting {
-    //! Cutting a sheet: the three surgeries stacked.
-
-    use super::*;
-    use crate::blocking::surgery::is_coherent;
-    use crate::cells::cube_corners;
-
-    fn cube() -> Blocking {
-        let mut b = Blocking::new().unwrap();
-        b.add_block(cube_corners([0.0, 0.0, 0.0], 1.0)).unwrap();
-        b
-    }
-
-    /// An edge whose ends differ only along this axis.
-    fn along(b: &Blocking, axis: usize) -> CellId {
-        b.map
-            .iter_edges()
-            .find(|e| {
-                let (u, v) = b.edge_endpoints_of(*e);
-                let (p, q) = (b.position_of(u).unwrap(), b.position_of(v).unwrap());
-                (0..3).all(|k| {
-                    if k == axis {
-                        (p[k] - q[k]).abs() > 0.5
-                    } else {
-                        (p[k] - q[k]).abs() < 1e-9
-                    }
-                })
-            })
-            .map(|e| b.edge_tag_of(e).id)
-            .expect("an edge along that axis")
-    }
-
-    #[test]
-    fn cutting_a_lone_cube_makes_two_blocks() {
-        let mut b = cube();
-        b.split_sheet(along(&b, 2), 0.25).unwrap();
-
-        // Two stacked hexahedra: twelve nodes, twenty edges, eleven faces.
-        // The same counts as two cubes glued, which is what this now is.
-        assert_eq!(
-            (b.nb_nodes(), b.nb_edges(), b.nb_faces(), b.nb_blocks()),
-            (12, 20, 11, 2)
-        );
-        is_coherent(&b);
-        assert!(b.block_faces().len() == 12, "each block a closed surface");
-    }
-
-    #[test]
-    fn the_cut_lands_where_the_parameter_says() {
-        let mut b = cube();
-        b.split_sheet(along(&b, 2), 0.25).unwrap();
-
-        // Four new nodes on the plane, and none anywhere else.
-        let at: Vec<f64> = b.nodes().map(|(_, p)| p[2]).collect();
-        assert_eq!(at.iter().filter(|z| (**z - 0.25).abs() < 1e-9).count(), 4);
-        assert_eq!(at.iter().filter(|z| z.abs() < 1e-9).count(), 4);
-        assert_eq!(at.iter().filter(|z| (**z - 1.0).abs() < 1e-9).count(), 4);
-    }
-
-    #[test]
-    fn one_parameter_means_one_plane_across_the_whole_sheet() {
-        // The concertina test. Two blocks glued, cut along a sheet that
-        // crosses both: an orientation that flipped on the way through would
-        // put half the new nodes at `t` and half at `1 - t`.
-        let mut b = cube();
-        b.add_block(cube_corners([1.0, 0.0, 0.0], 1.0)).unwrap();
-        let mut names: Vec<_> = b.block_faces().iter().map(|s| s.block).collect();
-        names.dedup();
-        let seam = |b: &Blocking, block: CellId| {
-            b.block_faces()
-                .iter()
-                .filter(|s| s.block == block)
-                .find(|s| {
-                    s.nodes
-                        .iter()
-                        .all(|n| (b.position(*n).unwrap()[0] - 1.0).abs() < 1e-9)
-                })
-                .unwrap()
-                .face
-        };
-        let (first, second) = (seam(&b, names[0]), seam(&b, names[1]));
-        b.glue_onto(first, second).unwrap();
-
-        b.split_sheet(along(&b, 2), 0.25).unwrap();
-
-        let at: Vec<f64> = b.nodes().map(|(_, p)| p[2]).collect();
-        assert_eq!(
-            at.iter().filter(|z| (**z - 0.25).abs() < 1e-9).count(),
-            6,
-            "six nodes on one plane, not some at 0.25 and some at 0.75"
-        );
-        assert!(
-            at.iter()
-                .all(|z| z.abs() < 1e-9 || (*z - 0.25).abs() < 1e-9 || (*z - 1.0).abs() < 1e-9),
-            "a node landed off the cut plane: {at:?}"
-        );
-        assert_eq!(b.nb_blocks(), 4);
-        is_coherent(&b);
-    }
-
-    #[test]
-    fn a_cut_can_be_cut_again() {
-        // The strongest check that the result is a proper mesh and not
-        // something that merely counts right.
-        let mut b = cube();
-        b.split_sheet(along(&b, 2), 0.5).unwrap();
-        assert_eq!(b.nb_blocks(), 2);
-        b.split_sheet(along(&b, 0), 0.5).unwrap();
-        assert_eq!(b.nb_blocks(), 4);
-        b.split_sheet(along(&b, 1), 0.5).unwrap();
-        assert_eq!(b.nb_blocks(), 8);
-        assert_eq!(
-            (b.nb_nodes(), b.nb_edges(), b.nb_faces()),
-            (27, 54, 36),
-            "a 2x2x2 grid of hexahedra"
-        );
-        is_coherent(&b);
-    }
-
-    #[test]
-    fn every_name_in_the_cut_is_fresh_and_nothing_is_left_unnamed() {
-        let mut b = cube();
-        let before: Vec<CellId> = b.map.iter_faces().map(|f| b.face_tag_of(f).id).collect();
-        b.split_sheet(along(&b, 2), 0.5).unwrap();
-
-        let after: Vec<CellId> = b.map.iter_faces().map(|f| b.face_tag_of(f).id).collect();
-        assert!(after.iter().all(|n| n.is_some()), "a face came out unnamed");
-        // The four faces the sheet crossed are gone, replaced by eight new
-        // ones plus the cut face; the two it did not touch keep their names.
-        assert_eq!(after.iter().filter(|n| before.contains(n)).count(), 2);
-        assert!(b.nodes().all(|(id, _)| id.is_some()));
-    }
-
-    #[test]
-    fn a_parameter_outside_the_edge_is_refused() {
-        for t in [0.0, 1.0, -0.5, 1.5, f64::NAN] {
-            let mut b = cube();
-            let before = (b.nb_nodes(), b.nb_edges(), b.nb_blocks());
-            assert!(
-                matches!(
-                    b.split_sheet(along(&b, 2), t),
-                    Err(BlockingError::BadParameter(_))
-                ),
-                "t = {t} should be refused"
-            );
-            assert_eq!((b.nb_nodes(), b.nb_edges(), b.nb_blocks()), before);
-        }
     }
 }

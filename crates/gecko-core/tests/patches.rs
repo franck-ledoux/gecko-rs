@@ -5,9 +5,10 @@
 //! a face has to be able to stand on its own, and the map has to go on
 //! making sense while it does.
 //!
-//! The arrangement is the map's own. β₂ joins two faces of one volume and β₃
-//! joins two volumes, so faces welded edge to edge are welded by β₂ — and a
-//! connected component of them is therefore **one volume orbit**, with a
+//! A face carries none, one or two **sides** — which block is behind it, and
+//! at which of that block's six slots. None is a patch face: faces welded
+//! edge to edge share an edge and bound nothing, and a connected component
+//! of them is a patch, derived rather than named, with a
 //! name of its own that nobody had to keep a list for. What tells it from a
 //! block is whether the shell closes.
 
@@ -46,7 +47,7 @@ fn a_face_on_its_own_is_a_patch_and_not_a_block() {
 #[test]
 fn a_block_is_still_a_block() {
     // The predicate has to answer the old question as well as the new one:
-    // every dart of a closed shell has a β₂ partner, and that is the whole
+    // a block names its six faces and each names it back, and that is the whole
     // difference.
     let mut b = Blocking::new().unwrap();
     b.add_block(cube_corners([0.0, 0.0, 0.0], 1.0)).unwrap();
@@ -63,7 +64,8 @@ fn a_block_is_still_a_block() {
 
 #[test]
 fn the_mesher_walks_past_a_patch() {
-    // The walk that finds the corner above one of a block's own crosses β₂,
+    // The walk that finds the corner above one of a block's own crosses a
+    // face,
     // which is null at the boundary of an open sheet. Meshing a blocking
     // that has one has to pass it by rather than step off the end of it.
     let mut b = Blocking::new().unwrap();
@@ -109,9 +111,8 @@ fn the_operations_that_need_an_inside_say_so() {
 
 #[test]
 fn a_patch_comes_back_whole_from_a_snapshot() {
-    // The undo stack copies the map by hand, dart run by dart run. A face
-    // with β₂ null all round is exactly the case a copy could quietly get
-    // wrong by assuming every dart has a partner.
+    // A face with no side at all is exactly the case a copy could quietly
+    // get wrong by assuming every face bounds something.
     let mut b = Blocking::new().unwrap();
     b.add_block(cube_corners([0.0, 0.0, 0.0], 1.0)).unwrap();
     b.add_face(SQUARE).unwrap();
@@ -132,8 +133,9 @@ fn a_patch_comes_back_whole_from_a_snapshot() {
 
 #[test]
 fn cutting_a_free_quadrangle_leaves_two_faces_in_one_patch() {
-    // The sheet machinery is written in terms of edges and β₁ cycles, and
-    // every β₃ step of it is guarded — so it ought to cut a sheet that has
+    // The sheet machinery is written in terms of edges and the faces that
+    // hold them, and every step across a face is guarded — so it ought to
+    // cut a sheet that has
     // no volumes at all. This is where that is found out, because the rest
     // of a surface blocking depends on it: one quadrangle per surface, cut
     // into a grid, then extruded.
@@ -153,7 +155,7 @@ fn cutting_a_free_quadrangle_leaves_two_faces_in_one_patch() {
     assert_eq!(b.nb_faces(), 2, "the quadrangle is two now");
     assert_eq!(b.nb_nodes(), 6);
     assert_eq!(b.nb_edges(), 7);
-    // Welded along the cut by β₂, so they are one component — which is what
+    // Sharing the edge the cut laid, so they are one component — which is what
     // an extrusion will be asked to take all of.
     assert_eq!(
         (b.nb_blocks(), b.nb_patches()),
@@ -572,8 +574,9 @@ mod laying {
     #[test]
     fn the_clicks_do_not_decide_which_way_round_it_is_wound() {
         // The same two quadrangles, the second wound the other way. A sheet
-        // has no inside, so there is no wrong way round — and β₂ joins two
-        // darts running opposite ways, so being wound to agree with the
+        // has no inside, so there is no wrong way round — and two adjacent
+        // faces of a sheet run opposite ways along the side they share, so
+        // being wound to agree with the
         // neighbour is the whole difference between welding and not.
         let mut b = Blocking::new().unwrap();
         b.lay_face(FIRST).expect("the first");
@@ -618,7 +621,7 @@ mod laying {
 
         // The nodes that survived are the neighbor's, by name, by class and
         // by position — exactly, not half a rounding error away, because
-        // honeycomb merges two vertices by averaging them. The quadrangle
+        // two nodes becoming one meet at the point between them. The quadrangle
         // being laid is the one that gives way.
         assert_eq!(next.corners[0], first.corners[1], "its name, not a new one");
         assert_eq!(next.corners[3], first.corners[2]);

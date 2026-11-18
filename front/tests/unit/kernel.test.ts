@@ -341,7 +341,8 @@ describe("the contract the other mode has to meet", () => {
     expect(kernel.apply(move).ok).toBe(true);
     commands.push(move);
 
-    // And a glue, because it is the first operation that walks an orbit and
+    // And a glue, because it is the first operation that goes looking round
+    // a cell and
     // orders what it finds. Non-determinism there would show up here and
     // nowhere else — which is exactly how an earlier prototype's HashSet was
     // caught.
@@ -369,9 +370,10 @@ describe("the contract the other mode has to meet", () => {
     expect(kernel.apply(glue).ok).toBe(true);
     commands.push(glue);
 
-    // And a removal, which walks an orbit, unsews, and hands darts back to
-    // the pool. Whether the pool hands them out again in the same order is
-    // exactly the kind of thing only this test would notice.
+    // And a removal, which hands the neighbour the cells they shared and
+    // empties the slots of whatever only the block was holding. Whether the
+    // free list hands those out again in the same order is exactly the kind
+    // of thing only this test would notice.
     const standing = decodeView(kernel.view());
     // The block that was not part of the glue: the one whose faces are all
     // still on the boundary.
@@ -390,9 +392,15 @@ describe("the contract the other mode has to meet", () => {
     commands.push(remove);
 
     // And a cut taken back. An undo puts a copy of the whole structure
-    // back, down to the dart numbers the names are derived from — so a
-    // façade that rebuilt the model instead of restoring it would arrive
-    // here with different bytes, and only this test would see it.
+    // back, down to the slots the names are packed from — so a façade that
+    // rebuilt the model instead of restoring it would arrive here with
+    // different bytes, and only this test would see it.
+    //
+    // Three blocks and not four: the sheet cut is the one through whichever
+    // edge the structure lists first, and that is a different edge since
+    // the block structure stopped being a combinatorial map, so it crosses
+    // one of the two standing blocks rather than both. A number this test
+    // records rather than one it is about.
     const cut = {
       op: "split_sheet",
       edge: decodeView(kernel.view()).edgeNames[0],
@@ -400,7 +408,7 @@ describe("the contract the other mode has to meet", () => {
     };
     expect(kernel.apply(cut).ok).toBe(true);
     commands.push(cut);
-    expect(kernel.stats().blocks).toBe(4);
+    expect(kernel.stats().blocks).toBe(3);
 
     const undo = { op: "undo" };
     expect(kernel.apply(undo).ok).toBe(true);

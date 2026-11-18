@@ -52,12 +52,6 @@ cargo clippy --workspace --all-targets -- -D warnings
 echo "── kernel, session, and the Lua API (Rust) ───────────────────"
 cargo test --workspace
 
-echo "── the cellular engine, as far as it has got ─────────────────"
-# The same suite over the engine being written to replace the combinatorial
-# map, as a number that may not go down. Informational while it climbs; a
-# failure the moment it falls. See docs/developer-guide/cellular.md.
-./cellular.sh
-
 echo "── decode and scene, headless (Vitest + NullEngine) ──────────"
 (cd front && npm run test:unit)
 

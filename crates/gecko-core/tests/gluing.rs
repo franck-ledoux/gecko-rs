@@ -1,6 +1,7 @@
 //! Welding two blocks along a face.
 //!
-//! This is the first operation that makes β₃ mean anything: until now every
+//! This is the first operation that makes a face's second side mean
+//! anything: until now every
 //! block was free-standing, every face was on the boundary, and "internal"
 //! described nothing. So the counts below are the real subject — eight nodes
 //! becoming four is what tells you the two blocks are one object now, rather
@@ -120,7 +121,8 @@ fn the_surface_then_has_a_face_with_a_block_on_each_side() {
 #[test]
 fn the_first_face_decides_where_the_seam_lands() {
     // The rule, and the reason the second face is moved before the sewing
-    // rather than after: honeycomb merges two vertices by averaging them, so
+    // rather than after: two nodes becoming one meet at the point between
+    // them, so
     // sewing them apart would leave the seam half way between.
     let mut b = Blocking::new().unwrap();
     b.add_block(cube_corners([0.0, 0.0, 0.0], 1.0)).unwrap();

@@ -120,8 +120,8 @@ fn a_copy_carries_on_where_the_original_left_off() {
 }
 
 #[test]
-fn a_copy_of_a_structure_with_holes_in_its_darts_is_the_same_structure() {
-    // Removing a block releases its darts, so the dart list has gaps in it
+fn a_copy_of_a_structure_with_holes_in_its_slots_is_the_same_structure() {
+    // Removing a block empties its slots, so the arenas have gaps in them
     // from then on. Those gaps are part of the state: a copy that closed
     // them up would renumber every cell above them.
     let mut b = pair();

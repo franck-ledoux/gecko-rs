@@ -2,7 +2,8 @@
 //!
 //! The interesting case is not the lone block — it is the one glued to
 //! something. Removing it has to give the neighbor its own cells back, which
-//! is the split that `CornerKey` exists for, and leave nothing of the block
+//! means handing the neighbour the cells they shared, and leaving nothing of
+//! the block
 //! behind for the next operation to trip over.
 
 use gecko_core::ids::CellId;
@@ -58,7 +59,8 @@ fn removing_the_only_block_empties_the_map() {
 
 #[test]
 fn the_map_can_be_used_again_afterwards() {
-    // The darts have to come back to the pool properly, or the next block is
+    // The slots have to come back to the free list properly, or the next
+    // block is
     // built on top of something.
     let mut b = Blocking::new().unwrap();
     b.add_block(cube_corners([0.0, 0.0, 0.0], 1.0)).unwrap();

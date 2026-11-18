@@ -16,7 +16,6 @@ edition = "2021"
 license = "AGPL-3.0-only"
 
 [workspace.dependencies]
-honeycomb-core = "0.12"
 thiserror = "2"
 gecko-core = { path = "crates/gecko-core" }
 gecko-geom = { path = "crates/gecko-geom" }

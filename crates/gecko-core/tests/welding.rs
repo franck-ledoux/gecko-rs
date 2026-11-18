@@ -110,7 +110,7 @@ fn a_frozen_corner_does_not_give_way() {
 #[test]
 fn two_frozen_corners_that_disagree_refuse_the_glue() {
     // Once per corner of the face. The four pairs are decided in whatever
-    // order the darts run in, and the promise is that **no** corner has
+    // order the corners are read in, and the promise is that **no** corner has
     // moved when the refusal comes — which a single corner cannot check,
     // because it might be the one decided first.
     for corner in [[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]] {

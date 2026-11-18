@@ -1,18 +1,34 @@
 //! The vocabulary the block structure is spoken in.
 //!
-//! The plain data two engines agree on — what an operation hands back, what
-//! it refuses with, the hexahedron's own tables, and the geometry that is
-//! arithmetic rather than topology. Nothing in here knows how the structure
-//! is represented, which is exactly why it is in here: it is what lets the
-//! representation be replaced underneath without the tests, the session, the
-//! page or Lua noticing.
+//! The plain data: what an operation hands back, what it refuses with, the
+//! hexahedron's own tables, and the geometry that is arithmetic rather than
+//! topology. Nothing in here knows how the structure is represented, which
+//! is exactly why it is in here — and it is what let the representation be
+//! replaced underneath without the tests, the session, the page or Lua
+//! noticing. Five of `BlockingError`'s variants went with the combinatorial
+//! map, being its own failures put into words.
 
 use std::collections::{HashMap, HashSet};
 
 use thiserror::Error;
 
-use crate::attributes::On;
 use crate::ids::CellId;
+
+/// Which geometric entity a cell is classified on.
+///
+/// `dim` is 0 for a corner, 1 for a curve, 2 for a surface, and `tag` is the
+/// gmsh entity tag — the geometry's own name for it. Deliberately plain
+/// numbers: the block structure has no business knowing what a triangle is,
+/// and the crate that does the projecting is the one that holds both.
+///
+/// One entity, not a set of them, which costs nothing: what a set would be
+/// *for* is reading off the entities that contain the one named here, and
+/// the geometry can answer that from the name alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct On {
+    pub dim: u8,
+    pub tag: i32,
+}
 
 /// A slab laid on four points, and what it found there.
 ///
@@ -89,11 +105,6 @@ pub fn cube_corners(origin: [f64; 3], size: f64) -> [[f64; 3]; 8] {
         [x + s, y + s, z + s],
         [x, y + s, z + s],
     ]
-}
-
-/// Two points close enough to be the same node.
-pub(crate) fn same_point(a: [f64; 3], b: [f64; 3]) -> bool {
-    (0..3).all(|k| (a[k] - b[k]).abs() < 1e-9)
 }
 
 /// How thick a pillow layer is, as a share of the cell it is cut from.
@@ -494,12 +505,6 @@ pub struct BlockFace {
 
 #[derive(Debug, Error)]
 pub enum BlockingError {
-    #[error("could not build the map: {0}")]
-    Build(String),
-    #[error("could not link darts: {0}")]
-    Link(String),
-    #[error("attribute error: {0}")]
-    Attribute(String),
     #[error("no node is named {0:?}")]
     NoSuchNode(CellId),
     #[error("no face is named {0:?}")]
@@ -508,12 +513,8 @@ pub enum BlockingError {
     SameFace,
     #[error("face {0:?} is already glued to another block")]
     AlreadyGlued(CellId),
-    #[error("could not glue: {0}")]
-    Sew(String),
     #[error("no block is named {0:?}")]
     NoSuchBlock(CellId),
-    #[error("could not free dart {0}")]
-    Release(u32),
     #[error("no edge is named {0:?}")]
     NoSuchEdge(CellId),
     #[error("the sheet through edge {0:?} meets itself the wrong way round")]

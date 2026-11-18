@@ -1,9 +1,11 @@
 //! What the structure costs, measured rather than estimated.
 //!
-//! A counting allocator round the whole process and a 7x7x7 grid of blocks
-//! built by eighteen `split_sheet` calls, which is the measurement the
-//! design note's table was made from — same grid, same method, so the two
-//! numbers can be put side by side.
+//! A counting allocator round the whole process and grids of blocks cut out
+//! of one by `split_sheet`, which is the measurement the design note's
+//! table was made from — same grids, same method, so the numbers could be
+//! put beside the combinatorial map's while it was still here. They were:
+//! 19 414 B a block against 550 at 12³, which is the whole reason the
+//! representation was replaced.
 //!
 //! Ignored by default: it is a measurement and not an assertion, and it
 //! wants the whole process to itself. `cargo test -p gecko-core --test
