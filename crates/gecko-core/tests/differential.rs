@@ -61,6 +61,29 @@ enum Step {
         first: [f64; 3],
         second: [f64; 3],
     },
+    /// Cut the sheet through the edge whose middle is at `edge`, at `t`
+    /// along it **measured from the end at `from`**.
+    ///
+    /// Which way round an edge runs is a convention and the two engines
+    /// chose differently. What is not a convention, and is what the page
+    /// relies on, is that `t` runs the way `edge_ends` reports — so the
+    /// step says which end it means and each engine turns it into its own
+    /// `t` or `1 - t`.
+    Split {
+        edge: [f64; 3],
+        from: [f64; 3],
+        t: f64,
+    },
+    /// Take away the block whose corners average to a point.
+    RemoveBlock {
+        middle: [f64; 3],
+    },
+    /// Take away the layer through the edge whose middle is at a point,
+    /// closing the gap behind it or leaving it open.
+    RemoveSheet {
+        edge: [f64; 3],
+        close: bool,
+    },
 }
 
 /// A settling rule with no geometry behind it: the boundary agrees or the
@@ -90,9 +113,16 @@ struct Answers {
     /// which is the first divergence this bench caught: the cellular engine
     /// was handing back corners, and nothing else noticed.
     faces: Vec<Vec<[Place; 2]>>,
-    /// Every block, as its eight corners' places **in order**: the order is
-    /// the hexahedron's own frame, so it is a fact about the block and not
-    /// about the naming.
+    /// Every block, as its eight corners' places — **sorted**, not in the
+    /// hexahedron's order.
+    ///
+    /// Which of a block's six faces is its bottom is a convention, and a
+    /// cut settles it differently in the two engines: the map's frame came
+    /// out of dart arithmetic, the arena's out of `SPLIT_FRAME`, and both
+    /// describe the same box. What is **not** a convention is which way the
+    /// block is turned out, and `seen` below is where that is compared: a
+    /// block inside out has every face wound the other way, and a reversed
+    /// cycle is not a rotation of the one it reverses.
     blocks: Vec<Vec<Place>>,
     /// What each node is lying on and whether it is frozen, by its place.
     told: Vec<(Place, Spot, bool)>,
@@ -201,6 +231,13 @@ trait Engine: Sized {
     fn free_face_at(&self, middle: [f64; 3]) -> CellId;
     fn glue(&mut self, first: CellId, second: CellId);
     fn glue_onto(&mut self, first: CellId, second: CellId);
+    /// The edge whose two ends average to a point.
+    fn edge_at(&self, middle: [f64; 3]) -> CellId;
+    fn split_sheet(&mut self, edge: CellId, t: f64);
+    /// Where the end `t` is measured from is.
+    fn first_end(&self, edge: CellId) -> Place;
+    fn remove_block(&mut self, block: CellId);
+    fn remove_sheet(&mut self, edge: CellId, close: bool);
     /// The cellular engine checks its own invariants; the map has none to
     /// check, so it says so by saying nothing.
     fn check(&self) -> Result<(), String>;
@@ -239,6 +276,23 @@ trait Engine: Sized {
             Step::GlueOnto { first, second } => {
                 let (a, b) = (self.free_face_at(first), self.free_face_at(second));
                 self.glue_onto(a, b);
+            }
+            Step::RemoveBlock { middle } => {
+                let block = self.block_at(middle);
+                self.remove_block(block);
+            }
+            Step::RemoveSheet { edge, close } => {
+                let id = self.edge_at(edge);
+                self.remove_sheet(id, close);
+            }
+            Step::Split { edge, from, t } => {
+                let id = self.edge_at(edge);
+                let t = if self.first_end(id) == fixed(from) {
+                    t
+                } else {
+                    1.0 - t
+                };
+                self.split_sheet(id, t);
             }
         }
     }
@@ -347,6 +401,44 @@ macro_rules! reading {
             Self::glue_onto(self, first, second).expect("a weld");
         }
 
+        fn edge_at(&self, middle: [f64; 3]) -> CellId {
+            let found: Vec<CellId> = self
+                .edges_in_full()
+                .filter(|(edge, ..)| {
+                    let (a, b) = self.edge_ends(*edge).expect("a live edge");
+                    let (p, q) = (
+                        self.position(a).expect("an end"),
+                        self.position(b).expect("an end"),
+                    );
+                    fixed([0, 1, 2].map(|k| 0.5 * (p[k] + q[k]))) == fixed(middle)
+                })
+                .map(|(edge, ..)| edge)
+                .collect();
+            assert_eq!(found.len(), 1, "one edge through {middle:?}");
+            found[0]
+        }
+
+        fn split_sheet(&mut self, edge: CellId, t: f64) {
+            Self::split_sheet(self, edge, t).expect("a cut");
+        }
+
+        fn first_end(&self, edge: CellId) -> Place {
+            let (a, _) = self.edge_ends(edge).expect("a live edge");
+            fixed(self.position(a).expect("an end"))
+        }
+
+        fn remove_block(&mut self, block: CellId) {
+            Self::remove_block(self, block).expect("a live block");
+        }
+
+        fn remove_sheet(&mut self, edge: CellId, close: bool) {
+            if close {
+                Self::remove_sheet(self, edge).expect("a layer");
+            } else {
+                Self::remove_sheet_leaving_a_gap(self, edge).expect("a layer");
+            }
+        }
+
         fn answers(&self) -> Answers {
             let at = |node: CellId| fixed(self.position(node).expect("a live node"));
             let mut nodes: Vec<Place> = self.nodes().map(|(_, p)| fixed(p)).collect();
@@ -379,7 +471,11 @@ macro_rules! reading {
                 .blocks()
                 .into_iter()
                 .filter_map(|block| self.hex_corners(block))
-                .map(|corners| corners.iter().map(|n| at(*n)).collect())
+                .map(|corners| {
+                    let mut places: Vec<Place> = corners.iter().map(|n| at(*n)).collect();
+                    places.sort_unstable();
+                    places
+                })
                 .collect();
             blocks.sort();
             let spot = |on: Option<On>| on.map(|on| (on.dim, on.tag));
@@ -657,6 +753,103 @@ fn a_script_of_laying() {
             [3.0, 0.0, 0.0],
             [2.0, 0.0, 0.0],
         ]),
+    ]);
+}
+
+#[test]
+fn a_script_of_cutting() {
+    agree(&[
+        // One block cut in three along z, then across in x: a grid made of
+        // cuts, which is how a blocking is actually built.
+        Step::AddBlock(cube_corners([0.0, 0.0, 0.0], 1.0)),
+        Step::Split {
+            edge: [0.0, 0.0, 0.5],
+            from: [0.0, 0.0, 0.0],
+            t: 0.25,
+        },
+        Step::Split {
+            edge: [0.0, 0.0, 0.625],
+            from: [0.0, 0.0, 0.25],
+            t: 1.0 / 3.0,
+        },
+        Step::Split {
+            edge: [0.5, 0.0, 0.0],
+            from: [0.0, 0.0, 0.0],
+            t: 0.4,
+        },
+    ]);
+}
+
+#[test]
+fn a_script_of_taking_away() {
+    // A three-by-three-by-three grid cut out of one block, then the middle
+    // layer taken out and the gap closed. Nine seams to weld, and the caps
+    // of neighbouring blocks share their corners — which is the case a
+    // layer one block wide never shows.
+    let mut script = vec![Step::AddBlock(cube_corners([0.0, 0.0, 0.0], 3.0))];
+    for (edge, from, t) in [
+        ([0.0, 0.0, 1.5], [0.0, 0.0, 0.0], 1.0 / 3.0),
+        ([0.0, 0.0, 2.0], [0.0, 0.0, 1.0], 0.5),
+        ([1.5, 0.0, 0.0], [0.0, 0.0, 0.0], 1.0 / 3.0),
+        ([2.0, 0.0, 0.0], [1.0, 0.0, 0.0], 0.5),
+        ([0.0, 1.5, 0.0], [0.0, 0.0, 0.0], 1.0 / 3.0),
+        ([0.0, 2.0, 0.0], [0.0, 1.0, 0.0], 0.5),
+    ] {
+        script.push(Step::Split { edge, from, t });
+    }
+    script.push(Step::RemoveSheet {
+        edge: [0.0, 0.0, 1.5],
+        close: true,
+    });
+    // And one block out of what is left, which leaves a hole rather than
+    // closing anything. The seam landed half way, so what was the lowest
+    // layer now runs from 0 to 1.5.
+    script.push(Step::RemoveBlock {
+        middle: [0.5, 0.5, 0.75],
+    });
+    agree(&script);
+}
+
+#[test]
+fn a_script_of_taking_away_and_leaving_the_gap() {
+    agree(&[
+        Step::AddBlock(cube_corners([0.0, 0.0, 0.0], 3.0)),
+        Step::Split {
+            edge: [0.0, 0.0, 1.5],
+            from: [0.0, 0.0, 0.0],
+            t: 1.0 / 3.0,
+        },
+        Step::Split {
+            edge: [0.0, 0.0, 2.0],
+            from: [0.0, 0.0, 1.0],
+            t: 0.5,
+        },
+        // The walls stay where they are and the model gains a slot.
+        Step::RemoveSheet {
+            edge: [0.0, 0.0, 1.5],
+            close: false,
+        },
+    ]);
+}
+
+#[test]
+fn a_script_of_cutting_across_a_seam() {
+    // The concertina case: a sheet that crosses from one block into
+    // another through the face they share. An orientation that flipped on
+    // the way through would put half the new nodes at `t` and half at
+    // `1 - t`, and nothing would say so.
+    agree(&[
+        Step::AddBlock(cube_corners([0.0, 0.0, 0.0], 1.0)),
+        Step::AddBlock(cube_corners([1.5, 0.0, 0.0], 1.0)),
+        Step::Glue {
+            first: [1.0, 0.5, 0.5],
+            second: [1.5, 0.5, 0.5],
+        },
+        Step::Split {
+            edge: [0.0, 0.0, 0.5],
+            from: [0.0, 0.0, 0.0],
+            t: 0.25,
+        },
     ]);
 }
 

@@ -305,6 +305,25 @@ pub const FACE_AXIS: [u8; 6] = [2, 2, 1, 0, 1, 0];
 /// The face opposite each face, in [`HEX_FACES`] order. One step of a chord.
 pub const OPPOSITE: [u8; 6] = [1, 0, 4, 5, 2, 3];
 
+/// The corners of a hexahedron re-read with one axis playing the part of
+/// `z`, in [`HEX_FACES`] order — so `SPLIT_FRAME[a][..4]` is the cap at the
+/// low end of axis `a` and `[4..]` the cap at the high end, each wound as a
+/// hexahedron wants them.
+///
+/// What it is for: cutting a sheet of axis `a` in two means making a block
+/// out of the low cap and the four new nodes, and another out of the new
+/// nodes and the high cap. Said in this frame that is one expression for
+/// all three axes instead of three.
+///
+/// The permutations are cyclic — `(z,x,y)` and `(y,z,x)`, not a swap — so
+/// that the reframed block is wound the same way round and not inside out.
+/// Asserted below rather than trusted.
+pub const SPLIT_FRAME: [[usize; 8]; 3] = [
+    [0, 3, 7, 4, 1, 2, 6, 5],
+    [0, 4, 5, 1, 3, 7, 6, 2],
+    [0, 1, 2, 3, 4, 5, 6, 7],
+];
+
 #[cfg(test)]
 mod hexahedron_tables {
     use super::*;
@@ -323,6 +342,42 @@ mod hexahedron_tables {
                 .filter(|i| corners.iter().all(|c| at[*c][*i] == at[corners[0]][*i]))
                 .collect();
             assert_eq!(flat, vec![FACE_AXIS[f] as usize], "face {f}");
+        }
+    }
+
+    /// A cube re-read through each frame is still a cube in the same
+    /// order, with the two caps at the two ends of that axis and the block
+    /// not turned inside out.
+    #[test]
+    fn a_reframed_cube_is_still_a_cube() {
+        let at = cube_corners([0.0, 0.0, 0.0], 1.0);
+        for (axis, frame) in SPLIT_FRAME.iter().enumerate() {
+            let p: Vec<[f64; 3]> = frame.iter().map(|c| at[*c]).collect();
+            // Axis-aligned in the same order: every edge of the table moves
+            // in exactly one coordinate.
+            for [a, b] in HEX_EDGES {
+                let moved = (0..3).filter(|k| p[a][*k] != p[b][*k]).count();
+                assert_eq!(moved, 1, "axis {axis}, edge {a}-{b}");
+            }
+            // The low cap at one end of this axis, the high cap at the other.
+            assert!(
+                p[..4].iter().all(|q| q[axis] == 0.0),
+                "axis {axis}: the low cap"
+            );
+            assert!(
+                p[4..].iter().all(|q| q[axis] == 1.0),
+                "axis {axis}: the high cap"
+            );
+            // And the right way out: a cyclic permutation of the axes, not
+            // a reflection.
+            let sides = [0, 1, 2].map(|k| {
+                let other = p[HEX_CORNER_EDGES[0][k]];
+                [0, 1, 2].map(|i| other[i] - p[0][i])
+            });
+            assert!(
+                scaled_jacobian(p[0], sides) > 0.0,
+                "axis {axis}: inside out"
+            );
         }
     }
 
