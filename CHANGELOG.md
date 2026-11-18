@@ -47,6 +47,22 @@ measurements that decided it.
   same scripts and compared every answer after every step, which caught five
   divergences no test had thought to ask about.
 
+  **And it is faster by a long way, which was not the point but is the
+  thing anybody will notice.** The page's whole scene buffer, at five
+  hundred blocks: **73.1 ms to 0.38 ms**. The light buffer that goes out on
+  every pointer move, which is why dragging a node felt slow: **6.9 ms to
+  18 µs**. Measured by the same bench over both engines, on models that
+  match byte for byte, and none of it is a change to the drawing code — it
+  is the same buffers read out of cells instead of out of darts.
+
+  Taking a layer of blocks out was the one operation that still scaled
+  badly, because a weld rewrote every reference to the corners it merges by
+  sweeping the whole structure, and a layer welds a seam per block: at eight
+  thousand blocks, 111 ms of the 124 that took. An index of who holds each
+  node and each edge, built once for the operation and carried through the
+  welds, brings it to 22.9 ms — and every operation is now linear in the
+  blocks it touches.
+
   **What this costs anyone outside the kernel:** `agree.lua`'s three pinned
   numbers moved, and one of them is the mesh itself — 45 hexahedra where it
   had 36. That script asks for whichever edge the structure lists first and

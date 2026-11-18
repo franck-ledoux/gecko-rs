@@ -470,11 +470,59 @@ faces that share an edge share the two corners of that edge and the two they
 rise to, so the face between them is found and the second block is handed
 its other side by nobody doing anything.
 
-What is left is the speed. `held_edge`, `held_node` and `known()` are
-sweeps, written honestly rather than cleverly while correctness was the
-question; the differential bench took ten seconds over a three-by-three
-grid, which says it plainly enough. `Up` is the cache that localises them
-and it is already there to be extended.
+## What it takes, measured
+
+`tests/timing.rs` in both crates, release, grids cut out of one block.
+Nothing is superlinear: every per-block figure is the same at 1 728 blocks
+and at 8 000.
+
+|                               | 1 728 bl | 8 000 bl |  a block |
+| ----------------------------- | -------: | -------: | -------: |
+| built by cuts                 |  34.8 ms | 224.7 ms | 0.028 ms |
+| `block_faces`                 |   0.3 ms |   1.4 ms |        — |
+| `hexes`                       |   0.1 ms |   0.2 ms |        — |
+| `snapshot`                    |   0.0 ms |   0.2 ms |        — |
+| `split_sheet`                 |   4.1 ms |  21.5 ms | 0.003 ms |
+| `remove_sheet`                |   5.4 ms |  22.9 ms | 0.003 ms |
+| `extrude_faces`, a whole side |   0.8 ms |   3.4 ms |        — |
+| `pillow`, a whole side        |   3.1 ms |  17.5 ms | 0.002 ms |
+| `smooth`, one round           |   2.7 ms |  11.5 ms | 0.001 ms |
+| `mesh`, 2 segments            |   7.3 ms |  33.6 ms | 0.004 ms |
+
+One thing was superlinear and is not any more. A **weld** rewrote every
+reference to the four corners it merges, and it did so by sweeping all
+three arenas; a layer removal welds a seam per block, so taking a layer out
+of a twenty-cubed grid swept the model three thousand times — 111 ms of the
+124 that removal took. `Holders` is the index that says who holds each node
+and each edge, built once for the operation and carried through the welds,
+each of which moves one cell's holders onto another's. 123.6 ms became
+22.9, and it is linear.
+
+The other sweeps turned out not to matter and were left alone, with one
+exception: `drop_block` asked "does anything still hold this?" twenty times
+a block, which is a question about the whole structure, so `detach_block`
+and `collect` separate taking blocks away from clearing up after them and a
+layer sweeps once for the lot.
+
+### What the page pays to draw
+
+The same bench over the session, and the same models to the byte, with the
+combinatorial map still there to compare against:
+
+|                | 512 bl: map |   cells | 1 728 bl: map |   cells |
+| -------------- | ----------: | ------: | ------------: | ------: |
+| `view_buffer`  |     73.1 ms | 0.38 ms |      257.0 ms | 0.98 ms |
+| `nodes_buffer` |      6.9 ms | 0.02 ms |       25.5 ms | 0.04 ms |
+| `faces_json`   |     62.4 ms | 2.07 ms |      219.2 ms | 5.46 ms |
+| `stats_json`   |     19.3 ms | 0.01 ms |       73.6 ms | 0.03 ms |
+
+`nodes_buffer` is the light path, which goes out on every pointer move: it
+was 6.9 ms at five hundred blocks, which is why dragging a node felt slow,
+and it is 18 µs. `view_buffer` is 190 times faster at five hundred blocks
+and 260 at seventeen hundred — the gap widens because the map's cost per
+block was itself growing. None of this is a change to the drawing code: it
+is the same buffers, byte for byte, read out of cells instead of out of
+darts.
 
 ## The order of work
 

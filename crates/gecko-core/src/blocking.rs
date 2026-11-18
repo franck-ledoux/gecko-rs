@@ -139,6 +139,23 @@ type Halved = ([[NodeId; 4]; 2], [NodeId; 2], Option<On>);
 /// corners as that block winds them, the way in, and how far.
 type Drawn = (FaceId, BlockId, [NodeId; 4], [f64; 3], f64);
 
+/// Who holds each node and each edge, while an operation merges several of
+/// them.
+///
+/// Kept by the operation and not in [`Up`], for the same reason [`Known`]
+/// is: a merge drops the cache, and welding four hundred seams would
+/// rebuild it four hundred times. A merge moves one cell's holders onto
+/// another's, which is what keeps this true as the welds go by — and an id
+/// it still names after the cell has gone is harmless, because every write
+/// below looks the cell up first.
+struct Holders {
+    node_edges: HashMap<NodeId, Vec<EdgeId>>,
+    node_faces: HashMap<NodeId, Vec<FaceId>>,
+    node_blocks: HashMap<NodeId, Vec<BlockId>>,
+    edge_faces: HashMap<EdgeId, Vec<FaceId>>,
+    edge_blocks: HashMap<EdgeId, Vec<BlockId>>,
+}
+
 /// A cycle of four, read the other way round.
 fn reversed(cycle: [NodeId; 4]) -> [NodeId; 4] {
     [cycle[3], cycle[2], cycle[1], cycle[0]]
@@ -829,27 +846,21 @@ impl Blocking {
     }
 
     /// Whether anything still holds this edge.
-    fn held_edge(&self, id: EdgeId) -> bool {
-        self.faces.iter().any(|(_, f)| f.edges.contains(&id))
-            || self.blocks.iter().any(|(_, b)| b.edges.contains(&id))
-    }
-
-    /// Whether anything still holds this node.
-    fn held_node(&self, id: NodeId) -> bool {
-        self.edges.iter().any(|(_, e)| e.ends.contains(&id))
-            || self.faces.iter().any(|(_, f)| f.nodes.contains(&id))
-            || self.blocks.iter().any(|(_, b)| b.nodes.contains(&id))
-    }
-
-    /// Take a block away, and with it whatever only it was holding.
+    /// Take a block away, leaving whatever it was holding behind.
     ///
     /// A face it shared with a neighbour stays — that is the neighbour's
-    /// boundary now — and one it alone held goes, with any edge and node
-    /// left holding nothing. Where the map unsewed β₃ so that the
-    /// neighbour could be handed its own copy of the shared cells, there
-    /// is nothing to copy here: the neighbour already names them, and that
-    /// is the whole of what the cellular structure is for.
-    fn drop_block(&mut self, id: BlockId) -> Result<(), BlockingError> {
+    /// boundary now — and where the map unsewed β₃ so the neighbour could
+    /// be handed its own copy of the shared cells, there is nothing to
+    /// copy: the neighbour already names them, which is the whole of what
+    /// this structure is for.
+    ///
+    /// What **only** this block was holding is left behind as well, and
+    /// [`collect`][Self::collect] is what clears it. Separating the two is
+    /// not tidiness: a cell is held or not by the whole structure, so
+    /// asking per block means a sweep per block, and a layer of four
+    /// hundred paid four hundred sweeps. The cells it was holding come back
+    /// so that a caller taking several blocks away can ask once.
+    fn detach_block(&mut self, id: BlockId) -> Result<Block, BlockingError> {
         let block = self
             .blocks
             .get(id)
@@ -859,26 +870,63 @@ impl Blocking {
             self.detach(face, id);
         }
         self.blocks.remove(id);
-        for face in block.faces {
+        self.forget();
+        Ok(block)
+    }
+
+    /// Clear away whatever nothing holds any more, among these cells.
+    ///
+    /// Three passes over the structure for however many blocks were taken
+    /// away, rather than twenty per block. A face with no side left goes, an
+    /// edge no surviving face or block names goes, and a node no surviving
+    /// edge, face or block names goes — in that order, because each one is
+    /// what makes the next true.
+    fn collect(&mut self, faces: &[FaceId], edges: &[EdgeId], nodes: &[NodeId]) {
+        for face in faces {
             if self
                 .faces
-                .get(face)
+                .get(*face)
                 .is_some_and(|f| f.sides.iter().all(|side| side.is_none()))
             {
-                self.faces.remove(face);
+                self.faces.remove(*face);
             }
         }
-        for edge in block.edges {
-            if !self.held_edge(edge) {
-                self.edges.remove(edge);
+
+        let mut held: HashSet<EdgeId> = HashSet::new();
+        for (_, face) in self.faces.iter() {
+            held.extend(face.edges);
+        }
+        for (_, block) in self.blocks.iter() {
+            held.extend(block.edges);
+        }
+        for edge in edges {
+            if !held.contains(edge) {
+                self.edges.remove(*edge);
             }
         }
-        for node in block.nodes {
-            if !self.held_node(node) {
-                self.nodes.remove(node);
+
+        let mut held: HashSet<NodeId> = HashSet::new();
+        for (_, edge) in self.edges.iter() {
+            held.extend(edge.ends);
+        }
+        for (_, face) in self.faces.iter() {
+            held.extend(face.nodes);
+        }
+        for (_, block) in self.blocks.iter() {
+            held.extend(block.nodes);
+        }
+        for node in nodes {
+            if !held.contains(node) {
+                self.nodes.remove(*node);
             }
         }
         self.forget();
+    }
+
+    /// One block away, and whatever only it was holding.
+    fn drop_block(&mut self, id: BlockId) -> Result<(), BlockingError> {
+        let block = self.detach_block(id)?;
+        self.collect(&block.faces, &block.edges, &block.nodes);
         Ok(())
     }
 
@@ -1033,14 +1081,32 @@ impl Blocking {
         // apart, and welded once it is gone.
         let pairs: Vec<(NodeId, NodeId)> = seams.iter().flat_map(|seam| seam.pairs).collect();
         self.settle_seams(&pairs);
+        // The whole layer detached first and swept once, not swept per
+        // block: what a cell is held by is a question about the structure,
+        // so asking it per block is asking it four hundred times over.
+        let mut faces: Vec<FaceId> = Vec::new();
+        let mut edges: Vec<EdgeId> = Vec::new();
+        let mut nodes: Vec<NodeId> = Vec::new();
         for id in doomed {
-            self.drop_block(id)?;
+            let block = self.detach_block(id)?;
+            faces.extend(block.faces);
+            edges.extend(block.edges);
+            nodes.extend(block.nodes);
         }
+        self.collect(&faces, &edges, &nodes);
         // A corner two seams share is merged by the first of them, so the
         // second has to be told where it went. Nine blocks in a layer and
         // the caps of neighbouring ones share their corners, which a layer
         // one block wide never shows.
         let mut moved: HashMap<NodeId, NodeId> = HashMap::new();
+        // One index for the whole layer, kept true by the welds as they go
+        // — and built only if there are any, since building it is itself a
+        // sweep and a layer taken out leaving the gap open welds nothing.
+        let mut holders = if seams.is_empty() {
+            None
+        } else {
+            Some(self.holders())
+        };
         let follow = |moved: &HashMap<NodeId, NodeId>, mut n: NodeId| {
             while let Some(to) = moved.get(&n) {
                 if *to == n {
@@ -1086,7 +1152,8 @@ impl Blocking {
                     frozen: mine.frozen || theirs.frozen,
                 }
             });
-            for (from, to) in self.join_faces(keep, gone, turn, decided)? {
+            let holders = holders.as_mut().expect("a seam to weld");
+            for (from, to) in self.join_faces(keep, gone, turn, decided, holders)? {
                 moved.insert(from, to);
             }
         }
@@ -1292,59 +1359,110 @@ impl Blocking {
             .map(|n| self.nodes.get(n).expect("live").at)
     }
 
+    /// Who holds each node and each edge: one sweep, for an operation that
+    /// is about to merge several of them.
+    fn holders(&self) -> Holders {
+        let mut out = Holders {
+            node_edges: HashMap::new(),
+            node_faces: HashMap::new(),
+            node_blocks: HashMap::new(),
+            edge_faces: HashMap::new(),
+            edge_blocks: HashMap::new(),
+        };
+        for (id, edge) in self.edges.iter() {
+            for end in edge.ends {
+                out.node_edges.entry(end).or_default().push(id);
+            }
+        }
+        for (id, face) in self.faces.iter() {
+            for node in face.nodes {
+                out.node_faces.entry(node).or_default().push(id);
+            }
+            for edge in face.edges {
+                out.edge_faces.entry(edge).or_default().push(id);
+            }
+        }
+        for (id, block) in self.blocks.iter() {
+            for node in block.nodes {
+                out.node_blocks.entry(node).or_default().push(id);
+            }
+            for edge in block.edges {
+                out.edge_blocks.entry(edge).or_default().push(id);
+            }
+        }
+        out
+    }
+
     /// Every reference to one node becomes a reference to another, and the
     /// first is gone.
     ///
-    /// A sweep of the three arenas that can hold a node. The cache that
-    /// makes this local — `node_edges` and `node_blocks` — arrives with the
-    /// sheet walks; until then this is correct and slow rather than clever
-    /// and wrong, and the suite is what says which it is.
-    fn rewrite_node(&mut self, from: NodeId, to: NodeId) {
-        for id in self.edges.ids().collect::<Vec<_>>() {
-            let edge = self.edges.get_mut(id).expect("live");
-            for end in edge.ends.iter_mut() {
-                if *end == from {
-                    *end = to;
+    /// Only what holds it is touched, which is the whole point of knowing
+    /// who does: this used to sweep all three arenas, and a weld merges
+    /// four corners, so taking a layer of four hundred blocks out of a
+    /// model swept it three thousand times. Measured on a twenty-cubed
+    /// grid: 111 ms of the 124 a layer removal took.
+    fn rewrite_node(&mut self, from: NodeId, to: NodeId, holders: &mut Holders) {
+        let edges = holders.node_edges.remove(&from).unwrap_or_default();
+        for id in &edges {
+            if let Some(edge) = self.edges.get_mut(*id) {
+                for end in edge.ends.iter_mut() {
+                    if *end == from {
+                        *end = to;
+                    }
                 }
             }
         }
-        for id in self.faces.ids().collect::<Vec<_>>() {
-            let face = self.faces.get_mut(id).expect("live");
-            for node in face.nodes.iter_mut() {
-                if *node == from {
-                    *node = to;
+        let faces = holders.node_faces.remove(&from).unwrap_or_default();
+        for id in &faces {
+            if let Some(face) = self.faces.get_mut(*id) {
+                for node in face.nodes.iter_mut() {
+                    if *node == from {
+                        *node = to;
+                    }
                 }
             }
         }
-        for id in self.blocks.ids().collect::<Vec<_>>() {
-            let block = self.blocks.get_mut(id).expect("live");
-            for node in block.nodes.iter_mut() {
-                if *node == from {
-                    *node = to;
+        let blocks = holders.node_blocks.remove(&from).unwrap_or_default();
+        for id in &blocks {
+            if let Some(block) = self.blocks.get_mut(*id) {
+                for node in block.nodes.iter_mut() {
+                    if *node == from {
+                        *node = to;
+                    }
                 }
             }
         }
+        // What held the one now holds the other.
+        holders.node_edges.entry(to).or_default().extend(edges);
+        holders.node_faces.entry(to).or_default().extend(faces);
+        holders.node_blocks.entry(to).or_default().extend(blocks);
         self.nodes.remove(from);
     }
 
     /// The same for an edge, which only faces and blocks can hold.
-    fn rewrite_edge(&mut self, from: EdgeId, to: EdgeId) {
-        for id in self.faces.ids().collect::<Vec<_>>() {
-            let face = self.faces.get_mut(id).expect("live");
-            for edge in face.edges.iter_mut() {
-                if *edge == from {
-                    *edge = to;
+    fn rewrite_edge(&mut self, from: EdgeId, to: EdgeId, holders: &mut Holders) {
+        let faces = holders.edge_faces.remove(&from).unwrap_or_default();
+        for id in &faces {
+            if let Some(face) = self.faces.get_mut(*id) {
+                for edge in face.edges.iter_mut() {
+                    if *edge == from {
+                        *edge = to;
+                    }
                 }
             }
         }
-        for id in self.blocks.ids().collect::<Vec<_>>() {
-            let block = self.blocks.get_mut(id).expect("live");
-            for edge in block.edges.iter_mut() {
-                if *edge == from {
-                    *edge = to;
+        let blocks = holders.edge_blocks.remove(&from).unwrap_or_default();
+        for id in &blocks {
+            if let Some(block) = self.blocks.get_mut(*id) {
+                for edge in block.edges.iter_mut() {
+                    if *edge == from {
+                        *edge = to;
+                    }
                 }
             }
         }
+        holders.edge_faces.entry(to).or_default().extend(faces);
+        holders.edge_blocks.entry(to).or_default().extend(blocks);
         self.edges.remove(from);
     }
 
@@ -1371,6 +1489,7 @@ impl Blocking {
         gone: FaceId,
         turn: usize,
         decided: [Welded; 4],
+        holders: &mut Holders,
     ) -> Result<Vec<(NodeId, NodeId)>, BlockingError> {
         let here = self.faces.get(keep).expect("live").clone();
         let there = self.faces.get(gone).expect("live").clone();
@@ -1386,7 +1505,7 @@ impl Blocking {
                 node.frozen = told.frozen;
             }
             if a != b {
-                self.rewrite_node(b, a);
+                self.rewrite_node(b, a, holders);
                 merged.push((b, a));
             }
         }
@@ -1417,7 +1536,7 @@ impl Blocking {
             let edge = self.edges.get_mut(keep_edge).expect("live");
             edge.on = on;
             edge.segments = segments;
-            self.rewrite_edge(gone_edge, keep_edge);
+            self.rewrite_edge(gone_edge, keep_edge, holders);
         }
 
         // One face, with a block on each side.
@@ -2423,7 +2542,8 @@ impl Blocking {
         }
 
         let decided: [Welded; 4] = decided.try_into().expect("four corners");
-        self.join_faces(a, b, turn, decided)?;
+        let mut holders = self.holders();
+        self.join_faces(a, b, turn, decided, &mut holders)?;
         Ok(unmet)
     }
 
@@ -2448,7 +2568,8 @@ impl Blocking {
                 frozen: mine.frozen || partner.frozen,
             }
         });
-        self.join_faces(a, b, turn, decided)?;
+        let mut holders = self.holders();
+        self.join_faces(a, b, turn, decided, &mut holders)?;
         Ok(())
     }
 
@@ -2585,17 +2706,7 @@ impl Blocking {
         // Whatever it alone was holding. A neighbour in the same patch
         // keeps the side and the corners they shared, which is where the
         // map had to unsew β₂ to hand them back.
-        for edge in edges {
-            if !self.held_edge(edge) {
-                self.edges.remove(edge);
-            }
-        }
-        for node in nodes {
-            if !self.held_node(node) {
-                self.nodes.remove(node);
-            }
-        }
-        self.forget();
+        self.collect(&[], &edges, &nodes);
         Ok(())
     }
 
@@ -2782,10 +2893,18 @@ impl Blocking {
         // sound walls rather than anything needing repair.
         let chord = self.chord_through(face, block)?;
         let mut gone = Vec::with_capacity(chord.len());
+        let (mut faces, mut edges, mut nodes) = (Vec::new(), Vec::new(), Vec::new());
         for step in &chord {
-            self.remove_block(step.block)?;
+            let id = self
+                .block_at(step.block)
+                .ok_or(BlockingError::NoSuchBlock(step.block))?;
+            let was = self.detach_block(id)?;
+            faces.extend(was.faces);
+            edges.extend(was.edges);
+            nodes.extend(was.nodes);
             gone.push(step.block);
         }
+        self.collect(&faces, &edges, &nodes);
         Ok(gone)
     }
 
