@@ -106,6 +106,46 @@ struct Answers {
     /// nothing else here would.
     seen: Vec<(Place, u64, Vec<Place>)>,
     patches: usize,
+    /// The sheet through every edge: the edge asked about by its two ends'
+    /// places, then every edge of the sheet with the direction the cut
+    /// parameter runs in — **canonically**, see [`coherent`].
+    sheets: Vec<SheetSeen>,
+    /// The chord through every face, from each of its blocks: the face by
+    /// its corners' places and the block by the middle of its own, then the
+    /// blocks the chord crosses **in order**, since a chord is a curve and
+    /// not a set.
+    chords: Vec<ChordSeen>,
+}
+
+/// A sheet's directions, with the sign taken out of them.
+///
+/// Which way round a sheet points is a **convention** and the two engines
+/// came to different ones honestly: the map read an edge the way its dart
+/// ran, and the arena reads it the way the hexahedron's table lists it.
+/// What is not a convention, and is the thing worth comparing, is that
+/// every edge of one sheet points the *same* way across it — an orientation
+/// that flipped half way through comes out as a concertina, nodes at `t` on
+/// one side and `1 - t` on the other, with nothing raised.
+///
+/// So: flipped as a whole if the lowest of its edges runs the wrong way.
+/// Two coherent sheets then compare equal whatever sign each engine chose,
+/// and an incoherent one still differs from a coherent one.
+fn coherent(mut along: Vec<(Place, Place)>) -> Vec<(Place, Place)> {
+    let lowest = along
+        .iter()
+        .min_by_key(|(from, to)| {
+            if from <= to {
+                (*from, *to)
+            } else {
+                (*to, *from)
+            }
+        })
+        .copied();
+    if lowest.is_some_and(|(from, to)| from > to) {
+        along = along.into_iter().map(|(from, to)| (to, from)).collect();
+    }
+    along.sort_unstable();
+    along
 }
 
 /// A cycle turned to start at its lowest entry, so that two readings of one
@@ -130,6 +170,12 @@ fn fixed(at: [f64; 3]) -> [i64; 3] {
 type Place = [i64; 3];
 /// What a cell is lying on, as a pair small enough to compare.
 type Spot = Option<(u8, i32)>;
+/// One sheet: the edge it was asked about, and every edge of it with the
+/// direction the cut parameter runs in. Absent where the walk was refused.
+type SheetSeen = ([Place; 2], Option<Vec<(Place, Place)>>);
+/// One chord: the face and block it was asked about, and the blocks it
+/// crosses in order. Absent where the walk was refused.
+type ChordSeen = ((Vec<Place>, Place), Option<Vec<Place>>);
 
 /// What the bench needs of an engine, and nothing more.
 trait Engine: Sized {
@@ -376,6 +422,51 @@ macro_rules! reading {
                 })
                 .collect();
             seen.sort();
+            let ends = |edge: CellId| {
+                let (a, b) = self.edge_ends(edge).expect("a live edge");
+                let mut pair = [at(a), at(b)];
+                pair.sort_unstable();
+                pair
+            };
+            let mut sheets: Vec<SheetSeen> = self
+                .edges_in_full()
+                .map(|(edge, _, _, _)| {
+                    let found = self.sheet_through(edge).ok().map(|sheet| {
+                        coherent(
+                            sheet
+                                .iter()
+                                .map(|side| (at(side.from), at(side.to)))
+                                .collect(),
+                        )
+                    });
+                    (ends(edge), found)
+                })
+                .collect();
+            sheets.sort();
+            let middle_of = |block: CellId| {
+                let corners = self.hex_corners(block).expect("a live block");
+                let mut at = [0.0; 3];
+                for corner in corners {
+                    let p = self.position(corner).expect("a live corner");
+                    for k in 0..3 {
+                        at[k] += p[k] / 8.0;
+                    }
+                }
+                fixed(at)
+            };
+            let mut chords: Vec<ChordSeen> = Vec::new();
+            for block in self.blocks() {
+                for side in self.faces_of(block) {
+                    let mut corners: Vec<Place> = side.nodes.iter().map(|n| at(*n)).collect();
+                    corners.sort_unstable();
+                    let crossed = self
+                        .chord_through(side.face, block)
+                        .ok()
+                        .map(|chord| chord.iter().map(|step| middle_of(step.block)).collect());
+                    chords.push(((corners, middle_of(block)), crossed));
+                }
+            }
+            chords.sort();
             Answers {
                 census: self.census(),
                 nodes,
@@ -387,6 +478,8 @@ macro_rules! reading {
                 faces_on,
                 seen,
                 patches: self.nb_patches(),
+                sheets,
+                chords,
             }
         }
     };

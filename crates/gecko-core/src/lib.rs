@@ -28,7 +28,8 @@ pub use blocking::Blocking;
 pub use cells::{
     across, best_pairing, cube_corners, flatness, mitre, quad_normal, scaled_jacobian, BlockFace,
     BlockingError, Census, ChordBlock, GroupMasks, Settling, Sheet, SheetCells, SheetEdge, Slab,
-    Smoothing, Unmet, HEX_CORNER_EDGES, HEX_EDGES, HEX_FACES, PILLOW_SHARE, SLAB_SHARE,
+    Smoothing, Unmet, EDGE_AXIS, FACE_AXIS, HEX_CORNER_EDGES, HEX_EDGES, HEX_FACES, OPPOSITE,
+    PILLOW_SHARE, SLAB_SHARE,
 };
 #[cfg(feature = "cellular")]
 pub use cellular::Blocking;

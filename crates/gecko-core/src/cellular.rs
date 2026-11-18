@@ -27,13 +27,14 @@
 #![allow(unused_variables, dead_code, clippy::diverging_sub_expression)]
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::arena::{index, Arena};
 use crate::attributes::On;
 use crate::cells::{
-    apart, best_pairing, quad_normal, BlockFace, BlockingError, Census, ChordBlock, GroupMasks,
-    Hex, Settling, Sheet, SheetCells, SheetEdge, Slab, Smoothing, Unmet, HEX_EDGES, HEX_FACES,
+    across, apart, best_pairing, quad_normal, BlockFace, BlockingError, Census, ChordBlock,
+    GroupMasks, Hex, Settling, Sheet, SheetCells, SheetEdge, Slab, Smoothing, Unmet, EDGE_AXIS,
+    FACE_AXIS, HEX_EDGES, HEX_FACES, OPPOSITE,
 };
 use crate::ids::CellId;
 
@@ -93,10 +94,20 @@ pub struct Block {
 }
 
 /// What climbs, derived from the arenas and dropped when they change.
+///
+/// Nothing in here is state: it is all re-derivable from the four arenas,
+/// which is why `snapshot` does not copy it and the undo stack does not
+/// carry it. Built on first use and dropped by [`Blocking::forget`].
+///
+/// The note draws these as CSR arrays. A map of vectors holds the same
+/// information and is what they will be built from; the arrays matter when
+/// the cost of the hashing starts to show, and it does not yet.
 #[derive(Clone, Debug, Default)]
 pub struct Up {
-    /// Stage 3 and after. Empty until something needs it.
-    pub placeholder: (),
+    pub node_edges: HashMap<NodeId, Vec<EdgeId>>,
+    pub edge_faces: HashMap<EdgeId, Vec<FaceId>>,
+    pub edge_blocks: HashMap<EdgeId, Vec<BlockId>>,
+    pub node_faces: HashMap<NodeId, Vec<FaceId>>,
 }
 
 /// Whether one cycle of four is a rotation of another — which is what
@@ -304,13 +315,55 @@ impl Blocking {
         (length > 0.0).then(|| v.map(|x| x / length))
     }
 
+    /// The side of this face joining those two corners.
+    fn edge_between(&self, face: FaceId, from: NodeId, to: NodeId) -> Option<EdgeId> {
+        let f = self.faces.get(face)?;
+        (0..4)
+            .find(|k| {
+                let (a, b) = (f.nodes[*k], f.nodes[(*k + 1) % 4]);
+                (a, b) == (from, to) || (a, b) == (to, from)
+            })
+            .map(|k| f.edges[k])
+    }
+
     /// Which faces hold this edge.
     fn faces_on(&self, edge: EdgeId) -> Vec<FaceId> {
-        self.faces
+        self.climbing(|up| up.edge_faces.get(&edge).cloned().unwrap_or_default())
+    }
+
+    /// Which blocks hold this edge.
+    fn blocks_on(&self, edge: EdgeId) -> Vec<BlockId> {
+        self.climbing(|up| up.edge_blocks.get(&edge).cloned().unwrap_or_default())
+    }
+
+    /// The slot a face occupies in a block, and which of its two sides that
+    /// is.
+    fn slot_of(&self, face: FaceId, block: BlockId) -> Option<(u8, usize)> {
+        let b = self.blocks.get(block)?;
+        let slot = b.faces.iter().position(|f| *f == face)? as u8;
+        let f = self.faces.get(face)?;
+        let which = f
+            .sides
             .iter()
-            .filter(|(_, face)| face.edges.contains(&edge))
-            .map(|(id, _)| id)
-            .collect()
+            .position(|side| side.is_some_and(|s| s.block == block && s.slot == slot))?;
+        Some((slot, which))
+    }
+
+    /// What is on the other side of a face from the side given.
+    ///
+    /// Compared as a whole `Side`, block **and** slot, and not by the block
+    /// alone: two faces of one block welded to each other leave a face with
+    /// the same block on both sides, and a chord that walked out of it by
+    /// asking for "a different block" would find nothing and stop short.
+    /// That case is a test of its own, and it is why this is not three
+    /// lines shorter.
+    fn beyond(&self, face: FaceId, from: Side) -> Option<Side> {
+        let f = self.faces.get(face)?;
+        f.sides
+            .iter()
+            .flatten()
+            .find(|side| **side != from)
+            .copied()
     }
 
     /// The edge a quadrangle being laid could share along one of its sides,
@@ -567,6 +620,38 @@ impl Blocking {
     /// none.
     fn forget(&mut self) {
         *self.up.borrow_mut() = None;
+    }
+
+    /// Read what climbs, building it if it has been dropped.
+    ///
+    /// A closure rather than a returned reference, because the cache lives
+    /// behind a `RefCell` and handing out a borrow across it would make
+    /// every caller responsible for not holding it. One sweep of the
+    /// arenas, amortised over everything that asks.
+    fn climbing<T>(&self, ask: impl FnOnce(&Up) -> T) -> T {
+        if self.up.borrow().is_none() {
+            let mut built = Up::default();
+            for (id, edge) in self.edges.iter() {
+                for end in edge.ends {
+                    built.node_edges.entry(end).or_default().push(id);
+                }
+            }
+            for (id, face) in self.faces.iter() {
+                for edge in face.edges {
+                    built.edge_faces.entry(edge).or_default().push(id);
+                }
+                for node in face.nodes {
+                    built.node_faces.entry(node).or_default().push(id);
+                }
+            }
+            for (id, block) in self.blocks.iter() {
+                for edge in block.edges {
+                    built.edge_blocks.entry(edge).or_default().push(id);
+                }
+            }
+            *self.up.borrow_mut() = Some(built);
+        }
+        ask(self.up.borrow().as_ref().expect("just built"))
     }
 
     /// One face as one of its blocks sees it.
@@ -1466,15 +1551,108 @@ impl Blocking {
     }
 
     pub fn sheet_blocks(&self, sheet: &[SheetEdge]) -> usize {
-        todo!("cellular: sheet_blocks")
+        let mut blocks: Vec<BlockId> = sheet
+            .iter()
+            .filter_map(|side| self.edge_at(side.edge))
+            .flat_map(|edge| self.blocks_on(edge))
+            .collect();
+        blocks.sort_unstable();
+        blocks.dedup();
+        blocks.len()
     }
 
     pub fn sheet_cells(&self, edge: CellId) -> Result<SheetCells, BlockingError> {
-        todo!("cellular: sheet_cells")
+        let sheet = self.sheet_through(edge)?;
+        let mut blocks: Vec<BlockId> = Vec::new();
+        for side in &sheet {
+            let id = self
+                .edge_at(side.edge)
+                .ok_or(BlockingError::NoSuchEdge(side.edge))?;
+            blocks.extend(self.blocks_on(id));
+        }
+        blocks.sort_unstable();
+        blocks.dedup();
+
+        // Everything that bounds one of them. Sorted by name, which is what
+        // makes the answer the same whatever order the walk found things in.
+        let mut nodes: BTreeSet<CellId> = BTreeSet::new();
+        let mut edges: BTreeSet<CellId> = BTreeSet::new();
+        let mut faces: BTreeSet<CellId> = BTreeSet::new();
+        for id in &blocks {
+            let block = self.blocks.get(*id).expect("live");
+            nodes.extend(block.nodes.iter().map(|n| self.node_name(*n)));
+            edges.extend(block.edges.iter().map(|e| self.edge_name(*e)));
+            faces.extend(block.faces.iter().map(|f| self.face_name(*f)));
+        }
+        let named = |ids: BTreeSet<CellId>| -> Vec<CellId> {
+            ids.into_iter().filter(|c| c.is_some()).collect()
+        };
+        Ok(SheetCells {
+            sheet: sheet.iter().map(|s| s.edge).min().unwrap_or(edge),
+            nodes: named(nodes),
+            edges: named(edges),
+            faces: named(faces),
+            blocks: blocks.iter().map(|b| self.block_name(*b)).collect(),
+        })
     }
 
     pub fn sheets_beside(&self, edge: CellId) -> Result<[Option<CellId>; 2], BlockingError> {
-        todo!("cellular: sheets_beside")
+        let sheet = self.sheet_through(edge)?;
+        let crossed: HashSet<CellId> = sheet.iter().map(|s| s.edge).collect();
+        let start = self.edge_at(edge).ok_or(BlockingError::NoSuchEdge(edge))?;
+        let holding = self.blocks_on(start);
+        let [block] = holding[..1] else {
+            return Err(BlockingError::BrokenSheet(edge));
+        };
+
+        // The caps: the two faces of this block that the sheet does not
+        // cross. Which is the same as the two perpendicular to the sheet's
+        // own axis, and asking it this way needs no axis to be worked out.
+        let faces = self.blocks.get(block).expect("live").faces;
+        let caps: Vec<(u8, FaceId)> = faces
+            .iter()
+            .enumerate()
+            .filter(|(_, face)| {
+                self.faces
+                    .get(**face)
+                    .expect("live")
+                    .edges
+                    .iter()
+                    .all(|e| !crossed.contains(&self.edge_name(*e)))
+            })
+            .map(|(slot, face)| (slot as u8, *face))
+            .collect();
+        let [first, second] = caps[..] else {
+            return Err(BlockingError::BrokenSheet(edge));
+        };
+
+        let mut out = [None, None];
+        for (slot, (at, cap)) in out.iter_mut().zip([first, second]) {
+            let Some(there) = self.beyond(cap, Side { block, slot: at }) else {
+                continue;
+            };
+            let (next, there) = (there.block, there.slot);
+            // In the block beyond, an edge running the way the sheet does:
+            // the cap is flat in one axis, and the edges of that axis are
+            // the ones that cross it. Where the map walked darts, the
+            // tables say it.
+            let axis = FACE_AXIS[there as usize];
+            let along = self.blocks.get(next).expect("live").edges;
+            let Some(at) = (0..12).find(|k| EDGE_AXIS[*k] == axis) else {
+                continue;
+            };
+            let name = self.edge_name(along[at]);
+            if name.is_none() {
+                continue;
+            }
+            // A layer that cannot be read is a layer there is no stepping
+            // to, which is the same answer as a cap on the surface.
+            *slot = self
+                .sheet_through(name)
+                .ok()
+                .and_then(|sheet| sheet.iter().map(|s| s.edge).min());
+        }
+        Ok(out)
     }
 
     pub fn remove_sheet(&mut self, edge: CellId) -> Result<(), BlockingError> {
@@ -1494,7 +1672,56 @@ impl Blocking {
     }
 
     pub fn sheet_through(&self, edge: CellId) -> Result<Vec<SheetEdge>, BlockingError> {
-        todo!("cellular: sheet_through")
+        let start = self.edge_at(edge).ok_or(BlockingError::NoSuchEdge(edge))?;
+        let ends = self.edges.get(start).expect("live").ends;
+
+        // The same walk the map did, and in the same words: out of an edge
+        // through each face that holds it, to the edge **across** that
+        // quadrangle — the one opposite, oriented to match. `across` is
+        // four ids and a cycle, which is why it needed no porting at all.
+        //
+        // Keyed by name and walked in order, so the answer does not depend
+        // on the order anything happened to hand things back in.
+        let mut found: BTreeMap<CellId, SheetEdge> = BTreeMap::new();
+        found.insert(
+            edge,
+            SheetEdge {
+                edge,
+                from: self.node_name(ends[0]),
+                to: self.node_name(ends[1]),
+            },
+        );
+        let mut pending = vec![(start, ends[0], ends[1])];
+
+        while let Some((current, from, to)) = pending.pop() {
+            for face in self.faces_on(current) {
+                let quad = self.faces.get(face).expect("live").nodes;
+                let Some((next_from, next_to)) = across(quad, from, to) else {
+                    continue;
+                };
+                let Some(next) = self.edge_between(face, next_from, next_to) else {
+                    continue;
+                };
+                let name = self.edge_name(next);
+                let (named_from, named_to) = (self.node_name(next_from), self.node_name(next_to));
+                if let Some(seen) = found.get(&name) {
+                    if (seen.from, seen.to) != (named_from, named_to) {
+                        return Err(BlockingError::TangledSheet(edge));
+                    }
+                    continue;
+                }
+                found.insert(
+                    name,
+                    SheetEdge {
+                        edge: name,
+                        from: named_from,
+                        to: named_to,
+                    },
+                );
+                pending.push((next, next_from, next_to));
+            }
+        }
+        Ok(found.into_values().collect())
     }
 
     pub fn chord_through(
@@ -1502,11 +1729,118 @@ impl Blocking {
         face: CellId,
         block: CellId,
     ) -> Result<Vec<ChordBlock>, BlockingError> {
-        todo!("cellular: chord_through")
+        let id = self.face_at(face).ok_or(BlockingError::NoSuchFace(face))?;
+        let start = match self.block_at(block) {
+            Some(start) => start,
+            None => {
+                // A chord steps out of a block through the face opposite,
+                // which an open sheet of faces does not have: it would walk
+                // out of the structure. A patch being named by a face of
+                // its own, that is what a name no block answers to and some
+                // loose face does means.
+                let loose = self.face_at(block).is_some_and(|f| {
+                    self.faces
+                        .get(f)
+                        .is_some_and(|face| face.sides[0].is_none())
+                });
+                return Err(if loose {
+                    BlockingError::NotABlock(block)
+                } else {
+                    BlockingError::NoSuchBlock(block)
+                });
+            }
+        };
+        let (slot, _) = self
+            .slot_of(id, start)
+            .ok_or(BlockingError::FaceNotOnBlock(face, block))?;
+
+        // One block of the chord, entered at a slot: the block, the face
+        // in, the face out, and what is beyond the far face — which is the
+        // way on. `OPPOSITE` is where the map walked three betas.
+        let step = |at: BlockId, slot: u8| {
+            let faces = self.blocks.get(at).expect("live").faces;
+            let out = faces[OPPOSITE[slot as usize] as usize];
+            (
+                ChordBlock {
+                    block: self.block_name(at),
+                    through: [self.face_name(faces[slot as usize]), self.face_name(out)],
+                },
+                out,
+            )
+        };
+
+        let mut ahead: Vec<ChordBlock> = Vec::new();
+        let mut closed = false;
+        let mut here = Side { block: start, slot };
+        loop {
+            let (crossing, out) = step(here.block, here.slot);
+            ahead.push(crossing);
+            let leaving = Side {
+                block: here.block,
+                slot: OPPOSITE[here.slot as usize],
+            };
+            let Some(next) = self.beyond(out, leaving) else {
+                break;
+            };
+            if next == (Side { block: start, slot }) {
+                // A ring: going on would walk it for ever, and going back
+                // would walk it again the other way.
+                closed = true;
+                break;
+            }
+            here = next;
+        }
+
+        let mut behind: Vec<ChordBlock> = Vec::new();
+        if !closed {
+            let mut back = self.beyond(id, Side { block: start, slot });
+            while let Some(side) = back {
+                let (crossing, out) = step(side.block, side.slot);
+                behind.push(crossing);
+                back = self.beyond(
+                    out,
+                    Side {
+                        block: side.block,
+                        slot: OPPOSITE[side.slot as usize],
+                    },
+                );
+            }
+        }
+        behind.reverse();
+        behind.extend(ahead);
+
+        let mut once: Vec<CellId> = behind.iter().map(|c| c.block).collect();
+        once.sort_unstable();
+        let crossings = once.len();
+        once.dedup();
+        if once.len() != crossings {
+            return Err(BlockingError::TangledChord(face));
+        }
+        Ok(behind)
     }
 
     pub fn chord_wire(&self, chord: &[ChordBlock]) -> Vec<(CellId, CellId, CellId)> {
-        todo!("cellular: chord_wire")
+        let mut out: Vec<(CellId, CellId, CellId)> = Vec::new();
+        for step in chord {
+            for name in step.through {
+                let Some(id) = self.face_at(name) else {
+                    continue;
+                };
+                let face = self.faces.get(id).expect("live");
+                for k in 0..4 {
+                    let edge = self.edge_name(face.edges[k]);
+                    if out.iter().any(|(seen, ..)| *seen == edge) {
+                        continue;
+                    }
+                    out.push((
+                        edge,
+                        self.node_name(face.nodes[k]),
+                        self.node_name(face.nodes[(k + 1) % 4]),
+                    ));
+                }
+            }
+        }
+        out
     }
 
     pub fn remove_chord(
@@ -1562,11 +1896,24 @@ impl Blocking {
     }
 
     pub fn sheet_segments(&self, edge: CellId) -> Result<u32, BlockingError> {
-        todo!("cellular: sheet_segments")
+        Ok(self
+            .sheet_through(edge)?
+            .iter()
+            .filter_map(|s| self.edge_at(s.edge))
+            .filter_map(|e| self.edges.get(e))
+            .map(|e| e.segments)
+            .max()
+            .unwrap_or(0))
     }
 
     pub fn set_sheet_segments(&mut self, edge: CellId, segments: u32) -> Result<(), BlockingError> {
-        todo!("cellular: set_sheet_segments")
+        for side in self.sheet_through(edge)? {
+            let Some(id) = self.edge_at(side.edge) else {
+                continue;
+            };
+            self.edges.get_mut(id).expect("live").segments = segments;
+        }
+        Ok(())
     }
 
     pub fn block_faces(&self) -> Vec<BlockFace> {
@@ -1659,19 +2006,21 @@ impl Blocking {
         let Some(id) = self.node_at(node) else {
             return Vec::new();
         };
-        // A sweep of the edges. The cache that answers this in O(1) comes
-        // with the sheet walks, which are the first thing that cannot
-        // afford a sweep; until then a sweep is the honest implementation
-        // and not a slow one worth hiding.
-        let mut out: Vec<CellId> = self
-            .edges
-            .iter()
-            .filter_map(|(_, edge)| match edge.ends {
-                [a, b] if a == id => Some(self.node_name(b)),
-                [a, b] if b == id => Some(self.node_name(a)),
-                _ => None,
-            })
-            .collect();
+        let mut out: Vec<CellId> = self.climbing(|up| {
+            up.node_edges
+                .get(&id)
+                .into_iter()
+                .flatten()
+                .filter_map(|e| {
+                    let edge = self.edges.get(*e)?;
+                    match edge.ends {
+                        [a, b] if a == id => Some(self.node_name(b)),
+                        [a, b] if b == id => Some(self.node_name(a)),
+                        _ => None,
+                    }
+                })
+                .collect()
+        });
         out.sort_unstable();
         out.dedup();
         out
@@ -1681,9 +2030,13 @@ impl Blocking {
         let Some(id) = self.node_at(node) else {
             return false;
         };
-        self.faces
-            .iter()
-            .any(|(_, face)| face.nodes.contains(&id) && face.sides[1].is_none())
+        self.climbing(|up| {
+            up.node_faces.get(&id).into_iter().flatten().any(|f| {
+                self.faces
+                    .get(*f)
+                    .is_some_and(|face| face.sides[1].is_none())
+            })
+        })
     }
 
     pub fn is_block(&self, block: CellId) -> bool {

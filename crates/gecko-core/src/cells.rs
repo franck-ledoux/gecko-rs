@@ -291,6 +291,54 @@ pub const HEX_EDGES: [[usize; 2]; 12] = [
     [3, 7],
 ];
 
+/// Which axis each of the twelve edges runs along, in [`HEX_EDGES`] order.
+///
+/// Derived from the corner numbering rather than trusted: the test below
+/// rebuilds it from [`cube_corners`] and fails if the table has drifted.
+pub const EDGE_AXIS: [u8; 12] = [0, 1, 0, 1, 0, 1, 0, 1, 2, 2, 2, 2];
+
+/// Which axis each of the six faces is **perpendicular** to, in
+/// [`HEX_FACES`] order. So the four edges of axis `a` lie on the four faces
+/// whose entry is not `a`, and the two that are are the sheet's caps.
+pub const FACE_AXIS: [u8; 6] = [2, 2, 1, 0, 1, 0];
+
+/// The face opposite each face, in [`HEX_FACES`] order. One step of a chord.
+pub const OPPOSITE: [u8; 6] = [1, 0, 4, 5, 2, 3];
+
+#[cfg(test)]
+mod hexahedron_tables {
+    use super::*;
+
+    /// A unit cube read through the tables: an edge runs along one axis and
+    /// a face is flat in one, and that is what the tables say they are.
+    #[test]
+    fn the_axes_are_what_the_corner_numbering_makes_them() {
+        let at = cube_corners([0.0, 0.0, 0.0], 1.0);
+        for (k, [a, b]) in HEX_EDGES.iter().enumerate() {
+            let along: Vec<usize> = (0..3).filter(|i| at[*a][*i] != at[*b][*i]).collect();
+            assert_eq!(along, vec![EDGE_AXIS[k] as usize], "edge {k}");
+        }
+        for (f, corners) in HEX_FACES.iter().enumerate() {
+            let flat: Vec<usize> = (0..3)
+                .filter(|i| corners.iter().all(|c| at[*c][*i] == at[corners[0]][*i]))
+                .collect();
+            assert_eq!(flat, vec![FACE_AXIS[f] as usize], "face {f}");
+        }
+    }
+
+    /// The opposite face shares no corner, and is the only one that does
+    /// not.
+    #[test]
+    fn opposite_is_the_face_with_no_corner_in_common() {
+        for (f, corners) in HEX_FACES.iter().enumerate() {
+            let apart: Vec<usize> = (0..6)
+                .filter(|g| HEX_FACES[*g].iter().all(|c| !corners.contains(c)))
+                .collect();
+            assert_eq!(apart, vec![OPPOSITE[f] as usize], "face {f}");
+        }
+    }
+}
+
 /// How square a corner is: the volume the three edges leaving it span, over
 /// the product of their lengths. One at a right angle, nought where they
 /// fall into a plane, negative where the cell is inside out.
