@@ -15,7 +15,11 @@
 //! left unnamed.
 
 use crate::ids::CellId;
-use crate::{cube_corners, Blocking};
+// The engine these tests are about, named rather than taken from the
+// crate's export: they reach into the combinatorial map, so they go with it
+// and not with whatever `Blocking` currently means.
+use crate::blocking::Blocking;
+use crate::cube_corners;
 use std::collections::HashMap;
 
 /// Glue every pair of faces that sit on the same four corners.

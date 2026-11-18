@@ -11,3 +11,9 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 anyhow = "1"
+
+[features]
+# The cellular engine, in place of the combinatorial map. While it is being
+# written this selects which of the two the crate exports as `Blocking`, so
+# that the suite is an oracle for both. See docs/developer-guide/cellular.md.
+cellular = []

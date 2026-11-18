@@ -13,13 +13,16 @@ mod hexahedron_tests;
 #[cfg(test)]
 mod naming_tests;
 
+mod arena;
 pub mod attributes;
 pub mod blocking;
 pub mod cells;
+pub mod cellular;
 pub mod ids;
 pub mod mesh;
 
 pub use attributes::{BlockTag, EdgeTag, FaceTag, NodeTag, On};
+#[cfg(not(feature = "cellular"))]
 pub use blocking::Blocking;
 /// The vocabulary, which belongs to no engine: see [`cells`].
 pub use cells::{
@@ -27,5 +30,7 @@ pub use cells::{
     BlockingError, Census, ChordBlock, GroupMasks, Settling, Sheet, SheetCells, SheetEdge, Slab,
     Smoothing, Unmet, HEX_CORNER_EDGES, HEX_EDGES, HEX_FACES, PILLOW_SHARE, SLAB_SHARE,
 };
+#[cfg(feature = "cellular")]
+pub use cellular::Blocking;
 pub use ids::{CellId, CornerKey};
 pub use mesh::{Mesh, SEGMENTS};

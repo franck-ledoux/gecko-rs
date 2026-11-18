@@ -411,10 +411,37 @@ for byte: `agree.lua` keeps the digests it had.
 1. **The streaming mesher** — the prefix-sum numbering, per-block generation,
    `.vtm`/`.vts` streamed out, a decimated skin for the screen. Independent of
    the rest, and it carries the hundred-million-cell target.
+
 1. **The cellular structure** — behind the current API, with the accessor
-   discipline.
+   discipline. **Taken first instead**, the mesher's own half of point 1
+   being already done: the prefix-sum numbering is in `mesh.rs` with the VTK
+   file unchanged byte for byte, and `hexes()` reads `Hex` rather than
+   walking betas. What is left of point 1 is file writing, and it would have
+   had to be written twice if the structure moved under it afterwards.
+
+   How it is being done, since a five-thousand-line engine cannot be
+   swapped in one commit:
+
+   - `cells.rs` holds the vocabulary two engines agree on, owned by neither.
+   - a `cellular` feature chooses which module the crate exports as
+     `Blocking`. Both are always compiled, so one of each can be held at
+     once.
+   - **the suite is the oracle.** Not a line of it changes. `./cellular.sh`
+     runs it under the feature, counts what passes, and fails if the count
+     falls below `cellular.ratchet` — which is bumped in the commit that
+     earns it. It started at 43 of 314.
+   - `tests/differential.rs` runs a script of operations on **both** engines
+     and compares every answer after every step, which is the part no test
+     written by hand can do: a test says what its author thought to ask.
+   - `hexahedron_tests.rs` and `naming_tests.rs` name `blocking::Blocking`
+     outright. They are about the map and they go with it.
+   - the mesher needed one line: it is written against the public surface
+     and names no dart, so it compiles over either engine unchanged.
+
 1. **The curved cells** — the arenas, the carrying rule, interned bases, knot
    insertion for the cut, and the refitting question settled.
+
 1. **CGNS** — the minimal HDF5 writer.
+
 1. **Polyhedra** — reopened the day LoopyCuts is on the table, knowing the
    work will be downstream.

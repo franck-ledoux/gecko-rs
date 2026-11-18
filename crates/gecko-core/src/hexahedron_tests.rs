@@ -11,7 +11,11 @@
 
 use crate::attributes::{EdgeTag, FaceTag, NodeTag, On};
 use crate::ids::{CellId, CornerKey};
-use crate::{Blocking, HEX_FACES};
+// The engine these tests are about, named rather than taken from the crate's
+// export: they reach into the combinatorial map, so they go with it and not
+// with whatever `Blocking` currently means.
+use crate::blocking::Blocking;
+use crate::HEX_FACES;
 use honeycomb_core::attributes::AttributeUpdate;
 use honeycomb_core::cmap::{OrbitPolicy, NULL_DART_ID};
 

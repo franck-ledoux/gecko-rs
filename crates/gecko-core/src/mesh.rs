@@ -40,7 +40,14 @@
 use std::collections::HashMap;
 
 use crate::attributes::On;
+// Whichever engine the crate exports. The mesher is written against the
+// public surface and against nothing else — it names no dart and no arena —
+// so it compiles unchanged over either, which is most of stage 8 of
+// docs/developer-guide/cellular.md already done.
+#[cfg(not(feature = "cellular"))]
 use crate::blocking::Blocking;
+#[cfg(feature = "cellular")]
+use crate::cellular::Blocking;
 use crate::ids::CellId;
 
 /// How many segments an edge is divided into when nobody has said.

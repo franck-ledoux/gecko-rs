@@ -11,3 +11,8 @@ gecko-geom = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+
+[features]
+# Pass the cellular engine through to the kernel, so that the session tests
+# are an oracle for it too.
+cellular = ["gecko-core/cellular"]
