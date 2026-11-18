@@ -1429,7 +1429,12 @@ mod patches {
             size: 1.0,
         })
         .unwrap();
-        s.apply(Command::AddFace { corners: SQUARE }).unwrap();
+        s.apply(Command::AddFace {
+            corners: SQUARE,
+            on: Vec::new(),
+            surface: None,
+        })
+        .unwrap();
 
         let seen = stats(&s);
         assert_eq!(
@@ -1446,7 +1451,12 @@ mod patches {
     fn a_face_is_written_into_the_script_and_taken_back() {
         let mut s = Session::new().unwrap();
         let before = s.view_buffer();
-        s.apply(Command::AddFace { corners: SQUARE }).unwrap();
+        s.apply(Command::AddFace {
+            corners: SQUARE,
+            on: Vec::new(),
+            surface: None,
+        })
+        .unwrap();
 
         let script = s.script();
         assert!(
@@ -1462,7 +1472,12 @@ mod patches {
     #[test]
     fn what_a_patch_cannot_be_asked_is_said_plainly() {
         let mut s = Session::new().unwrap();
-        s.apply(Command::AddFace { corners: SQUARE }).unwrap();
+        s.apply(Command::AddFace {
+            corners: SQUARE,
+            on: Vec::new(),
+            surface: None,
+        })
+        .unwrap();
         let faces: Vec<serde_json::Value> = serde_json::from_str(&s.faces_json()).unwrap();
         let (face, block) = (
             faces[0]["id"].as_u64().unwrap(),

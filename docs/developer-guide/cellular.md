@@ -61,27 +61,54 @@ VTK file handed over as one `Uint8Array` in the same linear memory.
 
 ## What is decided
 
-1. **No patches.** A thin volume is created instead of a free-standing
-   quadrangle. One cell type, and `split_sheet` does the grid cutting that
-   `extrude_patch` used to lead up to — an operation fewer, not just a cell
-   type fewer.
+1. ~~**No patches.**~~ **Patches stay**, and this is the one decision here
+   that practice has already overturned. It said that a thin volume would be
+   created instead of a free-standing quadrangle: one cell type, and an
+   operation fewer.
+
+   It was tried. Laying a series of thin blocks along the boundary of a
+   surface, by hand, five of them, does not work and cannot be made to: a
+   block has an inside, so placing one means saying which side the material
+   is on and how thick it is, and four clicks say neither. Along a boundary
+   the winding alternated from one quadrangle to the next, putting
+   consecutive blocks on opposite sides of the surface; the thickness, a
+   share of each quadrangle's own diagonal, came out between 0.35 and 0.61 on
+   a model whose features are two units; and the node inside the material
+   sits a fraction of a pixel behind the one on the surface, so two clicks in
+   five reached the wrong one and landed a thickness off the model.
+
+   A sheet has no inside, so none of those questions is asked. The height is
+   one drag, once, for the whole strip, which `extrude_patch` already does
+   with a step per node along the mitre and a weld along every shared edge.
+
+   What this costs the structure: a `Face` whose two sides are **both** empty
+   has to be legal, and `validate()` has to accept it. The invariant lost is
+   "every face bounds at least one block", which was worth something. What it
+   buys is the only interactive way onto a surface that works.
+
 1. **`Face.nodes` is stored**, redundantly with `Block.nodes` and the hex
    table, and `validate()` checks the redundancy. Deriving it instead would
    put a `match` on every access to a face.
+
 1. **Ids are bare `u32` inside, packed `index:24 | generation:8` at the
    boundary.** A slot that reaches generation 255 retires instead of going
    back on the free list, so a stale name can never designate another cell.
    The `u32` protocol the page and Lua speak does not change.
+
 1. **A closed shell of six welded faces is no longer a block.** It was a
    property of the representation that no test exercised. A `Block` is a
    block by construction.
+
 1. **Node merging at a weld is immediate**, not a union-find resolved later:
    every stored `NodeId` is live at all times, which is what keeps the rest
    readable.
+
 1. **The inner nodes of a thin volume are free**, at a small distance at
    creation. See the trap below.
+
 1. **General polyhedra and T-junctions are out of scope**, deliberately, and
    the cost of reopening that door is stated below.
+
 1. **Mesh node numbers stay `u32`.** Which puts a ceiling on the whole
    pipeline at 4 294 967 295 nodes — a little over four billion, so a few
    hundred million cells has room and a few billion does not. Said here so
@@ -313,6 +340,12 @@ and the session excludes that list from `settle_fresh`. The thickness is a
 share rather than a length, `SLAB_SHARE`, and **signed** — the sign picks the
 side, as the extrusion height already does.
 
+Done, as `add_slab`, and the trap was there exactly as predicted. It is worth
+keeping in mind that the trap is **not** why decision 1 was overturned: the
+guard works. What does not work is asking four clicks which side the material
+is on. A laid quadrangle has no free nodes at all, so it never comes near
+this.
+
 ## What disappears
 
 - `ids.rs` entirely: `CellId` becomes the arena id, and `CornerKey` goes with
@@ -323,12 +356,16 @@ side, as the extrusion height already does.
   beta_2: `block.nodes` is that frame, in VTK order.
 - `BlockFace.volume`, which exists only because "finding a block by name is a
   scan of every volume". An arena lookup is O(1).
-- `add_face`, `remove_face`, `extrude_patch`, `patches()`, `nb_patches()`,
-  `patches_json()`, `is_block`, `named_is_block`, and `tests/patches.rs`.
-- outside `gecko-core` — the only place this rewrite reaches past it — three
-  Lua commands, `patchesJson` in `gecko-wasm`, two census lines in
-  `gecko-cmd`, and in the page `patchIds`, `isPatch`, the displayed count, the
-  hover text and the `extrude_patch` branch of the drag.
+- ~~`add_face`, `remove_face`, `extrude_patch`, `patches()`, `nb_patches()`,
+  `patches_json()`, `is_block`, `named_is_block`, and `tests/patches.rs`.~~
+  **All of it stays**, with `lay_face` and `weld_sheet` besides — see
+  decision 1. `is_block` is the one that can still go: a `Block` is a block
+  by construction (decision 4), so telling a block from a patch stops being
+  a question about whether a shell closes.
+- ~~outside `gecko-core` — the only place this rewrite reaches past it —
+  three Lua commands, `patchesJson` in `gecko-wasm`, two census lines in
+  `gecko-cmd`, and in the page `patchIds`, `isPatch`, the displayed count,
+  the hover text and the `extrude_patch` branch of the drag.~~ Stays too.
 
 `attributes.rs` does not disappear: `AttributeUpdate::merge` and `split` stop
 being callbacks the map invokes at moments nobody chose, and become explicit

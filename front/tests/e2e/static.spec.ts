@@ -3609,7 +3609,7 @@ test("⌥ slides a selected face instead of growing a block from it", async ({
   expect(errors).toEqual([]);
 });
 
-test("⇧Q lays a slab on four corners clicked on the geometry", async ({
+test("⇧Q lays a quadrangle on four corners clicked on the geometry", async ({
   page,
 }) => {
   const errors = await boot(page);
@@ -3619,7 +3619,7 @@ test("⇧Q lays a slab on four corners clicked on the geometry", async ({
   await page.evaluate(() => (window as any).__gecko.settled());
 
   // Nothing laid yet, and the mode says what it wants.
-  await page.evaluate(() => (window as any).__gecko.run("lay-slab"));
+  await page.evaluate(() => (window as any).__gecko.run("lay-face"));
   await expect(page.locator("#status")).toContainText("four corners");
 
   // Four clicks spread over the square. Each one says how many are left,
@@ -3639,97 +3639,206 @@ test("⇧Q lays a slab on four corners clicked on the geometry", async ({
   await page.evaluate(() => (window as any).__gecko.settled());
   await expect(page.locator("#status")).toContainText("laid on");
 
-  // One block, eight corners — and the four on the geometry are classified
-  // on it while the four inside the material are not. That is the whole
-  // point of the thing: a slab whose inner corners were settled onto the
-  // surface would have no thickness left.
+  // One quadrangle and no block: four corners, all four on the geometry.
+  // The height comes later, once, for the whole patch.
   const stats = (await page.evaluate(() =>
     (window as any).__gecko.stats(),
   )) as {
     blocks: number;
+    patches: number;
     nodes: number;
-    classified: { nodes: number };
+    classified: { nodes: number; faces: number };
   };
-  expect(stats.blocks).toBe(1);
-  expect(stats.nodes).toBe(8);
+  expect(stats.blocks).toBe(0);
+  expect(stats.patches).toBe(1);
+  expect(stats.nodes).toBe(4);
   expect(stats.classified.nodes).toBe(4);
+  // Nobody picked a surface, and the quadrangle is on one anyway: all four
+  // of its corners are on this one, so the settling that runs after every
+  // command carries that up through its sides to the face. Saying which
+  // surface is for when the settling cannot tell — corners on curves of
+  // two different surfaces, or on nothing.
+  expect(stats.classified.faces).toBe(1);
 
   expect(errors).toEqual([]);
 });
 
-test("a slab laid on a neighbor's corners is welded to it", async ({
+test("a surface picked first is what the quadrangle is laid on", async ({
   page,
 }) => {
   const errors = await boot(page);
   await openSquare(page);
   await expect(page.locator("[data-test=geom-surfaces]")).toHaveText("1");
   await page.evaluate(() => (window as any).__gecko.run("recenter"));
-  // Seen from −z. The slab below is thickened toward +z, away from the
-  // camera, so a click on one of its corners reaches the handle lying on
-  // the surface rather than the one inside the material behind it.
-  await page.evaluate(() => (window as any).__gecko.snapTo("-z"));
+  await page.evaluate(() =>
+    (window as any).__gecko.selectGeom([{ dim: 2, tag: 1 }]),
+  );
   await page.evaluate(() => (window as any).__gecko.settled());
 
-  // The left half of the square, laid without clicking, so that the one
-  // gesture under test is the second slab.
-  await openConsole(page);
-  await lua(page, "gecko.add_slab({ {0,0,0}, {0.5,0,0}, {0.5,1,0}, {0,1,0} })");
-  await expect(page.locator("[data-test=blocks]")).toHaveText("1");
-  await page.locator("#console-open").click();
-  await page.evaluate(() => (window as any).__gecko.settled());
+  await page.evaluate(() => (window as any).__gecko.run("lay-face"));
+  await expect(page.locator("#status")).toContainText("surface 1");
 
-  // Where its corners are. The square lies in a plane facing the camera, so
-  // that plane's projection is a plain scaling — which is what lets the
-  // right-hand half be found by stepping the same way again.
-  const nodes = await handles(page);
-  const lying = (x: number, y: number) => {
-    const found = nodes.find(
-      (n) =>
-        Math.abs(n.at[0] - x) < 1e-9 &&
-        Math.abs(n.at[1] - y) < 1e-9 &&
-        Math.abs(n.at[2]) < 1e-9,
-    );
-    expect(found, `a handle at (${x}, ${y}, 0)`).toBeTruthy();
-    return found!.on;
-  };
-  const origin = lying(0, 0);
-  const along = lying(0.5, 0);
-  const up = lying(0, 1);
-  const screen = (x: number, y: number): [number, number] => [
-    origin[0] + (x / 0.5) * (along[0] - origin[0]) + y * (up[0] - origin[0]),
-    origin[1] + (x / 0.5) * (along[1] - origin[1]) + y * (up[1] - origin[1]),
-  ];
-
-  // The right-hand half, wound the same way round so that the material is
-  // on the same side: the shared side first, taken backwards, by its two
-  // corners; then two points on the geometry, kept just inside the edge.
   const box = (await page.locator("#view").boundingBox())!;
-  const at: [number, number][] = [
-    lying(0.5, 1),
-    lying(0.5, 0),
-    screen(0.95, 0.05),
-    screen(0.95, 0.95),
-  ];
-  await page.evaluate(() => (window as any).__gecko.run("lay-slab"));
-  for (let k = 0; k < 4; k++) {
-    await page.mouse.click(box.x + at[k][0], box.y + at[k][1]);
-    if (k < 3) await expect(page.locator("#status")).toContainText(`${k + 1} of 4`);
+  for (const [x, y] of [
+    [0.4, 0.4],
+    [0.6, 0.4],
+    [0.6, 0.6],
+    [0.4, 0.6],
+  ]) {
+    await page.mouse.click(box.x + box.width * x, box.y + box.height * y);
   }
   await page.evaluate(() => (window as any).__gecko.settled());
 
-  // Welded along the side it was laid on, and said so.
-  await expect(page.locator("#status")).toContainText("welded along 1 side");
-  const stats = (await page.evaluate(() =>
-    (window as any).__gecko.stats(),
-  )) as { blocks: number; nodes: number };
-  // Two slabs sharing a face: sixteen corners less the four that met.
-  expect(stats.blocks).toBe(2);
-  expect(stats.nodes).toBe(12);
+  await expect(page.locator("#status")).toContainText("laid on surface 1");
+  expect(
+    await page.evaluate(() => (window as any).__gecko.stats().classified.faces),
+  ).toBe(1);
 
   expect(errors).toEqual([]);
 });
 
-test("a slab being laid is given up on with Esc, and walked back with ⌫", async ({
+test("a quadrangle laid on a neighbor's corners is welded to it", async ({
+  page,
+}) => {
+  const errors = await boot(page);
+  await openSquare(page);
+  await expect(page.locator("[data-test=geom-surfaces]")).toHaveText("1");
+  await page.evaluate(() => (window as any).__gecko.run("recenter"));
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  const box = (await page.locator("#view").boundingBox())!;
+  const lay = async (corners: [number, number][]) => {
+    await page.evaluate(() => (window as any).__gecko.run("lay-face"));
+    for (const [x, y] of corners) await page.mouse.click(box.x + x, box.y + y);
+    await page.evaluate(() => (window as any).__gecko.settled());
+  };
+  const view = (x: number, y: number): [number, number] => [
+    box.width * x,
+    box.height * y,
+  ];
+
+  // A strip across the middle of the square, kept well inside it so that
+  // every click has geometry under it.
+  await lay([
+    view(0.45, 0.45),
+    view(0.52, 0.45),
+    view(0.52, 0.55),
+    view(0.45, 0.55),
+  ]);
+  expect(await page.evaluate(() => (window as any).__gecko.stats().nodes)).toBe(
+    4,
+  );
+
+  // Where its four corners actually ended up, rather than where they were
+  // aimed at.
+  const nodes = await handles(page);
+  expect(nodes).toHaveLength(4);
+  const byX = [...nodes].sort((a, b) => a.on[0] - b.on[0]);
+  const [farA, farB] = byX.slice(2).sort((a, b) => a.on[1] - b.on[1]);
+  const middle = (which: typeof byX) => [
+    (which[0].on[0] + which[1].on[0]) / 2,
+    (which[0].on[1] + which[1].on[1]) / 2,
+  ];
+  const [nx, ny] = middle(byX.slice(0, 2));
+  const [fx, fy] = middle(byX.slice(2));
+  const step: [number, number] = [fx - nx, fy - ny];
+  const beyond = (p: { on: [number, number] }): [number, number] => [
+    p.on[0] + step[0],
+    p.on[1] + step[1],
+  ];
+
+  // The next one along, its first two corners clicked on this one's
+  // handles — and clicked round **the same way**, which is the way that
+  // cannot be welded as it stands: β₂ joins two darts running opposite ways
+  // along one edge. A sheet has no inside, so the quadrangle is turned to
+  // agree with its neighbour rather than refused.
+  await lay([farA.on, farB.on, beyond(farB), beyond(farA)]);
+
+  await expect(page.locator("#status")).toContainText("welded along 1 side");
+  const stats = (await page.evaluate(() =>
+    (window as any).__gecko.stats(),
+  )) as { patches: number; nodes: number; faces: number };
+  // Eight corners less the two that met, in one patch: the strip a single
+  // drag raises into blocks of one height.
+  expect(stats.faces).toBe(2);
+  expect(stats.nodes).toBe(6);
+  expect(stats.patches).toBe(1);
+
+  expect(errors).toEqual([]);
+});
+
+test("laying reaches the handle on the geometry, not the one behind it", async ({
+  page,
+}) => {
+  // The trap that made a hand-laid series of thin blocks unusable: a block
+  // resting on a surface has a node inside the material right behind each
+  // of the ones on it, a fraction of a pixel away on screen, and a click
+  // meaning the corner reached the hidden one instead — putting the next
+  // quadrangle a thickness off the model, classified on nothing.
+  const errors = await boot(page);
+  await openSquare(page);
+  await expect(page.locator("[data-test=geom-surfaces]")).toHaveText("1");
+  await page.evaluate(() => (window as any).__gecko.run("recenter"));
+  // From +z, where the slab's material is: the inner handles are in front.
+  await page.evaluate(() => (window as any).__gecko.snapTo("+z"));
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  await openConsole(page);
+  // Thin, which is when the trap is worst: the thinner the block, the
+  // nearer the hidden handle is to the one on the surface on screen, until
+  // they are the same pixel and a click cannot tell them apart.
+  await lua(
+    page,
+    "gecko.add_slab({ {0,0,0}, {1,0,0}, {1,1,0}, {0,1,0} }, { thickness = 0.002, on = " +
+      "{ { dim = 2, tag = 1 }, { dim = 2, tag = 1 }, " +
+      "{ dim = 2, tag = 1 }, { dim = 2, tag = 1 } } })",
+  );
+  await expect(page.locator("[data-test=blocks]")).toHaveText("1");
+  await page.locator("#console-open").click();
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // Aim between an inner handle and the one on the surface behind it. They
+  // are all but the same pixel, which is the whole trouble, so both are
+  // under the pointer — and `pickNode` answering with the inner one is what
+  // says so.
+  const nodes = await handles(page);
+  const inner = nodes.find((n) => n.at[2] > 1e-6);
+  expect(inner, "a handle inside the material").toBeTruthy();
+  const outer = nodes.find(
+    (n) =>
+      Math.abs(n.at[2]) < 1e-9 &&
+      Math.hypot(n.at[0] - inner!.at[0], n.at[1] - inner!.at[1]) < 1e-9,
+  );
+  expect(outer, "the one on the surface under it").toBeTruthy();
+  const x = (inner!.on[0] + outer!.on[0]) / 2;
+  const y = (inner!.on[1] + outer!.on[1]) / 2;
+
+  const nearest = await page.evaluate(
+    ([x, y]) => (window as any).__gecko.pickNode(x, y),
+    [x, y],
+  );
+  const laying = await page.evaluate(
+    ([x, y]) => (window as any).__gecko.pickHandle(x, y),
+    [x, y],
+  );
+  expect(nearest).toBe(inner!.name);
+  // What a click while laying reaches is the one that is on the geometry.
+  expect(laying).toBe(outer!.name);
+  const state = await page.evaluate(
+    (name) => (window as any).__gecko.nodeState(name),
+    laying,
+  );
+  expect(state?.on).toEqual({ dim: 2, tag: 1 });
+  const at = await page.evaluate(
+    (name) => (window as any).__gecko.nodePosition(name),
+    laying,
+  );
+  expect(Math.abs(at[2])).toBeLessThan(1e-9);
+
+  expect(errors).toEqual([]);
+});
+
+test("a quadrangle being laid is given up on with Esc, and walked back with ⌫", async ({
   page,
 }) => {
   const errors = await boot(page);
@@ -3738,7 +3847,7 @@ test("a slab being laid is given up on with Esc, and walked back with ⌫", asyn
   await page.evaluate(() => (window as any).__gecko.settled());
 
   const box = (await page.locator("#view").boundingBox())!;
-  await page.evaluate(() => (window as any).__gecko.run("lay-slab"));
+  await page.evaluate(() => (window as any).__gecko.run("lay-face"));
   await page.mouse.click(box.x + box.width * 0.45, box.y + box.height * 0.45);
   await page.mouse.click(box.x + box.width * 0.55, box.y + box.height * 0.45);
   await expect(page.locator("#status")).toContainText("2 of 4");
@@ -3750,9 +3859,9 @@ test("a slab being laid is given up on with Esc, and walked back with ⌫", asyn
   // And give up: nothing was put in the model, so nothing comes out of it.
   await page.keyboard.press("Escape");
   await expect(page.locator("#status")).toContainText("given up");
-  expect(
-    await page.evaluate(() => (window as any).__gecko.stats().blocks),
-  ).toBe(0);
+  expect(await page.evaluate(() => (window as any).__gecko.stats().nodes)).toBe(
+    0,
+  );
 
   expect(errors).toEqual([]);
 });

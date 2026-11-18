@@ -118,3 +118,23 @@ for k = 1, 3 do
   apart = apart + math.abs(up[k] - down[k])
 end
 assert(apart > 0.1, "both extrusions went the same way")
+
+-- Laid *against* what is already there, a quadrangle is welded to it along
+-- the side they share. Which is what makes a hand-laid strip one patch, and
+-- what makes one drag raise all of it to one height.
+gecko.reset()
+for k = 0, 4 do
+  gecko.add_face({ {k,0,0}, {k+1,0,0}, {k+1,1,0}, {k,1,0} })
+end
+local strip = gecko.stats()
+assert(strip.patches == 1, "one strip: " .. strip.patches)
+assert(strip.faces == 5 and strip.nodes == 12, strip.faces .. " faces, " .. strip.nodes .. " nodes")
+
+-- And up they go, together.
+local face = gecko.faces()[1]
+gecko.extrude_patch(face.id, 0.5)
+local blocks = gecko.stats()
+assert(blocks.blocks == 5, "five blocks: " .. blocks.blocks)
+assert(blocks.nodes == 24, "twelve up, twelve down: " .. blocks.nodes)
+assert(blocks.patches == 0, "the strip was consumed")
+print(string.format("%d blocks from a laid strip, %d nodes", blocks.blocks, blocks.nodes))

@@ -1605,28 +1605,52 @@ async function boot() {
    * between them, face on the surface.
    */
   /**
-   * The corners placed so far for a slab being laid, or nothing when no
-   * slab is being laid. Four of them close it.
+   * The corners placed so far for a quadrangle being laid, or nothing when
+   * none is being laid. Four of them close it.
    *
-   * Each carries what it is lying on as well as where it is: the block
+   * Each carries what it is lying on as well as where it is: the face
    * arrives already following the model, in one command, rather than being
-   * classified afterwards in a second step somebody could forget.
+   * classified afterwards in a second step somebody could forget. `surface`
+   * is the one that was picked when the laying started, if one was — the
+   * quadrangle itself goes on it.
    */
-  let laying: { at: [number, number, number]; on: Spot | null }[] | undefined;
+  let laying:
+    | {
+        surface: number | null;
+        corners: { at: [number, number, number]; on: Spot | null }[];
+      }
+    | undefined;
 
-  /** Start, or give up on, laying a slab on four points. */
-  function laySlab() {
+  /**
+   * Start, or give up on, laying a quadrangle on four points.
+   *
+   * A face and not a thin block, and that is the lesson of trying it the
+   * other way round: a block has an inside, so laying one by hand means
+   * saying which side the material is on and how thick it is, and four
+   * clicks say neither. A sheet has no inside. The height comes later, once,
+   * for the whole strip, by dragging it — which is what `extrude_patch` is.
+   */
+  function layFace() {
     if (laying) {
       stopLaying("given up");
       return;
     }
     if (viewer.geomCount("surfaces") === 0) {
-      say("load a geometry first — a slab is laid on one");
+      say("load a geometry first — a quadrangle is laid on one");
       return;
     }
-    laying = [];
+    // Said, not worked out: if a surface is picked, the quadrangle goes on
+    // it. Otherwise only its corners are classified.
+    const picked = viewer.geomSelection;
+    const surface =
+      picked.length === 1 && picked[0].dim === 2 ? picked[0].tag : null;
+    laying = { surface, corners: [] };
     viewer.showLaying([]);
-    say("lay a slab: click four corners on the geometry — Esc gives up");
+    say(
+      surface === null
+        ? "lay a quadrangle: click four corners on the geometry — Esc gives up"
+        : `lay a quadrangle on surface ${surface}: click four corners — Esc gives up`,
+    );
   }
 
   function stopLaying(why?: string) {
@@ -1639,14 +1663,15 @@ async function boot() {
    * One corner, where the pointer is.
    *
    * A click near a handle takes **that node's place** rather than making a
-   * point of its own, so two slabs laid side by side meet instead of nearly
-   * meeting. Otherwise the geometry under the pointer answers, corners
-   * before curves before surfaces — which is the preference the tolerance
-   * is made of, a corner being a small ball and a curve a thin ribbon.
+   * point of its own, which is how a quadrangle comes to be laid against
+   * another and welded to it. Otherwise the geometry under the pointer
+   * answers, corners before curves before surfaces — which is the
+   * preference the tolerance is made of, a corner being a small ball and a
+   * curve a thin ribbon.
    */
   async function layCorner(x: number, y: number) {
     if (!laying) return;
-    const node = viewer.pickNode(x, y);
+    const node = viewer.pickHandle(x, y);
     const at = node === null ? null : viewer.nodePosition(node);
     const placed =
       node !== null && at
@@ -1659,30 +1684,37 @@ async function boot() {
     const corner =
       "spot" in placed
         ? { at: placed.at, on: placed.spot }
-        : (placed as (typeof laying)[0]);
-    laying.push(corner);
-    viewer.showLaying(laying.map((c) => c.at));
-    if (laying.length < 4) {
-      const left = 4 - laying.length;
+        : (placed as (typeof laying.corners)[0]);
+    laying.corners.push(corner);
+    viewer.showLaying(laying.corners.map((c) => c.at));
+    if (laying.corners.length < 4) {
+      const left = 4 - laying.corners.length;
       say(
-        `${laying.length} of 4 — ${left} more corner${left === 1 ? "" : "s"}`,
+        `${laying.corners.length} of 4 — ${left} more corner${
+          left === 1 ? "" : "s"
+        }`,
       );
       return;
     }
-    const corners = laying.map((c) => c.at);
-    const on = laying.map((c) => c.on);
+    const corners = laying.corners.map((c) => c.at);
+    const on = laying.corners.map((c) => c.on);
+    const surface = laying.surface;
     stopLaying(undefined);
-    const reply = await send({ op: "add_slab", corners, on });
+    const reply = await send(
+      surface === null
+        ? { op: "add_face", corners, on }
+        : { op: "add_face", corners, on, surface },
+    );
     message = reply.message;
     await refresh();
   }
 
   /** Take back the corner last placed. */
   function unlayCorner() {
-    if (!laying?.length) return;
-    laying.pop();
-    viewer.showLaying(laying.map((c) => c.at));
-    say(`${laying.length} of 4 — ⌫ again to take back another`);
+    if (!laying?.corners.length) return;
+    laying.corners.pop();
+    viewer.showLaying(laying.corners.map((c) => c.at));
+    say(`${laying.corners.length} of 4 — ⌫ again to take back another`);
   }
 
   async function faceOnSurface() {
@@ -2644,7 +2676,7 @@ async function boot() {
       drawLayers();
       say(`internal faces ${prefs.faces.internal ? "shown" : "hidden"}`);
     },
-    "lay-slab": laySlab,
+    "lay-face": layFace,
     quad: () => {
       prefs.quad = !prefs.quad;
       showQuad();
@@ -2913,6 +2945,7 @@ async function boot() {
       closest: viewer.camera.lowerRadiusLimit,
     }),
     pickNode: (x: number, y: number) => viewer.pickNode(x, y),
+    pickHandle: (x: number, y: number) => viewer.pickHandle(x, y),
     pickSurface: (x: number, y: number) => viewer.pickSurface(x, y),
     faceScreen: (name: number) => viewer.faceScreen(name),
     edgeScreen: (name: number) => viewer.edgeScreen(name),

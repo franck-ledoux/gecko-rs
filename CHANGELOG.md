@@ -32,6 +32,59 @@ measurements that decided it.
   what makes them an oracle for the structure to come rather than a description
   of the one being replaced. The mesh file is unchanged byte for byte.
 
+- **A quadrangle is laid on four corners you click, welded to what it was
+  laid against.** `⇧Q`, beside the `Q` that lays one on a whole surface's own
+  corners. Lay them one after another along a surface and what grows is one
+  patch, which a single drag raises into blocks of one height — one step per
+  node along the mitre, welded along every shared edge, which
+  `extrude_patch` already did.
+
+  A side is welded when the two points it was laid on were both already
+  nodes of the model, an edge joins them, and that edge has no face on its
+  other side. There is no question of *which* face: a side of an open sheet
+  carries one, so a free edge between two given points is the answer or
+  there is none. Two coincident sheets put two free edges between the same
+  two points, and then the side is left free rather than welded to a guess.
+
+  **Which way round you click does not matter.** β₂ joins two darts running
+  opposite ways along one edge, so a quadrangle wound the other way from its
+  neighbour could not be welded to it as it stands — and a sheet has no
+  inside, so which way round it is says nothing anybody meant. Each side
+  with a neighbour votes and the quadrangle is turned to agree. The corners
+  still come back in the order they were clicked.
+
+  The neighbour does not move, and the node and the side that survive keep
+  its name, its class and its freeze. The corners are classified from the
+  clicks in the same command. The quadrangle itself and its sides are
+  settled the way everything else is, from their boundary — four corners all
+  on one surface leave the face on it with nobody saying so — and a surface
+  picked before the laying starts is how to say it when that cannot work,
+  the corners being on curves of two different surfaces or on nothing.
+
+  The handle a click reaches while laying is the one **on the geometry**. A
+  block resting on a surface has a node inside the material a fraction of a
+  pixel behind each of the ones on it, and that one is never the corner
+  anybody meant.
+
+- **A thin block laid by hand was the wrong primitive, and `⇧Q` no longer
+  lays one.** Worth recording rather than quietly replacing, because the
+  design note had decided the opposite.
+
+  Five of them laid along the boundary of a surface, by hand, do not work.
+  A block has an inside, so placing one means saying which side the material
+  is on and how thick it is, and four clicks say neither: along the boundary
+  the winding alternated from one to the next, so consecutive blocks sat on
+  opposite sides of the surface and were correctly refused a weld; the
+  thickness, a share of each quadrangle's own diagonal, came out between
+  0.35 and 0.61 on a model whose features are two units; and two clicks in
+  five reached the node inside the material instead of the one on the
+  surface, landing a corner a thickness off the model, classified on
+  nothing.
+
+  `gecko.add_slab` stays in the language, welding included — a lone slab is
+  a reasonable thing to script. [The design note](developer-guide/cellular.md)
+  says what overturning its first decision costs the structure to come.
+
 - **A thin block is laid on four corners you click.** `⇧Q`, beside the `Q`
   that lays one on a whole surface's own corners.
 

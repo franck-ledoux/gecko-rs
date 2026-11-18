@@ -86,68 +86,105 @@ The same machinery takes surfaces rather than curves, for a face of a
 blocking that spans several geometric surfaces. Nothing more is needed when
 that day comes: it is one notion with a dimension on it.
 
-## Laying a thin block on four points
+## Laying a quadrangle on four points
 
 `Q` takes a whole surface's own corners. `⇧Q` takes four you click, which is
-the way to pave a surface that has no four corners worth using — a disc, a
-long strip, a face of a model that wants two blocks across it.
+the way to pave a surface whose corners are no use — a disc, a long strip, a
+boundary you want five blocks along.
 
 Press `⇧Q` and click four times. Each click puts a corner where the pointer
 is:
 
-- **on an existing handle**, if it is near one — which is how a slab is laid
-  *against* another and welded to it;
+- **on an existing handle**, if there is one there — which is how a
+  quadrangle is laid *against* another and welded to it. The handle reached
+  is the one **on the geometry**: a block resting on a surface has a node
+  inside the material right behind each of the ones on it, a fraction of a
+  pixel away on screen, and that one is never the corner you meant.
 - otherwise **on the geometry**, corners before curves before surfaces. That
   order is the tolerance: a corner is a small ball and a curve a thin ribbon,
   so a click only reaches one by being near it.
 
 What is on screen says how far along you are — a mark, then a side, then two,
-and at the fourth the block. `Esc` gives up, `⌫` takes back the last corner.
+and at the fourth the quadrangle. `Esc` gives up, `⌫` takes back the last
+corner.
 
 ```lua
-gecko.add_slab({ {0,0,0}, {1,0,0}, {1,1,0}, {0,1,0} }, { thickness = 0.1 })
+gecko.add_face({ {0,0,0}, {1,0,0}, {1,1,0}, {0,1,0} }, {
+  on = { { dim = 0, tag = 3 }, { dim = 1, tag = 8 }, false, false },
+  surface = 9,
+})
 ```
 
-A **block** and not a face, because a face on its own has no inside and
-everything that follows — a chord, a pillow, a mesh — wants one. The
-thickness is signed, the sign picking which side the material is on, and
-without one it is a tenth of the quadrangle's own shortest diagonal, so
-"thin" means the same thing whatever the model is measured in.
+The four corners come back **already classified**, from the clicks. A corner
+that follows nothing is written `false` rather than left out, so that the
+list stays one entry per corner.
 
-The four corners on the geometry come back **already classified**. The four
-inside the material follow nothing, deliberately: each sits next to a
-classified corner, and were they settled onto the surface like any other
-fresh node the slab would have no thickness left.
+**The quadrangle itself**, and its sides, are settled the way everything
+else is: the settling that runs after every command carries a
+classification up from a cell's boundary, so four corners all on one
+surface leave the face on that surface without anybody saying so.
+
+Say it when that cannot work — corners on curves of two different surfaces,
+or on nothing. Pick the surface first — `M`, click it — and `⇧Q` lays the
+face on it, which the status line repeats back.
+
+!!! note "A face, not a thin block"
+    This used to lay a block of small thickness, and that was a mistake worth
+    recording. A block has an inside, so laying one by hand means saying
+    which side the material is on and how thick it is — and four clicks say
+    neither. Laid along a boundary, the winding alternated from one to the
+    next, so consecutive blocks ended up on opposite sides of the surface;
+    the thickness, a share of each quadrangle's own diagonal, came out
+    different for every one of them; and the handles inside the material got
+    in the way of the clicks. A sheet has no inside. The height comes later,
+    once, for the whole strip.
 
 ### Welded to what it was laid against
 
-Lay a second slab on two of the first one's corners and the two share the
-face between them. Paving a surface therefore builds **one** blocking and
-not a heap of blocks in the same place.
+Lay a second quadrangle on two of the first one's corners and the two share
+the side between them. Paving a surface therefore builds **one** patch, which
+one drag raises into blocks.
 
 A side is welded when the two points it was laid on were both already nodes
-of the model and an edge joins them. Clicking two of a neighbour's handles
-makes that true; clicking the geometry twice at the same places does not, and
-is not meant to.
+of the model, an edge joins them, and that edge has **no face on its other
+side**. Clicking two of a neighbour's handles makes all three true; clicking
+the geometry twice at the same places does not, and is not meant to.
 
-Which face does it weld to? A slab's edge has two faces of its own — the
-broad face it was laid on and the thin side — and they are told apart by
-**which way they lean**, from the middle of the shared edge toward the middle
-of their other two corners. The thin side leans into the material, the way
-the new side does; the broad face leans across it.
+There is no question of *which* face to weld to — a side of an open sheet
+carries one face, so a free edge between two given points is the answer or
+there is none. Where two sheets lie coincident and unwelded there are two
+free edges between the same two points, and then the side is left free rather
+than welded to a guess.
 
-Two things follow, and both are refusals:
+**Which way round you click does not matter.** β₂ joins two darts running
+opposite ways along one edge, so a quadrangle wound the other way from its
+neighbour could not be welded to it as it stands — and a sheet has no inside,
+so which way round it is says nothing anybody meant. Each side that has a
+neighbour votes, and the quadrangle is turned to agree with them. The corners
+still come back in the order you clicked them.
 
-- **Where two faces lean the same way**, the side is left free. Which of them
-  you meant is not a question with an answer.
-- **A slab thickened the other way** is not welded to. Back to back is not
-  side by side, and the sign of the thickness is what says which you have.
+The neighbour does not move: the quadrangle being laid is the one that gives
+way, and the node and the side that survive keep the neighbour's name, class
+and freeze. The status line says how many sides were welded, so one you
+expected to join on and did not is visible at once.
 
-The neighbour does not move. The new slab comes onto the old face and adopts
-its thickness there: two slabs a tenth of their own diagonal thick are not
-quite equally thick, and the one being laid is the one with no claim. The
-status line says how many sides were welded, so a slab you expected to join
-on and did not is visible at once.
+### A thin block, in the language
+
+`gecko.add_slab` lays a block of small thickness on four points, welded to
+what it is laid against along any side whose two points were already nodes
+joined by an edge. It has no key: a lone slab is a reasonable thing to script
+and an unreasonable thing to click, for the reasons in the note above.
+
+```lua
+gecko.add_slab({ {0,0,0}, {1,0,0}, {1,1,0}, {0,1,0} }, { thickness = -0.1 })
+```
+
+The thickness is signed — the sign picks which side the material is on — and
+without one it is a tenth of the quadrangle's own shortest diagonal. Which
+side of an edge to weld to is a real question for a slab, since its edge
+carries both the broad face it was laid on and the thin side: they are told
+apart by which way they lean, from the middle of the shared edge toward the
+middle of their other two corners.
 
 ## Taking one away
 

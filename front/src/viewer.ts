@@ -2786,6 +2786,35 @@ export class Viewer {
       : null;
   }
 
+  /**
+   * The handle under these coordinates, preferring one that is **on the
+   * geometry**.
+   *
+   * `pickNode` answers with the nearest, which is what grabbing one wants.
+   * Laying a quadrangle against the model wants something else: a block
+   * sitting on a surface has a node inside the material directly behind
+   * each of the ones on it, and from most angles the two are a pixel apart
+   * on screen. The hidden one is never the corner you were aiming at — a
+   * node that follows nothing is not a place anybody lays a new face onto.
+   *
+   * So: the nearest among those that are classified, and the plain nearest
+   * when none of them is.
+   */
+  pickHandle(x: number, y: number): number | null {
+    const hits =
+      this.scene.multiPick(
+        x,
+        y,
+        (m) => (m.metadata?.name ?? -1) >= 0 && m.isVisible,
+        this.cameraFor(x, y),
+      ) ?? [];
+    const names = hits
+      .filter((hit) => hit.hit && hit.pickedMesh)
+      .sort((a, b) => a.distance - b.distance)
+      .map((hit) => hit.pickedMesh!.metadata.name as number);
+    return names.find((name) => this.nodeState(name)?.on) ?? names[0] ?? null;
+  }
+
   /** The node with this name, in **CSS pixels** — the inverse of `pickNode`,
    *  in the frame that takes, and what lets a test aim a real mouse at a real
    *  handle. */

@@ -229,6 +229,8 @@ fn an_edge_is_never_handed_a_side_it_was_not_put_on() {
             [1.0, 1.0, 1.0],
             [0.0, 1.0, 1.0],
         ],
+        on: Vec::new(),
+        surface: None,
     })
     .unwrap();
     let fresh: Vec<u32> = nodes(&s)

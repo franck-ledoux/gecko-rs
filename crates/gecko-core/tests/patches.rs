@@ -533,3 +533,149 @@ fn a_patch_of_two_goes_the_other_way_in_one_piece_too() {
         assert!(corners.iter().all(|p| p[2] <= 1e-9));
     }
 }
+
+/// A quadrangle laid against another is welded to it along the side they
+/// share, which is what makes a strip of them one patch to raise.
+mod laying {
+    use gecko_core::{Blocking, On};
+
+    /// The unit square, and the one next to it sharing the side from
+    /// (1,0,0) to (1,1,0).
+    const FIRST: [[f64; 3]; 4] = [
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [1.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],
+    ];
+    const NEXT: [[f64; 3]; 4] = [
+        [1.0, 0.0, 0.0],
+        [2.0, 0.0, 0.0],
+        [2.0, 1.0, 0.0],
+        [1.0, 1.0, 0.0],
+    ];
+
+    #[test]
+    fn two_laid_on_a_shared_side_are_one_patch() {
+        let mut b = Blocking::new().unwrap();
+        let first = b.lay_face(FIRST).expect("the first");
+        assert_eq!(first.welded, 0, "the first has nothing to weld to");
+
+        let next = b.lay_face(NEXT).expect("the second");
+        assert_eq!(next.welded, 1, "one shared side, one weld");
+        let seen = b.census();
+        // Eight corners less the two that met, and the shared side counted
+        // once: two free-standing quadrangles would be 8 nodes and 8 edges.
+        assert_eq!((seen.faces, seen.nodes, seen.edges), (2, 6, 7));
+        assert_eq!(b.nb_patches(), 1, "welded edge to edge, so one patch");
+    }
+
+    #[test]
+    fn the_clicks_do_not_decide_which_way_round_it_is_wound() {
+        // The same two quadrangles, the second wound the other way. A sheet
+        // has no inside, so there is no wrong way round — and β₂ joins two
+        // darts running opposite ways, so being wound to agree with the
+        // neighbour is the whole difference between welding and not.
+        let mut b = Blocking::new().unwrap();
+        b.lay_face(FIRST).expect("the first");
+        let back = [NEXT[0], NEXT[3], NEXT[2], NEXT[1]];
+        let next = b.lay_face(back).expect("the second");
+
+        assert_eq!(next.welded, 1, "turned to agree, and welded");
+        assert_eq!(b.nb_patches(), 1);
+        // And the corners still come back in the order the points were
+        // given, whichever way round it ended up being wound.
+        for (k, name) in next.corners.iter().enumerate() {
+            assert_eq!(b.position(*name).unwrap(), back[k], "corner {k}");
+        }
+    }
+
+    #[test]
+    fn the_neighbor_keeps_its_names_its_class_and_its_place() {
+        let mut b = Blocking::new().unwrap();
+        let first = b.lay_face(FIRST).expect("the first");
+        // Said of the two corners the next one will be laid on, and of the
+        // side between them.
+        b.set_node_class(first.corners[1], Some(On { dim: 0, tag: 7 }))
+            .unwrap();
+        b.set_node_class(first.corners[2], Some(On { dim: 0, tag: 8 }))
+            .unwrap();
+        let (_, edges) = b.face_cells(first.face).expect("its cells");
+        b.set_edge_class(edges[1], Some(On { dim: 1, tag: 9 }))
+            .unwrap();
+        let was = edges[1];
+
+        // Laid a hair off, as a click always is: the page reads a handle's
+        // place back through the f32 buffer it draws from, so "the same
+        // point" is the same to about a part in ten million.
+        let nudged = [
+            [NEXT[0][0] + 1e-9, NEXT[0][1], NEXT[0][2] - 1e-9],
+            NEXT[1],
+            NEXT[2],
+            [NEXT[3][0] - 1e-9, NEXT[3][1], NEXT[3][2] + 1e-9],
+        ];
+        let next = b.lay_face(nudged).expect("the second");
+        assert_eq!(next.welded, 1);
+
+        // The nodes that survived are the neighbor's, by name, by class and
+        // by position — exactly, not half a rounding error away, because
+        // honeycomb merges two vertices by averaging them. The quadrangle
+        // being laid is the one that gives way.
+        assert_eq!(next.corners[0], first.corners[1], "its name, not a new one");
+        assert_eq!(next.corners[3], first.corners[2]);
+        assert_eq!(b.node_class(next.corners[0]), Some(On { dim: 0, tag: 7 }));
+        assert_eq!(b.node_class(next.corners[3]), Some(On { dim: 0, tag: 8 }));
+        assert_eq!(b.position(next.corners[0]).unwrap(), FIRST[1]);
+        // And so does the shared side.
+        let (_, after) = b.face_cells(next.face).expect("its cells");
+        assert!(after.contains(&was), "the old edge: {after:?}");
+        assert_eq!(b.edge_class(was), Some(On { dim: 1, tag: 9 }));
+    }
+
+    #[test]
+    fn a_strip_of_five_rises_into_five_blocks_of_one_height() {
+        // What `⇧Q` five times and one drag are for.
+        let mut b = Blocking::new().unwrap();
+        for k in 0..5 {
+            let x = k as f64;
+            let laid = b
+                .lay_face([
+                    [x, 0.0, 0.0],
+                    [x + 1.0, 0.0, 0.0],
+                    [x + 1.0, 1.0, 0.0],
+                    [x, 1.0, 0.0],
+                ])
+                .expect("a quadrangle");
+            assert_eq!(laid.welded, usize::from(k > 0), "the one at {x}");
+        }
+        let seen = b.census();
+        assert_eq!((seen.faces, seen.nodes), (5, 12), "one strip");
+        assert_eq!(b.nb_patches(), 1);
+
+        let patch = b.patches()[0];
+        let face = b.faces_of(patch)[0].face;
+        assert_eq!(b.extrude_patch(face, 0.5).expect("raised").len(), 5);
+        let seen = b.census();
+        assert_eq!((seen.blocks, seen.nodes), (5, 24), "twelve up, twelve down");
+        assert_eq!(b.nb_patches(), 0, "the patch was consumed");
+    }
+
+    #[test]
+    fn a_side_with_two_free_edges_to_choose_from_is_left_free() {
+        let mut b = Blocking::new().unwrap();
+        b.lay_face(FIRST).expect("the first");
+        // A second quadrangle standing on that same side, put there with
+        // `add_face`, which welds nothing. Now the side from (1,0,0) to
+        // (1,1,0) has two free edges between the same two points.
+        b.add_face([
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [1.5, 1.0, 2.0],
+            [1.5, 0.0, 2.0],
+        ])
+        .expect("a quadrangle standing on its own");
+
+        let next = b.lay_face(NEXT).expect("the third");
+        assert_eq!(next.welded, 0, "two to choose from, so neither");
+        assert_eq!(b.nb_patches(), 3, "three sheets, none welded");
+    }
+}

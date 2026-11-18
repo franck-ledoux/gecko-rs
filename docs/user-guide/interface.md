@@ -47,7 +47,7 @@ cannot disagree with the release it was built from.
 | `K`                      | put the blocking on the geometry                     |
 | `A`                      | put the selected nodes on the selected entity        |
 | `Q`                      | lay a quadrangle on the selected surface             |
-| `⇧Q`                     | lay a thin block on four corners you click           |
+| `⇧Q`                     | lay a quadrangle on four corners you click           |
 | `W`-drag                 | catch every node handle inside the band              |
 | `⌥`-drag a selected face | slide it, rather than grow a block from it           |
 | `L`                      | lock the picked node, or let it go                   |

@@ -78,20 +78,9 @@ pub fn line(command: &Command) -> String {
             thickness,
         } => {
             let points = corners.iter().map(point).collect::<Vec<_>>().join(", ");
-            let said = on
-                .iter()
-                .map(|spot| match spot {
-                    Some(s) => format!("{{ dim = {}, tag = {} }}", s.dim, s.tag),
-                    // A corner that follows nothing, written down so that the
-                    // list stays one entry per corner and the fourth is the
-                    // fourth.
-                    None => "false".to_string(),
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
             let mut options: Vec<String> = Vec::new();
             if !on.is_empty() {
-                options.push(format!("on = {{{said}}}"));
+                options.push(format!("on = {{{}}}", spots(on)));
             }
             if let Some(thickness) = thickness {
                 options.push(format!("thickness = {}", number(*thickness)));
@@ -102,11 +91,24 @@ pub fn line(command: &Command) -> String {
                 format!("gecko.add_slab({{{points}}}, {{ {} }})", options.join(", "))
             }
         }
-        Command::AddFace { corners } => {
-            format!(
-                "gecko.add_face{{{}}}",
-                corners.iter().map(point).collect::<Vec<_>>().join(", ")
-            )
+        Command::AddFace {
+            corners,
+            on,
+            surface,
+        } => {
+            let points = corners.iter().map(point).collect::<Vec<_>>().join(", ");
+            let mut options: Vec<String> = Vec::new();
+            if !on.is_empty() {
+                options.push(format!("on = {{{}}}", spots(on)));
+            }
+            if let Some(surface) = surface {
+                options.push(format!("surface = {surface}"));
+            }
+            if options.is_empty() {
+                format!("gecko.add_face{{{points}}}")
+            } else {
+                format!("gecko.add_face({{{points}}}, {{ {} }})", options.join(", "))
+            }
         }
         Command::GlueFaces { first, second } => format!("gecko.glue_faces({first}, {second})"),
         Command::RemoveChord { face, block } => {
@@ -242,6 +244,21 @@ pub fn line(command: &Command) -> String {
 
 /// A float, as Lua reads one. Rust's own shortest round-trip form, which
 /// prints `1` for 1.0 — a number Lua is happy with either way.
+/// What each corner of a laid quadrangle is lying on.
+///
+/// A corner that follows nothing is written `false`, not left out: a `nil`
+/// inside a Lua table literal would end the list there and make the fourth
+/// corner the third. The reader takes it back — `Command`'s `spots`.
+fn spots(on: &[Option<crate::Spot>]) -> String {
+    on.iter()
+        .map(|spot| match spot {
+            Some(s) => format!("{{ dim = {}, tag = {} }}", s.dim, s.tag),
+            None => "false".to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn number(x: f64) -> String {
     format!("{x}")
 }

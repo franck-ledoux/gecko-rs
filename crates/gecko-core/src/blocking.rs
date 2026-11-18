@@ -38,6 +38,21 @@ pub struct Slab {
     pub welded: usize,
 }
 
+/// A quadrangle laid on four points, and what it met there.
+///
+/// As for [`Slab`], the corners are the ones that **survived**: a side
+/// welded to an edge already in the model merges two nodes into one, and
+/// what comes back is the node that remains.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Sheet {
+    /// The face.
+    pub face: CellId,
+    /// Its four corners, in the order the points were given.
+    pub corners: [CellId; 4],
+    /// How many of its four sides were welded to an edge already there.
+    pub welded: usize,
+}
+
 /// One block, as the mesher needs it: its eight corners in VTK order, and
 /// the cells of the blocking they bound. All by name.
 pub struct Hex {
@@ -907,7 +922,21 @@ impl Blocking {
     ///
     /// The corners are taken anticlockwise seen from the side the face
     /// faces; [`quad_normal`] is what that means in arithmetic.
+    ///
+    /// Whatever it was laid **against** it is welded to: see
+    /// [`weld_sheet`][Self::weld_sheet]. Laying one quadrangle after another
+    /// along a surface therefore builds one patch, which
+    /// [`extrude_patch`][Self::extrude_patch] raises into blocks of a single
+    /// height.
     pub fn add_face(&mut self, corners: [[f64; 3]; 4]) -> Result<CellId, BlockingError> {
+        let base = self.build_face(corners)?;
+        self.assign_missing_ids();
+        Ok(self.face_tag_of(self.map.face_id(base)).id)
+    }
+
+    /// The quadrangle itself: four darts, a β₁ cycle, β₂ null all round,
+    /// positions and corner keys written, and nothing named yet.
+    fn build_face(&mut self, corners: [[f64; 3]; 4]) -> Result<DartIdType, BlockingError> {
         let base = self.map.allocate_used_darts(4);
         for slot in 0..4 {
             self.map.link::<1>(
@@ -929,8 +958,225 @@ impl Blocking {
                 },
             );
         }
+        Ok(base)
+    }
+
+    /// A quadrangle laid on four points, **welded to what it was laid
+    /// against**.
+    ///
+    /// [`add_face`][Self::add_face] is the same quadrangle standing on its
+    /// own, which is what `Q` builds from a surface's own corners: welding
+    /// those to each other would make six of them a closed shell, and a
+    /// closed shell is a block, so a user who laid one per face of a box
+    /// could no longer extrude any of them. Laying one by hand is the other
+    /// case — it is laid *against* the model on purpose — and that is this.
+    ///
+    /// Lay one after another along a surface and what grows is one patch,
+    /// which [`extrude_patch`][Self::extrude_patch] raises into blocks of a
+    /// single height, one step per node along the mitre, welded along every
+    /// shared edge.
+    pub fn lay_face(&mut self, corners: [[f64; 3]; 4]) -> Result<Sheet, BlockingError> {
+        // Two points are "the same point" relative to the size of the thing
+        // being laid, as everywhere else here.
+        let reach = (0..4)
+            .map(|k| apart(corners[k], corners[(k + 1) % 4]))
+            .fold(0.0, f64::max);
+        let slack = 1e-6 * reach.max(f64::MIN_POSITIVE);
+
+        // Wound to agree with whatever it is laid against, before a dart
+        // exists. β₂ joins two darts traversing one edge in **opposite**
+        // directions, so a quadrangle wound the other way from its neighbour
+        // cannot be welded to it at all — and a sheet has no inside, so
+        // which way round it is says nothing anybody meant. The clicks
+        // therefore do not decide it: the neighbours do.
+        let order = if self.facing(corners, slack) {
+            [0, 3, 2, 1]
+        } else {
+            [0, 1, 2, 3]
+        };
+        let wound = order.map(|k| corners[k]);
+
+        let base = self.build_face(wound)?;
+        // Named before the welding, and not only after: a weld merges this
+        // quadrangle's edge and volume with the neighbour's, and honeycomb
+        // refuses to merge an attribute one of the two sides has not got.
         self.assign_missing_ids();
-        Ok(self.face_tag_of(self.map.face_id(base)).id)
+        let welded = self.weld_sheet(base, wound, slack)?;
+        self.assign_missing_ids();
+
+        // Read after the welding, so that a corner swallowed by a weld comes
+        // back as the node that swallowed it and a caller may go straight on
+        // to say what each of them is lying on — and in the order the
+        // **points** were given, whichever way round the quadrangle ended up
+        // wound, because that is the order the caller counts in.
+        let face = self.face_tag_of(self.map.face_id(base)).id;
+        let mut by_point = [CellId::NONE; 4];
+        for (slot, &point) in order.iter().enumerate() {
+            by_point[point] = self
+                .node_tag_of(self.map.vertex_id(base + slot as DartIdType))
+                .id;
+        }
+        Ok(Sheet {
+            face,
+            corners: by_point,
+            welded,
+        })
+    }
+
+    /// Whether a quadrangle about to be laid should be wound the other way
+    /// round to agree with its neighbours.
+    ///
+    /// Each side that has a free edge between its two points votes: one
+    /// running the other way wants the quadrangle as it was given, one
+    /// running the same way wants it turned. The majority carries, and a tie
+    /// — no neighbours at all, or a sheet that cannot be oriented — leaves
+    /// it as it was given.
+    fn facing(&self, quad: [[f64; 3]; 4], slack: f64) -> bool {
+        let (mut given, mut turned) = (0, 0);
+        for slot in 0..4 {
+            for (_, opposite) in self.free_along(quad[slot], quad[(slot + 1) % 4], slack, &[]) {
+                if opposite {
+                    given += 1;
+                } else {
+                    turned += 1;
+                }
+            }
+        }
+        turned > given
+    }
+
+    /// The model's free darts running along an edge between two points, each
+    /// with whether it runs **the other way** round — from `to` to `from`,
+    /// which is the way β₂ wants.
+    ///
+    /// Free meaning β₂ is null: an edge with a face on each side already has
+    /// everything it can be welded to. The points are matched by where they
+    /// are rather than by name, because a weld already done has merged one
+    /// of the caller's own corners into a neighbour's.
+    fn free_along(
+        &self,
+        from: [f64; 3],
+        to: [f64; 3],
+        slack: f64,
+        mine: &[DartIdType],
+    ) -> Vec<(DartIdType, bool)> {
+        let (mut at_from, mut at_to) = (Vec::new(), Vec::new());
+        for v in self.map_vertices() {
+            let Some(p) = self.position_of(v) else {
+                continue;
+            };
+            if apart(from, p) <= slack {
+                at_from.push(v);
+            }
+            if apart(to, p) <= slack {
+                at_to.push(v);
+            }
+        }
+
+        let mut out: Vec<(DartIdType, bool)> = Vec::new();
+        for v in at_from.iter().chain(at_to.iter()) {
+            for d in self.map.orbit(OrbitPolicy::Vertex, *v) {
+                if mine.contains(&d) || self.map.beta::<2>(d) != NULL_DART_ID {
+                    continue;
+                }
+                let (a, b) = (
+                    self.map.vertex_id(d),
+                    self.map.vertex_id(self.map.beta::<1>(d)),
+                );
+                if at_to.contains(&a) && at_from.contains(&b) {
+                    out.push((d, true));
+                } else if at_from.contains(&a) && at_to.contains(&b) {
+                    out.push((d, false));
+                }
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// Weld a quadrangle just laid to the edges it was laid against.
+    ///
+    /// A side is welded when the two points it was laid on were **both
+    /// already nodes of the model**, an edge joins them, and that edge has
+    /// **no face on its other side**. Clicking two of a neighbour's handles
+    /// makes all three true.
+    ///
+    /// There is no question of *which* face to weld to, and that is why this
+    /// is simpler than the same thing for a slab
+    /// ([`weld_slab`][Self::weld_slab]): a side of an open sheet carries one
+    /// face, so a free edge between two given points is the answer or there
+    /// is none. The refusal survives as a count — two coincident sheets put
+    /// two free edges between the same two points, and then the side is left
+    /// free rather than welded to a guess — but no geometry is consulted to
+    /// choose, and no threshold.
+    ///
+    /// β₂, not β₃: in a 3-map β₂ joins two faces of one volume, so faces
+    /// welded edge to edge are, in the map's eyes, one volume. Which is what
+    /// a patch is.
+    ///
+    /// The quadrangle just laid is the one that gives way. Its two corners
+    /// take the positions of the nodes they are meeting — honeycomb merges
+    /// two vertices by averaging them, so without that the model would be
+    /// pulled half a rounding error on every weld — and the merged node and
+    /// edge are written back with the **old** cell's name, class and freeze,
+    /// rather than left to a merge policy that would hand a neighbour's
+    /// corner a fresh name.
+    fn weld_sheet(
+        &mut self,
+        base: DartIdType,
+        quad: [[f64; 3]; 4],
+        slack: f64,
+    ) -> Result<usize, BlockingError> {
+        let mine: Vec<DartIdType> = (0..4).map(|k| base + k as DartIdType).collect();
+        let mut welded = 0;
+        for slot in 0..4 {
+            let along = self.free_along(quad[slot], quad[(slot + 1) % 4], slack, &mine);
+            // Only the ones running the other way are candidates at all; a
+            // free edge running the same way cannot be sewn to this one
+            // whatever anybody wants.
+            let facing: Vec<DartIdType> = along
+                .into_iter()
+                .filter(|(_, opposite)| *opposite)
+                .map(|(d, _)| d)
+                .collect();
+            // Nothing there, or no way to choose: leave the side free.
+            let [against] = facing[..] else {
+                continue;
+            };
+
+            // Everything the old cells say, read before anything moves.
+            let ours = base + slot as DartIdType;
+            let theirs = self.map.beta::<1>(against);
+            let (tag_from, tag_to) = (
+                self.node_tag_of(self.map.vertex_id(theirs)),
+                self.node_tag_of(self.map.vertex_id(against)),
+            );
+            let edge = self.edge_tag_of(self.map.edge_id(against));
+            let (p_from, p_to) = (
+                self.position_of(self.map.vertex_id(theirs)),
+                self.position_of(self.map.vertex_id(against)),
+            );
+
+            // The new corners come onto the old ones before the sew, so that
+            // the averaging the merge does lands back where the model was.
+            for (dart, at) in [(ours, p_from), (self.map.beta::<1>(ours), p_to)] {
+                if let Some(at) = at {
+                    self.map
+                        .write_vertex(self.map.vertex_id(dart), (at[0], at[1], at[2]));
+                }
+            }
+            self.map.sew::<2>(ours, against)?;
+
+            // And what the old cells said, said again over whatever the
+            // merge decided.
+            self.map.write_attribute(self.map.vertex_id(ours), tag_from);
+            self.map
+                .write_attribute(self.map.vertex_id(self.map.beta::<1>(ours)), tag_to);
+            self.map.write_attribute(self.map.edge_id(ours), edge);
+            welded += 1;
+        }
+        Ok(welded)
     }
 
     /// A face's four corners and four edges, in the order β₁ walks them.

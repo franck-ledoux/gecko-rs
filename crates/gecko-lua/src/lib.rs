@@ -113,7 +113,15 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
         ))
     })?;
     command(lua, &gecko, &kernel, "add_face", |lua, a| {
-        Ok(json!({ "op": "add_face", "corners": at(lua, &a, 0)? }))
+        // The four points, then what each is lying on and which surface the
+        // quadrangle is on — both optional, and `false` for a point that
+        // follows nothing.
+        let o = options(lua, &a, 1)?;
+        Ok(with(
+            json!({ "op": "add_face", "corners": at(lua, &a, 0)? }),
+            &o,
+            &["on", "surface"],
+        ))
     })?;
     command(lua, &gecko, &kernel, "remove_face", |lua, a| {
         Ok(json!({ "op": "remove_face", "face": at(lua, &a, 0)? }))

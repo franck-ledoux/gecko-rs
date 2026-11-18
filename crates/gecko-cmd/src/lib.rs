@@ -183,6 +183,19 @@ pub enum Command {
     /// corners go anticlockwise seen from the side the face faces.
     AddFace {
         corners: [[f64; 3]; 4],
+        /// Empty, or one entry a corner. `None` — written `false` by the
+        /// script, see [`spots`] — where a corner follows nothing.
+        #[serde(default, deserialize_with = "spots")]
+        on: Vec<Option<Spot>>,
+        /// The geometric surface the quadrangle itself is laid on, when one
+        /// was picked before the laying started.
+        ///
+        /// Said rather than worked out. Four corners on curves that happen
+        /// to bound one surface are not a claim about which surface the
+        /// quadrangle is on, and inferring it would be the interface
+        /// deciding something nobody said — the same rule the sides go by.
+        #[serde(default)]
+        surface: Option<i32>,
     },
     /// Lay a block of small thickness on four points.
     ///
@@ -911,13 +924,52 @@ impl Session {
                     view_changed: true,
                 })
             }
-            Command::AddFace { corners } => {
-                let id = self.blocking.add_face(corners)?;
+            Command::AddFace {
+                corners,
+                on,
+                surface,
+            } => {
+                let laid = self.blocking.lay_face(corners)?;
+
+                // What each point was lying on, told to the corner it
+                // became — in the same command, so that a quadrangle laid on
+                // the model is one step of undo rather than two.
+                let mut followed = 0;
+                for (node, spot) in laid
+                    .corners
+                    .iter()
+                    .zip(on.iter().chain(std::iter::repeat(&None)))
+                {
+                    let Some(spot) = spot else { continue };
+                    self.blocking.set_node_class(
+                        *node,
+                        Some(On {
+                            dim: spot.dim,
+                            tag: spot.tag,
+                        }),
+                    )?;
+                    followed += 1;
+                }
+                if let Some(tag) = surface {
+                    self.blocking
+                        .set_face_class(laid.face, Some(On { dim: 2, tag }))?;
+                }
+
+                let welded = match laid.welded {
+                    0 => String::new(),
+                    n => format!(", welded along {n} side{}", if n == 1 { "" } else { "s" }),
+                };
+                let on_surface = match surface {
+                    Some(tag) => format!(" on surface {tag}"),
+                    None => String::new(),
+                };
                 Ok(Outcome {
                     script: None,
                     message: format!(
-                        "face {:?} added — {} nodes, {} edges, {} faces, {} patches",
-                        id,
+                        "face {:?} laid{on_surface} on {followed} point{}{welded} — \
+                         {} nodes, {} edges, {} faces, {} patches",
+                        laid.face,
+                        if followed == 1 { "" } else { "s" },
                         self.blocking.nb_nodes(),
                         self.blocking.nb_edges(),
                         self.blocking.nb_faces(),

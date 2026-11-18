@@ -68,8 +68,8 @@ shorthand for a call with one table.
 | ------------------------------------------------------------------- | -------------------------------------------------------------------- |
 | `gecko.create_cube{ origin = {0,0,0}, size = 1 }`                   | and `add_block{ … }` with eight corners                              |
 | `gecko.face_on_surface(tag)`                                        | a quadrangle on a geometric surface                                  |
-| `gecko.add_face{ {x,y,z}, … }`                                      | one by hand, with four corners                                       |
-| `gecko.add_slab{ {x,y,z}, … }`                                      | a thin block on four points, welded to what it is laid against       |
+| `gecko.add_face({ {x,y,z}, … }, { on = …, surface = … })`           | one by hand, welded to what it is laid against                       |
+| `gecko.add_slab({ {x,y,z}, … }, { thickness = … })`                 | a thin block on four points, welded the same way                     |
 | `gecko.remove_face(id)`                                             | one face of a patch                                                  |
 | `gecko.extrude_patch(face, 0.5)`                                    | the whole sheet, into blocks; ± either way                           |
 | `gecko.smooth{ rounds = 5, share = 0.5 }`                           | a smart Laplacian, geometry respected                                |
