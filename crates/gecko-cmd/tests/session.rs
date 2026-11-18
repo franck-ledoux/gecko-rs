@@ -1,7 +1,7 @@
 //! The door, and the bytes that come out of it.
 
-use gecko_cmd::view::{HEADER, MAGIC};
-use gecko_cmd::{Command, Session, SessionError, ViewBuffer, SNAP_SHARE};
+use gecko_cmd::view::{HEADER, MAGIC, NODES_MAGIC};
+use gecko_cmd::{Command, NodeBuffer, Session, SessionError, ViewBuffer, SNAP_SHARE};
 
 const UNIT_CUBE: [[f64; 3]; 8] = [
     [0.0, 0.0, 0.0],
@@ -1493,4 +1493,55 @@ mod patches {
             assert_eq!(s.view_buffer(), before, "and nothing moved");
         }
     }
+}
+
+#[test]
+fn the_nodes_buffer_is_the_view_s_nodes_on_their_own() {
+    // The page asks for this one by itself after a drag, to put the handles
+    // back without decoding a whole view again. So the two encoders hold
+    // the same eight lines of node code twice, and that is exactly what
+    // can drift: a handle an origin-shift away from the block it belongs
+    // to, or a color read off the wrong column.
+    let mut s = Session::new().unwrap();
+    s.apply(Command::AddBlock { corners: UNIT_CUBE }).unwrap();
+    // On an origin neither of them would have chosen, which is the case
+    // that matters: the session settles one over the blocking *and* the
+    // geometry, and hands it to both encoders.
+    let far = [10.0, 20.0, 30.0];
+    let v = ViewBuffer::of(s.blocking(), Some(far));
+    let n = NodeBuffer::of(s.blocking(), Some(far));
+
+    assert_eq!(n.center, far);
+    assert_eq!(n.center, v.center);
+    assert_eq!(n.positions, v.positions);
+    assert_eq!(n.names, v.names);
+    assert_eq!(n.class_dim, v.node_class_dim);
+    assert_eq!(n.class_tag, v.node_class_tag);
+    assert_eq!(n.frozen, v.node_frozen);
+    assert_eq!(n.groups_lo, v.node_groups_lo);
+    assert_eq!(n.groups_hi, v.node_groups_hi);
+    assert_eq!(n.loose, v.node_loose);
+
+    // Given no origin it settles one over the nodes it has, which for a
+    // session holding nothing but a blocking is the view's own.
+    assert_eq!(
+        NodeBuffer::of(s.blocking(), None).center,
+        ViewBuffer::of(s.blocking(), None).center
+    );
+
+    let bytes = s.nodes_buffer();
+    assert_eq!(&bytes[0..4], &NODES_MAGIC);
+    assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 1);
+    let settled = ViewBuffer::of(s.blocking(), None).center;
+    for (k, c) in settled.iter().enumerate() {
+        let at = 8 + k * 8;
+        assert_eq!(
+            f64::from_le_bytes(bytes[at..at + 8].try_into().unwrap()),
+            *c
+        );
+    }
+    assert_eq!(u32::from_le_bytes(bytes[32..36].try_into().unwrap()), 8);
+    // Exact length, or a client's typed-array views walk off the end:
+    // three floats and seven words a node, after a header of thirty-six.
+    assert_eq!(bytes.len(), 36 + 8 * 40);
 }

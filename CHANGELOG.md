@@ -288,6 +288,19 @@ blocks together rather than one at a time.
   the map per block, for lattices that cannot change while a mesh is being
   built.
 
+- **Four tests the coverage figure asked for.** The light node buffer — the one that goes out on every
+  pointer move — was exercised only by the browser, and it holds the same
+  eight lines of node encoding as the full view; two tests now hold the two
+  encoders against each other, on an origin neither would have chosen and
+  on a blocking where the group masks are not nought.
+
+  The other two are about smoothing a **patch**: faces laid on a surface
+  with no block under them yet. There the measure that refuses a move
+  cannot be the corner of a hexahedron, because there is no hexahedron —
+  it is the folding of a quadrangle. Every node of an open patch is free to
+  walk inwards, and taking that measure away collapses a two-by-two patch
+  into a point in three rounds. Measured, by taking it away.
+
 ## 0.1.6
 
 Two faults in the shaded hollows that 0.1.5 shipped: a face of the boundary

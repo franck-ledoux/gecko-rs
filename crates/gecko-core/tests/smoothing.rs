@@ -15,7 +15,9 @@
 use std::collections::HashMap;
 
 use gecko_core::ids::CellId;
-use gecko_core::{cube_corners, scaled_jacobian, Blocking, On, Smoothing, HEX_CORNER_EDGES};
+use gecko_core::{
+    cube_corners, flatness, scaled_jacobian, Blocking, On, Smoothing, HEX_CORNER_EDGES,
+};
 
 /// Glue every pair of faces that sit on the same four corners.
 fn weld_everything(b: &mut Blocking) {
@@ -403,4 +405,141 @@ fn the_same_blocking_smooths_the_same_way_every_time() {
         all
     };
     assert_eq!(run(), run());
+}
+
+/// A two by two grid of laid quadrangles: one patch, nine nodes, and no
+/// block anywhere. What a surface blocking is before it is extruded.
+fn patch_grid() -> Blocking {
+    let mut b = Blocking::new().unwrap();
+    for i in 0..2 {
+        for j in 0..2 {
+            let (x, y) = (i as f64, j as f64);
+            b.lay_face([
+                [x, y, 0.0],
+                [x + 1.0, y, 0.0],
+                [x + 1.0, y + 1.0, 0.0],
+                [x, y + 1.0, 0.0],
+            ])
+            .expect("a quadrangle on the plane");
+        }
+    }
+    b
+}
+
+/// Back onto z = 0, which is where the patch was laid.
+fn onto_the_plane(_: On, at: [f64; 3]) -> Option<[f64; 3]> {
+    Some([at[0], at[1], 0.0])
+}
+
+#[test]
+fn a_patch_is_smoothed_by_its_quadrangles_and_nothing_else() {
+    // No block is involved, so the measure that guards the move cannot be
+    // the one a hexahedron is judged by. A patch face can fold flat on its
+    // own, and that is what has to be weighed instead.
+    let mut b = patch_grid();
+    assert_eq!(
+        (b.nb_nodes(), b.nb_faces(), b.nb_blocks(), b.nb_patches()),
+        (9, 4, 0, 1),
+        "the four quadrangles welded into one patch"
+    );
+
+    let middle = node_at(&b, [1.0, 1.0, 0.0]);
+    b.set_position(middle, [1.4, 1.3, 0.0]).unwrap();
+
+    // Unclassified it does not move at all: every face of a patch has an
+    // empty second side, so all nine nodes are on the surface, and the
+    // boundary is held.
+    assert_eq!(
+        b.smooth(
+            Smoothing {
+                rounds: 1,
+                share: 1.0,
+                held: &[],
+            },
+            onto_the_plane,
+        ),
+        0.0
+    );
+    assert_eq!(at(&b, middle), [1.4, 1.3, 0.0]);
+
+    // Following the surface it was laid on, it is free, and its four
+    // neighbors put it back in the middle.
+    b.set_node_class(middle, Some(On { dim: 2, tag: 1 }))
+        .unwrap();
+    let moved = b.smooth(
+        Smoothing {
+            rounds: 1,
+            share: 1.0,
+            held: &[],
+        },
+        onto_the_plane,
+    );
+    assert!(moved > 0.4, "it should have moved a long way, not {moved}");
+    let back = at(&b, middle);
+    assert!(
+        (back[0] - 1.0).abs() < 1e-9 && (back[1] - 1.0).abs() < 1e-9 && back[2].abs() < 1e-9,
+        "it should be back at the middle of the patch, not {back:?}"
+    );
+}
+
+#[test]
+fn the_two_measures_a_move_is_weighed_by() {
+    // One at a right angle, nought where the corner has folded flat, and
+    // nought — not a NaN, not an infinity — where two of the points are the
+    // same point. A degenerate corner is reached: it is what a Laplacian
+    // step produces on the way to being refused.
+    let o = [0.0, 0.0, 0.0];
+    let x = [1.0, 0.0, 0.0];
+    let y = [0.0, 1.0, 0.0];
+    let z = [0.0, 0.0, 1.0];
+
+    assert!((flatness(o, x, y) - 1.0).abs() < 1e-12);
+    assert!(flatness(o, x, [2.0, 0.0, 0.0]).abs() < 1e-12, "folded flat");
+    assert_eq!(flatness(o, o, y), 0.0);
+    assert_eq!(flatness(o, x, o), 0.0);
+
+    assert!((scaled_jacobian(o, [x, y, z]) - 1.0).abs() < 1e-12);
+    assert!(scaled_jacobian(o, [y, x, z]) < 0.0, "inside out");
+    assert_eq!(scaled_jacobian(o, [x, y, o]), 0.0);
+}
+
+#[test]
+fn a_laplacian_on_an_open_patch_would_collapse_it() {
+    // The teeth of the measure above, and the reason a patch needs one of
+    // its own: every node of an open patch is free to move inwards, and
+    // nothing but the folding of the quadrangles says not to. Without that
+    // weight the whole patch walks into a point in three rounds — measured,
+    // by taking the weight away: nine nodes inside a tenth of a unit.
+    let mut b = patch_grid();
+    for name in b.nodes().map(|(n, _)| n).collect::<Vec<_>>() {
+        b.set_node_class(name, Some(On { dim: 2, tag: 1 })).unwrap();
+    }
+    // A concave outline, which is where a Laplacian does its damage: one
+    // corner of the patch pushed deep inside it.
+    let bitten = node_at(&b, [2.0, 2.0, 0.0]);
+    b.set_position(bitten, [0.9, 0.9, 0.0]).unwrap();
+
+    b.smooth(
+        Smoothing {
+            rounds: 3,
+            share: 1.0,
+            held: &[],
+        },
+        onto_the_plane,
+    );
+
+    let span = |k: usize| {
+        let all: Vec<f64> = b.nodes().map(|(_, p)| p[k]).collect();
+        all.iter().copied().fold(f64::MIN, f64::max) - all.iter().copied().fold(f64::MAX, f64::min)
+    };
+    assert!(
+        span(0) > 1.9 && span(1) > 1.9,
+        "the patch should have kept its extent, not {:?}",
+        (span(0), span(1))
+    );
+    // And the three corners that are still convex have not budged.
+    for corner in [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0]] {
+        let at = b.position(node_at(&b, corner)).unwrap();
+        assert_eq!(at, corner, "a convex corner of the patch moved");
+    }
 }

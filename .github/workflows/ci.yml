@@ -268,7 +268,16 @@ jobs:
             cp -R coverage-page/page/e2e site/coverage/page
             cp coverage-page/page-badge.json site/coverage/
           fi
-          python3 tools/coverage_index.py site/coverage
+          # The index insists on finding at least one report, which is what
+          # catches an artifact name that has drifted. So it is asked only
+          # when there was a report to find: a branch does not measure
+          # coverage at all, and a run whose coverage job went red has one
+          # failure to report, not two.
+          if [ "${{ needs.coverage.result }}" = success ]; then
+            python3 tools/coverage_index.py site/coverage
+          else
+            echo "no coverage in this run; the site goes out without the reports"
+          fi
 
       - name: Keep it for the deploy job
         uses: actions/upload-pages-artifact@v3

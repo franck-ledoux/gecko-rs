@@ -338,3 +338,30 @@ fn a_block_name_is_checked_as_a_block() {
     assert!(said.contains("block"), "{said}");
     assert!(groups(&s).is_empty(), "and nothing was made");
 }
+
+#[test]
+fn the_nodes_buffer_carries_the_masks_the_view_carries() {
+    // A mask of nought is the same whichever encoder got it wrong, so the
+    // agreement is only worth asserting where something is grouped — and
+    // where something else is not, which is what `loose` answers.
+    let mut s = pair();
+    let all = blocks(&s);
+    s.apply(Command::Group {
+        name: "fluid".to_string(),
+        blocks: vec![all[0]],
+        written: Some(true),
+    })
+    .unwrap();
+
+    let v = gecko_cmd::ViewBuffer::of(s.blocking(), None);
+    let n = gecko_cmd::NodeBuffer::of(s.blocking(), Some(v.center));
+    assert_eq!(n.groups_lo, v.node_groups_lo);
+    assert_eq!(n.groups_hi, v.node_groups_hi);
+    assert_eq!(n.loose, v.node_loose);
+    assert_eq!(n.names, v.names);
+    assert_eq!(n.positions, v.positions);
+
+    // Eight corners in the group, eight on the cube that is in none.
+    assert_eq!(n.groups_lo.iter().filter(|m| **m == 1).count(), 8);
+    assert_eq!(n.loose.iter().sum::<u32>(), 8);
+}
