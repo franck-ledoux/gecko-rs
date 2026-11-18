@@ -5,10 +5,16 @@ the day a tag was cut.
 
 ## 0.2.0
 
-In progress. The block structure stops being a combinatorial map and becomes
-an explicit complex of cells, and the mesher stops holding the mesh it
-writes. [The design note](developer-guide/cellular.md) says why, with the
-measurements that decided it.
+The block structure stops being a combinatorial map and becomes an explicit
+complex of cells: the same model in 25 times less memory, a redraw 190 times
+faster, and `honeycomb` out of the lock file. Not a line of the test suite
+changed. [The design note](developer-guide/cellular.md) says why, with the
+measurements that decided it — and with the three of its own predictions
+that did not hold.
+
+And two new ways onto a surface: a quadrangle laid on four corners you
+click, welded to what it was laid against, and several faces that grow into
+blocks together rather than one at a time.
 
 - **The block structure is an explicit complex of cells, and `honeycomb` is
   out of the lock file.** The same model in **25 times less memory**:
