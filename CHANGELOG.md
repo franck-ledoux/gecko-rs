@@ -3,7 +3,11 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
-## Unreleased
+## 0.2.1
+
+Three things that were wrong in 0.2.0, each found by using it. A filter that
+could empty the window and never said so, a neighbour that came away from an
+o-grid, and a pointer that reached through a solid model.
 
 - **A solid model hides what is behind it from the pointer.** With the faces
   drawn opaque, a click still reached the handles and the edges on the far
