@@ -5,6 +5,24 @@ the day a tag was cut.
 
 ## Unreleased
 
+- **A block beside a pillowed one stays welded to the layer.** Grow a cube
+  out of one side of another and run an o-grid along the first, and four
+  edges of the neighbour ran from its own far corners into the middle of
+  the pillowed block, crossing the surface they should have stopped at.
+
+  Pillowing a face another block is behind lets go of the far side and
+  leaves it a copy of every node of the patch to hold on to, because the
+  nodes it was holding are about to be pushed inwards. The far side's
+  blocks and its faces were moved onto those copies; its **edges** were
+  not. Only the patch's own edges were copied, and an edge running *away*
+  from the patch is a copy of nothing — so it kept naming a node that then
+  moved, and the faces and the edges gave two accounts of the same model.
+
+  Edges wholly on the far side now follow their blocks and faces, by the
+  same "wholly on the far side" rule the faces already used. Measured, by
+  taking it away: the new test names the four edges, and nothing else in
+  the suite moves.
+
 - **A group filter no longer outlives the session, and admits to itself
   while it lives.** Decook "blocks in no group" once and every later visit
   to that address opened blind: the readout counted one block, eight nodes,

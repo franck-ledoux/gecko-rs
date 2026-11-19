@@ -668,6 +668,44 @@ impl Blocking {
                 }
             }
         }
+
+        // And the far side's **own** edges, which still name the nodes that
+        // are about to move.
+        //
+        // The loop above swapped a far block's edges for the copies, but
+        // only the patch's own. An edge running *away* from the patch is a
+        // copy of nothing — it is the far block's edge, and one of its ends
+        // is a node the layer is about to push inwards. Left as it is, it
+        // stretches from the far block's corner to wherever that node was
+        // pushed to, which is the neighbour coming away from the layer
+        // instead of staying welded to its outside: faces and blocks said
+        // one thing and the edges another.
+        //
+        // Wholly on the far side, as for the faces just below: an edge two
+        // groups share without sharing a face of the patch is not this cut's
+        // to rewrite.
+        let mut carried: HashMap<EdgeId, bool> = HashMap::new();
+        for (id, block) in self.blocks.iter() {
+            for edge in block.edges {
+                let far_side = over.contains(&id);
+                carried
+                    .entry(edge)
+                    .and_modify(|all| *all &= far_side)
+                    .or_insert(far_side);
+            }
+        }
+        for (edge, theirs) in &carried {
+            if !theirs {
+                continue;
+            }
+            let e = self.edges.get_mut(*edge).expect("live");
+            for node in e.ends.iter_mut() {
+                if let Some(copy) = node_copy.get(node) {
+                    *node = *copy;
+                }
+            }
+        }
+
         for id in self.faces.ids().collect::<Vec<_>>() {
             if cut.contains(&id) {
                 continue;

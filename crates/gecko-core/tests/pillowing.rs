@@ -297,3 +297,78 @@ fn the_node_left_on_the_surface_keeps_what_the_node_that_moved_was_on() {
         }
     }
 }
+
+/// Every edge of the model that is not a side of any face.
+///
+/// The cheapest statement of a blocking that has come apart: an edge and
+/// the faces around it are two accounts of the same thing, and they have to
+/// agree. Pillowing a face another block is behind lets go of the far side
+/// and leaves it a copy of every node of the patch to hold on to; the
+/// blocks and the faces over there were moved onto the copies and the edges
+/// were not, so four edges of the neighbour still named the nodes the layer
+/// had just pushed into the middle of the block.
+fn edges_bounding_nothing(b: &Blocking) -> Vec<(CellId, CellId)> {
+    let mut sides: std::collections::HashSet<(CellId, CellId)> = Default::default();
+    for face in b.block_faces() {
+        for k in 0..4 {
+            let (p, q) = (face.nodes[k], face.nodes[(k + 1) % 4]);
+            sides.insert((p.min(q), p.max(q)));
+        }
+    }
+    let mut loose: Vec<(CellId, CellId)> = b
+        .edges()
+        .map(|(_, a, c, _)| (a.min(c), a.max(c)))
+        .filter(|pair| !sides.contains(pair))
+        .collect();
+    loose.sort();
+    loose
+}
+
+#[test]
+fn a_block_beside_a_pillowed_one_stays_welded_to_the_layer() {
+    // The reported case: a cube, a second grown out of one side, and an
+    // o-grid run along the first. The side the neighbour is on is one of
+    // the four the chord pillows, so the layer goes in between — and the
+    // neighbour has to end up against the **outside** of that layer, where
+    // its own face has not moved.
+    let mut b = cube();
+    let (side, block) = face_at(&b, 0, 1.0);
+    b.extrude_face(side, block, 0.8).unwrap();
+
+    // The chord across the original block, taken through a face the
+    // neighbour is not on, so it is one block long and its four sides
+    // include the one they share.
+    let bottom = b
+        .block_faces()
+        .into_iter()
+        .find(|s| {
+            s.block == block
+                && s.nodes
+                    .iter()
+                    .all(|n| b.position(*n).unwrap()[2].abs() < 1e-9)
+        })
+        .expect("the original block's floor");
+    b.pillow_chord(bottom.face, bottom.block).unwrap();
+
+    assert_eq!(cells(&b), (20, 40, 27, 6));
+    assert_eq!(
+        edges_bounding_nothing(&b),
+        vec![],
+        "every edge is a side of a face it shares its ends with"
+    );
+
+    // And it is welded to the layer rather than to the core: the face they
+    // share is the one the surface was, which pillowing does not move.
+    let shared: Vec<_> = b
+        .block_faces()
+        .into_iter()
+        .filter(|s| {
+            s.nodes
+                .iter()
+                .all(|n| (b.position(*n).unwrap()[0] - 1.0).abs() < 1e-9)
+        })
+        .collect();
+    assert_eq!(shared.len(), 2, "one face, seen from each of two blocks");
+    assert_eq!(shared[0].face, shared[1].face);
+    assert_ne!(shared[0].block, shared[1].block);
+}
