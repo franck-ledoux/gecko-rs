@@ -6036,3 +6036,94 @@ test("a hidden group's name does not follow the browser to the next model", asyn
   await expect(page.locator("[data-test=filtered]")).toHaveText("");
   expect(errors).toEqual([]);
 });
+
+test("a solid model hides what is behind it from the pointer", async ({
+  page,
+}) => {
+  // Picking follows the picture. Through a shell you can see through, the
+  // far side is fair game — being able to see it is what that means. Once
+  // the faces go opaque the far side is not on the screen any more, and a
+  // click that still reached it was reaching through the model.
+  const errors = await boot(page);
+  // The drawer first, and open for the whole test: it takes the canvas
+  // narrower, and a probe is a screen position. Both halves have to be
+  // measured in the same picture.
+  await openDrawer(page);
+  await openSection(page, "cells");
+  await openGroup(page, "faces");
+  await page.locator("#cube").click();
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
+
+  const settle = () => page.evaluate(() => (window as any).__gecko.settled());
+  const opacity = async (alpha: string) => {
+    await page.locator("[data-test=faces-alpha]").fill(alpha);
+    await settle();
+  };
+
+  /** The edges that answer a pick aimed at their own midpoint. */
+  const edges = () =>
+    page.evaluate(() => {
+      const g = (window as any).__gecko;
+      return (g.edgeNames() as number[]).filter((name) => {
+        const at = g.edgeScreen(name) as [number, number] | null;
+        return at !== null && g.pickEdge(at[0], at[1]) === name;
+      });
+    });
+
+  // From where the view opens, which is a corner of the cube: three of the
+  // twelve edges are behind the model.
+  const clear = await edges();
+  await opacity("1");
+  const solid = await edges();
+  expect(
+    solid.length,
+    "an opaque shell takes edges away from the pointer",
+  ).toBeLessThan(clear.length);
+  expect(
+    clear,
+    "and takes none that were not reachable before",
+  ).toEqual(expect.arrayContaining(solid));
+
+  // Now squarely down one axis, where the near face of the cube sits
+  // between the camera and all four of the far corners, and each of those
+  // still has a pixel of its own to be aimed at.
+  await page.evaluate(() => (window as any).__gecko.snapTo("+x"));
+  await settle();
+
+  /** The corners that answer a pick aimed at their own handle, by the side
+   *  of the cube they are on. */
+  const corners = () =>
+    page.evaluate(() => {
+      const g = (window as any).__gecko;
+      const out = { near: [] as number[], far: [] as number[] };
+      for (const name of g.names() as number[]) {
+        const at = g.nodePosition(name) as [number, number, number];
+        const screen = g.nodeScreen(name) as [number, number] | null;
+        if (!screen) continue;
+        if (g.pickNode(screen[0], screen[1]) === name) {
+          (at[0] > 0.5 ? out.near : out.far).push(name);
+        }
+      }
+      return out;
+    });
+
+  const behind = await corners();
+  expect(behind.far, "nothing behind a solid model answers").toEqual([]);
+  expect(
+    behind.near,
+    "and the corners on the near side are still there to grab",
+  ).toHaveLength(4);
+
+  // The control: it is the opacity doing it and not the angle. Hand the
+  // transparency back and the far four answer again.
+  await opacity("0.35");
+  const through = await corners();
+  expect(
+    through.far.length,
+    "a shell you can see through is one you can pick through",
+  ).toBe(4);
+  expect(through.near).toHaveLength(4);
+  expect(errors).toEqual([]);
+});

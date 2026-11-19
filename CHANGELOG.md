@@ -5,6 +5,33 @@ the day a tag was cut.
 
 ## Unreleased
 
+- **A solid model hides what is behind it from the pointer.** With the faces
+  drawn opaque, a click still reached the handles and the edges on the far
+  side and inside: the pick asked only the handles and the wireframe, never
+  the surface, so the ray went straight through a shell you could not see
+  through.
+
+  A pick is now stopped by whatever is drawn **opaque**, tested against the
+  meshes actually on screen. That is what makes it follow the picture rather
+  than the model: shrinking the blocks opens gaps and the ray goes through
+  them, hiding a layer or filtering a group takes the surface out of the
+  scene and out of this with it, and a translucent shell stops nothing —
+  what you can see you may still pick. The discretised mesh goes on letting
+  clicks through, by the `isPickable` it already carried.
+
+  A mark drawn **on** the shell is kept: handles and the wireframe are sized
+  in pixels, so a handle on a front corner stands proud of the surface by a
+  world amount that depends on the distance and on which camera is looking,
+  and an edge runs exactly along the face it borders. That slack is worked
+  out for both kinds of camera, the quad panes being orthographic.
+
+  The band is deliberately untouched: a lasso means everything inside it,
+  the far side included, which is what you want when the corners you are
+  after are the ones at the back.
+
+  Measured, by taking it away: all twelve edges of a cube answer instead of
+  ten, and all four corners behind an opaque face answer instead of none.
+
 - **A block beside a pillowed one stays welded to the layer.** Grow a cube
   out of one side of another and run an o-grid along the first, and four
   edges of the neighbour ran from its own far corners into the middle of

@@ -1692,6 +1692,9 @@ export class Viewer {
         this.cameraFor(x, y),
       );
       if (!hit?.hit || !hit.pickedMesh || !hit.pickedPoint) continue;
+      // A corner or a curve buried inside a solid blocking is not on the
+      // screen, so it is not under the pointer either.
+      if (this.behindTheShell(x, y, hit.distance)) continue;
       const tag = Number(hit.pickedMesh.name.split("-").pop());
       if (!Number.isFinite(tag)) continue;
       const p = hit.pickedPoint;
@@ -2879,6 +2882,73 @@ export class Viewer {
     return material ? material.emissiveColor.toHexString().toLowerCase() : null;
   }
 
+  /**
+   * How far along the ray through these coordinates the model's shell stops
+   * it, or `Infinity` when nothing in the way is solid.
+   *
+   * Only what is drawn **opaque**. A translucent shell is one you can see
+   * through, and what you can see you may pick: the rule follows the
+   * picture rather than the model, which is why the test is made against
+   * the meshes actually on screen. Shrinking the blocks opens gaps and the
+   * ray goes through them; hiding a layer or filtering a group takes the
+   * surface out of the scene and out of this with it. None of that has to
+   * be asked about separately.
+   *
+   * The discretised mesh is not here, and not by omission: it carries its
+   * own `isPickable = false`, which already says a click through it has to
+   * reach the blocking.
+   */
+  private shellAt(x: number, y: number): number {
+    const solid = new Set<number>();
+    for (const group of ["faces", "blocks"] as const) {
+      if (this.layerOf(group).alpha < 1) continue;
+      for (const slot of this.surfaces[group]) solid.add(slot.mesh.uniqueId);
+    }
+    if (this.prefs.surfaces.alpha >= 1) {
+      for (const mesh of this.geomMeshes.surfaces) solid.add(mesh.uniqueId);
+    }
+    if (!solid.size) return Infinity;
+    const hit = this.scene.pick(
+      x,
+      y,
+      (m) => solid.has(m.uniqueId) && m.isVisible,
+      false,
+      this.cameraFor(x, y),
+    );
+    return hit?.hit ? hit.distance : Infinity;
+  }
+
+  /**
+   * How far proud of the shell a mark drawn **on** it can stand, in world
+   * units at this distance.
+   *
+   * Handles and the wireframe are sized in pixels, so a handle on a front
+   * corner sticks out towards the camera by a world amount that depends on
+   * how far away it is and on which camera is looking — and an edge runs
+   * exactly along the surface it borders, so without this slack the two
+   * come back at the same distance and the depth test between them is a
+   * coin toss. This undoes the sizing pass, as `handleAcross` does, for
+   * both kinds of camera: the quad panes are orthographic, where a pixel
+   * is the same size however far away it is.
+   */
+  private markReach(camera: ArcRotateCamera, distance: number): number {
+    const height = this.scene.getEngine().getRenderHeight();
+    const pixels = Math.max(this.prefs.nodes.size, this.prefs.edges.width, 1);
+    const across =
+      camera.mode === Camera.ORTHOGRAPHIC_CAMERA
+        ? (camera.orthoTop ?? 0) - (camera.orthoBottom ?? 0)
+        : 2 * Math.tan(camera.fov / 2) * distance;
+    return (pixels * across) / height;
+  }
+
+  /** Whether a hit that far along the ray is behind the model's shell —
+   *  something you are looking at the back of rather than at. */
+  private behindTheShell(x: number, y: number, distance: number): boolean {
+    const shell = this.shellAt(x, y);
+    if (!Number.isFinite(shell)) return false;
+    return distance > shell + this.markReach(this.cameraFor(x, y), shell);
+  }
+
   /** Screen coordinates -> the kernel's name for the node under them. */
   pickNode(x: number, y: number): number | null {
     // Explicitly the main camera: after a frame, `scene.activeCamera` is
@@ -2890,9 +2960,11 @@ export class Viewer {
       false,
       this.cameraFor(x, y),
     );
-    return hit?.hit && hit.pickedMesh
-      ? (hit.pickedMesh.metadata.name as number)
-      : null;
+    if (!hit?.hit || !hit.pickedMesh) return null;
+    // Not through a solid model: a handle you cannot see is not one you
+    // were aiming at.
+    if (this.behindTheShell(x, y, hit.distance)) return null;
+    return hit.pickedMesh.metadata.name as number;
   }
 
   /**
@@ -2920,6 +2992,10 @@ export class Viewer {
     const names = hits
       .filter((hit) => hit.hit && hit.pickedMesh)
       .sort((a, b) => a.distance - b.distance)
+      // The shell stops this one too. The rule above is about which of two
+      // handles a pixel apart you meant; this is about whether either of
+      // them is on the screen at all.
+      .filter((hit) => !this.behindTheShell(x, y, hit.distance))
       .map((hit) => hit.pickedMesh!.metadata.name as number);
     return names.find((name) => this.nodeState(name)?.on) ?? names[0] ?? null;
   }
@@ -2953,6 +3029,7 @@ export class Viewer {
     // that point is nearest — which is the same question asked in the
     // same space, and exact to the width of the ribbon.
     if (!hit?.hit || !hit.pickedPoint) return null;
+    if (this.behindTheShell(x, y, hit.distance)) return null;
     return this.edgeNearest(hit.pickedPoint);
   }
 
