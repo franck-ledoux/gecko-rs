@@ -3,6 +3,27 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
+## Unreleased
+
+- **A group filter no longer outlives the session, and admits to itself
+  while it lives.** Decook "blocks in no group" once and every later visit
+  to that address opened blind: the readout counted one block, eight nodes,
+  six faces and twelve edges, and the window stayed empty. Nothing on screen
+  said why — the only witness was a checkbox in a drawer that is shut by
+  default — and `localStorage` is per origin and per browser, so the same
+  gecko drew on one and not on the next, which is how it was found.
+
+  `hiddenGroups` is a list of group **names**, and a name belongs to a
+  model, not to a browser. The page always opens without a model, so a
+  stored name could only ever be applied to a *different* one than the one
+  it was written for: hide a `fluid` in one model and the next model's
+  `fluid` arrived hidden. It is now dropped on the way in and scrubbed on
+  the way out, and the readout carries the filter in amber for as long as
+  it is holding something back — plainly, when it is hiding all of it.
+
+  Measured, by putting the persistence back: the two new tests fall and the
+  six around them pass.
+
 ## 0.2.0
 
 The block structure stops being a combinatorial map and becomes an explicit

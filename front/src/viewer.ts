@@ -1056,6 +1056,26 @@ export class Viewer {
   }
 
   /**
+   * How much of the model the group filter lets through, against how much
+   * there is — counted in quadrangles, which is the one thing every block,
+   * face and edge on screen is made of.
+   *
+   * Not the same question as what is drawn: the display settings hide
+   * things too, and each of those has a switch of its own in plain sight.
+   * This filter is the one that can empty the view with nothing to say so,
+   * which is why the page asks it this and puts the answer on the screen.
+   */
+  get filtered(): { shown: number; all: number } {
+    const view = this.view;
+    if (!view) return { shown: 0, all: 0 };
+    let shown = 0;
+    for (let q = 0; q < view.quadFaces.length; q++) {
+      if (this.inShown(view.quadGroupsLo[q], view.quadGroupsHi[q])) shown++;
+    }
+    return { shown, all: view.quadFaces.length };
+  }
+
+  /**
    * Narrow the view to one layer of blocks, or widen it again with `null`.
    *
    * The names come from the kernel, which is the only thing that knows

@@ -258,6 +258,14 @@ body[data-chrome="light"] #readout { text-shadow: 0 1px 2px rgba(255, 255, 255, 
    will do rather than about what the model holds. */
 #aim { color: var(--accent); }
 #status { color: var(--accent); }
+/* The group filter, when it is holding something back. Amber rather than
+   the status line's blue: the other two say what the next click will do,
+   this one says something stands between the model and what you can see.
+   Gone entirely when there is nothing to report, so the readout keeps its
+   spacing on the ordinary day. */
+#filtered { color: #e0a33e; }
+#filtered:empty { display: none; }
+body[data-chrome="light"] #filtered { color: #8a6100; }
 
 /* --- put it all away ----------------------------------------------------- */
 

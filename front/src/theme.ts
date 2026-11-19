@@ -350,9 +350,13 @@ export function loadPrefs(): ViewPrefs {
       panels: Array.isArray(stored.panels)
         ? stored.panels.filter((id): id is string => typeof id === "string")
         : DEFAULTS.panels,
-      hiddenGroups: Array.isArray(stored.hiddenGroups)
-        ? stored.hiddenGroups.filter((name): name is string => typeof name === "string")
-        : [],
+      // Never from storage, whatever is in there. A group filter names the
+      // groups of one model, and this blob belongs to the origin: the page
+      // always opens without a project, so a stored name can only ever be
+      // applied to a *different* model than the one it was written for.
+      // It stays in `ViewPrefs` because the session carries it; it just does
+      // not outlive the session. `savePrefs` drops it on the way out too.
+      hiddenGroups: [],
       chrome: typeof stored.chrome === "boolean" ? stored.chrome : DEFAULTS.chrome,
       quad: typeof stored.quad === "boolean" ? stored.quad : DEFAULTS.quad,
       ao: typeof stored.ao === "boolean" ? stored.ao : DEFAULTS.ao,
@@ -428,7 +432,12 @@ export function loadPrefs(): ViewPrefs {
 
 export function savePrefs(prefs: ViewPrefs): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify(prefs));
+    // Everything else here is a taste — a color, a size, a coloring — true
+    // whatever is on screen. The group filter is not: it is an assertion
+    // about the groups of the model in front of you. Written empty rather
+    // than left out, so the first save also scrubs a list an older version
+    // stored, which is what left a view silently empty across sessions.
+    localStorage.setItem(KEY, JSON.stringify({ ...prefs, hiddenGroups: [] }));
   } catch {
     // Not being able to remember a color is not worth interrupting anyone.
   }

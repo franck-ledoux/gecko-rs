@@ -5938,3 +5938,101 @@ test("a block that lends its faces to its neighbours is still shaded the right w
   expect(shaded.blacker, JSON.stringify(shaded)).toBe(0);
   expect(errors).toEqual([]);
 });
+
+test("a group filter says so on the screen, and dies with the session", async ({
+  page,
+}) => {
+  // The filter is the one setting that can empty the view entirely, and the
+  // checkboxes that work it are in a drawer that is shut by default. So it
+  // admits to what it is doing while it is on, and it does not outlive the
+  // session: it names the groups of one model, and the page always opens
+  // without a model.
+  const errors = await boot(page);
+  const drawn = () =>
+    page.evaluate(() => (window as any).__gecko.nodesDrawn());
+
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  expect(await drawn()).toBe(8);
+  // Nothing held back, nothing said.
+  await expect(page.locator("[data-test=filtered]")).toHaveText("");
+
+  await openDrawer(page);
+  await openSection(page, "groups");
+  await page.locator("[data-test=ungrouped-visible]").uncheck();
+  await expect.poll(drawn).toBe(0);
+
+  // The readout still counts the block the kernel holds — which is exactly
+  // the trap — so the screen has to carry the reason next to it.
+  await expect(page.locator("[data-test=blocks]")).toHaveText("1");
+  await expect(page.locator("[data-test=filtered]")).toHaveText(
+    "nothing drawn — the group filter is hiding blocks in no group",
+  );
+
+  // And it is gone on the next visit. The block made after the reload is
+  // drawn, where before this it would have arrived invisible and stayed
+  // that way for every session on this origin.
+  await page.reload();
+  await page.waitForSelector("body[data-ready='1']", { timeout: 30_000 });
+  await page.locator("#cube").click();
+  await page.waitForFunction(() => (window as any).__gecko.counts().nodes === 8);
+  await expect.poll(drawn).toBe(8);
+  await expect(page.locator("[data-test=filtered]")).toHaveText("");
+
+  // Not merely ignored on the way in: the stored copy is scrubbed, so an
+  // older version's list cannot come back if one is ever read again.
+  expect(
+    await page.evaluate(
+      () => JSON.parse(localStorage.getItem("gecko.view") ?? "{}").hiddenGroups,
+    ),
+  ).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+test("a hidden group's name does not follow the browser to the next model", async ({
+  page,
+}) => {
+  // `hiddenGroups` holds names, and a name belongs to a model. Stored per
+  // origin, a `fluid` hidden in one model used to hide a different model's
+  // `fluid` on sight, in a session nobody had touched the filter in.
+  const errors = await boot(page);
+  const drawn = () =>
+    page.evaluate(() => (window as any).__gecko.nodesDrawn());
+
+  const twoCubesInAGroup = async () => {
+    await page.locator("#cube").click();
+    await page.waitForFunction(
+      () => (window as any).__gecko.counts().nodes === 8,
+    );
+    await page.locator("#cube").click();
+    await page.waitForFunction(
+      () => (window as any).__gecko.counts().nodes === 16,
+    );
+    await openDrawer(page);
+    await openSection(page, "groups");
+    await page.evaluate(() => {
+      const g = (window as any).__gecko;
+      const s = g.surface("faces");
+      g.choose({ face: s.faces[0], block: s.blocks[0] });
+    });
+    await page.locator("[data-test=group-new]").fill("fluid");
+    await page.locator("[data-test=group-make]").click();
+    await expect(page.locator("[data-test=group-name]")).toHaveValue("fluid");
+  };
+
+  await twoCubesInAGroup();
+  await page.locator("[data-test=group-shown]").uncheck();
+  await expect.poll(drawn).toBe(8);
+  await expect(page.locator("[data-test=filtered]")).toHaveText(
+    "group filter: 1 group hidden",
+  );
+
+  // A new session, a new model, the same name — and all of it drawn.
+  await page.reload();
+  await page.waitForSelector("body[data-ready='1']", { timeout: 30_000 });
+  await twoCubesInAGroup();
+  await expect(page.locator("[data-test=group-shown]")).toBeChecked();
+  await expect.poll(drawn).toBe(16);
+  await expect(page.locator("[data-test=filtered]")).toHaveText("");
+  expect(errors).toEqual([]);
+});

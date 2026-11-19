@@ -611,6 +611,38 @@ async function boot() {
       else hi |= 1 << (g.bit - 32);
     }
     viewer.showGroups(lo >>> 0, hi >>> 0, !hiddenGroups.has(UNGROUPED));
+    sayFiltered();
+  }
+
+  /**
+   * Say on the screen when the group filter is holding something back.
+   *
+   * Hide the blocks in no group, shut the drawer, and every block you make
+   * afterwards is counted and never drawn — the readout says one block and
+   * the view stays empty, with the one checkbox that explains it out of
+   * sight. A filter that can empty the view has to admit to it.
+   *
+   * Names that no longer match a group are passed over rather than counted:
+   * the set outlives the groups it was written about.
+   */
+  function sayFiltered() {
+    const groups = kernel.groups().filter((g) => hiddenGroups.has(g.name)).length;
+    const loose = hiddenGroups.has(UNGROUPED);
+    const { shown, all } = viewer.filtered;
+    if ((groups === 0 && !loose) || all === 0) {
+      $("filtered").textContent = "";
+      return;
+    }
+    const what = [
+      groups > 0 ? `${groups} group${groups > 1 ? "s" : ""}` : "",
+      loose ? "blocks in no group" : "",
+    ]
+      .filter(Boolean)
+      .join(" and ");
+    $("filtered").textContent =
+      shown === 0
+        ? `nothing drawn — the group filter is hiding ${what}`
+        : `group filter: ${what} hidden`;
   }
 
   /** `&` and `"` in a name, which a group may have and markup may not. */
