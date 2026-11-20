@@ -36,13 +36,20 @@ jobs:
           cache: npm
           cache-dependency-path: front/package-lock.json
 
+      # Pinned, from the file `setup` and `build-lua.sh` read too, so the
+      # binaries below carry the interpreter a developer built and tested.
+      # `ci.yml` says what `latest` cost.
+      - name: The Emscripten version, from the file both sides read
+        id: emsdk
+        run: echo "version=$(cat .emsdk-version)" >> "$GITHUB_OUTPUT"
+
       # The action has moved to the Emscripten project's own
       # organisation; `mymindstorm/setup-emsdk` is the same action
       # under its old name.
       - name: Install the Emscripten SDK
         uses: emscripten-core/setup-emsdk@v16
         with:
-          version: latest
+          version: ${{ steps.emsdk.outputs.version }}
           actions-cache-folder: emsdk-cache
 
       - name: The kernel, the interpreter, and the bundle

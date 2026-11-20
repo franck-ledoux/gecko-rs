@@ -37,7 +37,10 @@ elif [ -f "$HOME/emsdk/emsdk_env.sh" ]; then
 else
   echo "   fetching it into ~/emsdk — about a gigabyte, once"
   git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$HOME/emsdk"
-  (cd "$HOME/emsdk" && ./emsdk install latest && ./emsdk activate latest)
+  # The version the workflows install, from the same file, so a fresh clone
+  # builds the interpreter with the SDK the release is built with.
+  version=$(cat .emsdk-version)
+  (cd "$HOME/emsdk" && ./emsdk install "$version" && ./emsdk activate "$version")
 fi
 
 echo "── node packages ─────────────────────────────────────────────"

@@ -77,6 +77,16 @@ jobs:
           cache: npm
           cache-dependency-path: front/package-lock.json
 
+      # Pinned, and read from a file the `setup` script reads too. `latest`
+      # cost twice: the action cannot cache a version it has not resolved
+      # yet, so the SDK was downloaded on every single run, and `latest`
+      # here and `latest` on a developer's machine are not the same SDK —
+      # CI was building the interpreter with 7.0.0 while this machine had
+      # 6.0.12, which is exactly the drift `./check.sh` exists to deny.
+      - name: The Emscripten version, from the file both sides read
+        id: emsdk
+        run: echo "version=$(cat .emsdk-version)" >> "$GITHUB_OUTPUT"
+
       # mlua compiles to WebAssembly through emscripten only, which is why
       # the interpreter is a second module rather than part of the kernel.
       #
@@ -86,7 +96,7 @@ jobs:
       - name: Install the Emscripten SDK
         uses: emscripten-core/setup-emsdk@v16
         with:
-          version: latest
+          version: ${{ steps.emsdk.outputs.version }}
           actions-cache-folder: emsdk-cache
 
       # Half a minute of download a run, and half a minute of something

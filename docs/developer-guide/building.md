@@ -132,6 +132,26 @@ runs `wasm-opt`, which is worth about a quarter of the binary.
 passes `--js-library` for the four primitives, and asks for an ES module that
 grows its heap.
 
+### One Emscripten version, written down
+
+`.emsdk-version` holds it, and everything that installs the SDK reads that
+file: `./setup` on a fresh clone, and both workflows. It is pinned rather than
+`latest` for two reasons, and the second is the expensive one.
+
+The cheap one: the action cannot cache a version it has not resolved yet, so
+`latest` downloaded the whole SDK on every run.
+
+The expensive one: `latest` on a runner and `latest` on a laptop are not the
+same SDK. CI built the interpreter with 7.0.0 for weeks while the machine it
+was developed on had 6.0.12, and nothing said so — which makes "what passes
+locally passes there" untrue in the one place it is hardest to check, since
+neither suite can test the SDK that built the module it is running.
+
+`build-lua.sh` now says so out loud when the active `emcc` is not the one the
+file names. A warning and not a failure: a gigabyte is a poor thing to block
+someone's build over, and a mismatch has never broken anything yet. Raising
+the pin means editing one line and letting CI build it.
+
 ## Dependencies that are deliberately absent
 
 The browser is opened with the platform's own command (`open`, `xdg-open`,

@@ -21,6 +21,17 @@ if ! command -v emcc >/dev/null; then
   source "$HOME/emsdk/emsdk_env.sh" >/dev/null 2>&1
 fi
 
+# One version, named in `.emsdk-version`, which the workflows read too.
+# A warning and not a failure: a different SDK has always built this, and
+# stopping someone's build over a gigabyte they have not downloaded yet
+# would be a cure worse than the disease. But it is said out loud, because
+# the one time it mattered nobody was told — CI built the interpreter with
+# 7.0.0 for weeks while this machine had 6.0.12, and "what passes locally
+# passes there" was quietly untrue.
+want=$(cat .emsdk-version)
+have=$(emcc -dumpversion 2>/dev/null || echo unknown)
+[ "$have" = "$want" ] || echo "!! emscripten $have, and .emsdk-version says $want" >&2
+
 rustup target list --installed | grep -qx wasm32-unknown-emscripten \
   || rustup target add wasm32-unknown-emscripten
 
