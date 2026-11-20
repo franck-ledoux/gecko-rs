@@ -12,7 +12,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0",
-    "@types/node": "^22.0.0",
+    "@types/node": "^24.0.0",
     "@vitest/coverage-v8": "^2.1.9",
     "monocart-coverage-reports": "^2.13.2",
     "typescript": "^5.7.0",
