@@ -81,6 +81,25 @@ cd front && npx playwright test
 
 The last one needs artefacts the others do not; see [Building](building.md).
 
+## The workflows, which nothing else tests
+
+```bash
+./.venv/bin/python tools/check_actions.py
+```
+
+A workflow is read by GitHub and by nothing else, so a reference that has
+rotted is found by burning a run. This reads every `uses:` at its exact ref
+and asks three things: that the ref resolves to an action, that every key
+passed under `with:` is an input that action declares **there**, and what
+runtime it asks the runner for — `node16` and `node20` are deprecated, which
+is what the script was written for. It is not in `check.sh`: it needs the
+network, it is only ever wrong when `.github/` changes, and a check that fails
+because GitHub was briefly unreachable teaches people to ignore it.
+
+It says nothing about whether a newer version exists. Being a version behind is
+not a fault, and a tool that nagged would be ignored;
+`gh api repos/<owner>/<repo>/releases/latest` answers that in one line.
+
 ## Coverage, in two numbers
 
 ```bash
