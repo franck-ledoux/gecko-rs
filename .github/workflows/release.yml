@@ -21,7 +21,7 @@ jobs:
     name: The page, built once
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install the Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -30,14 +30,17 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: front/package-lock.json
 
+      # The action has moved to the Emscripten project's own
+      # organisation; `mymindstorm/setup-emsdk` is the same action
+      # under its old name.
       - name: Install the Emscripten SDK
-        uses: mymindstorm/setup-emsdk@v14
+        uses: emscripten-core/setup-emsdk@v16
         with:
           version: latest
           actions-cache-folder: emsdk-cache
@@ -51,7 +54,7 @@ jobs:
           (cd front && npm run build)
 
       # For the three binary jobs to bake in.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: page
           path: front/dist
@@ -64,7 +67,7 @@ jobs:
           mkdir -p release
           (cd front/dist && zip -qr ../../release/gecko-web.zip .)
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: asset-web
           path: release
@@ -88,7 +91,7 @@ jobs:
             built: target/release/gecko.exe
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -96,7 +99,7 @@ jobs:
       # The page the binary serves, built by the job above rather than three
       # times over: the Emscripten SDK is the expensive part, and it has
       # nothing to do with which machine the binary is for.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: page
           path: front/dist
@@ -110,7 +113,7 @@ jobs:
           mkdir -p release
           cp "${{ matrix.built }}" "release/${{ matrix.asset }}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: asset-${{ matrix.asset }}
           path: release
@@ -121,9 +124,9 @@ jobs:
     needs: [page, binaries]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: asset-*
           merge-multiple: true
