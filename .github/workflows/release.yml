@@ -38,7 +38,7 @@ jobs:
 
       # Pinned, from the file `setup` and `build-lua.sh` read too, so the
       # binaries below carry the interpreter a developer built and tested.
-      # `ci.yml` says what `latest` cost.
+      # `ci.yml` says why.
       - name: The Emscripten version, from the file both sides read
         id: emsdk
         run: echo "version=$(cat .emsdk-version)" >> "$GITHUB_OUTPUT"

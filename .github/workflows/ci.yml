@@ -77,12 +77,20 @@ jobs:
           cache: npm
           cache-dependency-path: front/package-lock.json
 
-      # Pinned, and read from a file the `setup` script reads too. `latest`
-      # cost twice: the action cannot cache a version it has not resolved
-      # yet, so the SDK was downloaded on every single run, and `latest`
-      # here and `latest` on a developer's machine are not the same SDK —
-      # CI was building the interpreter with 7.0.0 while this machine had
-      # 6.0.12, which is exactly the drift `./check.sh` exists to deny.
+      # Pinned, and read from a file the `setup` script reads too.
+      #
+      # **Not** for the cache, whatever it looks like. The SDK was indeed
+      # re-downloaded on every run for weeks, but the cause was the old
+      # action failing to *save* it — seven runs in a row ending in
+      # `Failed to save: <h2>Our services aren't available right now</h2>`,
+      # which is the retired cache API answering a `@actions/cache` too old
+      # to know. Upgrading the action is what fixed that, not this.
+      #
+      # Pinned because `latest` on a runner and `latest` on a laptop are
+      # not the same SDK. CI built the interpreter with 7.0.0 for weeks
+      # while the machine it was developed on had 6.0.12, and nothing said
+      # so — the drift `./check.sh` exists to deny, in the one place no
+      # test can reach. The action's README asks for a version too.
       - name: The Emscripten version, from the file both sides read
         id: emsdk
         run: echo "version=$(cat .emsdk-version)" >> "$GITHUB_OUTPUT"

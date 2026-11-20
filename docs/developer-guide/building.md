@@ -135,20 +135,26 @@ grows its heap.
 ### One Emscripten version, written down
 
 `.emsdk-version` holds it, and everything that installs the SDK reads that
-file: `./setup` on a fresh clone, and both workflows. It is pinned rather than
-`latest` for two reasons, and the second is the expensive one.
+file: `./setup` on a fresh clone, and both workflows.
 
-The cheap one: the action cannot cache a version it has not resolved yet, so
-`latest` downloaded the whole SDK on every run.
-
-The expensive one: `latest` on a runner and `latest` on a laptop are not the
+It is pinned because `latest` on a runner and `latest` on a laptop are not the
 same SDK. CI built the interpreter with 7.0.0 for weeks while the machine it
 was developed on had 6.0.12, and nothing said so — which makes "what passes
 locally passes there" untrue in the one place it is hardest to check, since
-neither suite can test the SDK that built the module it is running.
+neither suite can test the SDK that built the module it is running. The
+action's README asks for a version number as well.
 
-`build-lua.sh` now says so out loud when the active `emcc` is not the one the
-file names. A warning and not a failure: a gigabyte is a poor thing to block
+It is **not** pinned for the cache, although it was done in the hope that it
+would be. The SDK really was re-downloaded on every run for weeks, but the
+cause was the old action failing to *save* it: seven runs in a row ended in
+`Failed to save: <h2>Our services aren't available right now</h2>`, which is
+the retired cache API answering a bundled `@actions/cache` too old to know
+about its replacement — the same reason older runs warned
+`Cache service responded with 400`. Upgrading every action to a version that
+runs on Node 24 is what fixed the cache; the pin only changed its key.
+
+`build-lua.sh` says it out loud when the active `emcc` is not the one the file
+names. A warning and not a failure: a gigabyte is a poor thing to block
 someone's build over, and a mismatch has never broken anything yet. Raising
 the pin means editing one line and letting CI build it.
 
