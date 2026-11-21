@@ -15,10 +15,35 @@ colors, cells, geometry, and how a saved picture comes out. The cog, or `,`,
 opens **Settings**: what the operations do. Both remember their state.
 
 **A readout**, bottom left: the counts, which kind of thing the mouse is
-aimed at, and whatever just happened.
+aimed at and which one of them is under it, and whatever just happened.
 
 `⇧Tab` puts all three away and brings them back. Which is cosmetic rather
 than necessary — see [Pictures](#pictures) below.
+
+## The halo
+
+Point at the model and the cell a click would take is **ringed in cyan**, and
+the readout names it: `picking blocks — node 42`, or
+`picking geometry — curve 7`.
+
+A ball around a node or a geometric point, a ribbon along an edge or a curve,
+and a ring round the four sides of a face or round the border of a surface. A
+ring rather than a tint, so it never covers the thing you are squinting at.
+
+It is the same answer the click acts on, not a second guess at it. So the
+halo refuses whatever the click refuses: nothing behind an opaque model,
+nothing in a group a filter is holding back, nothing on a layer that is
+switched off. If no halo appears, the click would take nothing either.
+
+Which is what it is for. Classifying means picking a cell of the blocking and
+then a cell of the model, and those two sit at the same pixels; laying a
+quadrangle means four clicks that may each land on a point, on a curve or on
+a handle of a face already laid. The halo is what says which of them you are
+about to get — and for laying it follows that mode's own preference for a
+handle that is **on** the geometry over one a fraction of a pixel in front of
+it.
+
+The box is in **Display → Colors**, beside the triad. Off is for a figure.
 
 ## Keyboard
 

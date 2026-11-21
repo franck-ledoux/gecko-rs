@@ -2434,14 +2434,18 @@ test("aiming at the geometry picks surfaces, and the blocks stay out of it", asy
   ).toEqual([]);
 
   // Which mode you are in is said twice over, because a toggle that looks
-  // the same either way is one you click to find out about.
-  await expect(page.locator("[data-test=aim]")).toHaveText("picking blocks");
+  // the same either way is one you click to find out about. Contains
+  // rather than equals: the pointer is still over the face it just
+  // clicked, so the line also carries that face's name.
+  await expect(page.locator("[data-test=aim]")).toContainText("picking blocks");
   await expect(page.locator("#picking .as-blocks")).toBeVisible();
   await expect(page.locator("#picking .as-geometry")).toBeHidden();
 
   // Switched over, and the same click takes a surface instead.
   await page.keyboard.press("m");
-  await expect(page.locator("[data-test=aim]")).toHaveText("picking geometry");
+  await expect(page.locator("[data-test=aim]")).toContainText(
+    "picking geometry",
+  );
   await expect(page.locator("#picking .as-geometry")).toBeVisible();
   await expect(page.locator("#picking .as-blocks")).toBeHidden();
   expect(await page.evaluate(() => (window as any).__gecko.picking())).toBe(
@@ -6125,5 +6129,328 @@ test("a solid model hides what is behind it from the pointer", async ({
     "a shell you can see through is one you can pick through",
   ).toBe(4);
   expect(through.near).toHaveLength(4);
+  expect(errors).toEqual([]);
+});
+
+/** What the halo is ringing, how much ring reached the screen, and the
+ *  readout's own words for it. Three answers from one place, because the
+ *  claim under test is that they agree. */
+async function ringed(page: import("@playwright/test").Page) {
+  return {
+    ...(await page.evaluate(() => ({
+      hovered: (window as any).__gecko.hovered(),
+      halo: (window as any).__gecko.halo(),
+    }))),
+    aim: await page.locator("[data-test=aim]").textContent(),
+  };
+}
+
+test("a halo rings the cell a click would take, and the readout names it", async ({
+  page,
+}) => {
+  // Picking is the hard part of putting a blocking onto a model: a corner of
+  // a block and a corner of the geometry are a pixel apart from most
+  // angles. So the cell a click would take is ringed before the click, and
+  // named — a ring says where, and classifying onto curve 7 rather than
+  // curve 8 needs the number.
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  const box = (await page.locator("#view").boundingBox())!;
+  const look = async (at: [number, number]) => {
+    await page.mouse.move(box.x + at[0], box.y + at[1]);
+    // The resolution is put off to the frame that would show it, so the
+    // answer is one frame away however fast the mouse was moved.
+    await page.evaluate(() => (window as any).__gecko.settled());
+    return ringed(page);
+  };
+
+  // A handle: a ball, and no ribbon.
+  const node = (
+    await page.evaluate(() => (window as any).__gecko.names())
+  )[0] as number;
+  const onNode = await look(
+    (await page.evaluate(
+      (n) => (window as any).__gecko.nodeScreen(n),
+      node,
+    )) as [number, number],
+  );
+  expect(onNode.hovered).toEqual({ kind: "node", name: node });
+  expect(onNode.halo).toEqual({ marks: 1, sides: 0 });
+  expect(onNode.aim).toBe(`picking blocks — node ${node}`);
+
+  // An edge: one side of ribbon, along the segment the wireframe draws.
+  const edge = (
+    await page.evaluate(() => (window as any).__gecko.edgeNames())
+  )[0] as number;
+  const onEdge = await look(
+    (await page.evaluate(
+      (e) => (window as any).__gecko.edgeScreen(e),
+      edge,
+    )) as [number, number],
+  );
+  expect(onEdge.hovered).toEqual({ kind: "edge", name: edge });
+  expect(onEdge.halo).toEqual({ marks: 0, sides: 1 });
+  expect(onEdge.aim).toBe(`picking blocks — edge ${edge}`);
+
+  // A face: four sides, round the quadrangle as it is drawn. Aimed at a
+  // face whose own center answers for it — from an oblique camera the
+  // center of a far face lands on a near one, which is the picture being
+  // right rather than the test being wrong.
+  const face = await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    for (const name of g.surface("faces").faces as number[]) {
+      const at = g.faceScreen(name) as [number, number] | null;
+      if (!at) continue;
+      const hit = g.pickSurface(at[0], at[1]) as { face: number } | null;
+      if (hit && hit.face === name) return { name, at };
+    }
+    return null;
+  });
+  expect(face, "some face answers for its own center").not.toBeNull();
+  const onFace = await look(face!.at);
+  expect(onFace.hovered).toMatchObject({ kind: "face", face: face!.name });
+  expect(onFace.halo).toEqual({ marks: 0, sides: 4 });
+  expect(onFace.aim).toContain(`face ${face!.name} of block `);
+
+  // And nothing over nothing. The corner of the canvas is background, and
+  // the readout goes back to saying only which mode it is in.
+  const onNothing = await look([3, 3]);
+  expect(onNothing.hovered).toBeNull();
+  expect(onNothing.halo).toEqual({ marks: 0, sides: 0 });
+  expect(onNothing.aim).toBe("picking blocks");
+  expect(errors).toEqual([]);
+});
+
+test("what the halo rings is what the click takes", async ({ page }) => {
+  // The claim the whole feature rests on. The halo is drawn from the same
+  // function the click is decided by — `targetAt` — and this is what says
+  // so: for every position probed, the ring names a cell and the click at
+  // that very pixel takes *that* cell. Two resolution orders that agree
+  // today and drift tomorrow would fail here.
+  const errors = await boot(page);
+  await openSquare(page);
+  await expect(page.locator("[data-test=geom-surfaces]")).toHaveText("1");
+  await page.evaluate(() => (window as any).__gecko.run("recenter"));
+  await page.evaluate(() => (window as any).__gecko.settled());
+  await page.evaluate(() => (window as any).__gecko.run("picking"));
+  expect(await page.evaluate(() => (window as any).__gecko.picking())).toBe(
+    "geometry",
+  );
+
+  const box = (await page.locator("#view").boundingBox())!;
+  const settle = () => page.evaluate(() => (window as any).__gecko.settled());
+
+  // A grid over the square, which catches its surface, its four curves and
+  // its four corners. Clicking in geometry mode toggles an entity, so every
+  // probe is undone by a second click and the next one starts from nothing.
+  let probed = 0;
+  const kinds = new Set<number>();
+  for (let u = 0.2; u <= 0.8; u += 0.1) {
+    for (let v = 0.2; v <= 0.8; v += 0.1) {
+      const at: [number, number] = [box.width * u, box.height * v];
+      await page.mouse.move(box.x + at[0], box.y + at[1]);
+      await settle();
+      const { hovered } = await ringed(page);
+      if (hovered === null) continue;
+      await page.mouse.click(box.x + at[0], box.y + at[1]);
+      await settle();
+      const picked = (await page.evaluate(() =>
+        (window as any).__gecko.geomSelection(),
+      )) as { dim: number; tag: number }[];
+      expect(
+        picked,
+        `a click where ${JSON.stringify(hovered)} was ringed takes it`,
+      ).toEqual([hovered.spot]);
+      kinds.add(hovered.spot.dim as number);
+      probed += 1;
+      // Back to nothing picked, for the next probe.
+      await page.mouse.click(box.x + at[0], box.y + at[1]);
+      await settle();
+    }
+  }
+  expect(probed, "the grid found something to ring").toBeGreaterThan(4);
+  expect(
+    [...kinds].sort(),
+    "and both a curve and a surface among them",
+  ).toEqual([1, 2]);
+  expect(errors).toEqual([]);
+});
+
+test("no halo on what the pointer cannot reach, or when it is turned off", async ({
+  page,
+}) => {
+  // The halo is drawn from the pick, so everything the pick already refuses
+  // it refuses too — nothing behind an opaque model, which is the rule the
+  // picking itself was taught. Said out loud here because it is the kind of
+  // thing that comes back: a halo lighting up over a corner you cannot see
+  // is an offer the click would not keep.
+  const errors = await boot(page);
+  await openDrawer(page);
+  await openSection(page, "cells");
+  await openGroup(page, "faces");
+  await page.locator("#cube").click();
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
+  const settle = () => page.evaluate(() => (window as any).__gecko.settled());
+  await page.evaluate(() => (window as any).__gecko.snapTo("+x"));
+  await settle();
+
+  const box = (await page.locator("#view").boundingBox())!;
+  /** Which of the cube's corners the halo will ring, by the side they are
+   *  on: squarely down one axis the near face sits between the camera and
+   *  all four far corners. */
+  const ringable = async () => {
+    const out = { near: [] as number[], far: [] as number[] };
+    const corners = (await page.evaluate(() => {
+      const g = (window as any).__gecko;
+      return (g.names() as number[]).map((name) => ({
+        name,
+        at: g.nodeScreen(name) as [number, number] | null,
+        x: (g.nodePosition(name) as [number, number, number])[0],
+      }));
+    })) as { name: number; at: [number, number] | null; x: number }[];
+    for (const corner of corners) {
+      if (!corner.at) continue;
+      await page.mouse.move(box.x + corner.at[0], box.y + corner.at[1]);
+      await settle();
+      const { hovered } = await ringed(page);
+      if (hovered?.kind === "node" && hovered.name === corner.name) {
+        (corner.x > 0.5 ? out.near : out.far).push(corner.name);
+      }
+    }
+    return out;
+  };
+
+  // Transparent: the far side is on the screen, so it is fair game.
+  await page.locator("[data-test=faces-alpha]").fill("0.35");
+  await settle();
+  const through = await ringable();
+  expect(through.far, "a shell you can see through rings through").toHaveLength(
+    4,
+  );
+
+  // Opaque: it is not on the screen any more, and the halo says so by not
+  // being there.
+  await page.locator("[data-test=faces-alpha]").fill("1");
+  await settle();
+  const solid = await ringable();
+  expect(solid.far, "nothing behind a solid model is ringed").toEqual([]);
+  expect(
+    solid.near,
+    "and the corners on the near side still are",
+  ).toHaveLength(4);
+
+  // Turned off: no ring anywhere, and the readout back to the mode alone.
+  // Taken away at once rather than at the next movement.
+  await page.locator("[data-test=faces-alpha]").fill("0.35");
+  await settle();
+  const at = (await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    return g.nodeScreen((g.names() as number[])[0]);
+  })) as [number, number];
+  await page.mouse.move(box.x + at[0], box.y + at[1]);
+  await settle();
+  expect((await ringed(page)).halo).toEqual({ marks: 1, sides: 0 });
+
+  await openSection(page, "colors");
+  await page.locator("[data-test=show-halo]").uncheck();
+  await settle();
+  const off = await ringed(page);
+  expect(off.hovered).toBeNull();
+  expect(off.halo).toEqual({ marks: 0, sides: 0 });
+  expect(off.aim).toBe("picking blocks");
+  expect(errors).toEqual([]);
+});
+
+test("laying a quadrangle rings the corner the next click would take", async ({
+  page,
+}) => {
+  // Four clicks, and each one may land on a point of the geometry, on one of
+  // its curves, or on a handle of a quadrangle already laid — which is how
+  // one comes to be welded to the next. Which of those the click would take
+  // is the whole question, and laying asks it differently from a plain
+  // pick: it prefers the handle that is **on** the geometry to the one a
+  // fraction of a pixel in front of it. So the ring is drawn from laying's
+  // own answer, and this is what says it is.
+  const errors = await boot(page);
+  await openSquare(page);
+  await expect(page.locator("[data-test=geom-surfaces]")).toHaveText("1");
+  await page.evaluate(() => (window as any).__gecko.run("recenter"));
+  const settle = () => page.evaluate(() => (window as any).__gecko.settled());
+  await settle();
+
+  const box = (await page.locator("#view").boundingBox())!;
+  const corners: [number, number][] = [
+    [box.width * 0.4, box.height * 0.4],
+    [box.width * 0.6, box.height * 0.4],
+    [box.width * 0.6, box.height * 0.6],
+    [box.width * 0.4, box.height * 0.6],
+  ];
+
+  // One quadrangle first, so there are handles to reuse.
+  await page.evaluate(() => (window as any).__gecko.run("lay-face"));
+  for (const at of corners) {
+    await page.mouse.click(box.x + at[0], box.y + at[1]);
+  }
+  await settle();
+  await expect(page.locator("#status")).toContainText("laid on");
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 4,
+  );
+
+  // Laying again: now a handle of the quadrangle just laid is a corner to
+  // take, and the ring says which one.
+  await page.evaluate(() => (window as any).__gecko.run("lay-face"));
+  await expect(page.locator("#status")).toContainText("four corners");
+
+  const node = (
+    await page.evaluate(() => (window as any).__gecko.names())
+  )[0] as number;
+  const at = (await page.evaluate(
+    (n) => (window as any).__gecko.nodeScreen(n),
+    node,
+  )) as [number, number];
+  await page.mouse.move(box.x + at[0], box.y + at[1]);
+  await settle();
+  const onHandle = await ringed(page);
+  expect(
+    onHandle.hovered,
+    "a handle to reuse is ringed, not the surface behind it",
+  ).toEqual({ kind: "node", name: node });
+  expect(onHandle.halo).toEqual({ marks: 1, sides: 0 });
+
+  // And away from every handle, the geometry answers — which is what the
+  // click would take there. Found rather than guessed: where the square
+  // falls on the screen is the camera's business, and a coordinate written
+  // down here would be a test that passes until the framing changes.
+  const empty = (await page.evaluate(([w, h]) => {
+    const g = (window as any).__gecko;
+    for (let u = 0.2; u <= 0.8; u += 0.05) {
+      for (let v = 0.2; v <= 0.8; v += 0.05) {
+        const x = w * u;
+        const y = h * v;
+        if (g.pickHandle(x, y) !== null) continue;
+        if (g.pickGeometry(x, y) === null) continue;
+        return [x, y];
+      }
+    }
+    return null;
+  }, [box.width, box.height])) as [number, number] | null;
+  expect(empty, "the square has a spot with no handle on it").not.toBeNull();
+  await page.mouse.move(box.x + empty![0], box.y + empty![1]);
+  await settle();
+  const onGeometry = await ringed(page);
+  expect(onGeometry.hovered).toMatchObject({ kind: "spot" });
+  expect(onGeometry.aim).toContain("picking geometry — ");
+
+  // Given up, so the test leaves the page in the mode it found it in.
+  await page.evaluate(() => (window as any).__gecko.run("lay-face"));
+  await expect(page.locator("#status")).toContainText("given up");
   expect(errors).toEqual([]);
 });

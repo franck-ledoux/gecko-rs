@@ -177,3 +177,47 @@ export function geomBounds(
   }
   return { lo, hi };
 }
+
+/**
+ * The outline of a patch of triangles: the edges only one triangle uses.
+ *
+ * What a halo around a surface is drawn along. An outline rather than a
+ * tint over the triangles, because a halo must not hide the thing it is
+ * pointing at — and because the edges that come out of this *are* the
+ * surface's trim curves, so the ring lands exactly where the reader
+ * already sees the surface end.
+ *
+ * Six numbers per side, both ends, which is what a greased line takes.
+ * Vertices have to be shared inside the patch for this to mean anything,
+ * and inside one of `geomSurfaces`' surfaces they are.
+ */
+export function patchOutline(
+  positions: Float32Array,
+  indices: ArrayLike<number>,
+): number[][] {
+  // An edge of the patch is one that two triangles share, so it goes in on
+  // the first sighting and comes straight back out on the second. What is
+  // left over is the border.
+  const once = new Map<string, [number, number]>();
+  for (let t = 0; t < indices.length; t += 3) {
+    for (let k = 0; k < 3; k++) {
+      const a = indices[t + k];
+      const b = indices[t + ((k + 1) % 3)];
+      // One key for the pair, whichever way round it was given: the two
+      // triangles sharing an edge walk it in opposite directions. A string
+      // rather than `a * 2**32 + b`, which stops being exact above a
+      // million vertices in a patch and would then quietly lose sides.
+      const key = a < b ? `${a},${b}` : `${b},${a}`;
+      if (once.has(key)) once.delete(key);
+      else once.set(key, [a, b]);
+    }
+  }
+  return [...once.values()].map(([a, b]) => [
+    positions[a * 3],
+    positions[a * 3 + 1],
+    positions[a * 3 + 2],
+    positions[b * 3],
+    positions[b * 3 + 1],
+    positions[b * 3 + 2],
+  ]);
+}

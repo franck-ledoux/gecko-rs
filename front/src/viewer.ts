@@ -44,12 +44,15 @@ import "@babylonjs/core/Culling/ray";
 import type { GeometryView, MeshView, NodesView, View } from "./decode";
 import type { GeomGroup, Spot } from "./geometry";
 import {
+  CORNER,
+  CURVE,
   DIM_OF,
   geomBounds,
   geomCorners,
   geomCurves,
   geomSurfaces,
   GEOM_GROUPS,
+  patchOutline,
   SURFACE,
 } from "./geometry";
 import { Occlusion } from "./occlusion";
@@ -73,7 +76,7 @@ import {
   type Layer,
   type ViewPrefs,
 } from "./theme";
-import { ANCHOR, FAMILY, MATE, colorForId } from "./palette";
+import { ANCHOR, FAMILY, HALO, MATE, colorForId } from "./palette";
 import type { SheetEdge } from "./kernel";
 import {
   buildMesh,
@@ -102,6 +105,36 @@ export type Picking = "blocks" | "geometry";
 export interface Pick {
   face: number;
   block: number;
+}
+
+/**
+ * What a click at a pointer position would take.
+ *
+ * One shape for all four kinds, so that one function can answer the
+ * question once — see `targetAt`. A halo is drawn from the same answer the
+ * click acts on, because a halo promising something the click would not
+ * take is worse than no halo at all.
+ */
+export type Target =
+  | { kind: "node"; name: number }
+  | { kind: "edge"; name: number }
+  | { kind: "face"; face: number; block: number }
+  | { kind: "spot"; spot: Spot };
+
+/** Whether two answers are the same cell — so a pointer wandering across
+ *  one face does not rebuild its halo sixty times a second. */
+export function sameTarget(a: Target | null, b: Target | null): boolean {
+  if (a === null || b === null) return a === b;
+  if (a.kind !== b.kind) return false;
+  if (a.kind === "face") {
+    const other = b as { face: number; block: number };
+    return a.face === other.face && a.block === other.block;
+  }
+  if (a.kind === "spot") {
+    const other = (b as { spot: Spot }).spot;
+    return a.spot.dim === other.dim && a.spot.tag === other.tag;
+  }
+  return a.name === (b as { name: number }).name;
 }
 
 /** Where a dragged node was let go, in model coordinates. */
@@ -167,6 +200,20 @@ export const SHEET_PIXELS = 7;
 /** The aiming line, drawn over the sheet, is half again as wide so it reads
  *  against it. */
 export const AIM_SHARE = 1.6;
+
+/**
+ * How much bigger than the thing it rings a halo is drawn.
+ *
+ * Bigger rather than brighter. A halo has to read over a model whose colors
+ * the user chose and may have set to anything, so what says "this one" is
+ * the size, which nothing else can take away.
+ */
+export const HALO_GROWTH = 1.9;
+
+/** How solid a halo's ball is. Short of opaque on purpose: the handle it
+ *  rings is inside it, and a halo that hid it would be answering the
+ *  question with the answer out of sight. */
+export const HALO_ALPHA = 0.5;
 
 /** How long a recentring takes. Long enough to follow the model moving into
  *  place, short enough not to be waiting for it. */
@@ -602,6 +649,22 @@ export class Viewer {
   private laying?: { marks: Mesh[]; wire?: GreasedLineMesh };
   private layingAim?: GreasedLineMesh;
   private layingAimSides = 0;
+
+  /** What the halo rings, and the meshes that draw it.
+   *
+   *  Rebuilt only when the answer changes — a pointer wandering across one
+   *  face would otherwise throw two meshes away sixty times a second to
+   *  draw the same ring. `sameTarget` is what decides. */
+  private aimedTarget: Target | null = null;
+  private halo?: { marks: Mesh[]; wire?: GreasedLineMesh };
+  /** How many sides of ribbon the ring is in. Counted on the way in, like
+   *  the laying mark's, rather than read back off the mesh: a greased line
+   *  is free to hold its points however it likes. */
+  private haloSides = 0;
+  /** How big the halo's marks are asked to come out, in CSS pixels. Read by
+   *  the per-pane sizing pass, which is the only place that knows which
+   *  camera they are about to be seen through. */
+  private haloPixels = 0;
   private grownWire?: GreasedLineMesh;
   private grownBox?: Mesh;
   private grown: number | null = null;
@@ -1240,6 +1303,222 @@ export class Viewer {
   }
 
   /**
+   * What a click here would take. **The** resolution order, in one place.
+   *
+   * Smallest target first — a handle, then a line, then the surface behind
+   * them — because each is the thing you had to aim at to hit it. Aimed at
+   * the geometry, the block structure is not on offer at all: the two are
+   * at the same pixels, and whichever answered first would hide the other.
+   *
+   * This used to be written three times over, in three `pointerdown`
+   * listeners that each re-asked the questions the one before it had asked.
+   * Three copies of an order is three chances for them to disagree, and a
+   * halo drawn from a fourth copy would have been a promise the click did
+   * not keep. So: one function, and everything that needs the answer asks
+   * it for it.
+   */
+  targetAt(x: number, y: number): Target | null {
+    if (this.aimedAtGeometry) {
+      const spot = this.pickGeometry(x, y);
+      return spot === null ? null : { kind: "spot", spot };
+    }
+    const node = this.pickNode(x, y);
+    if (node !== null) return { kind: "node", name: node };
+    const edge = this.pickEdge(x, y);
+    if (edge !== null) return { kind: "edge", name: edge };
+    const face = this.pickSurface(x, y);
+    return face === null ? null : { kind: "face", ...face };
+  }
+
+  /** What the halo is ringing, for a test to read as state rather than as
+   *  pixels — and for the readout to name. */
+  get targeted(): Target | null {
+    return this.aimedTarget;
+  }
+
+  /** How much halo is actually on screen: how many balls, and how many
+   *  sides of ribbon. What says the ring reached the picture and not only
+   *  the field holding the answer. */
+  get haloDrawn(): { marks: number; sides: number } {
+    return { marks: this.halo?.marks.length ?? 0, sides: this.haloSides };
+  }
+
+  /**
+   * Ring whatever the pointer would take, or take the ring away.
+   *
+   * Two shapes and no more: a ball around anything that is a point, and a
+   * ribbon along anything that is a line — which a face is too, by its
+   * four sides, and a surface by the sides its triangles do not share. A
+   * tint over the cell was the other option and is the wrong one: a halo
+   * that covers the thing it is pointing at hides the very detail you were
+   * squinting at when you needed it.
+   *
+   * Nothing here is pickable and nothing is added to the camera's limits.
+   * A ring under the pointer is not part of the model, and letting it push
+   * the limits about would make the view breathe as the mouse moved.
+   */
+  showHover(target: Target | null) {
+    if (sameTarget(target, this.aimedTarget)) return;
+    for (const mark of this.halo?.marks ?? []) mark.dispose(false, true);
+    this.halo?.wire?.dispose(false, true);
+    this.halo = undefined;
+    this.haloSides = 0;
+    this.aimedTarget = target;
+    if (target === null) return;
+
+    const at = this.haloPoint(target);
+    if (at) {
+      this.halo = { marks: [this.haloMark(at)] };
+      return;
+    }
+    const lines = this.haloLines(target);
+    if (!lines.length) return;
+    this.halo = { marks: [], wire: this.haloWire(lines) };
+    this.haloSides = lines.length;
+  }
+
+  /** Where a halo around a point-like target goes, in scene coordinates —
+   *  or nothing, when the target is not point-like. Taken off the mesh that
+   *  draws the cell rather than worked out again, so the ring cannot land
+   *  anywhere other than on what is on screen. */
+  private haloPoint(target: Target): Vector3 | null {
+    if (target.kind === "node") {
+      const mesh = this.nodes.find((m) => m.metadata.name === target.name);
+      return mesh ? mesh.position.clone() : null;
+    }
+    if (target.kind === "spot" && target.spot.dim === CORNER) {
+      const mesh = this.geomMeshes.corners.find(
+        (m) => m.name === `geom-corners-${target.spot.tag}`,
+      );
+      return mesh ? mesh.position.clone() : null;
+    }
+    return null;
+  }
+
+  /** The sides a halo around a line-like or patch-like target runs along,
+   *  six numbers each. Empty when there are none to draw — a cell a filter
+   *  has taken off the screen has no sides on it. */
+  private haloLines(target: Target): number[][] {
+    if (target.kind === "edge") return this.haloEdge(target.name);
+    if (target.kind === "face") return this.haloFace(target);
+    if (target.kind === "spot" && target.spot.dim === CURVE) {
+      const curve = this.geometry
+        ? geomCurves(this.geometry).find((c) => c.tag === target.spot.tag)
+        : undefined;
+      if (!curve) return [];
+      const out: number[][] = [];
+      for (let s = 0; s < curve.segments.length; s += 6) {
+        out.push([...curve.segments.slice(s, s + 6)]);
+      }
+      return out;
+    }
+    if (target.kind === "spot" && target.spot.dim === SURFACE) {
+      const surface = this.geometry
+        ? geomSurfaces(this.geometry).find((s) => s.tag === target.spot.tag)
+        : undefined;
+      return surface ? patchOutline(surface.positions, surface.indices) : [];
+    }
+    return [];
+  }
+
+  /** The drawn segment of one edge, shrink and all. Nothing when the edge
+   *  is not among the ones on screen. */
+  private haloEdge(name: number): number[][] {
+    if (!this.view) return [];
+    const flat = edgeSegments(this.view, this.prefs.edges.shrink);
+    for (const e of this.edgesShown()) {
+      if (this.view.edgeNames[e] !== name) continue;
+      return [[...flat.slice(e * 6, e * 6 + 6)]];
+    }
+    return [];
+  }
+
+  /**
+   * The four sides of a face, as the surface actually draws it.
+   *
+   * Off the built buffer rather than off the view, because the buffer is
+   * where the shrink has been applied: a halo around an exploded model has
+   * to be around the quadrangle you can see, not around where it would be
+   * if nothing were exploded.
+   *
+   * Faces before blocks, which is the order `dataOf` scans in. The two draw
+   * the same quadrangle at their own shrink, so with both layers on the ring
+   * lands on the faces' copy — and with only one of them on, on that one.
+   */
+  private haloFace(pick: { face: number; block: number }): number[][] {
+    for (const group of GROUPS) {
+      for (const slot of this.surfaces[group]) {
+        for (let q = 0; q < slot.data.faces.length; q++) {
+          if (slot.data.faces[q] !== pick.face) continue;
+          if (slot.data.blocks[q] !== pick.block) continue;
+          const corner = (k: number) => {
+            const v = q * 12 + k * 3;
+            return [
+              slot.data.positions[v],
+              slot.data.positions[v + 1],
+              slot.data.positions[v + 2],
+            ];
+          };
+          // Round the perimeter: the four vertices are the quadrangle's
+          // corners in the kernel's winding, so consecutive ones are a side
+          // and the fourth closes it.
+          return [0, 1, 2, 3].map((k) => [
+            ...corner(k),
+            ...corner((k + 1) % 4),
+          ]);
+        }
+      }
+    }
+    return [];
+  }
+
+  /** A ball a little bigger than the handle it rings. */
+  private haloMark(at: Vector3): Mesh {
+    const mark = CreateSphere("halo", { diameter: 1, segments: 10 }, this.scene);
+    mark.position = at;
+    // Sized here as well as in the per-pane pass, so it is never drawn at a
+    // world unit for the one frame between being made and being scaled.
+    this.haloPixels = HALO_GROWTH * this.prefs.nodes.size;
+    mark.scaling.setAll(
+      worldSizeForPixels(
+        this.haloPixels,
+        Vector3.Distance(at, this.camera.position),
+        this.camera.fov,
+        this.scene.getEngine().getRenderHeight(),
+      ),
+    );
+    const material = new StandardMaterial("haloMat", this.scene);
+    material.emissiveColor = Color3.FromHexString(HALO);
+    material.disableLighting = true;
+    // Through, not over: a solid ball the size of this one would hide the
+    // handle it is saying something about.
+    material.alpha = HALO_ALPHA;
+    mark.material = material;
+    mark.isPickable = false;
+    mark.layerMask = MAIN_LAYER;
+    mark.renderingGroupId = PASS.aiming;
+    return mark;
+  }
+
+  /** A ribbon along the sides of whatever is being ringed. */
+  private haloWire(lines: number[][]): GreasedLineMesh {
+    const wire = CreateGreasedLine(
+      "halo",
+      { points: lines, updatable: false },
+      {
+        color: Color3.FromHexString(HALO),
+        materialType: GreasedLineMeshMaterialType.MATERIAL_TYPE_SIMPLE,
+        ...this.ribbon(HALO_GROWTH),
+      },
+      this.scene,
+    ) as GreasedLineMesh;
+    wire.isPickable = false;
+    wire.layerMask = MAIN_LAYER;
+    wire.renderingGroupId = PASS.aiming;
+    return wire;
+  }
+
+  /**
    * Bring one of the two surfaces up to date with the view and the settings.
    *
    * The mesh is **kept** whenever the new data has the same shape as the old,
@@ -1868,6 +2147,7 @@ export class Viewer {
   setGeometry(view: GeometryView) {
     this.geometry = view;
     this.pickedGeom = [];
+    this.showHover(null);
     this.rebuildGeometry();
     // The geometry counts towards the model's extent, so how close the
     // camera may come has to be worked out again.
@@ -2322,6 +2602,7 @@ export class Viewer {
     for (const [mesh, share] of [
       [this.litWire, 1],
       [this.aimWire, AIM_SHARE],
+      [this.halo?.wire, HALO_GROWTH],
     ] as const) {
       const material = (mesh as GreasedLineMesh | undefined)
         ?.greasedLineMaterial;
@@ -2374,6 +2655,10 @@ export class Viewer {
 
   setView(view: View) {
     this.center = view.center;
+    // A ring around a cell of the blocking that has just been replaced is a
+    // ring around nothing. The next pointer movement puts it back, over
+    // whatever is there now.
+    this.showHover(null);
     // The topology may be another one, so what each node touches has to be
     // worked out again. Dropped rather than rebuilt: the next drag asks.
     this.around = undefined;
@@ -3460,6 +3745,10 @@ export class Viewer {
       // and sized in pixels like everything else rather than in world
       // units, which on a twenty-unit model drew them the size of a block.
       [this.laying?.marks ?? [], 2 * this.prefs.nodes.size],
+      // The halo's ball, for the same reason and by the same arithmetic:
+      // it is a ring around a handle, so it has to be a ring around it in
+      // every pane, at whatever each one is zoomed to.
+      [this.halo?.marks ?? [], this.haloPixels],
     ] as const) {
       for (const mesh of meshes) {
         const wanted =

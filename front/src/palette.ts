@@ -108,3 +108,13 @@ export function hexToRgb(hex: string): [number, number, number] {
  */
 export const ANCHOR = "#ffcc33";
 export const MATE = "#ff5577";
+
+/**
+ * The color of a halo, drawn around whatever the pointer would take.
+ *
+ * Fixed like the two above, and a hue away from both: a halo in `ANCHOR`
+ * would say "picked" about something that is only being pointed at, which
+ * is the one thing it must never say. Cyan is also the one hue no layer
+ * defaults to, so a halo never comes out the color of what it rings.
+ */
+export const HALO = "#2ee6ff";

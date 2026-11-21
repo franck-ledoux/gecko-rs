@@ -25,6 +25,11 @@ A press and release on a handle without moving it is a pick; anything
 further is still a drag. Locking and unclassifying are things you *say*
 about a node, so one has to be nameable without being moved.
 
+A cell of the blocking and the cell of the model it goes onto sit at the same
+pixels, which is what makes both clicks awkward. Point first: the one a click
+would take is ringed and named in the readout — see
+[the halo](interface.md#the-halo).
+
 ### The fast way onto a model
 
 `K` puts the whole blocking on whatever is nearest, which is right until it

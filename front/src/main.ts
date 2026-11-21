@@ -10,7 +10,7 @@ import { Engine } from "@babylonjs/core/Engines/engine";
 import { decodeGeometry, decodeMesh, decodeNodes, decodeView } from "./decode";
 import type { Stats } from "./kernel";
 import { initKernel, WasmKernel } from "./kernel-wasm";
-import { Viewer, type Group, type Pick } from "./viewer";
+import { Viewer, type Group, type Pick, type Target } from "./viewer";
 import {
   DEFAULTS,
   isLight,
@@ -719,6 +719,15 @@ async function boot() {
   $("show-ao").addEventListener("change", (e) => {
     setOcclusion((e.target as HTMLInputElement).checked);
   });
+  $<HTMLInputElement>("show-halo").checked = prefs.halo;
+  $("show-halo").addEventListener("change", (e) => {
+    prefs.halo = (e.target as HTMLInputElement).checked;
+    savePrefs(prefs);
+    // Straight away rather than at the next pointer movement: a box you
+    // have just unticked while a halo is on screen is a box that did
+    // nothing.
+    if (!prefs.halo) clearHover();
+  });
   $<HTMLInputElement>("show-axes").checked = prefs.axes;
   $("show-axes").addEventListener("change", (e) => {
     prefs.axes = (e.target as HTMLInputElement).checked;
@@ -942,9 +951,12 @@ async function boot() {
     if (e.button !== 0 || aiming !== null || viewer.aimedAtGeometry || lasso)
       return;
     if (viewer.axes.pick(e.offsetX, e.offsetY)) return;
-    if (viewer.pickNode(e.offsetX, e.offsetY) !== null) return;
-    const edge = viewer.pickEdge(e.offsetX, e.offsetY);
-    if (edge === null) return;
+    // The one resolution order, asked once. A handle in front of the edge
+    // still stands the cut aside — it just no longer does so by re-asking a
+    // question `targetAt` has already answered.
+    const target = viewer.targetAt(e.offsetX, e.offsetY);
+    if (target?.kind !== "edge") return;
+    const edge = target.name;
 
     aiming = edge;
     aimingWasSelected = viewer.selectedEdge === edge;
@@ -971,17 +983,17 @@ async function boot() {
     )
       return;
     if (viewer.axes.pick(e.offsetX, e.offsetY)) return;
-    if (viewer.pickNode(e.offsetX, e.offsetY) !== null) return;
-    if (viewer.pickEdge(e.offsetX, e.offsetY) !== null) return;
-    const surface = viewer.pickSurface(e.offsetX, e.offsetY);
+    const target = viewer.targetAt(e.offsetX, e.offsetY);
+    if (target?.kind !== "face") return;
+    const surface: Pick = { face: target.face, block: target.block };
     const picked = viewer.selection;
     // Any of the selected faces, not only the first: several are selected
     // precisely so that one gesture can act on all of them, and which one
     // the pointer happens to be over is not a choice anybody made.
-    const on = surface
-      ? picked.find((p) => p.face === surface.face && p.block === surface.block)
-      : undefined;
-    if (!surface || !on) return;
+    const on = picked.find(
+      (p) => p.face === surface.face && p.block === surface.block,
+    );
+    if (!on) return;
 
     // ⌥ slides the faces instead of growing from them. The modifier is free
     // by construction — the shortcut table refuses every press that has it —
@@ -1071,7 +1083,19 @@ async function boot() {
       const by = viewer.aimSlide(e.offsetX, e.offsetY);
       if (by !== null) say(`sliding ${by.toFixed(2)} — let go to move`);
     }
+    // A halo while something is being dragged is noise: what a click would
+    // take is not the question any more — the pointer is already answering
+    // another one.
+    if (aiming === null && !growing && !sliding && !lasso) {
+      hover(e.offsetX, e.offsetY);
+    } else {
+      clearHover();
+    }
   });
+
+  // A ring left behind by a pointer that has gone is a ring around nothing
+  // in particular.
+  canvas.addEventListener("pointerleave", () => clearHover());
 
   canvas.addEventListener("pointerup", (e) => {
     if (e.button !== 0 || !pressedAt) return;
@@ -1130,25 +1154,36 @@ async function boot() {
       void layCorner(x, y);
       return;
     }
-    // Aimed at the geometry, the blocks are not there to be clicked at all
-    // — which is the whole reason for the mode: the two are at the same
-    // pixels, and whichever answered first would hide the other.
-    if (viewer.aimedAtGeometry) {
-      const spot = viewer.pickGeometry(x, y);
-      if (spot === null) clearSelection();
-      else toggleEntity(spot);
+    // One function for all of it. Aimed at the geometry it offers the
+    // geometry and nothing of the block structure — which is the whole
+    // reason for the mode: the two are at the same pixels, and whichever
+    // answered first would hide the other. Aimed at the blocks it is the
+    // smallest target first, a handle before a line before the surface
+    // behind them, each being the thing you had to aim at to hit it.
+    //
+    // A press and release on a handle without moving is a click on that
+    // node, which picks it — the drag behavior has already decided it was
+    // not a drag.
+    const target = viewer.targetAt(x, y);
+    if (target?.kind === "spot") {
+      toggleEntity(target.spot);
       return;
     }
-    // Smallest target first: a handle, then a line, then the surface behind
-    // them. Each is the thing you had to aim at to hit it. A press and
-    // release on a handle without moving is a click on that node, which
-    // picks it — the drag behavior has already decided it was not a drag.
-    const node = viewer.pickNode(x, y);
-    if (node !== null) {
-      pickNode(node);
+    if (target?.kind === "node") {
+      pickNode(target.name);
       return;
     }
-    const surface = viewer.pickSurface(x, y);
+    // An edge cannot be the answer here: pressing one sets `aiming`, and
+    // this listener has already returned above while it is set. Asked
+    // rather than assumed, so that if some gesture does reach this line
+    // with an edge under the pointer, it still picks the face behind it as
+    // it always did.
+    const surface: Pick | null =
+      target?.kind === "face"
+        ? { face: target.face, block: target.block }
+        : target?.kind === "edge"
+          ? viewer.pickSurface(x, y)
+          : null;
     // Nothing under the pointer at all: the background is how you let go of
     // everything, whichever kind of selection it was.
     if (surface === null) clearSelection();
@@ -1581,13 +1616,88 @@ async function boot() {
     $("picking").setAttribute("aria-pressed", String(at === "geometry"));
     $("picking").title =
       at === "geometry" ? "Aim at the blocks — M" : "Aim at the geometry — M";
-    $("aim").textContent =
-      at === "geometry" ? "picking geometry" : "picking blocks";
+    sayAim();
     // Both selections stay. They used to be cleared on the way through,
     // on the grounds that a selection you cannot see is a mystery — but
     // the two are made to be held at once now: a handful of nodes and the
     // entity to put them on are picked in different modes and used
     // together. `Esc` is how you let go.
+  }
+
+  /**
+   * The mode, and the cell the pointer is over.
+   *
+   * One line rather than two readouts: which of the two kinds of thing a
+   * click would take and *which* of them it would take are the same
+   * question asked at two depths, and they are most use read together. The
+   * halo says where; this says what, which a halo cannot — classifying onto
+   * a curve means knowing it is curve 7 and not curve 8.
+   */
+  function sayAim() {
+    const mode = viewer.aimedAtGeometry ? "picking geometry" : "picking blocks";
+    const target = viewer.targeted;
+    $("aim").textContent = target === null ? mode : `${mode} — ${nameOf(target)}`;
+  }
+
+  /** How a target reads. A face carries both names because that is what it
+   *  is: the quadrangles are listed per (face, block) pair, and which
+   *  block's side you are on decides what gluing and removing do. */
+  function nameOf(target: Target): string {
+    switch (target.kind) {
+      case "node":
+        return `node ${target.name}`;
+      case "edge":
+        return `edge ${target.name}`;
+      case "face":
+        return `face ${target.face} of block ${target.block}`;
+      case "spot":
+        return spotName(target.spot);
+    }
+  }
+
+  /**
+   * Ring what the pointer is over, at most once a frame.
+   *
+   * The resolution is up to three `scene.pick`s deep and each of them may
+   * ask the shell where it is as well, while a mouse dragged across the
+   * window delivers moves faster than frames are drawn. So the position is
+   * remembered and the question asked once, in front of the frame that
+   * would show the answer.
+   */
+  let hoverAt: [number, number] | null = null;
+  let hoverQueued = false;
+
+  function hover(x: number, y: number) {
+    hoverAt = [x, y];
+    if (hoverQueued) return;
+    hoverQueued = true;
+    requestAnimationFrame(() => {
+      hoverQueued = false;
+      if (!hoverAt) return;
+      viewer.showHover(prefs.halo ? targetUnder(hoverAt[0], hoverAt[1]) : null);
+      sayAim();
+    });
+  }
+
+  /** No halo, and no name beside the mode. */
+  function clearHover() {
+    hoverAt = null;
+    viewer.showHover(null);
+    sayAim();
+  }
+
+  /**
+   * The cell a click would take, whatever is going on.
+   *
+   * While a quadrangle is being laid that is `cornerUnder`'s answer and not
+   * `targetAt`'s, because laying asks a different question: it prefers the
+   * handle that is **on** the geometry to the one a fraction of a pixel in
+   * front of it. A halo drawn from the other rule would ring the node the
+   * click does not take, which is the one thing a halo must never do.
+   */
+  function targetUnder(x: number, y: number): Target | null {
+    if (laying) return cornerUnder(x, y)?.target ?? null;
+    return viewer.targetAt(x, y);
   }
 
   /** How many segments the lit sheet is in, as the kernel last said. */
@@ -1721,13 +1831,30 @@ async function boot() {
   function cornerUnder(
     x: number,
     y: number,
-  ): { at: [number, number, number]; on: Spot | null } | null {
+  ): {
+    at: [number, number, number];
+    on: Spot | null;
+    /** The cell the corner would be taken from, for the halo to ring. The
+     *  same answer, so the ring and the click cannot part company. */
+    target: Target;
+  } | null {
     const node = viewer.pickHandle(x, y);
     const at = node === null ? null : viewer.nodePosition(node);
-    if (node !== null && at)
-      return { at, on: viewer.nodeState(node)?.on ?? null };
+    if (node !== null && at) {
+      return {
+        at,
+        on: viewer.nodeState(node)?.on ?? null,
+        target: { kind: "node", name: node },
+      };
+    }
     const placed = viewer.pickOnGeometry(x, y);
-    return placed ? { at: placed.at, on: placed.spot } : null;
+    return placed === null
+      ? null
+      : {
+          at: placed.at,
+          on: placed.spot,
+          target: { kind: "spot", spot: placed.spot },
+        };
   }
 
   /**
@@ -2934,7 +3061,7 @@ async function boot() {
   // The kernel starts with its own default; this is the one in the drawer,
   // which is the one the person using it last chose.
   await setHistory();
-  $("aim").textContent = "picking blocks";
+  sayAim();
   engine.runRenderLoop(() => viewer.render());
   // Straight there: there is nothing on screen yet to glide away from.
   await refresh("jump");
@@ -2949,6 +3076,13 @@ async function boot() {
     revision: () => revision,
     counts: () => ({ nodes: viewer.nodeCount, edges: viewer.edgeCount }),
     names: () => viewer.names(),
+    // The answer the click acts on and the halo is drawn from, and how
+    // much of a ring reached the screen. Two numbers rather than a
+    // screenshot: what matters is that the halo is around the cell a click
+    // would take, and that is state.
+    hovered: () => viewer.targeted,
+    halo: () => viewer.haloDrawn,
+    target: (x: number, y: number) => viewer.targetAt(x, y),
     theme: () => ({ ...prefs.theme }),
     setTheme: (t: Theme) => setTheme(t),
     display: () => viewer.display,

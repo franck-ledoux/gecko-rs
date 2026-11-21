@@ -185,6 +185,13 @@ export const SMOOTH_SHARE = 0.5;
 export interface ViewPrefs {
   theme: Theme;
   axes: boolean;
+  /** Whether a halo rings the cell the pointer would take.
+   *
+   *  On, because picking is the hard part of putting a blocking onto a
+   *  model: a corner of a block and a corner of the geometry are a pixel
+   *  apart from most angles, and the halo is what says which of them a
+   *  click is about to take. Off is for a figure. */
+  halo: boolean;
   /** The two panels, and whether the interface is on screen at all. Only
    *  one panel is ever open: they sit in the same place. */
   drawer: boolean;
@@ -246,6 +253,7 @@ export interface ViewPrefs {
 export const DEFAULTS: ViewPrefs = {
   theme: { ...PRESETS.dark },
   axes: true,
+  halo: true,
   // Shut, because the whole point of a drawer is that the window belongs to
   // the model. The toolbar carries the verbs; this carries the settings.
   drawer: false,
@@ -345,6 +353,7 @@ export function loadPrefs(): ViewPrefs {
     return {
       theme: { ...DEFAULTS.theme, ...(stored.theme ?? {}) },
       axes: typeof stored.axes === "boolean" ? stored.axes : DEFAULTS.axes,
+      halo: typeof stored.halo === "boolean" ? stored.halo : DEFAULTS.halo,
       drawer: typeof stored.drawer === "boolean" ? stored.drawer : DEFAULTS.drawer,
       params: typeof stored.params === "boolean" ? stored.params : DEFAULTS.params,
       panels: Array.isArray(stored.panels)

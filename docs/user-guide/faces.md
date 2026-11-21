@@ -104,6 +104,10 @@ is:
   order is the tolerance: a corner is a small ball and a curve a thin ribbon,
   so a click only reaches one by being near it.
 
+Which of those a click is about to take is ringed under the pointer before
+you press — see [the halo](interface.md#the-halo). It follows this order and
+not the plain one, so what is ringed is what the corner will be taken from.
+
 What is on screen says how far along you are. Each corner placed gets a mark
 — twice the size of an ordinary handle, and twice the size of one however
 far away you are, which is what you want from a mark and not from a sphere a

@@ -3,6 +3,27 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
+## Unreleased
+
+- **A halo under the pointer.** The cell a click would take is ringed in
+  cyan before the click, and the readout names it —
+  `picking blocks — node 42`, `picking geometry — curve 7`. A ball around a
+  point, a ribbon along a line, a ring round the sides of a face or the
+  border of a surface; a ring rather than a tint, so it never covers what
+  you are looking at. For the two operations where picking is the hard part:
+  classifying, where a cell of the blocking and the cell of the model it goes
+  onto are at the same pixels, and laying a quadrangle, where each of the four
+  clicks may land on a point, a curve or a handle to reuse. Laying has its own
+  preference for a handle that is on the geometry, and the halo follows it
+  rather than the plain one. Switched off in **Display → Colors**.
+
+  It is drawn from the same answer the click acts on, so it refuses whatever
+  the click refuses: nothing behind an opaque model, nothing a group filter is
+  holding back, nothing on a layer that is off. The resolution order used to
+  be written three times over in three listeners; it is one function now, and
+  a test says the ring and the click take the same cell at every pixel it
+  probes.
+
 ## 0.2.1
 
 Three things that were wrong in 0.2.0, each found by using it. A filter that

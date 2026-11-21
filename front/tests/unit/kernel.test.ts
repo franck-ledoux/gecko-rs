@@ -48,6 +48,7 @@ import {
   geomCurves,
   geomSurfaces,
   GEOM_GROUPS,
+  patchOutline,
 } from "../../src/geometry";
 import {
   orthoExtents,
@@ -2521,4 +2522,43 @@ describe("the classification colors are told apart", () => {
       }
     });
   }
+});
+
+describe("the outline a halo is drawn along", () => {
+  it("keeps the sides one triangle uses and drops the ones two share", () => {
+    // Two triangles making a unit square, sharing the diagonal 0–2. The
+    // ring round the square is its four sides; the diagonal is inside it
+    // and drawing it would put a line across the face the halo is
+    // pointing at.
+    const positions = new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]);
+    const sides = patchOutline(positions, [0, 1, 2, 0, 2, 3]);
+    expect(sides).toHaveLength(4);
+    const ends = sides
+      .map((s) => [s.slice(0, 3).join(","), s.slice(3).join(",")].sort().join(" "))
+      .sort();
+    expect(ends).toEqual(
+      [
+        ["0,0,0", "1,0,0"],
+        ["1,0,0", "1,1,0"],
+        ["1,1,0", "0,1,0"],
+        ["0,1,0", "0,0,0"],
+      ]
+        .map((pair) => pair.sort().join(" "))
+        .sort(),
+    );
+  });
+
+  it("gives a lone triangle all three of its sides", () => {
+    const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+    expect(patchOutline(positions, [0, 1, 2])).toHaveLength(3);
+  });
+
+  it("leaves nothing for a patch whose every side is shared", () => {
+    // The four faces of a tetrahedron: a closed shell, so no side belongs
+    // to one triangle alone. A ring around it would be a ring around
+    // nothing in particular, and this says so rather than drawing one.
+    const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]);
+    const closed = [0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3];
+    expect(patchOutline(positions, closed)).toEqual([]);
+  });
 });
