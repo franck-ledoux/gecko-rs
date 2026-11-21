@@ -5,17 +5,26 @@ the day a tag was cut.
 
 ## Unreleased
 
-- **A halo under the pointer.** The cell a click would take is ringed in
-  cyan before the click, and the readout names it —
-  `picking blocks — node 42`, `picking geometry — curve 7`. A ball around a
-  point, a ribbon along a line, a ring round the sides of a face or the
-  border of a surface; a ring rather than a tint, so it never covers what
-  you are looking at. For the two operations where picking is the hard part:
+- **A halo under the pointer.** The cell a click would take glows before
+  the click, and the readout names it — `picking blocks — node 42`,
+  `picking geometry — curve 7`. A ball around a point, a thread along a
+  line, a frame round the sides of a face or the border of a surface; a
+  light around the cell rather than a tint over it, so it never covers what
+  you are looking at. How far it reaches is a slider under *Drawing*, and
+  its color a swatch under *Colors*. For the two operations where picking is the hard part:
   classifying, where a cell of the blocking and the cell of the model it goes
   onto are at the same pixels, and laying a quadrangle, where each of the four
   clicks may land on a point, a curve or a handle to reuse. Laying has its own
   preference for a handle that is on the geometry, and the halo follows it
   rather than the plain one. Switched off in **Display → Colors**.
+
+  Two meshes carry it for the whole session — a ball and a thread, shown,
+  hidden and given new points — rather than one made per pointer movement.
+  A line disposed and built again under the pointer draws the first time
+  and not afterwards on some drivers, which is what "an edge lit up once
+  and then never again" was; and rebuilding them when a setting changed
+  put the glow into a state where it stopped drawing at all, so any slider
+  took the halo with it. A test holds the count of meshes ever made at two.
 
   It is drawn from the same answer the click acts on, so it refuses whatever
   the click refuses: nothing behind an opaque model, nothing a group filter is

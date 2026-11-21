@@ -39,6 +39,7 @@ import {
 import type { GreasedLineSimpleMaterial } from "@babylonjs/core/Materials/GreasedLine/greasedLineSimpleMaterial";
 import type { GreasedLineMesh } from "@babylonjs/core/Meshes/GreasedLine/greasedLineMesh";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
+import { GlowLayer } from "@babylonjs/core/Layers/glowLayer";
 import { PointerDragBehavior } from "@babylonjs/core/Behaviors/Meshes/pointerDragBehavior";
 import "@babylonjs/core/Culling/ray";
 import type { GeometryView, MeshView, NodesView, View } from "./decode";
@@ -76,7 +77,7 @@ import {
   type Layer,
   type ViewPrefs,
 } from "./theme";
-import { ANCHOR, FAMILY, HALO, MATE, colorForId } from "./palette";
+import { ANCHOR, FAMILY, MATE, colorForId } from "./palette";
 import type { SheetEdge } from "./kernel";
 import {
   buildMesh,
@@ -202,18 +203,35 @@ export const SHEET_PIXELS = 7;
 export const AIM_SHARE = 1.6;
 
 /**
- * How much bigger than the thing it rings a halo is drawn.
+ * The core of a halo along a line, as a share of the halo's own size.
  *
- * Bigger rather than brighter. A halo has to read over a model whose colors
- * the user chose and may have set to anything, so what says "this one" is
- * the size, which nothing else can take away.
+ * A ball and a thread, not two balls: a node's glow comes off a sphere the
+ * full size, an edge's off a ribbon well under half of it. What spreads
+ * them into the same soft light is the blur, and a thread blurred reads as
+ * a line lit from inside while a slab blurred reads as a smear.
  */
-export const HALO_GROWTH = 1.9;
+export const HALO_CORE = 0.4;
 
-/** How solid a halo's ball is. Short of opaque on purpose: the handle it
- *  rings is inside it, and a halo that hid it would be answering the
- *  question with the answer out of sight. */
-export const HALO_ALPHA = 0.5;
+/**
+ * How far the blur carries the glow past its core, as a share of the size.
+ *
+ * The number that makes it a glow rather than a highlight. Babylon takes a
+ * kernel in pixels and clamps it itself; this is what it is asked for.
+ */
+export const HALO_SPREAD = 2.4;
+
+/** As wide as the blur is ever asked to be. Past this the light is spread
+ *  so thin that a bigger halo reads as a fainter one. */
+export const MAX_HALO_KERNEL = 64;
+
+/** How bright the glow comes back. Over one, because the core is drawn at
+ *  less than full alpha so the cell shows through it. */
+export const HALO_INTENSITY = 1.3;
+
+/** How solid a halo's core is. Short of opaque on purpose: the cell it is
+ *  pointing at is inside the light, and a core that hid it would be
+ *  answering the question with the answer out of sight. */
+export const HALO_ALPHA = 0.55;
 
 /** How long a recentring takes. Long enough to follow the model moving into
  *  place, short enough not to be waiting for it. */
@@ -656,7 +674,16 @@ export class Viewer {
    *  face would otherwise throw two meshes away sixty times a second to
    *  draw the same ring. `sameTarget` is what decides. */
   private aimedTarget: Target | null = null;
-  private halo?: { marks: Mesh[]; wire?: GreasedLineMesh };
+  /** The halo's two meshes, **made once and kept**.
+   *
+   *  Not made per hover, which is how this started and what was wrong with
+   *  it: a greased line disposed and built again under the pointer renders
+   *  the first time and not afterwards on some drivers, which is exactly
+   *  the shape of "an edge lit up once and then never again". One mesh
+   *  each, shown, hidden and given new points — the idiom the grown box
+   *  already uses. */
+  private haloBall?: Mesh;
+  private haloLine?: GreasedLineMesh;
   /** How many sides of ribbon the ring is in. Counted on the way in, like
    *  the laying mark's, rather than read back off the mesh: a greased line
    *  is free to hold its points however it likes. */
@@ -665,6 +692,19 @@ export class Viewer {
    *  the per-pane sizing pass, which is the only place that knows which
    *  camera they are about to be seen through. */
   private haloPixels = 0;
+  /** The bloom the halo is seen through. Made on the first halo and kept:
+   *  an effect layer carries render targets, and building one per pointer
+   *  movement would be a new framebuffer sixty times a second. */
+  private glow?: GlowLayer;
+  /** What the glow layer was last given, so it can be taken back. */
+  private glowing: Mesh[] = [];
+  /** How many times the halo's meshes have been made.
+   *
+   *  Not a statistic: it is what a test can hold on to to say that a
+   *  preference change **tuned** the halo rather than building a new one,
+   *  which is the difference between a glow that survives a slider and one
+   *  that does not. */
+  private haloBuilds = 0;
   private grownWire?: GreasedLineMesh;
   private grownBox?: Mesh;
   private grown: number | null = null;
@@ -1044,6 +1084,7 @@ export class Viewer {
     this.rebuildSurface("blocks");
     this.rebuildGeometry();
     this.rebuildMesh();
+    this.retuneHalo();
     this.refreshOcclusion();
   }
 
@@ -1348,8 +1389,8 @@ export class Viewer {
    * ring nobody sees, and a count alone cannot tell the two apart.
    */
   get haloBox(): { min: number[]; max: number[] } | null {
-    const meshes = [...(this.halo?.marks ?? []), this.halo?.wire].filter(
-      (m): m is Mesh | GreasedLineMesh => m !== undefined,
+    const meshes = [this.haloBall, this.haloLine].filter(
+      (m): m is Mesh | GreasedLineMesh => m !== undefined && m.isEnabled(),
     );
     if (!meshes.length) return null;
     const min = [Infinity, Infinity, Infinity];
@@ -1365,8 +1406,12 @@ export class Viewer {
     return { min, max };
   }
 
-  get haloDrawn(): { marks: number; sides: number } {
-    return { marks: this.halo?.marks.length ?? 0, sides: this.haloSides };
+  get haloDrawn(): { marks: number; sides: number; builds: number } {
+    return {
+      marks: this.haloBall?.isEnabled() ? 1 : 0,
+      sides: this.haloSides,
+      builds: this.haloBuilds,
+    };
   }
 
   /**
@@ -1385,22 +1430,67 @@ export class Viewer {
    */
   showHover(target: Target | null) {
     if (sameTarget(target, this.aimedTarget)) return;
-    for (const mark of this.halo?.marks ?? []) mark.dispose(false, true);
-    this.halo?.wire?.dispose(false, true);
-    this.halo = undefined;
-    this.haloSides = 0;
     this.aimedTarget = target;
-    if (target === null) return;
+    this.haloSides = 0;
 
-    const at = this.haloPoint(target);
+    const at = target === null ? null : this.haloPoint(target);
+    const lines = at || target === null ? [] : this.haloLines(target);
+
+    const ball = this.ball();
+    ball.setEnabled(at !== null);
     if (at) {
-      this.halo = { marks: [this.haloMark(at)] };
-      return;
+      ball.position = at;
+      this.sizeBall(ball, at);
     }
-    const lines = this.haloLines(target);
-    if (!lines.length) return;
-    this.halo = { marks: [], wire: this.haloWire(lines) };
-    this.haloSides = lines.length;
+
+    const line = this.line();
+    line.setEnabled(lines.length > 0);
+    if (lines.length) {
+      line.setPoints(lines);
+      this.haloSides = lines.length;
+    }
+
+    // Enabled last, and only when there is something lit: a bloom over
+    // nothing is a pass that need not run.
+    if (this.glow) this.glow.isEnabled = at !== null || lines.length > 0;
+  }
+
+  /**
+   * The halo on screen, in step with the preferences.
+   *
+   * A size and a color are read when the halo is made, so a slider dragged
+   * with one on screen would otherwise leave it as it was until the
+   * pointer moved. **Tuned, not rebuilt**: throwing the meshes away and
+   * making new ones here puts the glow layer in a state where it stops
+   * compositing at all, and the halo is then gone for the rest of the
+   * session — which is what dragging any slider used to do to it. The
+   * wireframe's own width is updated in place on a resize for the same
+   * kind of reason, and this is the same idiom.
+   */
+  private retuneHalo() {
+    const color = Color3.FromHexString(this.prefs.theme.halo);
+    // Read by the per-pane pass, which is what actually resizes the ball.
+    this.haloPixels = this.prefs.halo.size;
+    const ball = this.haloBall;
+    if (ball) {
+      (ball.material as StandardMaterial).emissiveColor = color;
+      if (ball.isEnabled()) this.sizeBall(ball, ball.position);
+    }
+    const wire = this.haloLine;
+    if (wire) {
+      const material = wire.greasedLineMaterial as GreasedLineSimpleMaterial;
+      material.color = color;
+      material.width = this.ribbon(this.haloShare).width;
+    }
+    if (this.glow) this.glow.blurKernelSize = this.haloBlur;
+  }
+
+  /** How wide the blur is asked to be, from the size. */
+  private get haloBlur(): number {
+    return Math.min(
+      MAX_HALO_KERNEL,
+      Math.round(this.prefs.halo.size * HALO_SPREAD),
+    );
   }
 
   /** Where a halo around a point-like target goes, in scene coordinates —
@@ -1498,14 +1588,34 @@ export class Viewer {
     return [];
   }
 
-  /** A ball a little bigger than the handle it rings. */
-  private haloMark(at: Vector3): Mesh {
-    const mark = CreateSphere("halo", { diameter: 1, segments: 10 }, this.scene);
-    mark.position = at;
-    // Sized here as well as in the per-pane pass, so it is never drawn at a
-    // world unit for the one frame between being made and being scaled.
-    this.haloPixels = HALO_GROWTH * this.prefs.nodes.size;
-    mark.scaling.setAll(
+  /** The ball, made the first time one is wanted and kept thereafter. */
+  private ball(): Mesh {
+    if (this.haloBall) return this.haloBall;
+    const ball = CreateSphere("halo", { diameter: 1, segments: 12 }, this.scene);
+    const material = new StandardMaterial("haloMat", this.scene);
+    material.emissiveColor = Color3.FromHexString(this.prefs.theme.halo);
+    material.disableLighting = true;
+    // Through, not over: a solid ball the size of this one would hide the
+    // handle it is saying something about.
+    material.alpha = HALO_ALPHA;
+    ball.material = material;
+    ball.isPickable = false;
+    ball.layerMask = MAIN_LAYER;
+    ball.renderingGroupId = PASS.aiming;
+    ball.setEnabled(false);
+    this.haloBall = ball;
+    this.haloBuilds += 1;
+    this.lightUp(ball);
+    return ball;
+  }
+
+  /** The ball at the size the preference asks for, now.
+   *
+   *  Sized here as well as in the per-pane pass, so it is never drawn at a
+   *  world unit for the one frame between being moved and being scaled. */
+  private sizeBall(ball: Mesh, at: Vector3) {
+    this.haloPixels = this.prefs.halo.size;
+    ball.scaling.setAll(
       worldSizeForPixels(
         this.haloPixels,
         Vector3.Distance(at, this.camera.position),
@@ -1513,36 +1623,76 @@ export class Viewer {
         this.scene.getEngine().getRenderHeight(),
       ),
     );
-    const material = new StandardMaterial("haloMat", this.scene);
-    material.emissiveColor = Color3.FromHexString(HALO);
-    material.disableLighting = true;
-    // Through, not over: a solid ball the size of this one would hide the
-    // handle it is saying something about.
-    material.alpha = HALO_ALPHA;
-    mark.material = material;
-    mark.isPickable = false;
-    mark.layerMask = MAIN_LAYER;
-    mark.renderingGroupId = PASS.aiming;
-    return mark;
   }
 
-  /** A ribbon along the sides of whatever is being ringed. */
-  private haloWire(lines: number[][]): GreasedLineMesh {
+  /** The ribbon, likewise: one mesh, given new points each time.
+   *
+   *  `updatable`, because that is the whole point of keeping it. It starts
+   *  on a segment of no length, which is never seen: it is disabled until
+   *  there is something to run it along. */
+  private line(): GreasedLineMesh {
+    if (this.haloLine) return this.haloLine;
     const wire = CreateGreasedLine(
       "halo",
-      { points: lines, updatable: false },
+      { points: [[0, 0, 0, 0, 0, 0]], updatable: true },
       {
-        color: Color3.FromHexString(HALO),
+        color: Color3.FromHexString(this.prefs.theme.halo),
         materialType: GreasedLineMeshMaterialType.MATERIAL_TYPE_SIMPLE,
-        ...this.ribbon(HALO_GROWTH),
+        ...this.ribbon(this.haloShare),
       },
       this.scene,
     ) as GreasedLineMesh;
     wire.isPickable = false;
     wire.layerMask = MAIN_LAYER;
     wire.renderingGroupId = PASS.aiming;
+    const material = wire.material as GreasedLineSimpleMaterial;
+    material.alpha = HALO_ALPHA;
+    wire.setEnabled(false);
+    this.haloLine = wire;
+    this.haloBuilds += 1;
+    this.lightUp(wire);
     return wire;
   }
+
+  /** The ribbon's width as `ribbon` wants it: a share of `SHEET_PIXELS`. */
+  private get haloShare(): number {
+    return (this.prefs.halo.size * HALO_CORE) / SHEET_PIXELS;
+  }
+
+  /**
+   * The bloom, made on demand and told what to carry.
+   *
+   * `includedOnlyMeshes` rather than letting it loose on the scene: every
+   * surface in this model is emissive to some degree, and a glow layer with
+   * no list blooms the lot — which is a different application.
+   *
+   * The ribbon is referenced to its own material because it has one: a
+   * greased line is not a `StandardMaterial`, and the layer's own shader
+   * would find no emissive color on it and render it black.
+   */
+  private lightUp(mesh: Mesh | GreasedLineMesh) {
+    if (!this.glow) {
+      this.glow = new GlowLayer("halo", this.scene, {
+        mainTextureFixedSize: 512,
+        blurKernelSize: 32,
+      });
+      this.glow.intensity = HALO_INTENSITY;
+    }
+    const glow = this.glow;
+    // Clamped: the kernel is in pixels and a very wide one spreads the
+    // light so thin that a big halo comes out fainter than a small one,
+    // which is not what a size slider should do.
+    glow.blurKernelSize = this.haloBlur;
+    this.glowing.push(mesh as Mesh);
+    glow.addIncludedOnlyMesh(mesh as Mesh);
+    // A greased line carries its color in a material of its own, which the
+    // layer's shader knows nothing about: told to use that material, it
+    // blooms the line's own color instead of rendering it black.
+    if ("greasedLineMaterial" in mesh) {
+      glow.referenceMeshToUseItsOwnMaterial(mesh as GreasedLineMesh);
+    }
+  }
+
 
   /**
    * Bring one of the two surfaces up to date with the view and the settings.
@@ -2628,7 +2778,7 @@ export class Viewer {
     for (const [mesh, share] of [
       [this.litWire, 1],
       [this.aimWire, AIM_SHARE],
-      [this.halo?.wire, HALO_GROWTH],
+      [this.haloLine, this.haloShare],
     ] as const) {
       const material = (mesh as GreasedLineMesh | undefined)
         ?.greasedLineMaterial;
@@ -3774,7 +3924,7 @@ export class Viewer {
       // The halo's ball, for the same reason and by the same arithmetic:
       // it is a ring around a handle, so it has to be a ring around it in
       // every pane, at whatever each one is zoomed to.
-      [this.halo?.marks ?? [], this.haloPixels],
+      [this.haloBall?.isEnabled() ? [this.haloBall] : [], this.haloPixels],
     ] as const) {
       for (const mesh of meshes) {
         const wanted =

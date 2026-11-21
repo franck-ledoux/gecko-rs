@@ -18,6 +18,7 @@ import {
   savePrefs,
   MAX_BOX_MARGIN,
   MAX_EDGE_WIDTH,
+  MAX_HALO_SIZE,
   MAX_HISTORY,
   MAX_NODE_SIZE,
   MAX_SEGMENTS,
@@ -719,14 +720,14 @@ async function boot() {
   $("show-ao").addEventListener("change", (e) => {
     setOcclusion((e.target as HTMLInputElement).checked);
   });
-  $<HTMLInputElement>("show-halo").checked = prefs.halo;
+  $<HTMLInputElement>("show-halo").checked = prefs.halo.visible;
   $("show-halo").addEventListener("change", (e) => {
-    prefs.halo = (e.target as HTMLInputElement).checked;
+    prefs.halo.visible = (e.target as HTMLInputElement).checked;
     savePrefs(prefs);
     // Straight away rather than at the next pointer movement: a box you
     // have just unticked while a halo is on screen is a box that did
     // nothing.
-    if (!prefs.halo) clearHover();
+    if (!prefs.halo.visible) clearHover();
   });
   $<HTMLInputElement>("show-axes").checked = prefs.axes;
   $("show-axes").addEventListener("change", (e) => {
@@ -857,6 +858,12 @@ async function boot() {
     (px) => (prefs.edges.width = px),
     () => prefs.edges.width,
     MAX_EDGE_WIDTH,
+  );
+  drawnIn(
+    "halo-size",
+    (px) => (prefs.halo.size = px),
+    () => prefs.halo.size,
+    MAX_HALO_SIZE,
   );
 
   // --- how far back it can go ---------------------------------------------
@@ -1674,7 +1681,9 @@ async function boot() {
     requestAnimationFrame(() => {
       hoverQueued = false;
       if (!hoverAt) return;
-      viewer.showHover(prefs.halo ? targetUnder(hoverAt[0], hoverAt[1]) : null);
+      viewer.showHover(
+        prefs.halo.visible ? targetUnder(hoverAt[0], hoverAt[1]) : null,
+      );
       sayAim();
     });
   }

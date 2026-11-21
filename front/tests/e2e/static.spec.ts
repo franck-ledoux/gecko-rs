@@ -244,10 +244,10 @@ test("colors can be changed, and are remembered", async ({ page }) => {
 
   // The panel is generated from the theme's keys, so there is one input per
   // color and no markup to keep in step: background, nodes, edges, faces,
-  // blocks, the geometry's corners, curves and surfaces, the mesh, and the
-  // three that say what a cell follows. Being frozen is not among them —
-  // that is a shape, not a color.
-  await expect(page.locator("#swatches input[type=color]")).toHaveCount(12);
+  // blocks, the geometry's corners, curves and surfaces, the mesh, the
+  // three that say what a cell follows, and the halo. Being frozen is not
+  // among them — that is a shape, not a color.
+  await expect(page.locator("#swatches input[type=color]")).toHaveCount(13);
   expect(
     await page.evaluate(() => (window as any).__gecko.theme()),
   ).toMatchObject({
@@ -6180,7 +6180,7 @@ test("a halo rings the cell a click would take, and the readout names it", async
     )) as [number, number],
   );
   expect(onNode.hovered).toEqual({ kind: "node", name: node });
-  expect(onNode.halo).toEqual({ marks: 1, sides: 0 });
+  expect(onNode.halo).toMatchObject({ marks: 1, sides: 0 });
   expect(onNode.aim).toBe(`picking blocks — node ${node}`);
 
   // An edge: one side of ribbon, along the segment the wireframe draws.
@@ -6194,7 +6194,7 @@ test("a halo rings the cell a click would take, and the readout names it", async
     )) as [number, number],
   );
   expect(onEdge.hovered).toEqual({ kind: "edge", name: edge });
-  expect(onEdge.halo).toEqual({ marks: 0, sides: 1 });
+  expect(onEdge.halo).toMatchObject({ marks: 0, sides: 1 });
   expect(onEdge.aim).toBe(`picking blocks — edge ${edge}`);
 
   // A face: four sides, round the quadrangle as it is drawn. Aimed at a
@@ -6214,15 +6214,30 @@ test("a halo rings the cell a click would take, and the readout names it", async
   expect(face, "some face answers for its own center").not.toBeNull();
   const onFace = await look(face!.at);
   expect(onFace.hovered).toMatchObject({ kind: "face", face: face!.name });
-  expect(onFace.halo).toEqual({ marks: 0, sides: 4 });
+  expect(onFace.halo).toMatchObject({ marks: 0, sides: 4 });
   expect(onFace.aim).toContain(`face ${face!.name} of block `);
 
   // And nothing over nothing. The corner of the canvas is background, and
   // the readout goes back to saying only which mode it is in.
   const onNothing = await look([3, 3]);
   expect(onNothing.hovered).toBeNull();
-  expect(onNothing.halo).toEqual({ marks: 0, sides: 0 });
+  expect(onNothing.halo).toMatchObject({ marks: 0, sides: 0 });
   expect(onNothing.aim).toBe("picking blocks");
+
+  // **Two meshes, for the whole session.** A ball and a thread, made the
+  // first time each is wanted and shown, hidden and given new points from
+  // then on. This is not an optimisation: a greased line disposed and
+  // built again under the pointer draws the first time and not afterwards
+  // on some drivers, which is what "an edge lit up once and then never
+  // again" was. Four kinds of cell have been pointed at by now, twice over
+  // for some of them, and the count has to have stopped at two.
+  await look(face!.at);
+  await look([3, 3]);
+  const kept = await ringed(page);
+  expect(
+    kept.halo.builds,
+    "the halo's meshes are made once and reused",
+  ).toBeLessThanOrEqual(2);
   expect(errors).toEqual([]);
 });
 
@@ -6356,14 +6371,14 @@ test("no halo on what the pointer cannot reach, or when it is turned off", async
   })) as [number, number];
   await page.mouse.move(box.x + at[0], box.y + at[1]);
   await settle();
-  expect((await ringed(page)).halo).toEqual({ marks: 1, sides: 0 });
+  expect((await ringed(page)).halo).toMatchObject({ marks: 1, sides: 0 });
 
   await openSection(page, "colors");
   await page.locator("[data-test=show-halo]").uncheck();
   await settle();
   const off = await ringed(page);
   expect(off.hovered).toBeNull();
-  expect(off.halo).toEqual({ marks: 0, sides: 0 });
+  expect(off.halo).toMatchObject({ marks: 0, sides: 0 });
   expect(off.aim).toBe("picking blocks");
   expect(errors).toEqual([]);
 });
@@ -6423,7 +6438,7 @@ test("laying a quadrangle rings the corner the next click would take", async ({
     onHandle.hovered,
     "a handle to reuse is ringed, not the surface behind it",
   ).toEqual({ kind: "node", name: node });
-  expect(onHandle.halo).toEqual({ marks: 1, sides: 0 });
+  expect(onHandle.halo).toMatchObject({ marks: 1, sides: 0 });
 
   // And away from every handle, the geometry answers — which is what the
   // click would take there. Found rather than guessed: where the square
@@ -6452,5 +6467,80 @@ test("laying a quadrangle rings the corner the next click would take", async ({
   // Given up, so the test leaves the page in the mode it found it in.
   await page.evaluate(() => (window as any).__gecko.run("lay-face"));
   await expect(page.locator("#status")).toContainText("given up");
+  expect(errors).toEqual([]);
+});
+
+test("the halo's size and color are settings, and changing one keeps it alive", async ({
+  page,
+}) => {
+  // Two controls, and one rule underneath them that is worth more than
+  // either: a preference change **tunes** the halo on screen rather than
+  // making a new one. Rebuilding it there put the glow layer into a state
+  // where it stopped compositing at all, and the halo was then gone for
+  // the rest of the session — from one drag of any slider, including
+  // sliders that have nothing to do with it.
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
+  await page.evaluate(() => (window as any).__gecko.snapTo("+z"));
+  const settle = () => page.evaluate(() => (window as any).__gecko.settled());
+  await settle();
+
+  // The panel first, and open for the whole test: opening it takes the
+  // pointer off the canvas, which puts the halo out on the way — and the
+  // halo is the thing being watched.
+  await openParams(page);
+  await settle();
+
+  // Squarely down an axis, the middle of the window is the near face.
+  const box = (await page.locator("#view").boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await settle();
+  const lit = await ringed(page);
+  expect(lit.hovered).toMatchObject({ kind: "face" });
+  expect(lit.halo.sides).toBe(4);
+  const built = lit.halo.builds as number;
+
+  // `fill` rather than a drag: it sets the slider without taking the
+  // pointer anywhere, so the halo under it is undisturbed.
+  await page.locator("[data-test=halo-size]").fill("36");
+  await settle();
+  await expect(page.locator("[data-test=halo-size-value]")).toHaveText("36px");
+  expect(
+    await page.evaluate(() => (window as any).__gecko.prefs().halo.size),
+  ).toBe(36);
+
+  // **The same halo**, wider. Not a new one — that is the whole claim.
+  const wider = await ringed(page);
+  expect(wider.hovered).toEqual(lit.hovered);
+  expect(wider.halo.sides).toBe(4);
+  expect(
+    wider.halo.builds,
+    "a size change tunes the halo it has rather than making another",
+  ).toBe(built);
+
+  // A slider that is nothing to do with the halo, which is how this was
+  // found: the handles slider used to take the glow with it.
+  await page.locator("[data-test=node-size]").fill("14");
+  await settle();
+  const after = await ringed(page);
+  expect(after.hovered).toEqual(lit.hovered);
+  expect(after.halo.builds).toBe(built);
+
+  // And the color, which is themed like every other: one swatch, light and
+  // dark, and it reaches the halo already on screen.
+  await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    g.setTheme({ ...g.theme(), halo: "#ff9500" });
+  });
+  await settle();
+  expect(await page.evaluate(() => (window as any).__gecko.theme().halo)).toBe(
+    "#ff9500",
+  );
+  const painted = await ringed(page);
+  expect(painted.halo.builds).toBe(built);
+  expect(painted.hovered).toEqual(lit.hovered);
   expect(errors).toEqual([]);
 });

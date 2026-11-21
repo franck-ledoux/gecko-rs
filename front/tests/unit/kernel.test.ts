@@ -2576,7 +2576,7 @@ describe("where the halo lands", () => {
 
     const edge = view.edgeNames[0];
     viewer.showHover({ kind: "edge", name: edge });
-    expect(viewer.haloDrawn).toEqual({ marks: 0, sides: 1 });
+    expect(viewer.haloDrawn).toMatchObject({ marks: 0, sides: 1 });
 
     // The box round the ring is the box round the edge's own two ends.
     const ends = [view.edges[0], view.edges[1]].map((n) => [
@@ -2596,7 +2596,7 @@ describe("where the halo lands", () => {
     // And a face: four sides, round the quadrangle rather than through it.
     const pick = { face: view.quadFaces[0], block: view.quadBlocks[0] };
     viewer.showHover({ kind: "face", ...pick });
-    expect(viewer.haloDrawn).toEqual({ marks: 0, sides: 4 });
+    expect(viewer.haloDrawn).toMatchObject({ marks: 0, sides: 4 });
     const quad = viewer.haloBox!;
     // A face of the unit cube is flat, so one of its three extents is nil.
     const thin = [0, 1, 2].filter(
@@ -2606,7 +2606,7 @@ describe("where the halo lands", () => {
 
     // Taken away again, and nothing is left behind.
     viewer.showHover(null);
-    expect(viewer.haloDrawn).toEqual({ marks: 0, sides: 0 });
+    expect(viewer.haloDrawn).toMatchObject({ marks: 0, sides: 0 });
     expect(viewer.haloBox).toBeNull();
   });
 });

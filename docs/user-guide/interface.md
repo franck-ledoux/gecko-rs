@@ -22,13 +22,20 @@ than necessary — see [Pictures](#pictures) below.
 
 ## The halo
 
-Point at the model and the cell a click would take is **ringed in cyan**, and
-the readout names it: `picking blocks — node 42`, or
-`picking geometry — curve 7`.
+Point at the model and the cell a click would take **lights up**, and the
+readout names it: `picking blocks — node 42`, or `picking geometry — curve 7`.
 
-A ball around a node or a geometric point, a ribbon along an edge or a curve,
-and a ring round the four sides of a face or round the border of a surface. A
-ring rather than a tint, so it never covers the thing you are squinting at.
+A ball around a node or a geometric point, a thread along an edge or a curve,
+and a frame round the four sides of a face or round the border of a surface —
+each of them glowing, which is what carries across a model of any color. A
+light around the cell rather than a tint over it, so it never covers the thing
+you are squinting at.
+
+Two settings, each where its kind lives: **how far it reaches** is the `halo`
+slider under *Drawing* in the Settings panel (the cog), in pixels like the
+handles and the edges beside it; **what color it is** is the `halo` swatch
+under *Colors* in the Display drawer, with one value for the dark theme and
+one for the light.
 
 It is the same answer the click acts on, not a second guess at it. So the
 halo refuses whatever the click refuses: nothing behind an opaque model,
@@ -43,7 +50,8 @@ about to get — and for laying it follows that mode's own preference for a
 handle that is **on** the geometry over one a fraction of a pixel in front of
 it.
 
-The box is in **Display → Colors**, beside the triad. Off is for a figure.
+The box that turns it off is in **Display → Colors**, beside the triad. Off
+is for a figure.
 
 ## Keyboard
 

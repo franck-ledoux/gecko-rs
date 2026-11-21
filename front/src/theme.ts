@@ -25,6 +25,7 @@ export interface Theme {
    *  blocking's blues and browns — so that at a glance you can tell what is
    *  the model and what is the thing the model is meant to follow. */
   corners: string;
+  halo: string;
   curves: string;
   surfaces: string;
   /** The mesh's skin. A family of its own: it is not the blocking and not
@@ -63,6 +64,7 @@ export const SWATCHES: ReadonlyArray<{ key: keyof Theme; label: string }> = [
   { key: "onCorner", label: "on a corner" },
   { key: "onCurve", label: "on a curve" },
   { key: "onSurface", label: "on a surface" },
+  { key: "halo", label: "halo" },
 ];
 
 export const PRESETS: Record<"dark" | "light", Theme> = {
@@ -73,6 +75,7 @@ export const PRESETS: Record<"dark" | "light", Theme> = {
     faces: "#4a6b8a",
     blocks: "#8a6b4a",
     corners: "#6ee7a8",
+    halo: "#2ee6ff",
     curves: "#2fbf71",
     surfaces: "#3f7d5e",
     mesh: "#4f8f7a",
@@ -87,6 +90,7 @@ export const PRESETS: Record<"dark" | "light", Theme> = {
     faces: "#8fb0cc",
     blocks: "#ccae8f",
     corners: "#1d8a52",
+    halo: "#00a6c4",
     curves: "#157f4a",
     surfaces: "#a8d5bd",
     mesh: "#8fc7b4",
@@ -159,6 +163,12 @@ export const MAX_NODE_SIZE = 24;
  *  ribbon, the width is a number somebody can choose. */
 export const EDGE_WIDTH = 2;
 export const MAX_EDGE_WIDTH = 8;
+
+/** How far the glow round the cell under the pointer reaches, in CSS
+ *  pixels, and as far as it may be asked to. Wider than a handle by
+ *  default: it is a light around the thing rather than a mark on it. */
+export const HALO_SIZE = 18;
+export const MAX_HALO_SIZE = 48;
 export const MAX_BOX_MARGIN = 0.5;
 
 /** How near a node has to come to a geometric entity to be taken by it, as
@@ -185,13 +195,14 @@ export const SMOOTH_SHARE = 0.5;
 export interface ViewPrefs {
   theme: Theme;
   axes: boolean;
-  /** Whether a halo rings the cell the pointer would take.
+  /** The glow around the cell the pointer would take: whether it is drawn,
+   *  and how far it reaches in pixels.
    *
    *  On, because picking is the hard part of putting a blocking onto a
    *  model: a corner of a block and a corner of the geometry are a pixel
    *  apart from most angles, and the halo is what says which of them a
    *  click is about to take. Off is for a figure. */
-  halo: boolean;
+  halo: { visible: boolean; size: number };
   /** The two panels, and whether the interface is on screen at all. Only
    *  one panel is ever open: they sit in the same place. */
   drawer: boolean;
@@ -253,7 +264,7 @@ export interface ViewPrefs {
 export const DEFAULTS: ViewPrefs = {
   theme: { ...PRESETS.dark },
   axes: true,
-  halo: true,
+  halo: { visible: true, size: HALO_SIZE },
   // Shut, because the whole point of a drawer is that the window belongs to
   // the model. The toolbar carries the verbs; this carries the settings.
   drawer: false,
@@ -353,7 +364,16 @@ export function loadPrefs(): ViewPrefs {
     return {
       theme: { ...DEFAULTS.theme, ...(stored.theme ?? {}) },
       axes: typeof stored.axes === "boolean" ? stored.axes : DEFAULTS.axes,
-      halo: typeof stored.halo === "boolean" ? stored.halo : DEFAULTS.halo,
+      halo: {
+        visible:
+          typeof stored.halo?.visible === "boolean"
+            ? stored.halo.visible
+            : DEFAULTS.halo.visible,
+        size: Math.max(
+          2,
+          within(stored.halo?.size, MAX_HALO_SIZE, DEFAULTS.halo.size),
+        ),
+      },
       drawer: typeof stored.drawer === "boolean" ? stored.drawer : DEFAULTS.drawer,
       params: typeof stored.params === "boolean" ? stored.params : DEFAULTS.params,
       panels: Array.isArray(stored.panels)
