@@ -6264,7 +6264,6 @@ test("what the halo rings is what the click takes", async ({ page }) => {
   // its four corners. Clicking in geometry mode toggles an entity, so every
   // probe is undone by a second click and the next one starts from nothing.
   let probed = 0;
-  const kinds = new Set<number>();
   for (let u = 0.2; u <= 0.8; u += 0.1) {
     for (let v = 0.2; v <= 0.8; v += 0.1) {
       const at: [number, number] = [box.width * u, box.height * v];
@@ -6281,7 +6280,6 @@ test("what the halo rings is what the click takes", async ({ page }) => {
         picked,
         `a click where ${JSON.stringify(hovered)} was ringed takes it`,
       ).toEqual([hovered.spot]);
-      kinds.add(hovered.spot.dim as number);
       probed += 1;
       // Back to nothing picked, for the next probe.
       await page.mouse.click(box.x + at[0], box.y + at[1]);
@@ -6289,10 +6287,47 @@ test("what the halo rings is what the click takes", async ({ page }) => {
     }
   }
   expect(probed, "the grid found something to ring").toBeGreaterThan(4);
+
+  // And one of **each** kind, found rather than hoped for. A coarse grid
+  // lands on a surface everywhere and on a corner or a curve only by luck,
+  // now that those are targets a few pixels across rather than a tenth of
+  // the model — so they are swept for.
+  const each = (await page.evaluate(
+    ([w, h]) => {
+      const g = (window as any).__gecko;
+      const found: Record<number, [number, number]> = {};
+      for (let x = 20; x < w - 20; x += 2) {
+        for (let y = 20; y < h - 20; y += 2) {
+          const t = g.target(x, y);
+          if (t && t.kind === "spot" && found[t.spot.dim] === undefined) {
+            found[t.spot.dim] = [x, y];
+          }
+        }
+      }
+      return found;
+    },
+    [box.width, box.height],
+  )) as Record<string, [number, number]>;
   expect(
-    [...kinds].sort(),
-    "and both a curve and a surface among them",
-  ).toEqual([1, 2]);
+    Object.keys(each).map(Number).sort(),
+    "a corner, a curve and a surface are all there to be pointed at",
+  ).toEqual([0, 1, 2]);
+
+  for (const [dim, at] of Object.entries(each)) {
+    await page.mouse.move(box.x + at[0], box.y + at[1]);
+    await settle();
+    const { hovered } = await ringed(page);
+    expect(hovered, `something is ringed at the ${dim}-dimensional probe`)
+      .not.toBeNull();
+    await page.mouse.click(box.x + at[0], box.y + at[1]);
+    await settle();
+    expect(
+      await page.evaluate(() => (window as any).__gecko.geomSelection()),
+      `a click takes the ${dim}-dimensional cell that was ringed`,
+    ).toEqual([hovered!.spot]);
+    await page.mouse.click(box.x + at[0], box.y + at[1]);
+    await settle();
+  }
   expect(errors).toEqual([]);
 });
 
@@ -6542,5 +6577,81 @@ test("the halo's size and color are settings, and changing one keeps it alive", 
   const painted = await ringed(page);
   expect(painted.halo.builds).toBe(built);
   expect(painted.hovered).toEqual(lit.hovered);
+  expect(errors).toEqual([]);
+});
+
+/** The same square, a hundred times across. Only the coordinates change,
+ *  so anything that behaves differently on the two is behaving differently
+ *  because of the model's size — which is the thing under test. */
+const BIG_SQUARE_MSH = SQUARE_MSH.replace(
+  /^(\d+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+)$/gm,
+  (_, n, x, y, z) =>
+    `${n} ${Number(x) * 100} ${Number(y) * 100} ${Number(z) * 100}`,
+);
+
+test("a curve is as easy to point at on a big model as on a small one", async ({
+  page,
+}) => {
+  // Classifying is done onto curves, so a curve has to be reachable with a
+  // pointer. Babylon gives a line mesh a pick tolerance of a tenth of a
+  // **world unit**, which is not a tolerance at all: on a square one unit
+  // across it swallowed the surface behind it, and on a real model a
+  // hundred units across it was thinner than the line drawn for it — a
+  // curve you can see and cannot hit. In pixels, like every other target
+  // in this application, it is the same either way.
+  const errors = await boot(page);
+  const settle = () => page.evaluate(() => (window as any).__gecko.settled());
+
+  /** How many pixels of a coarse grid reach a curve. */
+  const reachable = async () => {
+    const box = (await page.locator("#view").boundingBox())!;
+    return page.evaluate(
+      ([w, h]) => {
+        const g = (window as any).__gecko;
+        let seen = 0;
+        for (let x = 20; x < w - 20; x += 4) {
+          for (let y = 20; y < h - 20; y += 4) {
+            const t = g.target(x, y);
+            if (t && t.kind === "spot" && t.spot.dim === 1) seen += 1;
+          }
+        }
+        return seen;
+      },
+      [box.width, box.height],
+    );
+  };
+
+  const count = async (msh: string) => {
+    await page.locator("#msh").setInputFiles({
+      name: "square.msh",
+      mimeType: "text/plain",
+      buffer: Buffer.from(msh),
+    });
+    await expect(page.locator("[data-test=geom-curves]")).toHaveText("4");
+    await page.evaluate(() => (window as any).__gecko.run("recenter"));
+    await settle();
+    if (
+      (await page.evaluate(() => (window as any).__gecko.picking())) !==
+      "geometry"
+    ) {
+      await page.evaluate(() => (window as any).__gecko.run("picking"));
+      await settle();
+    }
+    return reachable();
+  };
+
+  const small = await count(SQUARE_MSH);
+  const big = await count(BIG_SQUARE_MSH);
+  expect(small, "the curves of a small model can be pointed at").toBeGreaterThan(
+    100,
+  );
+  expect(big, "and so can the curves of a model a hundred times across").toBeGreaterThan(
+    100,
+  );
+  // Framed the same way, the two pictures are the same picture, so the same
+  // pixels reach a curve in both. Loose, because the framing of a square is
+  // not identical to the pixel — the claim is that the model's size does
+  // not decide it.
+  expect(Math.abs(big - small) / small).toBeLessThan(0.25);
   expect(errors).toEqual([]);
 });

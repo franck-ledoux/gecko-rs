@@ -26,6 +26,15 @@ the day a tag was cut.
   put the glow into a state where it stopped drawing at all, so any slider
   took the halo with it. A test holds the count of meshes ever made at two.
 
+- **A geometric curve can be pointed at.** Its pick tolerance was Babylon's
+  own default, a tenth of a **world unit**: on a model a hundred units
+  across that is thinner than the line drawn for the curve, so a curve you
+  could see could not be hit — and on a model one unit across it was so
+  wide that curves swallowed clicks meant for the surface behind them. It
+  is now a few pixels, like every other target in the application, and a
+  test says the same pixels reach a curve on a model a hundred times
+  bigger.
+
   It is drawn from the same answer the click acts on, so it refuses whatever
   the click refuses: nothing behind an opaque model, nothing a group filter is
   holding back, nothing on a layer that is off. The resolution order used to

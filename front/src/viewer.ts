@@ -3948,7 +3948,6 @@ export class Viewer {
    * where the mouse is, and the mouse is in one pane.
    */
   private fitPickTolerance() {
-    if (!this.wire) return;
     const engine = this.scene.getEngine();
     const camera = this.panes[this.hovered];
     const height = engine.getRenderHeight() * camera.viewport.height;
@@ -3956,7 +3955,7 @@ export class Viewer {
     // Half, because the threshold is a radius about the line. Taken at the
     // distance to what the camera is looking at: an exact answer would be
     // per edge, and this is a click tolerance.
-    this.wire.intersectionThreshold =
+    const reach =
       (ortho === null
         ? worldSizeForPixels(
             EDGE_PICK_PIXELS,
@@ -3965,6 +3964,16 @@ export class Viewer {
             height,
           )
         : worldSizeForPixelsOrtho(EDGE_PICK_PIXELS, ortho, height)) / 2;
+    if (this.wire) this.wire.intersectionThreshold = reach;
+    // **The geometry's curves on the same terms.** They are what a
+    // classification is made on, and they were left on Babylon's own
+    // default: a tenth of a **world unit**, which on a model a hundred
+    // units across is a target thinner than the line drawn for it. A curve
+    // you can see and cannot hit is the whole reason a halo was asked for
+    // here.
+    for (const mesh of this.geomMeshes.curves) {
+      (mesh as unknown as LinesMesh).intersectionThreshold = reach;
+    }
   }
 
   get nodeCount() {

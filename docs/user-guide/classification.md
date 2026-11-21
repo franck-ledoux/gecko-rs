@@ -27,8 +27,13 @@ about a node, so one has to be nameable without being moved.
 
 A cell of the blocking and the cell of the model it goes onto sit at the same
 pixels, which is what makes both clicks awkward. Point first: the one a click
-would take is ringed and named in the readout — see
+would take glows and is named in the readout — see
 [the halo](interface.md#the-halo).
+
+A geometric curve is reached within a few **pixels** of it, whatever the model
+measures. It used to be a tenth of a world unit, which is no tolerance at all:
+on a model a hundred units across it made a curve thinner than the line drawn
+for it, and on a model one unit across it swallowed the surface behind it.
 
 ### The fast way onto a model
 
