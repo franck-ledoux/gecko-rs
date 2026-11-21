@@ -2562,3 +2562,51 @@ describe("the outline a halo is drawn along", () => {
     expect(patchOutline(positions, closed)).toEqual([]);
   });
 });
+
+describe("where the halo lands", () => {
+  it("rings an edge along that edge, and a face around that face", () => {
+    // A ring whose count is right and whose place is wrong is a ring
+    // nobody sees. `haloDrawn` says how many pieces there are; this says
+    // where they are, which is the half a count cannot carry.
+    const viewer = new Viewer(new NullEngine());
+    const kernel = new WasmKernel();
+    kernel.apply({ op: "add_block", corners: CUBE });
+    const view = decodeView(kernel.view());
+    viewer.setView(view);
+
+    const edge = view.edgeNames[0];
+    viewer.showHover({ kind: "edge", name: edge });
+    expect(viewer.haloDrawn).toEqual({ marks: 0, sides: 1 });
+
+    // The box round the ring is the box round the edge's own two ends.
+    const ends = [view.edges[0], view.edges[1]].map((n) => [
+      view.positions[n * 3],
+      view.positions[n * 3 + 1],
+      view.positions[n * 3 + 2],
+    ]);
+    const box = viewer.haloBox!;
+    expect(box, "the ring is somewhere").not.toBeNull();
+    for (let axis = 0; axis < 3; axis++) {
+      const lo = Math.min(ends[0][axis], ends[1][axis]);
+      const hi = Math.max(ends[0][axis], ends[1][axis]);
+      expect(box.min[axis]).toBeCloseTo(lo, 5);
+      expect(box.max[axis]).toBeCloseTo(hi, 5);
+    }
+
+    // And a face: four sides, round the quadrangle rather than through it.
+    const pick = { face: view.quadFaces[0], block: view.quadBlocks[0] };
+    viewer.showHover({ kind: "face", ...pick });
+    expect(viewer.haloDrawn).toEqual({ marks: 0, sides: 4 });
+    const quad = viewer.haloBox!;
+    // A face of the unit cube is flat, so one of its three extents is nil.
+    const thin = [0, 1, 2].filter(
+      (axis) => Math.abs(quad.max[axis] - quad.min[axis]) < 1e-6,
+    );
+    expect(thin, "a quadrangle of a cube is flat").toHaveLength(1);
+
+    // Taken away again, and nothing is left behind.
+    viewer.showHover(null);
+    expect(viewer.haloDrawn).toEqual({ marks: 0, sides: 0 });
+    expect(viewer.haloBox).toBeNull();
+  });
+});

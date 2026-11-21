@@ -1339,6 +1339,32 @@ export class Viewer {
   /** How much halo is actually on screen: how many balls, and how many
    *  sides of ribbon. What says the ring reached the picture and not only
    *  the field holding the answer. */
+  /**
+   * The box the ring occupies, in scene coordinates, or nothing when there
+   * is no ring.
+   *
+   * `haloDrawn` says how many pieces reached the screen; this says where
+   * they are. A ring whose count is right and whose place is wrong is a
+   * ring nobody sees, and a count alone cannot tell the two apart.
+   */
+  get haloBox(): { min: number[]; max: number[] } | null {
+    const meshes = [...(this.halo?.marks ?? []), this.halo?.wire].filter(
+      (m): m is Mesh | GreasedLineMesh => m !== undefined,
+    );
+    if (!meshes.length) return null;
+    const min = [Infinity, Infinity, Infinity];
+    const max = [-Infinity, -Infinity, -Infinity];
+    for (const mesh of meshes) {
+      mesh.computeWorldMatrix(true);
+      const box = mesh.getBoundingInfo().boundingBox;
+      for (const axis of [0, 1, 2]) {
+        min[axis] = Math.min(min[axis], box.minimumWorld.asArray()[axis]);
+        max[axis] = Math.max(max[axis], box.maximumWorld.asArray()[axis]);
+      }
+    }
+    return { min, max };
+  }
+
   get haloDrawn(): { marks: number; sides: number } {
     return { marks: this.halo?.marks.length ?? 0, sides: this.haloSides };
   }

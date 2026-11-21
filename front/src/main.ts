@@ -3082,6 +3082,7 @@ async function boot() {
     // would take, and that is state.
     hovered: () => viewer.targeted,
     halo: () => viewer.haloDrawn,
+    haloBox: () => viewer.haloBox,
     target: (x: number, y: number) => viewer.targetAt(x, y),
     theme: () => ({ ...prefs.theme }),
     setTheme: (t: Theme) => setTheme(t),
