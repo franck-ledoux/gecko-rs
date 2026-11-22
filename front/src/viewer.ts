@@ -751,6 +751,8 @@ export class Viewer {
    *  its own, which hid the curves of every real model: see `repoint`. */
   private haloBall?: Mesh;
   private haloLine?: GreasedLineMesh;
+  /** The handle the ball is on, which it follows wherever it goes. */
+  private haloFollows: Mesh | null = null;
   /** How many sides of ribbon the ring is in. Counted on the way in, like
    *  the laying mark's, rather than read back off the mesh: a greased line
    *  is free to hold its points however it likes. */
@@ -883,6 +885,7 @@ export class Viewer {
       this.rescaleHandles(camera as ArcRotateCamera);
     });
     this.scene.onBeforeRenderObservable.add(() => this.fitPickTolerance());
+    this.scene.onBeforeRenderObservable.add(() => this.followHalo());
     this.occlusion = new Occlusion(this.scene, this.camera);
     // Per frame, because the surfaces are built afresh by every edit and a
     // list that still names a disposed mesh is a crash inside a frame. It
@@ -1520,7 +1523,9 @@ export class Viewer {
     this.aimedTarget = target;
     this.haloSides = 0;
 
-    const at = target === null ? null : this.haloPoint(target);
+    const anchor = target === null ? null : this.haloAnchor(target);
+    this.haloFollows = anchor;
+    const at = anchor ? anchor.position.clone() : null;
     const lines = at || target === null ? [] : this.haloLines(target);
 
     const ball = this.ball();
@@ -1583,18 +1588,35 @@ export class Viewer {
    *  or nothing, when the target is not point-like. Taken off the mesh that
    *  draws the cell rather than worked out again, so the ring cannot land
    *  anywhere other than on what is on screen. */
-  private haloPoint(target: Target): Vector3 | null {
+  private haloAnchor(target: Target): Mesh | null {
     if (target.kind === "node") {
-      const mesh = this.nodes.find((m) => m.metadata.name === target.name);
-      return mesh ? mesh.position.clone() : null;
+      return this.nodes.find((m) => m.metadata.name === target.name) ?? null;
     }
     if (target.kind === "spot" && target.spot.dim === CORNER) {
-      const mesh = this.geomMeshes.corners.find(
-        (m) => m.name === `geom-corners-${target.spot.tag}`,
+      return (
+        this.geomMeshes.corners.find(
+          (m) => m.name === `geom-corners-${target.spot.tag}`,
+        ) ?? null
       );
-      return mesh ? mesh.position.clone() : null;
     }
     return null;
+  }
+
+  /**
+   * Keep the ball on the handle it rings, every frame.
+   *
+   * A handle being dragged moves under the ball — the drag moves the mesh,
+   * and the kernel is only told at the drop — so a ball placed once stayed
+   * where the node **was** until it was let go. It follows the mesh it was
+   * put on instead, whatever moves it.
+   */
+  private followHalo() {
+    const anchor = this.haloFollows;
+    const ball = this.haloBall;
+    if (!anchor || !ball?.isEnabled()) return;
+    if (!ball.position.equals(anchor.position)) {
+      ball.position.copyFrom(anchor.position);
+    }
   }
 
   /** The sides a halo around a line-like or patch-like target runs along,

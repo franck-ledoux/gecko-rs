@@ -20,6 +20,8 @@ the day a tag was cut.
 
   Two meshes carry it for the whole session — a ball and a thread, shown,
   hidden and given new points — rather than one made per pointer movement.
+  The ball follows the handle it is on, so a node being dragged takes its
+  halo with it instead of leaving it where the node started.
 
   **Why the line kept disappearing**, in the three ways it was reported — an
   edge that lit up once and never again, a slider that put the halo out for

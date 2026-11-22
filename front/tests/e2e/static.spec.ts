@@ -6730,3 +6730,74 @@ test("laying a quadrangle does not put out every plain-colored line", async ({
   ).toBe(true);
   expect(errors).toEqual([]);
 });
+
+test("the halo stays on a handle while it is dragged", async ({ page }) => {
+  // The drag moves the handle and tells the kernel only at the drop. The
+  // halo was placed once, when the pointer arrived, so it stayed where the
+  // node **was** until it was let go — a light around an empty spot, with
+  // the thing it was about somewhere else.
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
+  const settle = () => page.evaluate(() => (window as any).__gecko.settled());
+  await settle();
+  const name = (
+    await page.evaluate(() => (window as any).__gecko.names())
+  )[4] as number;
+  const at = (await page.evaluate(
+    (n) => (window as any).__gecko.nodeScreen(n),
+    name,
+  )) as [number, number];
+  const box = (await page.locator("#view").boundingBox())!;
+
+  /** How far the middle of the halo is from where the node is now. */
+  const apart = () =>
+    page.evaluate((n) => {
+      const g = (window as any).__gecko;
+      const ring = g.haloBox() as { min: number[]; max: number[] } | null;
+      if (!ring) return null;
+      const center = g.center() as number[];
+      const node = g.nodePosition(n) as number[];
+      return Math.hypot(
+        ...[0, 1, 2].map(
+          (k) => (ring.min[k] + ring.max[k]) / 2 + center[k] - node[k],
+        ),
+      );
+    }, name);
+
+  await page.mouse.move(box.x + at[0], box.y + at[1]);
+  await settle();
+  expect(await page.evaluate(() => (window as any).__gecko.hovered())).toEqual({
+    kind: "node",
+    name,
+  });
+  expect(await apart(), "the halo starts on the handle").toBeLessThan(1e-3);
+  const start = await page.evaluate(
+    (n) => (window as any).__gecko.nodePosition(n),
+    name,
+  );
+
+  // Pressed and moving, and **not yet let go**.
+  await page.mouse.down();
+  for (let i = 1; i <= 8; i++) {
+    await page.mouse.move(box.x + at[0] + i * 10, box.y + at[1] - i * 6);
+  }
+  await settle();
+  const moved = await page.evaluate(
+    (n) => (window as any).__gecko.nodePosition(n),
+    name,
+  );
+  expect(moved, "the handle is under way").not.toEqual(start);
+  expect(
+    await apart(),
+    "and the halo is on it, not where it started",
+  ).toBeLessThan(1e-3);
+
+  await page.mouse.up();
+  await page.waitForFunction(() =>
+    (window as any).__gecko.message().includes("moved"),
+  );
+  expect(errors).toEqual([]);
+});
