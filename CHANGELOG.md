@@ -3,7 +3,11 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
-## Unreleased
+## 0.2.3
+
+One fix to 0.2.2's halo, found because two tests began running past their
+minute: its glow was costing more than half the frame rate whenever it was
+on.
 
 - **Navigation stays fluid with a halo on screen.** The halo's glow cost
   every frame a blurred pass, which took a cube from 52 frames a second to
