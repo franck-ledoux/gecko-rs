@@ -37,6 +37,7 @@ import {
   GreasedLineMeshMaterialType,
 } from "@babylonjs/core/Materials/GreasedLine/greasedLineMaterialInterfaces";
 import type { GreasedLineSimpleMaterial } from "@babylonjs/core/Materials/GreasedLine/greasedLineSimpleMaterial";
+import { GreasedLineMaterialDefaults } from "@babylonjs/core/Materials/GreasedLine/greasedLineMaterialDefaults";
 import type { GreasedLineMesh } from "@babylonjs/core/Meshes/GreasedLine/greasedLineMesh";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { GlowLayer } from "@babylonjs/core/Layers/glowLayer";
@@ -168,6 +169,39 @@ export function repoint(line: GreasedLineMesh, lines: number[][]) {
     points * 2,
   ).fill(1);
   line.setPoints(lines);
+}
+
+/**
+ * Throw away a greased line **without** taking every other one with it.
+ *
+ * A line of one plain color, drawn with the unlit material, is given a
+ * colors texture it does not own: Babylon hands every such line the same
+ * one-pixel texture, a static on `GreasedLineMaterialDefaults`. And the
+ * material's `dispose` disposes whatever colors texture it holds — that
+ * shared one included — without clearing the static, so every line still
+ * using it, and every line made afterwards, is bound to a dead texture and
+ * is not drawn again for the rest of the session.
+ *
+ * That one upstream behaviour was all three reports about the halo. Made
+ * and thrown away per hover, it lit up once and never again; rebuilt when
+ * a slider moved, it went for good; and laying a quadrangle throws its
+ * provisional side away on every movement of the pointer, so after `⇧Q`
+ * nothing plain-colored was drawn at all — the halo, and the sides of the
+ * quadrangle being laid.
+ *
+ * So the shared texture is taken off the material before the material
+ * goes. A line with colors of its own owns its texture and keeps the
+ * ordinary path.
+ */
+export function disposeLine(line: GreasedLineMesh | undefined) {
+  if (!line) return;
+  const material = line.material as GreasedLineSimpleMaterial | null;
+  line.dispose(false, false);
+  if (!material) return;
+  const shared = GreasedLineMaterialDefaults.EmptyColorsTexture;
+  const held = material as unknown as { _colorsTexture: unknown };
+  if (shared && held._colorsTexture === shared) held._colorsTexture = null;
+  material.dispose();
 }
 
 /** Where a dragged node was let go, in model coordinates. */
@@ -709,13 +743,12 @@ export class Viewer {
   /** The halo's two meshes, **made once and kept**.
    *
    *  Shown, hidden and given new points — the idiom the grown box already
-   *  uses — rather than made per hover. Rebuilding them under a glow layer
-   *  that has been given them leaves the layer no longer compositing at
-   *  all, which was seen: one drag of any slider took the halo with it for
-   *  the rest of the session.
+   *  uses — rather than made per hover: there is nothing to gain from a
+   *  mesh and a material sixty times a second, and throwing a one-color
+   *  line away is not harmless anyway (see `disposeLine`).
    *
    *  Keeping the line means giving it new points, and that has a trap of
-   *  its own, which is what actually hid the curves: see `repoint`. */
+   *  its own, which hid the curves of every real model: see `repoint`. */
   private haloBall?: Mesh;
   private haloLine?: GreasedLineMesh;
   /** How many sides of ribbon the ring is in. Counted on the way in, like
@@ -1446,6 +1479,7 @@ export class Viewer {
     builds: number;
     widths: number;
     vertices: number;
+    textured: boolean;
   } {
     const line = this.haloLine?.isEnabled() ? this.haloLine : undefined;
     return {
@@ -1457,6 +1491,13 @@ export class Viewer {
       // so a test can say they agree.
       widths: line?.widths.length ?? 0,
       vertices: line?.getTotalVertices() ?? 0,
+      // Whether the texture the line reads its color from is still there.
+      // A dead one is drawn as nothing, whatever the rest says.
+      textured: line
+        ? !!(
+            line.material as GreasedLineSimpleMaterial | null
+          )?.colorsTexture?.getInternalTexture()
+        : false,
     };
   }
 
@@ -1506,12 +1547,11 @@ export class Viewer {
    *
    * A size and a color are read when the halo is made, so a slider dragged
    * with one on screen would otherwise leave it as it was until the
-   * pointer moved. **Tuned, not rebuilt**: throwing the meshes away and
-   * making new ones here puts the glow layer in a state where it stops
-   * compositing at all, and the halo is then gone for the rest of the
-   * session — which is what dragging any slider used to do to it. The
-   * wireframe's own width is updated in place on a resize for the same
-   * kind of reason, and this is the same idiom.
+   * pointer moved. **Tuned, not rebuilt**, as the wireframe's width is on
+   * a resize. Rebuilding it here is what used to put the halo out for the
+   * rest of the session at one drag of any slider — not, as was first
+   * thought, the glow layer, but the shared colors texture a one-color
+   * line takes down with it when it goes: see `disposeLine`.
    */
   private retuneHalo() {
     const color = Color3.FromHexString(this.prefs.theme.halo);
@@ -2217,7 +2257,7 @@ export class Viewer {
    */
   showLaying(points: readonly [number, number, number][]) {
     for (const mark of this.laying?.marks ?? []) mark.dispose();
-    this.laying?.wire?.dispose(false, true);
+    disposeLine(this.laying?.wire);
     this.laying = undefined;
     // A corner placed settles whatever was provisional about it.
     this.aimLaying([], null);
@@ -2302,7 +2342,7 @@ export class Viewer {
     points: readonly [number, number, number][],
     at: [number, number, number] | null,
   ) {
-    this.layingAim?.dispose(false, true);
+    disposeLine(this.layingAim);
     this.layingAim = undefined;
     this.layingAimSides = 0;
     if (at === null || !points.length || points.length > 3) return;

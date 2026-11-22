@@ -6226,9 +6226,8 @@ test("a halo rings the cell a click would take, and the readout names it", async
 
   // **Two meshes, for the whole session.** A ball and a thread, made the
   // first time each is wanted and shown, hidden and given new points from
-  // then on: rebuilt under the glow layer that carries them, they left it
-  // no longer drawing at all. Four kinds of cell have been pointed at by
-  // now, twice over for some, and the count has to have stopped at two.
+  // then on. Four kinds of cell have been pointed at by now, twice over
+  // for some, and the count has to have stopped at two.
   //
   // And the thread, given a face's four sides after an edge's one, has a
   // width for every vertex. Babylon keeps the width table a line was made
@@ -6515,10 +6514,10 @@ test("the halo's size and color are settings, and changing one keeps it alive", 
 }) => {
   // Two controls, and one rule underneath them that is worth more than
   // either: a preference change **tunes** the halo on screen rather than
-  // making a new one. Rebuilding it there put the glow layer into a state
-  // where it stopped compositing at all, and the halo was then gone for
-  // the rest of the session — from one drag of any slider, including
-  // sliders that have nothing to do with it.
+  // making a new one. Rebuilding it there threw a one-color line away,
+  // which takes down the colors texture every such line shares, and the
+  // halo was then gone for the rest of the session — from one drag of any
+  // slider, including sliders that have nothing to do with it.
   const errors = await boot(page);
   await page.locator("#cube").click();
   await page.waitForFunction(
@@ -6658,5 +6657,76 @@ test("a curve is as easy to point at on a big model as on a small one", async ({
   // not identical to the pixel — the claim is that the model's size does
   // not decide it.
   expect(Math.abs(big - small) / small).toBeLessThan(0.25);
+  expect(errors).toEqual([]);
+});
+
+test("laying a quadrangle does not put out every plain-colored line", async ({
+  page,
+}) => {
+  // Babylon gives every one-color greased line the same one-pixel colors
+  // texture, and its material's `dispose` disposes that shared texture
+  // without letting go of it. Laying a quadrangle throws its provisional
+  // side away on every movement of the pointer, so after `⇧Q` nothing
+  // plain-colored was drawn again: not the halo, not even the sides of the
+  // quadrangle being laid. This is the same upstream behaviour that made a
+  // halo light up once and never again, and a slider put it out for good.
+  const errors = await boot(page);
+  await openSquare(page);
+  await expect(page.locator("[data-test=geom-surfaces]")).toHaveText("1");
+  await page.evaluate(() => (window as any).__gecko.run("recenter"));
+  const settle = () => page.evaluate(() => (window as any).__gecko.settled());
+  await settle();
+  const box = (await page.locator("#view").boundingBox())!;
+  // Aimed at the geometry, which is what a curve answers to.
+  await page.evaluate(() => (window as any).__gecko.run("picking"));
+  await settle();
+
+  /** A pixel on a curve, found rather than guessed. */
+  const curve = (await page.evaluate(
+    ([w, h]) => {
+      const g = (window as any).__gecko;
+      for (let x = 20; x < w - 20; x += 2)
+        for (let y = 20; y < h - 20; y += 2) {
+          const t = g.target(x, y);
+          if (t && t.kind === "spot" && t.spot.dim === 1) return [x, y];
+        }
+      return null;
+    },
+    [box.width, box.height],
+  )) as [number, number] | null;
+
+  // Lay a quadrangle the way a hand does: the pointer travels between the
+  // clicks, and every step of it remakes the provisional side.
+  await page.evaluate(() => (window as any).__gecko.run("lay-face"));
+  const at: [number, number][] = [
+    [box.width * 0.4, box.height * 0.4],
+    [box.width * 0.6, box.height * 0.4],
+    [box.width * 0.6, box.height * 0.6],
+    [box.width * 0.4, box.height * 0.6],
+  ];
+  for (const [x, y] of at) {
+    for (let i = 1; i <= 4; i++) {
+      await page.mouse.move(box.x + x - 12 + i * 3, box.y + y);
+    }
+    await page.mouse.click(box.x + x, box.y + y);
+  }
+  await settle();
+  await expect(page.locator("#status")).toContainText("laid on");
+
+  // Then a curve. Laying hands the mouse back to the mode it found, which
+  // was the geometry.
+  expect(await page.evaluate(() => (window as any).__gecko.picking())).toBe(
+    "geometry",
+  );
+  expect(curve, "the square has a curve to point at").not.toBeNull();
+  await page.mouse.move(box.x + curve![0], box.y + curve![1]);
+  await settle();
+  const lit = await ringed(page);
+  expect(lit.hovered).toMatchObject({ kind: "spot", spot: { dim: 1 } });
+  expect(lit.halo.sides).toBeGreaterThan(0);
+  expect(
+    lit.halo.textured,
+    "the halo's color texture outlived the provisional sides thrown away",
+  ).toBe(true);
   expect(errors).toEqual([]);
 });

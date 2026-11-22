@@ -19,9 +19,19 @@ the day a tag was cut.
   rather than the plain one. Switched off in **Display → Colors**.
 
   Two meshes carry it for the whole session — a ball and a thread, shown,
-  hidden and given new points — rather than one made per pointer movement:
-  rebuilding them when a setting changed put the glow into a state where it
-  stopped drawing at all, so any slider took the halo with it.
+  hidden and given new points — rather than one made per pointer movement.
+
+  **Why the line kept disappearing**, in the three ways it was reported — an
+  edge that lit up once and never again, a slider that put the halo out for
+  good, and no halo at all after `⇧Q`. Babylon gives every one-color greased
+  line the same one-pixel colors texture, and its material's `dispose`
+  disposes that shared texture without letting go of it, so every such line
+  — and every one made afterwards — is bound to a dead texture and not drawn
+  again. A halo made per hover, a halo rebuilt by a slider, and the
+  provisional side of a quadrangle being laid, remade on every movement of
+  the pointer: each of them threw one away. Those lines now go without the
+  shared texture, and the sides of a quadrangle being laid, which had
+  stopped showing too, are back.
 
   Giving the thread new points has a trap of its own, and it is what hid
   the halo on every curve of a real model, in Chrome and in Safari alike.
