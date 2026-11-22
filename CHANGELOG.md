@@ -3,6 +3,17 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
+## Unreleased
+
+- **Navigation stays fluid with a halo on screen.** The halo's glow cost
+  every frame a blurred pass, which took a cube from 52 frames a second to
+  21 whenever the pointer rested on the model — felt exactly while
+  orbiting, zooming or dragging, when nobody reads a halo. The light now
+  goes out while the view or a dragged handle moves and comes back once
+  things are still, drawn once per still picture rather than every frame;
+  the ball and the thread stay drawn throughout. It is also no longer drawn
+  into the corner triad, which wore a small copy of it.
+
 ## 0.2.2
 
 Picking, made something you can see before you do it. The cell a click

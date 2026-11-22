@@ -6814,3 +6814,52 @@ test("the halo stays on a handle while it is dragged", async ({ page }) => {
   );
   expect(errors).toEqual([]);
 });
+
+test("the halo blooms only while the picture is still", async ({ page }) => {
+  // The bloom is a blurred pass every frame it is on, and it took a cube
+  // from 52 frames a second to 21 — felt exactly when the view is moving,
+  // and when nobody is reading a halo. So it waits for stillness; the ball
+  // and the thread stay drawn throughout.
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
+  const settle = () => page.evaluate(() => (window as any).__gecko.settled());
+  await settle();
+  const box = (await page.locator("#view").boundingBox())!;
+  /** The halo's state, two frames on — after the per-frame decision. */
+  const halo = () =>
+    page.evaluate(
+      () =>
+        new Promise((done) =>
+          requestAnimationFrame(() =>
+            requestAnimationFrame(() => done((window as any).__gecko.halo())),
+          ),
+        ),
+    ) as Promise<{ sides: number; glowing: boolean }>;
+
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await settle();
+  await page.waitForTimeout(400);
+  const still = await halo();
+  expect(still.sides, "a halo is on the face").toBe(4);
+  expect(still.glowing, "and, the view being still, it blooms").toBe(true);
+
+  // The wheel moves the camera: the light goes, the halo stays.
+  await page.mouse.wheel(0, -240);
+  const moving = await halo();
+  expect(moving.sides, "the halo is still drawn").toBe(4);
+  expect(moving.glowing, "but not lit while the view moves").toBe(false);
+
+  // And back once the view has come to rest. Polled rather than waited
+  // for: the wheel's zoom glides on for most of a second after the last
+  // notch, and the camera's own "settled" does not wait for that glide.
+  await expect
+    .poll(async () => (await halo()).glowing, {
+      message: "lit again once it is still",
+      timeout: 5000,
+    })
+    .toBe(true);
+  expect(errors).toEqual([]);
+});

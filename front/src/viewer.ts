@@ -41,6 +41,7 @@ import { GreasedLineMaterialDefaults } from "@babylonjs/core/Materials/GreasedLi
 import type { GreasedLineMesh } from "@babylonjs/core/Meshes/GreasedLine/greasedLineMesh";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { GlowLayer } from "@babylonjs/core/Layers/glowLayer";
+import { RenderTargetTexture } from "@babylonjs/core/Materials/Textures/renderTargetTexture";
 import { PointerDragBehavior } from "@babylonjs/core/Behaviors/Meshes/pointerDragBehavior";
 import "@babylonjs/core/Culling/ray";
 import type { GeometryView, MeshView, NodesView, View } from "./decode";
@@ -288,7 +289,12 @@ export const HALO_SPREAD = 2.4;
 
 /** As wide as the blur is ever asked to be. Past this the light is spread
  *  so thin that a bigger halo reads as a fainter one. */
-export const MAX_HALO_KERNEL = 64;
+export const MAX_HALO_KERNEL = 32;
+
+/** How long the picture has to be still before the halo blooms again, in
+ *  milliseconds. Long enough not to flicker between two notches of the
+ *  wheel, short enough to read as the glow simply being there. */
+export const HALO_REST_MS = 150;
 
 /** How bright the glow comes back. Over one, because the core is drawn at
  *  less than full alpha so the cell shows through it. */
@@ -767,6 +773,13 @@ export class Viewer {
   private glow?: GlowLayer;
   /** What the glow layer was last given, so it can be taken back. */
   private glowing: Mesh[] = [];
+  /** When the picture last moved, and what it looked like then — for
+   *  `quietGlow`, which keeps the bloom off while anything moves. */
+  private stillSince = 0;
+  private lastView = "";
+  /** Whether the bloom's texture has to be drawn again: the halo moved to
+   *  another cell, or was tuned, or the glow is coming back on. */
+  private glowStale = true;
   /** How many times the halo's meshes have been made.
    *
    *  Not a statistic: it is what a test can hold on to to say that a
@@ -886,6 +899,7 @@ export class Viewer {
     });
     this.scene.onBeforeRenderObservable.add(() => this.fitPickTolerance());
     this.scene.onBeforeRenderObservable.add(() => this.followHalo());
+    this.scene.onBeforeRenderObservable.add(() => this.quietGlow());
     this.occlusion = new Occlusion(this.scene, this.camera);
     // Per frame, because the surfaces are built afresh by every edit and a
     // list that still names a disposed mesh is a crash inside a frame. It
@@ -1483,6 +1497,7 @@ export class Viewer {
     widths: number;
     vertices: number;
     textured: boolean;
+    glowing: boolean;
   } {
     const line = this.haloLine?.isEnabled() ? this.haloLine : undefined;
     return {
@@ -1496,6 +1511,7 @@ export class Viewer {
       vertices: line?.getTotalVertices() ?? 0,
       // Whether the texture the line reads its color from is still there.
       // A dead one is drawn as nothing, whatever the rest says.
+      glowing: this.glow?.isEnabled ?? false,
       textured: line
         ? !!(
             line.material as GreasedLineSimpleMaterial | null
@@ -1542,9 +1558,10 @@ export class Viewer {
       this.haloSides = lines.length;
     }
 
-    // Enabled last, and only when there is something lit: a bloom over
-    // nothing is a pass that need not run.
-    if (this.glow) this.glow.isEnabled = at !== null || lines.length > 0;
+    // Whether it blooms is decided every frame, in `quietGlow`: on when
+    // something is lit **and** nothing is moving. Another cell is another
+    // picture to bloom.
+    this.glowStale = true;
   }
 
   /**
@@ -1574,6 +1591,7 @@ export class Viewer {
       material.width = this.ribbon(this.haloShare).width;
     }
     if (this.glow) this.glow.blurKernelSize = this.haloBlur;
+    this.glowStale = true;
   }
 
   /** How wide the blur is asked to be, from the size. */
@@ -1616,7 +1634,69 @@ export class Viewer {
     if (!anchor || !ball?.isEnabled()) return;
     if (!ball.position.equals(anchor.position)) {
       ball.position.copyFrom(anchor.position);
+      // A handle being dragged is something moving, like the view.
+      this.stillSince = performance.now();
     }
+  }
+
+  /**
+   * The bloom on only when the picture is still.
+   *
+   * The glow layer is not cheap: a blurred pass over its own target, every
+   * frame it is on. Measured on a cube, with a halo lit, it took the frame
+   * rate from 52 to 21 — and the wheel, the orbit and a drag are exactly
+   * when a slow frame is felt, and when nobody is looking at a halo. On a
+   * runner with no graphics card it was slow enough for sixty notches of
+   * the wheel to run past a test's minute.
+   *
+   * So it goes off the moment any pane's camera moves, or the handle under
+   * the ball does, and comes back once things have been still for
+   * `HALO_REST_MS`. The halo itself — the ball, the thread — stays drawn
+   * throughout; only the light around it waits.
+   */
+  private quietGlow() {
+    const now = performance.now();
+    // Rounded, so that the last few millionths an inertial camera sheds as
+    // it comes to rest do not count as moving: compared exactly, a view
+    // that has stopped for every eye kept the bloom off indefinitely.
+    const view = PANES.map((pane) => {
+      const c = this.panes[pane];
+      const scale = Math.max(Math.abs(c.radius), 1e-9);
+      const angle = (a: number) => a.toFixed(4);
+      const length = (l: number) => (l / scale).toFixed(4);
+      return [
+        angle(c.alpha),
+        angle(c.beta),
+        c.radius.toPrecision(5),
+        length(c.target.x),
+        length(c.target.y),
+        length(c.target.z),
+        length(c.orthoTop ?? 0),
+        length(c.orthoLeft ?? 0),
+      ].join(",");
+    }).join("|");
+    if (view !== this.lastView) {
+      this.lastView = view;
+      this.stillSince = now;
+    }
+    if (!this.glow) return;
+    const lit = this.glowing.some((mesh) => mesh.isEnabled());
+    const on = lit && now - this.stillSince >= HALO_REST_MS;
+    if (on && !this.glow.isEnabled) this.glowStale = true;
+    if (this.glow.isEnabled !== on) this.glow.isEnabled = on;
+    if (!on) return;
+    // **Rendered once per still picture**, not every frame. A still view
+    // with a still halo blooms the same way each time, and the blurred
+    // pass is the whole of the glow's cost: drawn once and composited
+    // after that, it costs a still view next to nothing. A split window
+    // keeps rendering every frame — one texture for four cameras would
+    // put the 3-D pane's light in all four.
+    const texture = this.glow.mainTexture;
+    const once = !this.quad;
+    const rate = once ? RenderTargetTexture.REFRESHRATE_RENDER_ONCE : 1;
+    if (texture.refreshRate !== rate) texture.refreshRate = rate;
+    if (once && this.glowStale) texture.resetRefreshCounter();
+    this.glowStale = false;
   }
 
   /** The sides a halo around a line-like or patch-like target runs along,
@@ -1781,8 +1861,14 @@ export class Viewer {
   private lightUp(mesh: Mesh | GreasedLineMesh) {
     if (!this.glow) {
       this.glow = new GlowLayer("halo", this.scene, {
-        mainTextureFixedSize: 512,
+        // A quarter of the pixels of 512, for a light that is blurred
+        // anyway: measured, it is a third of the glow's cost gone.
+        mainTextureFixedSize: 256,
         blurKernelSize: 32,
+        // The 3-D pane's camera and no other. Without it the layer is drawn
+        // for every camera that renders — the corner triad included, which
+        // then wore a small copy of the halo's light in its corner.
+        camera: this.camera,
       });
       this.glow.intensity = HALO_INTENSITY;
     }
