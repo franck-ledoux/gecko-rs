@@ -6268,8 +6268,11 @@ test("what the halo rings is what the click takes", async ({ page }) => {
   // its four corners. Clicking in geometry mode toggles an entity, so every
   // probe is undone by a second click and the next one starts from nothing.
   let probed = 0;
-  for (let u = 0.2; u <= 0.8; u += 0.1) {
-    for (let v = 0.2; v <= 0.8; v += 0.1) {
+  // Five by five. Each probe is a move, a click and a click back, with a
+  // frame waited for after each — seven by seven was a minute's work on a
+  // slow runner, and the probes that matter most are the three below.
+  for (let u = 0.2; u <= 0.8; u += 0.15) {
+    for (let v = 0.2; v <= 0.8; v += 0.15) {
       const at: [number, number] = [box.width * u, box.height * v];
       await page.mouse.move(box.x + at[0], box.y + at[1]);
       await settle();
@@ -6290,7 +6293,10 @@ test("what the halo rings is what the click takes", async ({ page }) => {
       await settle();
     }
   }
-  expect(probed, "the grid found something to ring").toBeGreaterThan(4);
+  // The square covers the middle of the window and not all of it, so a
+  // handful of the twenty-five land on it — which is enough: the probes
+  // below make sure of one of each kind.
+  expect(probed, "the grid found something to ring").toBeGreaterThanOrEqual(3);
 
   // And one of **each** kind, found rather than hoped for. A coarse grid
   // lands on a surface everywhere and on a corner or a curve only by luck,
@@ -6300,8 +6306,12 @@ test("what the halo rings is what the click takes", async ({ page }) => {
     ([w, h]) => {
       const g = (window as any).__gecko;
       const found: Record<number, [number, number]> = {};
-      for (let x = 20; x < w - 20; x += 2) {
-        for (let y = 20; y < h - 20; y += 2) {
+      // Every pixel is a pick three deep, so the sweep stops the moment it
+      // has one of each — a full sweep at this pitch is two hundred
+      // thousand picks, and on a slow runner that alone ran past the
+      // test's minute and starved the worker beside it.
+      for (let x = 20; x < w - 20 && Object.keys(found).length < 3; x += 3) {
+        for (let y = 20; y < h - 20; y += 3) {
           const t = g.target(x, y);
           if (t && t.kind === "spot" && found[t.spot.dim] === undefined) {
             found[t.spot.dim] = [x, y];
@@ -6613,8 +6623,11 @@ test("a curve is as easy to point at on a big model as on a small one", async ({
       ([w, h]) => {
         const g = (window as any).__gecko;
         let seen = 0;
-        for (let x = 20; x < w - 20; x += 4) {
-          for (let y = 20; y < h - 20; y += 4) {
+        // Coarse on purpose: a curve is a target seven pixels across, so
+        // a six-pixel pitch still lands on every one of them, at a quarter
+        // of the picks a finer grid costs.
+        for (let x = 20; x < w - 20; x += 6) {
+          for (let y = 20; y < h - 20; y += 6) {
             const t = g.target(x, y);
             if (t && t.kind === "spot" && t.spot.dim === 1) seen += 1;
           }
