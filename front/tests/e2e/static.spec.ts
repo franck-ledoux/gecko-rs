@@ -6226,12 +6226,17 @@ test("a halo rings the cell a click would take, and the readout names it", async
 
   // **Two meshes, for the whole session.** A ball and a thread, made the
   // first time each is wanted and shown, hidden and given new points from
-  // then on. This is not an optimisation: a greased line disposed and
-  // built again under the pointer draws the first time and not afterwards
-  // on some drivers, which is what "an edge lit up once and then never
-  // again" was. Four kinds of cell have been pointed at by now, twice over
-  // for some of them, and the count has to have stopped at two.
-  await look(face!.at);
+  // then on: rebuilt under the glow layer that carries them, they left it
+  // no longer drawing at all. Four kinds of cell have been pointed at by
+  // now, twice over for some, and the count has to have stopped at two.
+  //
+  // And the thread, given a face's four sides after an edge's one, has a
+  // width for every vertex. Babylon keeps the width table a line was made
+  // with, and the vertices past it are drawn or not as the GPU pleases —
+  // here, yes; on a Mac, no. That was every curve of a real model.
+  const onFaceAgain = await look(face!.at);
+  expect(onFaceAgain.halo.vertices).toBe(16);
+  expect(onFaceAgain.halo.widths).toBe(onFaceAgain.halo.vertices);
   await look([3, 3]);
   const kept = await ringed(page);
   expect(

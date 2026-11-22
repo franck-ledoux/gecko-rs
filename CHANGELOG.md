@@ -19,12 +19,18 @@ the day a tag was cut.
   rather than the plain one. Switched off in **Display → Colors**.
 
   Two meshes carry it for the whole session — a ball and a thread, shown,
-  hidden and given new points — rather than one made per pointer movement.
-  A line disposed and built again under the pointer draws the first time
-  and not afterwards on some drivers, which is what "an edge lit up once
-  and then never again" was; and rebuilding them when a setting changed
-  put the glow into a state where it stopped drawing at all, so any slider
-  took the halo with it. A test holds the count of meshes ever made at two.
+  hidden and given new points — rather than one made per pointer movement:
+  rebuilding them when a setting changed put the glow into a state where it
+  stopped drawing at all, so any slider took the halo with it.
+
+  Giving the thread new points has a trap of its own, and it is what hid
+  the halo on every curve of a real model, in Chrome and in Safari alike.
+  Babylon's `setPoints` keeps the width table the line was made with, so a
+  line made for one segment and given twenty has a width for two points and
+  none for the rest; what the GPU draws for those is its own business.
+  Headless Chromium draws a small overrun, which is why the square used in
+  the tests never showed it; a Mac draws nothing. The line is now handed a
+  width per point with its points, and a test says the two counts agree.
 
 - **A geometric curve can be pointed at.** Its pick tolerance was Babylon's
   own default, a tenth of a **world unit**: on a model a hundred units

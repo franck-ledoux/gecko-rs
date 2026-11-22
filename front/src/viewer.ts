@@ -138,6 +138,38 @@ export function sameTarget(a: Target | null, b: Target | null): boolean {
   return a.name === (b as { name: number }).name;
 }
 
+/**
+ * Give a greased line new points, **and widths to go with them**.
+ *
+ * `setPoints` keeps the width table the line was made with. Upstream,
+ * `GreasedLineMesh._updateWidths` is empty — "intentionally left blank" —
+ * so a line made with one segment and then given twenty has a width for
+ * the first two points and nothing for the other forty: the buffer the
+ * shader reads them from is the size it was, and what a GPU returns for a
+ * read past its end is its own business. Headless Chromium happens to
+ * return something drawable for a small overrun; Chrome and Safari on a
+ * Mac return nothing, and the line is not drawn at all.
+ *
+ * That is why a halo along an edge lit up and one along a curve of B10 did
+ * not: an edge is one segment, the size the line was made at, and a curve
+ * of a real model is twenty. The fix is the table Babylon would have built
+ * itself had the line been made with these points — one width per side of
+ * every point — put in place before the buffers are made from it.
+ *
+ * The table is written to the private field because the public setter
+ * updates the **old** buffer, which is the wrong size, before `setPoints`
+ * makes the new one. A test reads the public getter back, so a Babylon
+ * that renames the field fails a test rather than a picture.
+ */
+export function repoint(line: GreasedLineMesh, lines: number[][]) {
+  let points = 0;
+  for (const one of lines) points += one.length / 3;
+  (line as unknown as { _widths: number[] })._widths = new Array(
+    points * 2,
+  ).fill(1);
+  line.setPoints(lines);
+}
+
 /** Where a dragged node was let go, in model coordinates. */
 export type Drop = (
   name: number,
@@ -676,12 +708,14 @@ export class Viewer {
   private aimedTarget: Target | null = null;
   /** The halo's two meshes, **made once and kept**.
    *
-   *  Not made per hover, which is how this started and what was wrong with
-   *  it: a greased line disposed and built again under the pointer renders
-   *  the first time and not afterwards on some drivers, which is exactly
-   *  the shape of "an edge lit up once and then never again". One mesh
-   *  each, shown, hidden and given new points — the idiom the grown box
-   *  already uses. */
+   *  Shown, hidden and given new points — the idiom the grown box already
+   *  uses — rather than made per hover. Rebuilding them under a glow layer
+   *  that has been given them leaves the layer no longer compositing at
+   *  all, which was seen: one drag of any slider took the halo with it for
+   *  the rest of the session.
+   *
+   *  Keeping the line means giving it new points, and that has a trap of
+   *  its own, which is what actually hid the curves: see `repoint`. */
   private haloBall?: Mesh;
   private haloLine?: GreasedLineMesh;
   /** How many sides of ribbon the ring is in. Counted on the way in, like
@@ -1406,11 +1440,23 @@ export class Viewer {
     return { min, max };
   }
 
-  get haloDrawn(): { marks: number; sides: number; builds: number } {
+  get haloDrawn(): {
+    marks: number;
+    sides: number;
+    builds: number;
+    widths: number;
+    vertices: number;
+  } {
+    const line = this.haloLine?.isEnabled() ? this.haloLine : undefined;
     return {
       marks: this.haloBall?.isEnabled() ? 1 : 0,
       sides: this.haloSides,
       builds: this.haloBuilds,
+      // One width per vertex is what the shader reads; fewer is a line
+      // drawn in part or not at all, depending on the GPU. Both numbers,
+      // so a test can say they agree.
+      widths: line?.widths.length ?? 0,
+      vertices: line?.getTotalVertices() ?? 0,
     };
   }
 
@@ -1446,7 +1492,7 @@ export class Viewer {
     const line = this.line();
     line.setEnabled(lines.length > 0);
     if (lines.length) {
-      line.setPoints(lines);
+      repoint(line, lines);
       this.haloSides = lines.length;
     }
 

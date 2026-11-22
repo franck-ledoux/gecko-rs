@@ -2597,6 +2597,17 @@ describe("where the halo lands", () => {
     const pick = { face: view.quadFaces[0], block: view.quadBlocks[0] };
     viewer.showHover({ kind: "face", ...pick });
     expect(viewer.haloDrawn).toMatchObject({ marks: 0, sides: 4 });
+    // **A width for every vertex.** The line was made for the edge — one
+    // segment, four vertices — and has just been given four segments.
+    // Babylon's `setPoints` keeps the old width table, so without being
+    // handed a new one the twelve vertices past the fourth have no width,
+    // and whether they are drawn is up to the GPU: headless Chromium draws
+    // a small overrun, a Mac draws nothing. That was every curve of B10.
+    const drawn = viewer.haloDrawn;
+    expect(drawn.vertices).toBe(16);
+    expect(drawn.widths, "one width per vertex of the line").toBe(
+      drawn.vertices,
+    );
     const quad = viewer.haloBox!;
     // A face of the unit cube is flat, so one of its three extents is nil.
     const thin = [0, 1, 2].filter(
