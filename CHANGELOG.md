@@ -3,62 +3,42 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
-## Unreleased
+## 0.2.2
+
+Picking, made something you can see before you do it. The cell a click
+would take lights up under the pointer and is named, which is what
+classifying and laying quadrangles needed most: a corner of a block and a
+corner of the model are a pixel apart from most angles.
 
 - **A halo under the pointer.** The cell a click would take glows before
   the click, and the readout names it — `picking blocks — node 42`,
-  `picking geometry — curve 7`. A ball around a point, a thread along a
-  line, a frame round the sides of a face or the border of a surface; a
-  light around the cell rather than a tint over it, so it never covers what
-  you are looking at. How far it reaches is a slider under *Drawing*, and
-  its color a swatch under *Colors*. For the two operations where picking is the hard part:
-  classifying, where a cell of the blocking and the cell of the model it goes
-  onto are at the same pixels, and laying a quadrangle, where each of the four
-  clicks may land on a point, a curve or a handle to reuse. Laying has its own
-  preference for a handle that is on the geometry, and the halo follows it
-  rather than the plain one. Switched off in **Display → Colors**.
+  `picking geometry — curve 7`. A ball around a node or a geometric point,
+  a thread along an edge or a curve, a frame round the sides of a face or
+  the border of a surface: a light around the cell rather than a tint over
+  it, so it never covers what you are looking at. It works in both picking
+  modes and while a quadrangle is being laid, where it follows laying's own
+  preference for a handle that is on the geometry; a node being dragged
+  takes its halo with it.
 
-  Two meshes carry it for the whole session — a ball and a thread, shown,
-  hidden and given new points — rather than one made per pointer movement.
-  The ball follows the handle it is on, so a node being dragged takes its
-  halo with it instead of leaving it where the node started.
+  It is drawn from the same answer the click acts on, so it refuses
+  whatever the click refuses: nothing behind an opaque model, nothing a
+  group filter is holding back, nothing on a layer that is off. How far it
+  reaches is the `halo` slider under *Drawing* in the Settings panel, its
+  color the `halo` swatch under *Colors*, and the box that turns it off is
+  beside the triad.
 
-  **Why the line kept disappearing**, in the three ways it was reported — an
-  edge that lit up once and never again, a slider that put the halo out for
-  good, and no halo at all after `⇧Q`. Babylon gives every one-color greased
-  line the same one-pixel colors texture, and its material's `dispose`
-  disposes that shared texture without letting go of it, so every such line
-  — and every one made afterwards — is bound to a dead texture and not drawn
-  again. A halo made per hover, a halo rebuilt by a slider, and the
-  provisional side of a quadrangle being laid, remade on every movement of
-  the pointer: each of them threw one away. Those lines now go without the
-  shared texture, and the sides of a quadrangle being laid, which had
-  stopped showing too, are back.
+- **A geometric curve can be pointed at.** Its pick tolerance was a tenth
+  of a **world unit**: on a model a hundred units across that is thinner
+  than the line drawn for the curve, so a curve you could see could not be
+  hit — and on a model one unit across curves swallowed the clicks meant
+  for the surface behind them. It is now a few pixels, like every other
+  target, whatever the model measures.
 
-  Giving the thread new points has a trap of its own, and it is what hid
-  the halo on every curve of a real model, in Chrome and in Safari alike.
-  Babylon's `setPoints` keeps the width table the line was made with, so a
-  line made for one segment and given twenty has a width for two points and
-  none for the rest; what the GPU draws for those is its own business.
-  Headless Chromium draws a small overrun, which is why the square used in
-  the tests never showed it; a Mac draws nothing. The line is now handed a
-  width per point with its points, and a test says the two counts agree.
-
-- **A geometric curve can be pointed at.** Its pick tolerance was Babylon's
-  own default, a tenth of a **world unit**: on a model a hundred units
-  across that is thinner than the line drawn for the curve, so a curve you
-  could see could not be hit — and on a model one unit across it was so
-  wide that curves swallowed clicks meant for the surface behind them. It
-  is now a few pixels, like every other target in the application, and a
-  test says the same pixels reach a curve on a model a hundred times
-  bigger.
-
-  It is drawn from the same answer the click acts on, so it refuses whatever
-  the click refuses: nothing behind an opaque model, nothing a group filter is
-  holding back, nothing on a layer that is off. The resolution order used to
-  be written three times over in three listeners; it is one function now, and
-  a test says the ring and the click take the same cell at every pixel it
-  probes.
+- **The sides of a quadrangle being laid show again.** Laying remakes its
+  provisional side at every movement of the pointer, and throwing one away
+  took down the colors texture every one-color line shares — so after the
+  first movement, neither those sides nor any other plain-colored line was
+  drawn again. Found because the halo went dark the same way.
 
 ## 0.2.1
 
