@@ -2880,7 +2880,19 @@ export class Viewer {
     this.wire?.dispose(false, true);
     this.wire = CreateGreasedLine(
       "edges",
-      { points: lines, updatable: true },
+      {
+        points: lines,
+        updatable: true,
+        // Which color each vertex reads, said rather than left to the
+        // ribbon. Left to it, it numbers them by **point** across all its
+        // lines, so edge k read the colors of edges 2k and 2k + 1 off a
+        // table of one per edge. And it reads entry i at i / width, the
+        // boundary between two texels, which is only right as long as the
+        // rounding goes one way. So: the four vertices of edge k (two per
+        // end) all read the middle of entry k. Kept by `setPoints`, which is right
+        // while the number of edges is the same, the only time it is used.
+        colorPointers: lines.flatMap((_, k) => [k, k, k, k].map((i) => i + 0.5)),
+      },
       {
         colors: colors,
         useColors: true,

@@ -1792,6 +1792,110 @@ test("a refused pillowing selects the pillow surface that would pass", async ({
   expect(errors).toEqual([]);
 });
 
+test("every edge is drawn in the color of what it is on", async ({ page }) => {
+  // A block resting on the cube, cut in half: the edges round the cube's
+  // corners are on its curves, the ones the cut made across its walls are
+  // on its surfaces. The ribbon numbers its colors by point, so a table of
+  // one color per edge drew edge k in the colors of edges 2k and 2k + 1.
+  const errors = await boot(page);
+  await page.evaluate(EDGE_NEAR);
+  const msh = await readFile(
+    "../crates/gecko-lua/tests/fixtures/cube.msh",
+    "utf8",
+  );
+  await page.evaluate(
+    (m) => (window as any).__gecko.loadGeometry("cube.msh", m),
+    msh,
+  );
+  await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    g.apply({ op: "box_geometry", surfaces: [], margin: 0 });
+    g.apply({ op: "classify", tolerance: 0.02 });
+  });
+  await page.evaluate(() => (window as any).__gecko.refresh());
+  const edge = (await page.evaluate(() => edgeNear([0.5, 0, 0]))) as number;
+  await page.evaluate(
+    (e) =>
+      (window as any).__gecko.apply({ op: "split_sheet", edge: e, at: 0.5 }),
+    edge,
+  );
+  await page.evaluate(() => (window as any).__gecko.refresh());
+  await page.evaluate(() => (window as any).__gecko.settled());
+  expect(
+    await page.evaluate(() => (window as any).__gecko.edgeNames().length),
+  ).toBe(20);
+  // Nothing in front of any edge, and nothing drawn along it: the faces
+  // would tint the ones behind them, the model's own curves lie on top of
+  // the edges on them.
+  await page.evaluate(async () => {
+    const g = (window as any).__gecko;
+    for (const what of ["faces", "blocks", "surfaces", "curves"])
+      if (g.prefs()[what].visible) await g.run(what);
+  });
+  await page.waitForFunction(() => {
+    const p = (window as any).__gecko.prefs();
+    return ["faces", "blocks", "surfaces", "curves"].every(
+      (w) => !p[w].visible,
+    );
+  });
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  const wrong = (await page.evaluate(async () => {
+    const g = (window as any).__gecko;
+    const theme = g.prefs().theme;
+    const hex = (h: string) =>
+      [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+    const looks = {
+      curve: hex(theme.onCurve),
+      surface: hex(theme.onSurface),
+      plain: hex(theme.edges),
+    };
+    const shot = await g.capture({ scale: 1, transparent: false });
+    const img = await createImageBitmap(await (await fetch(shot)).blob());
+    const canvas = new OffscreenCanvas(img.width, img.height);
+    const cx = canvas.getContext("2d")!;
+    cx.drawImage(img, 0, 0);
+    const k = img.width / document.querySelector("#view")!.clientWidth;
+    const far = (p: ArrayLike<number>, q: number[]) =>
+      Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+    const out: string[] = [];
+    let seen = 0;
+    for (const e of g.edgeNames() as number[]) {
+      // On two of the cube's walls is on a curve, on one is on a surface.
+      const walls = (g.edgeMidpoint(e) as number[]).filter(
+        (v) => Math.abs(v) < 1e-6 || Math.abs(v - 1) < 1e-6,
+      ).length;
+      const want = walls === 2 ? "curve" : "surface";
+      const [x, y] = g.edgeScreen(e);
+      seen++;
+      // The color nearest any pixel round the middle.
+      let best = "";
+      let closest = Infinity;
+      for (let dx = -2; dx <= 2; dx++)
+        for (let dy = -2; dy <= 2; dy++) {
+          const d = cx.getImageData(
+            Math.round((x + dx) * k),
+            Math.round((y + dy) * k),
+            1,
+            1,
+          ).data;
+          for (const [name, c] of Object.entries(looks)) {
+            const gap = far(d, c);
+            if (gap < closest) {
+              closest = gap;
+              best = name;
+            }
+          }
+        }
+      if (best !== want) out.push(`edge ${e}: ${best}, not ${want}`);
+    }
+    return { out, seen };
+  })) as { out: string[]; seen: number };
+  expect(wrong.out).toEqual([]);
+  expect(wrong.seen).toBe(20);
+  expect(errors).toEqual([]);
+});
+
 /** The color in the middle of the canvas, as three numbers. */
 async function centerPixel(page: import("@playwright/test").Page) {
   return page.evaluate(() => {

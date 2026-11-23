@@ -22,6 +22,11 @@ moves, and a pillowing never takes a cell beside it off the model.
   offers the blocks behind the pillow surface instead when those would pass,
   and the page selects their faces, so `P` again pillows them.
   The `tolerance` of `pillow` and `pillow_chord` is no longer read.
+- **Edges are drawn in the color of what they are on.** Colored by
+  classification, an edge could wear the color of another edge — a curve's
+  edge drawn as on a surface, and the other way round — and the later half
+  of the edges the plain wireframe's color. The wireframe read its color
+  table two entries per edge where it was given one.
 - **A pillow surface across a ring of blocks is no longer refused.** A wall
   from a hole's wall to the outer wall, across the blocks round the hole, was
   refused because the blocks on either side still reach each other the other
