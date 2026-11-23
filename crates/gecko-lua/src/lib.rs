@@ -465,7 +465,29 @@ fn answer(lua: &Lua, json: &str) -> mlua::Result<Value> {
 
 /// The n-th positional argument, as JSON.
 fn at(lua: &Lua, args: &Variadic<Value>, n: usize) -> mlua::Result<Json> {
-    lua.from_value(args.get(n).cloned().unwrap_or(Value::Nil))
+    let value: Json = lua.from_value(args.get(n).cloned().unwrap_or(Value::Nil))?;
+    Ok(empty_as_list(value))
+}
+
+/// An empty table as an empty list, however deep.
+///
+/// Lua has one kind of table, and an empty one says nothing about whether
+/// it was meant as a list or as a set of named fields: it arrives as an
+/// empty map. Every empty table a command takes is a list — `group("A",
+/// {})`, `surfaces = {}` — and an empty map of options means no options
+/// either way, so this is always the right reading. Without it, a script
+/// the page wrote, with a group emptied in its history, stopped there.
+fn empty_as_list(value: Json) -> Json {
+    match value {
+        Json::Object(map) if map.is_empty() => Json::Array(Vec::new()),
+        Json::Object(map) => Json::Object(
+            map.into_iter()
+                .map(|(k, v)| (k, empty_as_list(v)))
+                .collect(),
+        ),
+        Json::Array(many) => Json::Array(many.into_iter().map(empty_as_list).collect()),
+        other => other,
+    }
 }
 
 /// The same, as a list: one node or several, written either way.

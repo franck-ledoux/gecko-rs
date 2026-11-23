@@ -22,6 +22,10 @@ moves, and a pillowing never takes a cell beside it off the model.
   offers the blocks behind the pillow surface instead when those would pass,
   and the page selects their faces, so `P` again pillows them.
   The `tolerance` of `pillow` and `pillow_chord` is no longer read.
+- **A script with an empty list in it runs.** `gecko.group("A", {})` — which
+  the page writes into the history when a group is emptied — was refused
+  with "invalid type: map, expected u32", so a saved script stopped there.
+  An empty Lua table is now read as an empty list.
 - **Edges are drawn in the color of what they are on.** Colored by
   classification, an edge could wear the color of another edge — a curve's
   edge drawn as on a surface, and the other way round — and the later half

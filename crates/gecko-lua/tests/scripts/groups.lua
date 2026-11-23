@@ -50,3 +50,14 @@ local file = gecko.vtk()
 assert(file:find("SCALARS water int 1", 1, true), "the group is a variable of the mesh")
 assert(not file:find("looking", 1, true), "a group that was dropped is not")
 print("groups: " .. #left .. " left, " .. gecko.stats().blocks .. " blocks")
+
+-- An empty list is a list. Lua cannot tell an empty table meant as a list
+-- from one meant as named fields, and the page writes `{}` into a script
+-- when a group is emptied; replaying that script has to work.
+gecko.group("empty", {})
+gecko.group("empty", {}, { written = false })
+local found
+for _, g in ipairs(gecko.groups()) do if g.name == "empty" then found = g end end
+assert(found and found.blocks == 0, "a group of nothing")
+assert(not found.written, "and its option still taken")
+gecko.ungroup("water", {})
