@@ -3,7 +3,7 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
-## Unreleased
+## 0.2.4
 
 Pillowing, given rules. What can be pillowed is now checked before a node
 moves, and a pillowing never takes a cell beside it off the model.
