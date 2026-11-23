@@ -22,6 +22,11 @@ moves, and a pillowing never takes a cell beside it off the model.
   offers the blocks behind the pillow surface instead when those would pass,
   and the page selects their faces, so `P` again pillows them.
   The `tolerance` of `pillow` and `pillow_chord` is no longer read.
+- **A pillow surface across a ring of blocks is no longer refused.** A wall
+  from a hole's wall to the outer wall, across the blocks round the hole, was
+  refused because the blocks on either side still reach each other the other
+  way round. The two sides are now told apart round each node of the pillow
+  surface.
 
 ## 0.2.3
 

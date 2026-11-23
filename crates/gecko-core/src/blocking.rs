@@ -563,14 +563,19 @@ impl Blocking {
     /// not drag the other with it.
     ///
     /// Where the map unsewed β₃ and left honeycomb to split whatever vertex
-    /// orbits came apart, here it is said outright. The blocks are grouped
-    /// by whether they can reach each other **without crossing the patch**;
-    /// the group holding the chosen blocks keeps the cells of the patch,
-    /// and every other group is handed its own copy of them.
+    /// orbits came apart, here it is said outright, **node by node**. Round
+    /// each node of the patch, the blocks having it as a corner are grouped
+    /// by whether they reach each other through a face holding that node
+    /// that is not in the patch. The group holding a block behind the patch
+    /// is handed a copy of the node; the rest keep it.
     ///
-    /// A group that can reach the chosen blocks anyway — two blocks joined
-    /// along another face as well — is refused, because there is no space
-    /// to open up between them.
+    /// Round the node, not round the whole structure: the blocks on either
+    /// side of a wall across a ring of blocks reach each other the other way
+    /// round the ring, and at the wall they are still apart.
+    ///
+    /// A node whose two sides meet anyway — two blocks joined there along
+    /// another face as well — is refused, because there is no space to open
+    /// up between them.
     ///
     /// Returns where each node of the patch went on the far side, which is
     /// what a caller laying a layer into the gap needs: the far copy did
@@ -580,10 +585,56 @@ impl Blocking {
         picked: &[(FaceId, BlockId)],
     ) -> Result<HashMap<NodeId, NodeId>, BlockingError> {
         let cut: HashSet<FaceId> = picked.iter().map(|(face, _)| *face).collect();
-        let front: HashSet<BlockId> = picked.iter().map(|(_, block)| *block).collect();
 
-        // Which blocks can reach which without crossing the patch.
-        let mut group: HashMap<BlockId, BlockId> = HashMap::new();
+        // The far side of each face of the patch, and what it holds.
+        let mut behind: Vec<(FaceId, Side)> = Vec::new();
+        for (face, block) in picked {
+            let f = self.faces.get(*face).expect("live");
+            if let Some(other) = f.sides.iter().flatten().find(|s| s.block != *block) {
+                behind.push((*face, *other));
+            }
+        }
+        if behind.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        // The nodes to split, and what is round each of them.
+        let mut split: Vec<NodeId> = Vec::new();
+        for (face, _) in &behind {
+            for node in self.faces.get(*face).expect("live").nodes {
+                if !split.contains(&node) {
+                    split.push(node);
+                }
+            }
+        }
+        let wanted: HashSet<NodeId> = split.iter().copied().collect();
+        let mut round_blocks: HashMap<NodeId, Vec<BlockId>> = HashMap::new();
+        for (id, block) in self.blocks.iter() {
+            for node in block.nodes {
+                if wanted.contains(&node) {
+                    round_blocks.entry(node).or_default().push(id);
+                }
+            }
+        }
+        let mut round_faces: HashMap<NodeId, Vec<[BlockId; 2]>> = HashMap::new();
+        for (id, face) in self.faces.iter() {
+            if cut.contains(&id) {
+                continue;
+            }
+            let [Some(a), Some(b)] = face.sides else {
+                continue;
+            };
+            for node in face.nodes {
+                if wanted.contains(&node) {
+                    round_faces
+                        .entry(node)
+                        .or_default()
+                        .push([a.block, b.block]);
+                }
+            }
+        }
+
+        // Which blocks round each node are on the far side of it.
         fn root(group: &HashMap<BlockId, BlockId>, mut b: BlockId) -> BlockId {
             while let Some(up) = group.get(&b) {
                 if *up == b {
@@ -593,39 +644,54 @@ impl Blocking {
             }
             b
         }
-        for (id, _) in self.blocks.iter() {
-            group.insert(id, id);
-        }
-        for (id, face) in self.faces.iter() {
-            if cut.contains(&id) {
-                continue;
+        let mut far_at: HashMap<NodeId, HashSet<BlockId>> = HashMap::new();
+        for node in &split {
+            let mut group: HashMap<BlockId, BlockId> = HashMap::new();
+            for b in round_blocks.get(node).into_iter().flatten() {
+                group.insert(*b, *b);
             }
-            if let [Some(a), Some(b)] = face.sides {
-                let (ra, rb) = (root(&group, a.block), root(&group, b.block));
+            for [a, b] in round_faces.get(node).into_iter().flatten() {
+                let (ra, rb) = (root(&group, *a), root(&group, *b));
                 if ra != rb {
                     group.insert(rb, ra);
                 }
             }
-        }
-        let ours: HashSet<BlockId> = front.iter().map(|b| root(&group, *b)).collect();
-
-        // The far side of each face of the patch, and what it holds.
-        let mut behind: Vec<(FaceId, Side)> = Vec::new();
-        for (face, block) in picked {
-            let f = self.faces.get(*face).expect("live");
-            let Some(other) = f.sides.iter().flatten().find(|s| s.block != *block) else {
-                continue;
+            let holds = |block: BlockId| {
+                self.blocks
+                    .get(block)
+                    .is_some_and(|b| b.nodes.contains(node))
             };
-            if ours.contains(&root(&group, other.block)) {
-                // Still the same group: the two blocks are joined somewhere
-                // else as well, so drawing one in would drag the other.
-                return Err(BlockingError::NotOnTheSurface(self.face_name(*face)));
+            let near: HashSet<BlockId> = picked
+                .iter()
+                .filter(|(_, b)| holds(*b))
+                .map(|(_, b)| root(&group, *b))
+                .collect();
+            let mut far: HashSet<BlockId> = HashSet::new();
+            for (face, side) in &behind {
+                if !self.faces.get(*face).expect("live").nodes.contains(node) {
+                    continue;
+                }
+                let r = root(&group, side.block);
+                if near.contains(&r) {
+                    // The two sides meet round this node: the blocks are
+                    // joined here along another face as well, so drawing
+                    // one in would drag the other.
+                    return Err(BlockingError::NotOnTheSurface(self.face_name(*face)));
+                }
+                far.insert(r);
             }
-            behind.push((*face, *other));
+            let blocks: HashSet<BlockId> = round_blocks
+                .get(node)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|b| far.contains(&root(&group, *b)))
+                .collect();
+            far_at.insert(*node, blocks);
         }
-        if behind.is_empty() {
-            return Ok(HashMap::new());
-        }
+        let far_of = |node: &NodeId, block: &BlockId| {
+            far_at.get(node).is_some_and(|far| far.contains(block))
+        };
 
         // A copy of every node and edge of the patch, for the far side.
         let mut node_copy: HashMap<NodeId, NodeId> = HashMap::new();
@@ -651,26 +717,29 @@ impl Blocking {
                 edge_copy.insert(edge, copy);
             }
         }
+        // An edge of the patch is on the far side of a block when both its
+        // ends are.
+        let edge_far = |this: &Self, edge: &EdgeId, block: &BlockId| {
+            this.edges
+                .get(*edge)
+                .is_some_and(|e| e.ends.iter().all(|n| far_of(n, block)))
+        };
 
         // Everything on the far side now names the copies.
-        let theirs: Vec<BlockId> = self
-            .blocks
-            .ids()
-            .filter(|b| !ours.contains(&root(&group, *b)))
-            .collect();
-        let over: HashSet<BlockId> = theirs.iter().copied().collect();
-        for id in &theirs {
+        let ids: Vec<BlockId> = self.blocks.ids().collect();
+        for id in &ids {
+            let block = self.blocks.get(*id).expect("live").clone();
+            let nodes = block.nodes.map(|n| match node_copy.get(&n) {
+                Some(copy) if far_of(&n, id) => *copy,
+                _ => n,
+            });
+            let edges = block.edges.map(|e| match edge_copy.get(&e) {
+                Some(copy) if edge_far(self, &e, id) => *copy,
+                _ => e,
+            });
             let block = self.blocks.get_mut(*id).expect("live");
-            for node in block.nodes.iter_mut() {
-                if let Some(copy) = node_copy.get(node) {
-                    *node = *copy;
-                }
-            }
-            for edge in block.edges.iter_mut() {
-                if let Some(copy) = edge_copy.get(edge) {
-                    *edge = *copy;
-                }
-            }
+            block.nodes = nodes;
+            block.edges = edges;
         }
 
         // And the far side's **own** edges, which still name the nodes that
@@ -685,58 +754,50 @@ impl Blocking {
         // instead of staying welded to its outside: faces and blocks said
         // one thing and the edges another.
         //
-        // Wholly on the far side, as for the faces just below: an edge two
-        // groups share without sharing a face of the patch is not this cut's
-        // to rewrite.
-        let mut carried: HashMap<EdgeId, bool> = HashMap::new();
+        // An end is rewritten only when every block along the edge is on the
+        // far side of it: an edge shared with the near side is not this
+        // cut's to rewrite.
+        let mut along: HashMap<EdgeId, Vec<BlockId>> = HashMap::new();
         for (id, block) in self.blocks.iter() {
             for edge in block.edges {
-                let far_side = over.contains(&id);
-                carried
-                    .entry(edge)
-                    .and_modify(|all| *all &= far_side)
-                    .or_insert(far_side);
+                along.entry(edge).or_default().push(id);
             }
         }
-        for (edge, theirs) in &carried {
-            if !theirs {
+        let copies: HashSet<EdgeId> = edge_copy.values().copied().collect();
+        for (edge, blocks) in &along {
+            if copies.contains(edge) {
                 continue;
             }
-            let e = self.edges.get_mut(*edge).expect("live");
-            for node in e.ends.iter_mut() {
-                if let Some(copy) = node_copy.get(node) {
-                    *node = *copy;
-                }
-            }
+            let ends = self.edges.get(*edge).expect("live").ends;
+            let ends = ends.map(|n| match node_copy.get(&n) {
+                Some(copy) if blocks.iter().all(|b| far_of(&n, b)) => *copy,
+                _ => n,
+            });
+            self.edges.get_mut(*edge).expect("live").ends = ends;
         }
 
         for id in self.faces.ids().collect::<Vec<_>>() {
             if cut.contains(&id) {
                 continue;
             }
-            let face = self.faces.get(id).expect("live");
-            // Only a face wholly on the far side: one with a side on each
-            // is a face of the patch, and those are split below.
-            if !face
-                .sides
-                .iter()
-                .flatten()
-                .all(|side| over.contains(&side.block))
-                || face.sides.iter().flatten().count() == 0
-            {
+            let face = self.faces.get(id).expect("live").clone();
+            let sides: Vec<BlockId> = face.sides.iter().flatten().map(|s| s.block).collect();
+            // A face of the patch is split below, and a face of no block
+            // is not this cut's to rewrite.
+            if sides.is_empty() {
                 continue;
             }
+            let nodes = face.nodes.map(|n| match node_copy.get(&n) {
+                Some(copy) if sides.iter().all(|b| far_of(&n, b)) => *copy,
+                _ => n,
+            });
+            let edges = face.edges.map(|e| match edge_copy.get(&e) {
+                Some(copy) if sides.iter().all(|b| edge_far(self, &e, b)) => *copy,
+                _ => e,
+            });
             let face = self.faces.get_mut(id).expect("live");
-            for node in face.nodes.iter_mut() {
-                if let Some(copy) = node_copy.get(node) {
-                    *node = *copy;
-                }
-            }
-            for edge in face.edges.iter_mut() {
-                if let Some(copy) = edge_copy.get(edge) {
-                    *edge = *copy;
-                }
-            }
+            face.nodes = nodes;
+            face.edges = edges;
         }
 
         // And each face of the patch becomes two: the one that was there

@@ -517,3 +517,46 @@ fn a_closed_pillow_surface_takes_its_inside() {
     b.pillow(&faces(&b, false)).expect("round the middle block");
     assert_eq!(b.nb_blocks(), 33);
 }
+
+#[test]
+fn a_pillow_surface_across_a_ring_of_blocks_opens_it() {
+    // Eight blocks round a square hole. One wall across the ring, from the
+    // hole to the outside: the blocks on either side of it still reach each
+    // other the other way round, and that is no reason to refuse — at the
+    // wall itself they are apart.
+    let mut b = cube();
+    for axis in 0..2 {
+        cut(&mut b, axis, 1.0 / 3.0);
+        cut(&mut b, axis, 2.0 / 3.0);
+    }
+    let hole = b
+        .blocks()
+        .into_iter()
+        .find(|id| near(centre(&b, &b.hex_corners(*id).unwrap()), [0.5, 0.5, 0.5]))
+        .expect("the middle block");
+    b.remove_block(hole).unwrap();
+    assert_eq!(b.nb_blocks(), 8);
+
+    let (near_side, far_side) = ([0.5, 1.0 / 6.0, 0.5], [1.0 / 6.0, 1.0 / 6.0, 0.5]);
+    let wall = [1.0 / 3.0, 1.0 / 6.0, 0.5];
+    b.pillow(&[seen(&b, wall, near_side)])
+        .expect("a wall across the ring");
+    assert_eq!(b.nb_blocks(), 9);
+    b.validate().expect("a valid structure");
+    assert_eq!(edges_bounding_nothing(&b), vec![]);
+
+    // The far block did not move, and is welded to the layer, not to the
+    // block that was drawn in.
+    let shared: Vec<_> = b
+        .block_faces()
+        .into_iter()
+        .filter(|s| near(centre(&b, &s.nodes), wall))
+        .collect();
+    assert_eq!(shared.len(), 2, "one face, seen from each of two blocks");
+    assert_eq!(shared[0].face, shared[1].face);
+    let blocks: Vec<_> = shared
+        .iter()
+        .map(|s| centre(&b, &b.hex_corners(s.block).unwrap()))
+        .collect();
+    assert!(blocks.iter().any(|c| near(*c, far_side)), "{blocks:?}");
+}

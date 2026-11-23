@@ -119,9 +119,13 @@ operation does the unsewing for the whole patch before it reads anything
 again: two blocks joined along several faces keep sharing their nodes until
 the last of those is undone.
 
-Two blocks joined along **another** face as well as the one you picked are
-refused, for the same reason: the nodes stay shared and there is nowhere for
-the layer to go.
+The two sides are told apart **round each node** of the pillow surface, not
+round the whole structure. A wall across a ring of blocks — the blocks round a
+hole, from the hole's wall to the outer wall — works: the blocks on either
+side of it still reach each other the other way round the ring, but at the
+wall they are apart. What is refused is two blocks that also meet along
+another face **at a node of the pillow surface**: there the node stays
+shared, and there is nowhere for the layer to go.
 
 ## What it will not do
 
@@ -130,11 +134,6 @@ moving it takes them with it. The mesh stays conforming and those blocks are
 deformed a little, along the wall the node slides on. That is the honest
 consequence of a shared node being shared, and a smoothing pass is the answer
 to it rather than a special case here.
-
-A pillow surface crossing a **ring** of blocks — the blocks round a hole, from
-the hole's wall to the outer wall — is refused today, because the blocks on
-either side still reach each other the other way round. The rules above allow
-it; the operation does not yet.
 
 !!! note "Why this one is not dart surgery"
     A [sheet cut](sheets.md#cutting) had to rewire the map by hand, because
