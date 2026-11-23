@@ -316,8 +316,9 @@ edge is on what that edge was on, and is projected onto it. See
 
 **Pillowing** leaves a copy of each node where it was and draws the original
 in. The copy keeps the classification, being the one still on the geometry;
-the node drawn in is looked at again by proximity, and lands on whatever it
-is on *now* — see [Pillowing](pillowing.md#what-happens-to-the-classification).
+the node drawn in slides on what the cells still beside it are on, and a
+pillowing that would take one of those cells off the model is refused — see
+[Pillowing](pillowing.md#what-happens-to-the-classification).
 
 ## What is not classified
 

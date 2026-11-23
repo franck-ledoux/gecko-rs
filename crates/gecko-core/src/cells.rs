@@ -30,6 +30,32 @@ pub struct On {
     pub tag: i32,
 }
 
+/// A node a pillowing pulled into the material, and what whoever holds the
+/// geometry needs to decide where it may go.
+///
+/// The block structure moves the node by the step and lets go of what it
+/// was on; it cannot say more, having no triangles. What it **can** say is
+/// which cells stayed attached to the node: the edges and faces that were
+/// there before, are not part of the pillow surface, and were not handed to
+/// the copy on the far side. Those are the node's **neighbours**, and the
+/// rules of pillowing are about them — a neighbour on a surface has to stay
+/// on it, so the node may only slide along it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Pulled {
+    /// The node, under its own name: it is the one that moved, and the copy
+    /// the layer left where it was is a new node.
+    pub node: CellId,
+    /// What it was on before it let go.
+    pub was: Option<On>,
+    /// Where it was, which is where its copy is now.
+    pub from: [f64; 3],
+    /// Where the step put it.
+    pub to: [f64; 3],
+    /// What its classified neighbours are on, each entity once, in a settled
+    /// order.
+    pub neighbours: Vec<On>,
+}
+
 /// A slab laid on four points, and what it found there.
 ///
 /// The names are the ones that **survived**: a side welded to a face
@@ -542,6 +568,25 @@ pub enum BlockingError {
     NotOnTheSurface(CellId),
     #[error("could not find the face a new layer should be glued along")]
     LostFace,
+    #[error(
+        "the pillow surface is in more than one piece: face {0:?} shares no edge \
+         with the rest of it"
+    )]
+    PillowApart(CellId),
+    #[error("edge {0:?} is shared by more than two faces of the pillow surface")]
+    PillowBranches(CellId),
+    #[error(
+        "the pillow surface stops at edge {0:?}, inside the block structure — an \
+         open pillow surface has to end on the outer boundary"
+    )]
+    PillowEndsInside(CellId),
+    #[error("the faces of the pillow surface take opposite sides of it along edge {0:?}")]
+    PillowTwoSides(CellId),
+    #[error(
+        "the pillow surface is closed and its faces take its outside — a closed \
+         pillow surface takes its inside"
+    )]
+    PillowOutside,
     #[error("an extrusion has to go somewhere: {0} is not a positive distance")]
     BadHeight(f64),
     #[error("node {0:?} is frozen; thaw it before moving it")]

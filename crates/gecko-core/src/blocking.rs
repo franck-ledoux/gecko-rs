@@ -34,9 +34,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use crate::arena::{index, Arena};
 use crate::cells::{
     across, apart, best_pairing, flatness, mitre, quad_normal, scaled_jacobian, BlockFace,
-    BlockingError, Census, ChordBlock, GroupMasks, Hex, On, Settling, Sheet, SheetCells, SheetEdge,
-    Slab, Smoothing, Unmet, EDGE_AXIS, FACE_AXIS, HEX_CORNER_EDGES, HEX_EDGES, HEX_FACES, OPPOSITE,
-    PILLOW_SHARE, SPLIT_FRAME,
+    BlockingError, Census, ChordBlock, GroupMasks, Hex, On, Pulled, Settling, Sheet, SheetCells,
+    SheetEdge, Slab, Smoothing, Unmet, EDGE_AXIS, FACE_AXIS, HEX_CORNER_EDGES, HEX_EDGES,
+    HEX_FACES, OPPOSITE, PILLOW_SHARE, SPLIT_FRAME,
 };
 use crate::ids::CellId;
 
@@ -138,6 +138,10 @@ type Halved = ([[NodeId; 4]; 2], [NodeId; 2], Option<On>);
 /// One face a pillow draws in: the face, the block drawing it, the four
 /// corners as that block winds them, the way in, and how far.
 type Drawn = (FaceId, BlockId, [NodeId; 4], [f64; 3], f64);
+
+/// A face of a pillow surface along one of its edges: which face, and the
+/// way it runs along the edge as its block sees it.
+type Along = (usize, NodeId, NodeId);
 
 /// Who holds each node and each edge, while an operation merges several of
 /// them.
@@ -2951,6 +2955,20 @@ impl Blocking {
         face: CellId,
         block: CellId,
     ) -> Result<Vec<(CellId, Option<On>)>, BlockingError> {
+        Ok(self
+            .pillow_chord_traced(face, block)?
+            .into_iter()
+            .map(|p| (p.node, p.was))
+            .collect())
+    }
+
+    /// [`pillow_chord`](Self::pillow_chord), saying what
+    /// [`pillow_traced`](Self::pillow_traced) says.
+    pub fn pillow_chord_traced(
+        &mut self,
+        face: CellId,
+        block: CellId,
+    ) -> Result<Vec<Pulled>, BlockingError> {
         // The chord is a tube of blocks, and what is pillowed is its
         // **side**: the four faces of each of its blocks that the chord
         // does not cross. The two at the ends are deliberately left out, so
@@ -2966,7 +2984,7 @@ impl Blocking {
                 }
             }
         }
-        self.pillow(&patch)
+        self.pillow_traced(&patch)
     }
 
     pub fn split_sheet(&mut self, edge: CellId, t: f64) -> Result<Vec<CellId>, BlockingError> {
@@ -3299,6 +3317,25 @@ impl Blocking {
         &mut self,
         patch: &[(CellId, CellId)],
     ) -> Result<Vec<(CellId, Option<On>)>, BlockingError> {
+        Ok(self
+            .pillow_traced(patch)?
+            .into_iter()
+            .map(|p| (p.node, p.was))
+            .collect())
+    }
+
+    /// Pillow a **pillow surface**: a set of faces, each with the block the
+    /// layer goes into, and say for each node that went in where it came
+    /// from and what it is still attached to.
+    ///
+    /// The surface is checked before anything moves (see
+    /// [`check_pillow_surface`](Self::check_pillow_surface)); what the
+    /// geometry allows is not, the block structure having no triangles —
+    /// that is the caller's, from the [`Pulled`] handed back.
+    pub fn pillow_traced(
+        &mut self,
+        patch: &[(CellId, CellId)],
+    ) -> Result<Vec<Pulled>, BlockingError> {
         if patch.is_empty() {
             return Err(BlockingError::EmptyPatch);
         }
@@ -3359,6 +3396,27 @@ impl Blocking {
                 normal.map(|x| -x / length),
                 2.0 * reach * PILLOW_SHARE,
             ));
+        }
+
+        self.check_pillow_surface(&plans)?;
+
+        // What each node of the surface touches before anything moves,
+        // bar the surface itself. After the layer is in, what it still
+        // touches of these is what stayed with it rather than going to its
+        // copy on the far side: its neighbours.
+        let surface_faces: HashSet<FaceId> = plans.iter().map(|p| p.0).collect();
+        let surface_edges: HashSet<EdgeId> = surface_faces
+            .iter()
+            .flat_map(|f| self.faces.get(*f).expect("live").edges)
+            .collect();
+        let mut touched: HashMap<NodeId, BTreeSet<(bool, CellId)>> = HashMap::new();
+        for (_, _, winding, _, _) in &plans {
+            for node in winding {
+                if !touched.contains_key(node) {
+                    let cells = self.touching(*node, &surface_faces, &surface_edges);
+                    touched.insert(*node, cells);
+                }
+            }
         }
 
         // What each node of the patch is, where it is and what it follows,
@@ -3447,11 +3505,199 @@ impl Blocking {
         // decide it is still on the same thing — a node sliding along the
         // rim of the patch is the case — which it cannot do without being
         // told what that was.
-        let mut out: Vec<(CellId, Option<On>)> = patch
+        let mut out: Vec<Pulled> = patch
             .iter()
-            .map(|node| (self.node_name(*node), was[node].1))
+            .map(|node| {
+                let now = self.touching(*node, &surface_faces, &surface_edges);
+                let mut neighbours: Vec<On> = now
+                    .intersection(&touched[node])
+                    .filter_map(|&(is_face, name)| {
+                        if is_face {
+                            self.face_class(name)
+                        } else {
+                            self.edge_class(name)
+                        }
+                    })
+                    .collect();
+                neighbours.sort_by_key(|on| (on.dim, on.tag));
+                neighbours.dedup();
+                Pulled {
+                    node: self.node_name(*node),
+                    was: was[node].1,
+                    from: was[node].0,
+                    to: self.nodes.get(*node).expect("live").at,
+                    neighbours,
+                }
+            })
             .collect();
-        out.sort_by_key(|(name, _)| *name);
+        out.sort_by_key(|p| p.node);
+        Ok(out)
+    }
+
+    /// The edges and faces a node is on, by name, leaving out the ones
+    /// given — `true` marks a face, since an edge and a face may carry the
+    /// same number.
+    fn touching(
+        &self,
+        node: NodeId,
+        faces: &HashSet<FaceId>,
+        edges: &HashSet<EdgeId>,
+    ) -> BTreeSet<(bool, CellId)> {
+        self.climbing(|up| {
+            let mut out = BTreeSet::new();
+            for e in up.node_edges.get(&node).into_iter().flatten() {
+                if !edges.contains(e) {
+                    out.insert((false, self.edge_name(*e)));
+                }
+            }
+            for f in up.node_faces.get(&node).into_iter().flatten() {
+                if !faces.contains(f) {
+                    out.insert((true, self.face_name(*f)));
+                }
+            }
+            out
+        })
+    }
+
+    /// Whether a set of faces, each seen from the block the layer goes
+    /// into, is a pillow surface at all — whatever it is classified on.
+    ///
+    /// Four conditions, checked in this order so that the complaint is
+    /// about the first thing wrong:
+    ///
+    /// - no edge is shared by more than two of its faces (it does not
+    ///   branch);
+    /// - its faces are connected through shared edges, a node in common not
+    ///   being enough;
+    /// - every face takes the same side of it: two faces along an edge run
+    ///   along that edge in opposite directions, as two faces of one sheet
+    ///   seen from one side do;
+    /// - if it is open, every edge of its boundary is on the outer boundary
+    ///   of the block structure — a pillow surface never stops inside;
+    ///   if it is closed, its faces take its inside.
+    fn check_pillow_surface(&self, plans: &[Drawn]) -> Result<(), BlockingError> {
+        // Every edge of the surface, with each face along it and the way
+        // that face, as its block sees it, runs along the edge.
+        let mut along: BTreeMap<CellId, (EdgeId, Vec<Along>)> = BTreeMap::new();
+        for (i, (face, _, winding, _, _)) in plans.iter().enumerate() {
+            let f = self.faces.get(*face).expect("live");
+            for k in 0..4 {
+                let (a, b) = (f.nodes[k], f.nodes[(k + 1) % 4]);
+                let at = winding.iter().position(|n| *n == a).expect("its own node");
+                let (p, q) = if winding[(at + 1) % 4] == b {
+                    (a, b)
+                } else {
+                    (b, a)
+                };
+                along
+                    .entry(self.edge_name(f.edges[k]))
+                    .or_insert_with(|| (f.edges[k], Vec::new()))
+                    .1
+                    .push((i, p, q));
+            }
+        }
+
+        if let Some((name, _)) = along.iter().find(|(_, (_, by))| by.len() > 2) {
+            return Err(BlockingError::PillowBranches(*name));
+        }
+
+        let mut root: Vec<usize> = (0..plans.len()).collect();
+        fn find(root: &mut [usize], mut i: usize) -> usize {
+            while root[i] != i {
+                root[i] = root[root[i]];
+                i = root[i];
+            }
+            i
+        }
+        for (_, by) in along.values() {
+            if let [(i, ..), (j, ..)] = by[..] {
+                let (a, b) = (find(&mut root, i), find(&mut root, j));
+                root[b] = a;
+            }
+        }
+        let first = find(&mut root, 0);
+        if let Some(apart) = (0..plans.len()).find(|i| find(&mut root, *i) != first) {
+            return Err(BlockingError::PillowApart(self.face_name(plans[apart].0)));
+        }
+
+        for (name, (_, by)) in &along {
+            if let [(_, a, b), (_, c, d)] = by[..] {
+                if (c, d) != (b, a) {
+                    return Err(BlockingError::PillowTwoSides(*name));
+                }
+            }
+        }
+
+        let mut closed = true;
+        for (name, (edge, by)) in &along {
+            if by.len() != 1 {
+                continue;
+            }
+            closed = false;
+            let outer = self.faces_on(*edge).iter().any(|f| {
+                self.faces
+                    .get(*f)
+                    .is_some_and(|face| face.sides.iter().any(|side| side.is_none()))
+            });
+            if !outer {
+                return Err(BlockingError::PillowEndsInside(*name));
+            }
+        }
+
+        // Closed: which side is inside is the sign of the volume it
+        // encloses, each face wound away from its block. Positive when
+        // every face looks away from the blocks, i.e. they are inside.
+        if closed {
+            let mut volume = 0.0;
+            for (_, _, winding, _, _) in plans {
+                let points = winding.map(|n| self.nodes.get(n).expect("live").at);
+                let normal = quad_normal(points);
+                let centre = self.middle(&points);
+                volume += (0..3).map(|k| centre[k] * normal[k]).sum::<f64>();
+            }
+            if volume < 0.0 {
+                return Err(BlockingError::PillowOutside);
+            }
+        }
+        Ok(())
+    }
+
+    /// The pillow surface that goes round the blocks behind this one: the
+    /// faces given, and every face of those blocks that has another block
+    /// on its other side.
+    ///
+    /// What to offer when a pillow surface stops in the middle of a surface
+    /// of the model: pillowing the blocks behind it instead lets the layer
+    /// come out on the walls, where its nodes can slide. A suggestion, not a
+    /// promise — the caller checks it as it would any other.
+    pub fn enlarged_pillow_surface(
+        &self,
+        patch: &[(CellId, CellId)],
+    ) -> Result<Vec<(CellId, CellId)>, BlockingError> {
+        let mut behind: Vec<BlockId> = Vec::new();
+        for (face, block) in patch {
+            let at = self
+                .block_at(*block)
+                .ok_or(BlockingError::FaceNotOnBlock(*face, *block))?;
+            if !behind.contains(&at) {
+                behind.push(at);
+            }
+        }
+        let mut out: Vec<(CellId, CellId)> = patch.to_vec();
+        for at in &behind {
+            for f in self.blocks.get(*at).expect("live").faces {
+                let face = self.faces.get(f).expect("live");
+                let other = face.sides.iter().flatten().find(|s| s.block != *at);
+                let Some(other) = other else { continue };
+                if behind.contains(&other.block) {
+                    continue;
+                }
+                let pair = (self.face_name(f), self.block_name(*at));
+                if !out.contains(&pair) {
+                    out.push(pair);
+                }
+            }
+        }
         Ok(out)
     }
 

@@ -45,6 +45,80 @@ pub enum SessionError {
     NoGeometry,
     #[error("{0}")]
     Group(#[from] GroupError),
+    /// A pillowing that would have taken a cell off what it is on: a node
+    /// pulled in whose neighbours leave it nowhere to go.
+    #[error("node {} cannot be pulled in: {why}{offer}", .node.get().unwrap_or(u32::MAX))]
+    PillowStuck {
+        node: CellId,
+        why: String,
+        /// What would pass instead, said as a sentence, or nothing.
+        offer: String,
+    },
+}
+
+/// How far a node pulled in by a pillowing may lean away from its step and
+/// still count as moving away from its copy: more than 90° less this, and
+/// it is refused.
+///
+/// The continuity tolerance, so that a dihedral angle nearly flat behaves
+/// exactly as a continuous surface does: a pillow surface ending on a curve
+/// between two surfaces that meet within this of flat is refused as one
+/// ending in the middle of a surface is.
+pub const PILLOW_ANGLE_DEGREES: f64 = 10.0;
+
+/// Where a node a pillowing pulled in goes, and what it is then on — or
+/// why it cannot go anywhere. See [`Session::settle_pulled`].
+fn place_pulled(
+    model: &Model,
+    p: &gecko_core::Pulled,
+) -> Result<(Option<On>, [f64; 3]), SessionError> {
+    if p.neighbours.is_empty() {
+        return Ok((None, p.to));
+    }
+    let stuck = |why: String| SessionError::PillowStuck {
+        node: p.node,
+        why,
+        offer: String::new(),
+    };
+    let held: Vec<(u8, i32)> = p.neighbours.iter().map(|on| (on.dim, on.tag)).collect();
+    let named = |e: &(u8, i32)| {
+        format!(
+            "{}{}",
+            ["P", "C", "S"].get(e.0 as usize).unwrap_or(&"?"),
+            e.1
+        )
+    };
+    let list = held.iter().map(named).collect::<Vec<_>>().join(", ");
+    let Some((dim, tag)) = model.destination(&held, p.to) else {
+        return Err(stuck(format!(
+            "the cells around it are on {list}, which have nothing in common"
+        )));
+    };
+    if dim == 0 {
+        return Err(stuck(format!(
+            "the cells around it are on {list}, which leaves it only the point {}",
+            named(&(dim, tag))
+        )));
+    }
+    let at = model.project(dim, tag, p.to).unwrap_or(p.to);
+    let step: [f64; 3] = [0, 1, 2].map(|k| p.to[k] - p.from[k]);
+    let went: [f64; 3] = [0, 1, 2].map(|k| at[k] - p.from[k]);
+    let norm = |v: [f64; 3]| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    let (s, w) = (norm(step), norm(went));
+    let leaning = if s < 1e-12 || w < 1e-9 * s {
+        90.0
+    } else {
+        let cos = (0..3).map(|k| step[k] * went[k]).sum::<f64>() / (s * w);
+        cos.clamp(-1.0, 1.0).acos().to_degrees()
+    };
+    if leaning > 90.0 - PILLOW_ANGLE_DEGREES {
+        return Err(stuck(format!(
+            "the cells around it are on {list}, so it has to stay on {}, and it \
+             cannot move away from its copy along it",
+            named(&(dim, tag))
+        )));
+    }
+    Ok((Some(On { dim, tag }), at))
 }
 
 /// How much room a bounding box leaves round the geometry, as a share of
@@ -315,8 +389,8 @@ pub enum Command {
     PillowChord {
         face: u32,
         block: u32,
-        /// As [`Command::Pillow`]: how near a node drawn in has to be to a
-        /// geometric entity to be taken by it.
+        /// No longer read, as for [`Command::Pillow`]; kept so that a
+        /// script that passes it still runs.
         #[serde(default = "default_snap")]
         tolerance: f64,
     },
@@ -335,13 +409,10 @@ pub enum Command {
     /// so the model's surface does not move.
     Pillow {
         faces: Vec<PickedFace>,
-        /// How near a node drawn in has to be to a geometric entity to be
-        /// taken by it — the same share [`Command::Classify`] uses.
-        ///
-        /// Pillowing moves nodes, and a node somewhere new is on
-        /// something new: the corner of a box drawn in off the rim of a
-        /// disc is still on that disc. Only the nodes that moved are
-        /// looked at again.
+        /// No longer read: a node drawn in is no longer placed by
+        /// proximity but goes where the cells still attached to it allow
+        /// (see `Session::settle_pulled`). Kept so that a script that
+        /// passes it still runs.
         #[serde(default = "default_snap")]
         tolerance: f64,
     },
@@ -1191,11 +1262,11 @@ impl Session {
             } => {
                 let (face, block) = (CellId::from_raw(face), CellId::from_raw(block));
                 let along = self.blocking.chord_through(face, block)?.len();
-                let drawn = self.blocking.pillow_chord(face, block)?;
-                // As for a pillow: the nodes that went in have moved, and
-                // where they are now is a different question from where
-                // they were.
-                self.settle_moved(&drawn, tolerance);
+                let pulled = self.blocking.pillow_chord_traced(face, block)?;
+                // As for a pillow: the nodes that went in slide on what
+                // their neighbours are on, or the o-grid is refused.
+                let _ = tolerance;
+                self.settle_pulled(&pulled)?;
                 Ok(Outcome {
                     script: None,
                     message: format!(
@@ -1236,13 +1307,22 @@ impl Session {
                     .iter()
                     .map(|f| (CellId::from_raw(f.face), CellId::from_raw(f.block)))
                     .collect();
-                let drawn = self.blocking.pillow(&patch)?;
+                // Kept to try the blocks behind instead, should this one be
+                // refused: the attempt below changes the structure.
+                let untouched = self.blocking.snapshot()?;
+                let pulled = self.blocking.pillow_traced(&patch)?;
                 // The layer leaves a copy of each node where it was, and
-                // that copy keeps what the node was pinned to. The one
-                // that went in has moved, so where **it** is has to be
-                // looked at again — it has left the curve it was on and
-                // may still be on the surface that curve bounds.
-                self.settle_moved(&drawn, tolerance);
+                // that copy keeps what the node was pinned to. The one that
+                // went in may only slide on what its neighbours are on —
+                // a neighbour never loses its classification to a
+                // pillowing — and when it cannot, nothing is done.
+                let _ = tolerance;
+                if let Err(SessionError::PillowStuck { node, why, .. }) =
+                    self.settle_pulled(&pulled)
+                {
+                    let offer = self.offer_behind(untouched, &patch);
+                    return Err(SessionError::PillowStuck { node, why, offer });
+                }
                 Ok(Outcome {
                     script: None,
                     message: format!(
@@ -1834,71 +1914,66 @@ impl Session {
         );
     }
 
-    /// Decide again what these nodes are on, by where they are now.
+    /// Put each node a pillowing pulled in where its neighbours allow, or
+    /// refuse the pillowing.
     ///
-    /// For an operation that **moves** nodes: the blanket
-    /// [`Command::Classify`] would undo every classification anybody had
-    /// made by hand, and leaving them as they were pins a node to a curve
-    /// it is no longer anywhere near — which drags the mesh out through
-    /// the boundary when it is projected, and turns the cells inside out.
-    fn settle_moved(&mut self, nodes: &[(CellId, Option<On>)], tolerance: f64) {
-        let Session {
-            blocking,
-            geometry,
-            composites,
-            ..
-        } = self;
-        let Some(geometry) = geometry.as_deref() else {
-            // Nothing is written back either: with no triangles there is
-            // nobody to decide, and a hint nobody reads is a stale
-            // classification.
-            return;
+    /// The rules: the node goes to the point nearest where the step put it
+    /// on what **every** classified neighbour of it is on, and takes the
+    /// entity it lands on; with no classified neighbour it is free where
+    /// the step put it. It is refused when that leaves it a point, or when
+    /// it cannot move away from its copy there — the move it is left with
+    /// more than 90° less [`PILLOW_ANGLE_DEGREES`] off its step.
+    ///
+    /// Every node is decided before any is moved, so a refusal leaves
+    /// nothing half done (and the session puts the structure back anyway).
+    fn settle_pulled(&mut self, pulled: &[gecko_core::Pulled]) -> Result<(), SessionError> {
+        let Some(geometry) = self.geometry.as_deref() else {
+            return Ok(());
         };
-        // What each of them was following, put back as a **hint** before
-        // anything is decided. The operation let go of it on the way in —
-        // rightly, since the node is inside the material — but a node that
-        // only slid along what it was on has not left it, and the rule
-        // below is the one that can tell.
-        for (node, was) in nodes {
-            let _ = blocking.set_node_class(*node, *was);
+        let model = Model::new(geometry, &self.composites);
+        let mut placed: Vec<(CellId, Option<On>, [f64; 3])> = Vec::new();
+        for p in pulled {
+            let (on, at) = place_pulled(&model, p)?;
+            placed.push((p.node, on, at));
         }
-        let names: Vec<CellId> = nodes.iter().map(|(name, _)| *name).collect();
-        let model = Model::new(geometry, composites);
-        let reach = [tolerance.max(0.0) * model.span(); 3];
-        blocking.classify_named(
-            &names,
-            |already, at| {
-                let found = model.nearest(at, reach).map(|(dim, tag)| On { dim, tag });
-                // A node deliberately put on a **side** keeps it as long as
-                // it is still somewhere on that side.
-                //
-                // Proximity cannot say "side": a composite is never a
-                // candidate, so the nearest thing it can name is one of the
-                // curves the side is made of — and being on one of those
-                // *is* being on the side. Taking the curve instead would
-                // quietly narrow a node that has not moved off anything,
-                // which is what a node sliding along the rim of a pillowed
-                // patch does every time.
-                //
-                // Only composites. Between two entities of the model,
-                // proximity's answer is the better one: a corner drawn in
-                // off the rim of a disc really has left the rim, and
-                // keeping what it claimed is exactly the bug this settling
-                // exists to avoid.
-                match (already, found) {
-                    (Some(was), Some(now))
-                        if Composites::is_composite(was.tag)
-                            && model
-                                .containing(now.dim, now.tag)
-                                .contains(&(was.dim, was.tag)) =>
-                    {
-                        Some(was)
-                    }
-                    (_, now) => now,
-                }
-            },
-            |on, at| model.project(on.dim, on.tag, at),
-        );
+        for (node, on, at) in placed {
+            self.blocking.set_node_class(node, on)?;
+            self.blocking.set_position(node, at)?;
+        }
+        Ok(())
+    }
+
+    /// The blocks behind a refused pillow surface, as a pillow surface of
+    /// their own, if that one would pass — said as the end of the refusal.
+    fn offer_behind(&self, mut trial: Blocking, patch: &[(CellId, CellId)]) -> String {
+        let Some(geometry) = self.geometry.as_deref() else {
+            return String::new();
+        };
+        let Ok(bigger) = trial.enlarged_pillow_surface(patch) else {
+            return String::new();
+        };
+        if bigger.len() == patch.len() {
+            return String::new();
+        }
+        let Ok(pulled) = trial.pillow_traced(&bigger) else {
+            return String::new();
+        };
+        let model = Model::new(geometry, &self.composites);
+        if pulled.iter().any(|p| place_pulled(&model, p).is_err()) {
+            return String::new();
+        }
+        let faces: Vec<String> = bigger
+            .iter()
+            .map(|(face, block)| {
+                let n = |id: &CellId| id.get().unwrap_or(u32::MAX);
+                format!("face {} of block {}", n(face), n(block))
+            })
+            .collect();
+        format!(
+            " — pillowing the blocks behind it would pass, with the pillow surface made \
+             of {}",
+            faces.join(", ")
+        )
     }
 
     /// Put a node where its classification says it is.

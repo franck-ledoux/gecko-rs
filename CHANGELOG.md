@@ -3,6 +3,25 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
+## Unreleased
+
+Pillowing, given rules. What can be pillowed is now checked before a node
+moves, and a pillowing never takes a cell beside it off the model.
+
+- **A pillow surface has to be one.** The faces picked for a pillow are
+  refused, naming the face or the edge at fault, when they are in more than
+  one piece, branch along an edge, take both sides of themselves, stop at an
+  edge inside the block structure rather than on its outer boundary, or —
+  closed — take their outside.
+- **The cells beside a pillow surface keep their classification.** A node
+  drawn in used to be placed again by proximity, and a node at the edge of a
+  pillow surface in the middle of a wall left the wall, taking the faces
+  beside it off it and denting the mesh. It now slides on what those cells
+  are on — a wall, or the curve where two walls meet — and when that leaves
+  it nowhere to go, the pillowing is refused and the node named. The refusal
+  offers the blocks behind the pillow surface instead when those would pass.
+  The `tolerance` of `pillow` and `pillow_chord` is no longer read.
+
 ## 0.2.3
 
 One fix to 0.2.2's halo, found because two tests began running past their

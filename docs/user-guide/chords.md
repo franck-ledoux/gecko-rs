@@ -59,8 +59,7 @@ That is the o-grid — the pattern for putting a boundary layer round a hole, or
 for getting a decent mesh out of a cylinder.
 
 ```lua
-gecko.pillow_chord(face, block)              -- or
-gecko.pillow_chord(face, block, { tolerance = 0.02 })
+gecko.pillow_chord(face, block)
 ```
 
 **The two ends stay where they are.** The faces at the ends of the chord are
@@ -69,10 +68,12 @@ on an end face belongs to two of the side faces and to nothing else, so it
 moves along the mitre of those two: inwards across the chord, and not one bit
 along it. A chord ending on the model's surface keeps its ends flush with it.
 
-Pillowing moves nodes, so where the nodes that moved are classified is decided
-again afterwards, exactly as for [pillowing a patch](pillowing.md). The copy
-left behind keeps what the node was pinned to; the one drawn in is looked at
-afresh.
+Pillowing moves nodes, so the rules of [pillowing a
+patch](pillowing.md#what-happens-to-the-classification) apply: the copy left
+behind keeps what the node was pinned to, the node drawn in slides on what the
+cells beside it are on, and an o-grid that would take one of them off the
+model is refused. The `tolerance` is no longer read; scripts that pass it
+still run.
 
 ## Chords and sheets together
 

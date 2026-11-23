@@ -75,9 +75,9 @@ shorthand for a call with one table.
 | `gecko.smooth{ rounds = 5, share = 0.5 }`                           | a smart Laplacian, geometry respected                                |
 | `gecko.remove_block(id)`, `gecko.glue_faces(a, b)`                  |                                                                      |
 | `gecko.extrude_face(face, block, height)`                           |                                                                      |
-| `gecko.pillow({ {face, block}, … }, { tolerance = 0.02 })`          |                                                                      |
+| `gecko.pillow({ {face, block}, … })`                                |                                                                      |
 | `gecko.remove_chord(face, block)`                                   | the whole thread through a face                                      |
-| `gecko.pillow_chord(face, block, { tolerance = 0.02 })`             | an o-grid along it                                                   |
+| `gecko.pillow_chord(face, block)`                                   | an o-grid along it                                                   |
 | `gecko.split_sheet(edge, 0.5)`, `gecko.remove_sheet(edge[, close])` | `close = false` leaves the gap open                                  |
 | `gecko.set_segments(edge, 8)`                                       | on the whole sheet                                                   |
 | `gecko.move_node(id, {x,y,z}, { carrying = {…}, snap = 0 })`        | moves those nodes and nothing else                                   |

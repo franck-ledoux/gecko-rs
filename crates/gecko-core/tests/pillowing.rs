@@ -372,3 +372,148 @@ fn a_block_beside_a_pillowed_one_stays_welded_to_the_layer() {
     assert_eq!(shared[0].face, shared[1].face);
     assert_ne!(shared[0].block, shared[1].block);
 }
+
+// --- what a pillow surface has to be, whatever it is classified on --------
+
+/// Cut the structure across `axis` at `value`, through any edge spanning it.
+fn cut(b: &mut Blocking, axis: usize, value: f64) {
+    let (edge, t) = b
+        .edges_in_full()
+        .find_map(|(id, [p, q], _, _)| {
+            let (a, c) = (b.position(p).unwrap(), b.position(q).unwrap());
+            let straight = (0..3)
+                .filter(|k| *k != axis)
+                .all(|k| (a[k] - c[k]).abs() < 1e-12);
+            let (lo, hi) = (a[axis].min(c[axis]), a[axis].max(c[axis]));
+            (straight && lo < value - 1e-9 && value < hi - 1e-9)
+                .then(|| (id, (value - a[axis]) / (c[axis] - a[axis])))
+        })
+        .expect("an edge across");
+    b.split_sheet(edge, t).unwrap();
+}
+
+fn centre(b: &Blocking, nodes: &[CellId]) -> [f64; 3] {
+    let mut c = [0.0; 3];
+    for n in nodes {
+        let p = b.position(*n).unwrap();
+        for k in 0..3 {
+            c[k] += p[k] / nodes.len() as f64;
+        }
+    }
+    c
+}
+
+fn near(p: [f64; 3], q: [f64; 3]) -> bool {
+    (0..3).all(|k| (p[k] - q[k]).abs() < 1e-9)
+}
+
+/// The face centred here, as the block centred there sees it.
+fn seen(b: &Blocking, face: [f64; 3], block: [f64; 3]) -> (CellId, CellId) {
+    let side = b
+        .block_faces()
+        .into_iter()
+        .find(|s| {
+            near(centre(b, &s.nodes), face)
+                && b.hex_corners(s.block)
+                    .is_some_and(|c| near(centre(b, &c), block))
+        })
+        .expect("that face of that block");
+    (side.face, side.block)
+}
+
+#[test]
+fn a_pillow_surface_in_two_pieces_is_refused() {
+    let mut b = cube();
+    let before = cells(&b);
+    let (top, bottom) = (face_at(&b, 2, 1.0), face_at(&b, 2, 0.0));
+    assert!(matches!(
+        b.pillow(&[top, bottom]),
+        Err(BlockingError::PillowApart(_))
+    ));
+    assert_eq!(cells(&b), before);
+}
+
+#[test]
+fn a_pillow_surface_that_branches_is_refused() {
+    let mut b = cube();
+    cut(&mut b, 0, 0.5);
+    let before = cells(&b);
+    let (left, right) = ([0.25, 0.5, 0.5], [0.75, 0.5, 0.5]);
+    let surface = [
+        seen(&b, [0.25, 0.5, 1.0], left),
+        seen(&b, [0.75, 0.5, 1.0], right),
+        seen(&b, [0.5, 0.5, 0.5], left),
+    ];
+    assert!(matches!(
+        b.pillow(&surface),
+        Err(BlockingError::PillowBranches(_))
+    ));
+    assert_eq!(cells(&b), before);
+}
+
+#[test]
+fn a_pillow_surface_takes_one_side_of_itself() {
+    let mut b = cube();
+    cut(&mut b, 0, 0.5);
+    let before = cells(&b);
+    let (left, right) = ([0.25, 0.5, 0.5], [0.75, 0.5, 0.5]);
+    let top = seen(&b, [0.25, 0.5, 1.0], left);
+    // The top of the left block from below, and the wall between the two
+    // from the right: the layer would have to change sides at their edge.
+    assert!(matches!(
+        b.pillow(&[top, seen(&b, [0.5, 0.5, 0.5], right)]),
+        Err(BlockingError::PillowTwoSides(_))
+    ));
+    assert_eq!(cells(&b), before);
+    // Both from the left block: one side, and it goes round that block.
+    b.pillow(&[top, seen(&b, [0.5, 0.5, 0.5], left)])
+        .expect("one side of an L");
+    assert_eq!(b.nb_blocks(), 4);
+}
+
+#[test]
+fn a_pillow_surface_cannot_stop_inside_the_blocks() {
+    let mut b = cube();
+    cut(&mut b, 0, 0.5);
+    cut(&mut b, 1, 0.5);
+    let before = cells(&b);
+    // Half of the wall at x = 0.5: its edge on the axis x = y = 0.5 has a
+    // block on every side.
+    let half = seen(&b, [0.5, 0.25, 0.5], [0.25, 0.25, 0.5]);
+    assert!(matches!(
+        b.pillow(&[half]),
+        Err(BlockingError::PillowEndsInside(_))
+    ));
+    assert_eq!(cells(&b), before);
+}
+
+#[test]
+fn a_closed_pillow_surface_takes_its_inside() {
+    let mut b = cube();
+    for axis in 0..3 {
+        cut(&mut b, axis, 1.0 / 3.0);
+        cut(&mut b, axis, 2.0 / 3.0);
+    }
+    assert_eq!(b.nb_blocks(), 27);
+    let middle = [0.5; 3];
+    let faces = |b: &Blocking, from_outside: bool| -> Vec<(CellId, CellId)> {
+        (0..3)
+            .flat_map(|axis| [1.0 / 3.0, 2.0 / 3.0].map(move |v| (axis, v)))
+            .map(|(axis, v)| {
+                let mut f = middle;
+                f[axis] = v;
+                let mut outside = middle;
+                outside[axis] = if v < 0.5 { 1.0 / 6.0 } else { 5.0 / 6.0 };
+                seen(b, f, if from_outside { outside } else { middle })
+            })
+            .collect()
+    };
+    let before = cells(&b);
+    assert!(matches!(
+        b.pillow(&faces(&b, true)),
+        Err(BlockingError::PillowOutside)
+    ));
+    assert_eq!(cells(&b), before);
+    b.pillow(&faces(&b, false)).expect("round the middle block");
+    assert_eq!(b.nb_blocks(), 33);
+}

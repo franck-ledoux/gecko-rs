@@ -47,25 +47,61 @@ adding the face normals sends a node in the middle of a flat patch four times
 too far, and averaging them leaves a node on a corner short of both its
 faces.
 
+## What can be pillowed
+
+The faces you pick, each with the block the layer goes into, form the
+**pillow surface**. Whatever the model is classified on, it has to be one
+surface, and one that a layer can follow from end to end:
+
+- **Connected.** Its faces hold together through shared edges. Two faces
+  that only share a node are two surfaces.
+- **No branching.** No edge is shared by more than two of its faces.
+- **One side.** Every face takes the same side of it. A closed pillow surface
+  — every face of a block, say — takes its inside.
+- **Closed, or ending on the outer boundary.** An open pillow surface ends on
+  edges of the outer boundary of the block structure. It never stops at an
+  edge with blocks all the way round it: a layer cannot end in the middle of
+  the material.
+
+Anything else is refused before a node moves, naming the face or the edge at
+fault.
+
 ## What happens to the classification
+
+The rule is that **pillowing never takes a neighbouring cell off what it is
+on**. Only the faces of the pillow surface and the cells the layer creates
+change.
 
 The layer leaves a copy of each node exactly where it was, and draws the
 original in. **The copy is the one on the geometry**, so it is the copy that
 keeps what the node was classified on — and its freeze with it, a frozen
 node having been frozen where it stood rather than wherever it is pushed to.
 
-The node drawn in is somewhere new, so where it is is decided again, by
-proximity, within the **snap** of the settings panel. It is not simply
-freed: the corner of a box drawn in off the rim of a disc is still sitting
-*on* that disc, and the corner of a box drawn in along an upright of the
-model slides down that upright and is still on it. Only the nodes that
-moved are looked at again, so nothing you classified by hand elsewhere is
-disturbed.
+The node drawn in is still attached to the cells beside the pillow surface:
+the faces and edges that are not part of it and did not go to the copy. They
+say where it may go. On a wall, it slides along that wall; on two walls, along
+the curve where they meet; with nothing classified beside it, it is free where
+the step put it. It takes what it lands on. Draw in the top of a box and its
+four corners slide down the four uprights, each still on its curve, and the
+four walls keep their classification.
 
-Getting this backwards is worth describing, because it is invisible until
-you mesh: a node pinned to a curve it is no longer anywhere near drags the
-mesh along that curve out through the boundary, and the cells come out
-inside out.
+When the cells beside it leave a node only a point, or leave it no way to
+move away from its copy — the step would take it straight off the surface
+they are on, or within 10° of that — the pillowing is **refused** and the
+node is named. That is the pillow surface that stops in the middle of a wall
+of the model: the node at its edge would have to leave the wall, and drag the
+faces beside it off with it. A curve between two surfaces that meet within
+10° of flat counts as the middle of a wall.
+
+When the blocks behind the pillow surface would pass instead, the refusal
+says so and lists their faces: the faces you picked, and every face of those
+blocks with another block on its other side. Pillowing those draws the layer
+round the blocks, and it comes out on the walls, where its nodes can slide.
+
+Getting this wrong is invisible until you mesh: a node pinned to a curve it is
+no longer anywhere near drags the mesh along that curve out through the
+boundary, and a face taken off its wall leaves a dent in the mesh where the
+model is flat.
 
 ## Inside the model
 
@@ -87,11 +123,16 @@ the layer to go.
 
 ## What it will not do
 
-A node on the **rim** of the patch is shared with blocks outside it, and
+A node on the edge of the pillow surface is shared with blocks outside it, and
 moving it takes them with it. The mesh stays conforming and those blocks are
-deformed a little. That is the honest consequence of a shared node being
-shared, and a smoothing pass is the answer to it rather than a special case
-here.
+deformed a little, along the wall the node slides on. That is the honest
+consequence of a shared node being shared, and a smoothing pass is the answer
+to it rather than a special case here.
+
+A pillow surface crossing a **ring** of blocks — the blocks round a hole, from
+the hole's wall to the outer wall — is refused today, because the blocks on
+either side still reach each other the other way round. The rules above allow
+it; the operation does not yet.
 
 !!! note "Why this one is not dart surgery"
     A [sheet cut](sheets.md#cutting) had to rewire the map by hand, because

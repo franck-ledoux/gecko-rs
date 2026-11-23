@@ -297,6 +297,46 @@ impl<'a> Model<'a> {
             .map(|(_, e)| e)
     }
 
+    /// Where a node held by all of these may be: the entity contained in
+    /// **every** one of them that is nearest to `near`, lower dimension
+    /// first on a tie.
+    ///
+    /// What a node pulled in by a pillowing may slide on when its
+    /// neighbours are on these: on S3 and S6 that is the curve where they
+    /// meet, on S3 alone it is S3 — or a curve or corner of it, when that is
+    /// where the nearest point falls. A composite takes part only when it
+    /// is one of those given: being on a side is a thing a cell is put on,
+    /// never one it is found on.
+    ///
+    /// `None` when nothing is contained in all of them, or nothing is
+    /// given.
+    pub fn destination(&self, on: &[(u8, i32)], near: [f64; 3]) -> Option<(u8, i32)> {
+        if on.is_empty() {
+            return None;
+        }
+        let found: Vec<(f64, (u8, i32))> = self
+            .entities()
+            .into_iter()
+            .filter(|e| !Composites::is_composite(e.1) || on.contains(e))
+            .filter(|e| {
+                let up = self.containing(e.0, e.1);
+                on.iter().all(|o| up.contains(o))
+            })
+            .filter_map(|e| self.distance(e.0, e.1, near).map(|d| (d, e)))
+            .collect();
+        // A point projected onto a surface lands on its rim when the rim
+        // is nearest, and so is as far as the rim is give or take the last
+        // digit: "as near" has to allow for that, or the surface would win
+        // ties it should lose.
+        let nearest = found.iter().map(|(d, _)| *d).fold(f64::INFINITY, f64::min);
+        let slack = 1e-9 * self.span().max(1.0);
+        found
+            .into_iter()
+            .filter(|(d, _)| *d <= nearest + slack)
+            .map(|(_, e)| e)
+            .min()
+    }
+
     /// Every entity there is, composites included.
     fn entities(&self) -> Vec<(u8, i32)> {
         let mut out: Vec<(u8, i32)> = self

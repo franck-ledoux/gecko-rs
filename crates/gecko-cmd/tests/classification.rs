@@ -1382,3 +1382,173 @@ fn the_reach_a_new_node_is_judged_by_is_the_one_classify_was_given() {
         "a tenth caught {loose} and two percent {tight}"
     );
 }
+
+// --- pillowing never takes a neighbour off the model -----------------------
+
+fn faces(s: &Session) -> Vec<serde_json::Value> {
+    serde_json::from_str::<Vec<_>>(&s.faces_json()).unwrap()
+}
+
+fn close(v: &serde_json::Value, p: [f64; 3]) -> bool {
+    (0..3).all(|k| (v[k].as_f64().unwrap() - p[k]).abs() < 1e-9)
+}
+
+/// The middle of a block, from the middles of its six faces.
+fn block_centre(s: &Session, block: u64) -> [f64; 3] {
+    let mut c = [0.0; 3];
+    for f in faces(s).iter().filter(|f| f["block"] == block) {
+        for k in 0..3 {
+            c[k] += f["center"][k].as_f64().unwrap() / 6.0;
+        }
+    }
+    c
+}
+
+/// The face centred here, as the block centred there sees it.
+fn seen(s: &Session, face: [f64; 3], block: [f64; 3]) -> gecko_cmd::PickedFace {
+    let f = faces(s)
+        .into_iter()
+        .find(|f| {
+            close(&f["center"], face) && {
+                let c = block_centre(s, f["block"].as_u64().unwrap());
+                (0..3).all(|k| (c[k] - block[k]).abs() < 1e-9)
+            }
+        })
+        .expect("that face of that block");
+    gecko_cmd::PickedFace {
+        face: f["id"].as_u64().unwrap() as u32,
+        block: f["block"].as_u64().unwrap() as u32,
+    }
+}
+
+/// Cut the structure across `axis` at `value`, through an edge spanning it.
+fn cut(s: &mut Session, axis: usize, value: f64) {
+    let at: std::collections::HashMap<u64, [f64; 3]> = nodes(s)
+        .iter()
+        .map(|n| {
+            let p = &n["pos"];
+            (
+                n["id"].as_u64().unwrap(),
+                [0, 1, 2].map(|k| p[k].as_f64().unwrap()),
+            )
+        })
+        .collect();
+    let (edge, t) = edges(s)
+        .iter()
+        .find_map(|e| {
+            let (a, c) = (
+                at[&e["nodes"][0].as_u64().unwrap()],
+                at[&e["nodes"][1].as_u64().unwrap()],
+            );
+            let straight = (0..3)
+                .filter(|k| *k != axis)
+                .all(|k| (a[k] - c[k]).abs() < 1e-12);
+            let (lo, hi) = (a[axis].min(c[axis]), a[axis].max(c[axis]));
+            (straight && lo < value - 1e-9 && value < hi - 1e-9).then(|| {
+                (
+                    e["id"].as_u64().unwrap() as u32,
+                    (value - a[axis]) / (c[axis] - a[axis]),
+                )
+            })
+        })
+        .expect("an edge across");
+    s.apply(Command::SplitSheet { edge, at: t }).expect("cut");
+}
+
+fn pillow(s: &mut Session, faces: Vec<gecko_cmd::PickedFace>) -> Result<String, String> {
+    s.apply(Command::Pillow {
+        faces,
+        tolerance: SNAP_SHARE,
+    })
+    .map(|o| o.message)
+    .map_err(|e| e.to_string())
+}
+
+/// What every face that is still there is on, by name.
+fn classes(s: &Session) -> std::collections::HashMap<u64, serde_json::Value> {
+    faces(s)
+        .into_iter()
+        .map(|f| (f["id"].as_u64().unwrap(), f["on"].clone()))
+        .collect()
+}
+
+#[test]
+fn a_pillowed_wall_keeps_every_face_beside_it_on_the_model() {
+    // Case 1: the whole top of the box. Its corners slide down the four
+    // upright curves, and the four walls keep what they were on.
+    let mut s = on_the_box();
+    s.apply(Command::Classify { tolerance: 0.02 }).unwrap();
+    let before = classes(&s);
+    let top = seen(&s, [0.5, 0.5, 1.0], [0.5; 3]);
+    pillow(&mut s, vec![top]).expect("a whole wall");
+    let after = classes(&s);
+    for (id, on) in &before {
+        if *id != u64::from(top.face) {
+            assert_eq!(after.get(id), Some(on), "face {id} changed");
+        }
+    }
+    let drawn: Vec<_> = nodes(&s)
+        .into_iter()
+        .filter(|n| {
+            let z = n["pos"][2].as_f64().unwrap();
+            z > 0.1 && z < 0.9
+        })
+        .collect();
+    assert_eq!(drawn.len(), 4);
+    for n in drawn {
+        assert_eq!(n["on"]["dim"], 1, "slid down a curve: {n}");
+    }
+}
+
+#[test]
+fn a_pillow_surface_ending_in_the_middle_of_a_wall_is_refused() {
+    // Case 2: one face out of four on the wall y = 0. A node of its edge
+    // would have to leave the wall, and drag the faces beside it off with
+    // it; nothing is done, and the blocks behind are offered instead.
+    let mut s = on_the_box();
+    s.apply(Command::Classify { tolerance: 0.02 }).unwrap();
+    cut(&mut s, 0, 0.5);
+    cut(&mut s, 2, 0.5);
+    let before = s.faces_json();
+    let behind = [0.25, 0.5, 0.25];
+    let corner = seen(&s, [0.25, 0.0, 0.25], behind);
+    let refused = pillow(&mut s, vec![corner]).expect_err("refused");
+    assert!(refused.contains("cannot be pulled in"), "{refused}");
+    assert!(refused.contains("would pass"), "{refused}");
+    assert_eq!(s.faces_json(), before, "nothing changed");
+
+    // And the offer holds: the three faces of that block that are on the
+    // wall or against another block.
+    let offered = vec![
+        corner,
+        seen(&s, [0.5, 0.5, 0.25], behind),
+        seen(&s, [0.25, 0.5, 0.5], behind),
+    ];
+    let ids: Vec<u64> = offered.iter().map(|f| u64::from(f.face)).collect();
+    let before = classes(&s);
+    pillow(&mut s, offered).expect("the blocks behind");
+    let after = classes(&s);
+    for (id, on) in &before {
+        if !ids.contains(id) {
+            assert_eq!(after.get(id), Some(on), "face {id} changed");
+        }
+    }
+}
+
+#[test]
+fn a_pillow_surface_across_the_blocks_keeps_the_walls() {
+    // Case 3: the wall between two halves, drawn into the right one. Its
+    // nodes slide along the curves they are on.
+    let mut s = on_the_box();
+    s.apply(Command::Classify { tolerance: 0.02 }).unwrap();
+    cut(&mut s, 0, 0.5);
+    let before = classes(&s);
+    let wall = seen(&s, [0.5, 0.5, 0.5], [0.75, 0.5, 0.5]);
+    pillow(&mut s, vec![wall]).expect("across");
+    let after = classes(&s);
+    for (id, on) in &before {
+        if *id != u64::from(wall.face) {
+            assert_eq!(after.get(id), Some(on), "face {id} changed");
+        }
+    }
+}

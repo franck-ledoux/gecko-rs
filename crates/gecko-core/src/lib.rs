@@ -24,9 +24,9 @@ pub use blocking::Blocking;
 /// The vocabulary: the plain data the structure is spoken in. See [`cells`].
 pub use cells::{
     across, best_pairing, cube_corners, flatness, mitre, quad_normal, scaled_jacobian, BlockFace,
-    BlockingError, Census, ChordBlock, GroupMasks, On, Settling, Sheet, SheetCells, SheetEdge,
-    Slab, Smoothing, Unmet, EDGE_AXIS, FACE_AXIS, HEX_CORNER_EDGES, HEX_EDGES, HEX_FACES, OPPOSITE,
-    PILLOW_SHARE, SLAB_SHARE,
+    BlockingError, Census, ChordBlock, GroupMasks, On, Pulled, Settling, Sheet, SheetCells,
+    SheetEdge, Slab, Smoothing, Unmet, EDGE_AXIS, FACE_AXIS, HEX_CORNER_EDGES, HEX_EDGES,
+    HEX_FACES, OPPOSITE, PILLOW_SHARE, SLAB_SHARE,
 };
 pub use ids::CellId;
 pub use mesh::{Mesh, SEGMENTS};
