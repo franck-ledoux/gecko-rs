@@ -89,7 +89,12 @@ export class WasmKernel implements Kernel {
           viewChanged: raw.outcome.viewChanged,
           script: raw.outcome.script,
         }
-      : { ok: false, message: raw.error, viewChanged: false };
+      : {
+          ok: false,
+          message: raw.error,
+          viewChanged: false,
+          ...(raw.offer ? { offer: raw.offer } : {}),
+        };
   }
 
   nodes(): Uint8Array {

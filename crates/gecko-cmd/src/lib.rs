@@ -47,12 +47,18 @@ pub enum SessionError {
     Group(#[from] GroupError),
     /// A pillowing that would have taken a cell off what it is on: a node
     /// pulled in whose neighbours leave it nowhere to go.
-    #[error("node {} cannot be pulled in: {why}{offer}", .node.get().unwrap_or(u32::MAX))]
+    #[error(
+        "node {} cannot be pulled in: {why}{}",
+        .node.get().unwrap_or(u32::MAX),
+        offered(.offer)
+    )]
     PillowStuck {
         node: CellId,
         why: String,
-        /// What would pass instead, said as a sentence, or nothing.
-        offer: String,
+        /// A pillow surface that would pass instead — the blocks behind
+        /// this one — or nothing. Handed back as faces as well as said, so
+        /// that a page can select them.
+        offer: Vec<PickedFace>,
     },
 }
 
@@ -66,6 +72,21 @@ pub enum SessionError {
 /// ending in the middle of a surface is.
 pub const PILLOW_ANGLE_DEGREES: f64 = 10.0;
 
+/// The end of a refused pillowing's message: what would pass instead.
+fn offered(offer: &[PickedFace]) -> String {
+    if offer.is_empty() {
+        return String::new();
+    }
+    let faces: Vec<String> = offer
+        .iter()
+        .map(|f| format!("face {} of block {}", f.face, f.block))
+        .collect();
+    format!(
+        " — pillowing the blocks behind it would pass, with the pillow surface made of {}",
+        faces.join(", ")
+    )
+}
+
 /// Where a node a pillowing pulled in goes, and what it is then on — or
 /// why it cannot go anywhere. See [`Session::settle_pulled`].
 fn place_pulled(
@@ -78,7 +99,7 @@ fn place_pulled(
     let stuck = |why: String| SessionError::PillowStuck {
         node: p.node,
         why,
-        offer: String::new(),
+        offer: Vec::new(),
     };
     let held: Vec<(u8, i32)> = p.neighbours.iter().map(|on| (on.dim, on.tag)).collect();
     let named = |e: &(u8, i32)| {
@@ -1944,36 +1965,32 @@ impl Session {
     }
 
     /// The blocks behind a refused pillow surface, as a pillow surface of
-    /// their own, if that one would pass — said as the end of the refusal.
-    fn offer_behind(&self, mut trial: Blocking, patch: &[(CellId, CellId)]) -> String {
+    /// their own, if that one would pass.
+    fn offer_behind(&self, mut trial: Blocking, patch: &[(CellId, CellId)]) -> Vec<PickedFace> {
         let Some(geometry) = self.geometry.as_deref() else {
-            return String::new();
+            return Vec::new();
         };
         let Ok(bigger) = trial.enlarged_pillow_surface(patch) else {
-            return String::new();
+            return Vec::new();
         };
         if bigger.len() == patch.len() {
-            return String::new();
+            return Vec::new();
         }
         let Ok(pulled) = trial.pillow_traced(&bigger) else {
-            return String::new();
+            return Vec::new();
         };
         let model = Model::new(geometry, &self.composites);
         if pulled.iter().any(|p| place_pulled(&model, p).is_err()) {
-            return String::new();
+            return Vec::new();
         }
-        let faces: Vec<String> = bigger
-            .iter()
-            .map(|(face, block)| {
-                let n = |id: &CellId| id.get().unwrap_or(u32::MAX);
-                format!("face {} of block {}", n(face), n(block))
+        let n = |id: CellId| id.get().unwrap_or(u32::MAX);
+        bigger
+            .into_iter()
+            .map(|(face, block)| PickedFace {
+                face: n(face),
+                block: n(block),
             })
-            .collect();
-        format!(
-            " — pillowing the blocks behind it would pass, with the pillow surface made \
-             of {}",
-            faces.join(", ")
-        )
+            .collect()
     }
 
     /// Put a node where its classification says it is.
@@ -2163,7 +2180,15 @@ impl Session {
             .and_then(|c| self.apply(c));
         match result {
             Ok(outcome) => serde_json::json!({ "ok": true, "outcome": outcome }).to_string(),
-            Err(e) => serde_json::json!({ "ok": false, "error": e.to_string() }).to_string(),
+            Err(e) => {
+                let mut reply = serde_json::json!({ "ok": false, "error": e.to_string() });
+                if let SessionError::PillowStuck { offer, .. } = &e {
+                    if !offer.is_empty() {
+                        reply["offer"] = serde_json::json!(offer);
+                    }
+                }
+                reply.to_string()
+            }
         }
     }
 

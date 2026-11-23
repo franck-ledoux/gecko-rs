@@ -15,6 +15,9 @@ export interface Reply {
   /** The line of Lua that would have made this command, for the console
    *  to echo. Absent for the commands that leave no line. */
   script?: string;
+  /** A refused pillowing's way out: the faces of a pillow surface that
+   *  would pass instead. Absent when there is none. */
+  offer?: { face: number; block: number }[];
 }
 
 /**

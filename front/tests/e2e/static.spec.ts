@@ -1712,6 +1712,86 @@ test("the selection grows as far as you like", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test("a refused pillowing selects the pillow surface that would pass", async ({
+  page,
+}) => {
+  // One face out of four on a wall: a node of its edge would have to leave
+  // the wall. Nothing is done, and the faces of the block behind it that
+  // would pass are selected instead, for P to take.
+  const errors = await boot(page);
+  await page.evaluate(EDGE_NEAR);
+  const msh = await readFile(
+    "../crates/gecko-lua/tests/fixtures/cube.msh",
+    "utf8",
+  );
+  await page.evaluate(
+    (m) => (window as any).__gecko.loadGeometry("cube.msh", m),
+    msh,
+  );
+  await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    g.apply({ op: "box_geometry", surfaces: [], margin: 0 });
+    g.apply({ op: "classify", tolerance: 0.02 });
+  });
+  await page.evaluate(() => (window as any).__gecko.refresh());
+  for (const want of [
+    [0.5, 0, 0],
+    [0, 0, 0.5],
+  ]) {
+    const edge = (await page.evaluate((w) => edgeNear(w), want)) as number;
+    const cut = await page.evaluate(
+      (e) =>
+        (window as any).__gecko.apply({ op: "split_sheet", edge: e, at: 0.5 }),
+      edge,
+    );
+    expect(cut.ok, cut.message).toBe(true);
+    await page.evaluate(() => (window as any).__gecko.refresh());
+  }
+  await expect(page.locator("[data-test=blocks]")).toHaveText("4");
+
+  // The face of the wall y = 0 nearest the corner at the origin.
+  const corner = (await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    const s = g.surface("faces");
+    const c = g.center();
+    let best = 0;
+    let shortest = Infinity;
+    for (let q = 0; q < s.quads; q++) {
+      const at = [0, 0, 0];
+      for (let k = 0; k < 4; k++)
+        for (let a = 0; a < 3; a++)
+          at[a] += s.positions[(q * 4 + k) * 3 + a] / 4;
+      const d = Math.hypot(
+        at[0] + c[0] - 0.25,
+        at[1] + c[1],
+        at[2] + c[2] - 0.25,
+      );
+      if (d < shortest) {
+        shortest = d;
+        best = q;
+      }
+    }
+    return { face: s.faces[best], block: s.blocks[best] };
+  })) as { face: number; block: number };
+
+  await page.evaluate((t) => (window as any).__gecko.choose(t), corner);
+  await page.locator("#pillow").click();
+  await expect(page.locator("#status")).toContainText("cannot be pulled in");
+  await expect(page.locator("#status")).toContainText("P pillows them");
+  await expect(page.locator("[data-test=blocks]")).toHaveText("4");
+  const offered = (await page.evaluate(() =>
+    (window as any).__gecko.selection(),
+  )) as { face: number; block: number }[];
+  expect(offered).toHaveLength(3);
+  expect(offered).toContainEqual(corner);
+  for (const f of offered) expect(f.block).toBe(corner.block);
+
+  // And taking it is one more P.
+  await page.locator("#pillow").click();
+  await expect(page.locator("#status")).toContainText("pillowed 3 faces");
+  expect(errors).toEqual([]);
+});
+
 /** The color in the middle of the canvas, as three numbers. */
 async function centerPixel(page: import("@playwright/test").Page) {
   return page.evaluate(() => {

@@ -97,6 +97,8 @@ When the blocks behind the pillow surface would pass instead, the refusal
 says so and lists their faces: the faces you picked, and every face of those
 blocks with another block on its other side. Pillowing those draws the layer
 round the blocks, and it comes out on the walls, where its nodes can slide.
+On the page those faces are selected for you, so pressing `P` again takes
+them; a script reads them from the message.
 
 Getting this wrong is invisible until you mesh: a node pinned to a curve it is
 no longer anywhere near drags the mesh along that curve out through the

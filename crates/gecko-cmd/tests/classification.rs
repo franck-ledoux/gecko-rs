@@ -1510,6 +1510,7 @@ fn a_pillow_surface_ending_in_the_middle_of_a_wall_is_refused() {
     cut(&mut s, 0, 0.5);
     cut(&mut s, 2, 0.5);
     let before = s.faces_json();
+    let before_json = before.clone();
     let behind = [0.25, 0.5, 0.25];
     let corner = seen(&s, [0.25, 0.0, 0.25], behind);
     let refused = pillow(&mut s, vec![corner]).expect_err("refused");
@@ -1525,6 +1526,28 @@ fn a_pillow_surface_ending_in_the_middle_of_a_wall_is_refused() {
         seen(&s, [0.25, 0.5, 0.5], behind),
     ];
     let ids: Vec<u64> = offered.iter().map(|f| u64::from(f.face)).collect();
+
+    // The page is handed the same faces, to select them.
+    let reply: serde_json::Value = serde_json::from_str(
+        &s.apply_json(&serde_json::json!({ "op": "pillow", "faces": [corner] }).to_string()),
+    )
+    .unwrap();
+    assert_eq!(reply["ok"], false);
+    let mut handed: Vec<(u64, u64)> = reply["offer"]
+        .as_array()
+        .expect("an offer")
+        .iter()
+        .map(|f| (f["face"].as_u64().unwrap(), f["block"].as_u64().unwrap()))
+        .collect();
+    let mut want: Vec<(u64, u64)> = offered
+        .iter()
+        .map(|f| (u64::from(f.face), u64::from(f.block)))
+        .collect();
+    handed.sort();
+    want.sort();
+    assert_eq!(handed, want);
+    assert_eq!(s.faces_json(), before_json, "still nothing changed");
+
     let before = classes(&s);
     pillow(&mut s, offered).expect("the blocks behind");
     let after = classes(&s);

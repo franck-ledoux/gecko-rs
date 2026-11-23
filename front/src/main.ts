@@ -2179,6 +2179,16 @@ async function boot() {
       op: "pillow",
       faces: picked.map((p) => ({ face: p.face, block: p.block })),
     });
+    // Refused, with a pillow surface that would pass: that one is selected
+    // instead, so that P again takes it. Nothing was changed, so there is
+    // nothing to redraw, and the names in the offer are still good.
+    if (!reply.ok && reply.offer?.length) {
+      clearSelection();
+      for (const f of reply.offer) choose(f);
+      message = `${reply.message} — selected: P pillows them`;
+      $("status").textContent = message;
+      return;
+    }
     // Every one of those faces is a different cell now.
     clearSelection();
     message = reply.message;

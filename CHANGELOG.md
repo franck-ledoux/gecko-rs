@@ -19,7 +19,8 @@ moves, and a pillowing never takes a cell beside it off the model.
   beside it off it and denting the mesh. It now slides on what those cells
   are on — a wall, or the curve where two walls meet — and when that leaves
   it nowhere to go, the pillowing is refused and the node named. The refusal
-  offers the blocks behind the pillow surface instead when those would pass.
+  offers the blocks behind the pillow surface instead when those would pass,
+  and the page selects their faces, so `P` again pillows them.
   The `tolerance` of `pillow` and `pillow_chord` is no longer read.
 
 ## 0.2.3
