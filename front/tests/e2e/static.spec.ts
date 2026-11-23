@@ -1896,6 +1896,122 @@ test("every edge is drawn in the color of what it is on", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test("a face between two blocks is taken from the block behind it", async ({
+  page,
+}) => {
+  // Eight blocks in two layers, internal faces shown and shrunk, so the
+  // faces between the layers can be clicked through the gaps. A click on
+  // one is a face of the block behind it, as on the outside: the layer
+  // below seen from above, the layer above seen from below. It used to be
+  // whichever block the view listed first, so a pillow of faces clicked
+  // from one side could be refused for taking two.
+  const errors = await boot(page);
+  await page.evaluate(EDGE_NEAR);
+  await page.locator("#cube").click();
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
+  for (const want of [
+    [0, 0.5, 0],
+    [0.5, 0, 0],
+    [0, 0, 0.5],
+  ]) {
+    const edge = (await page.evaluate((w) => edgeNear(w), want)) as number;
+    await page.evaluate(
+      (e) =>
+        (window as any).__gecko.apply({ op: "split_sheet", edge: e, at: 0.5 }),
+      edge,
+    );
+    await page.evaluate(() => (window as any).__gecko.refresh());
+  }
+  await expect(page.locator("[data-test=blocks]")).toHaveText("8");
+  await openDrawer(page);
+  await openGroup(page, "faces");
+  if (
+    !(await page.evaluate(() => (window as any).__gecko.prefs().faces.internal))
+  )
+    await page.evaluate(() => (window as any).__gecko.run("internal"));
+  await page.locator("[data-test=faces-shrink]").fill("0.5");
+  await page.waitForFunction(
+    () => (window as any).__gecko.display().faces.shrink === 0.5,
+  );
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // The lower layer: the blocks with a face on the floor, y = 0.
+  const lower = (await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    const s = g.surface("faces");
+    const c = g.center();
+    const out: number[] = [];
+    for (let q = 0; q < s.quads; q++)
+      if (
+        [0, 1, 2, 3].every(
+          (k) => Math.abs(s.positions[(q * 4 + k) * 3 + 1] + c[1]) < 1e-6,
+        )
+      )
+        out.push(s.blocks[q]);
+    return out;
+  })) as number[];
+  expect(lower).toHaveLength(4);
+
+  /** Click every face between the layers a click can reach, and check
+   *  each is taken from the layer on the far side of it. */
+  const check = async () => {
+    const { taken, beta } = (await page.evaluate(() => {
+      const g = (window as any).__gecko;
+      const s = g.surface("faces");
+      const c = g.center();
+      const taken: { face: number; block: number }[] = [];
+      for (let q = 0; q < s.quads; q++) {
+        const between = [0, 1, 2, 3].every(
+          (k) => Math.abs(s.positions[(q * 4 + k) * 3 + 1] + c[1] - 0.5) < 1e-6,
+        );
+        if (!between) continue;
+        const [x, y] = g.faceScreen(s.faces[q]);
+        const t = g.target(x, y);
+        if (t?.kind === "face" && t.face === s.faces[q])
+          taken.push({ face: t.face, block: t.block });
+      }
+      return { taken, beta: g.camera().beta };
+    })) as { taken: { face: number; block: number }[]; beta: number };
+    expect(taken.length, "a face between the layers in reach").toBeGreaterThan(
+      0,
+    );
+    const looksDown = beta < Math.PI / 2;
+    for (const t of taken)
+      expect(
+        lower.includes(t.block),
+        `face ${t.face} taken from block ${t.block}, looking ${looksDown ? "down" : "up"}`,
+      ).toBe(looksDown);
+  };
+
+  // From above, as the camera starts.
+  await check();
+
+  // And from below: dragged up, the camera goes under the model — a little
+  // under, so the faces between the layers are not hidden behind the floor.
+  const box = (await page.locator("#view").boundingBox())!;
+  const x = box.x + box.width - 40;
+  let y = box.y + box.height - 60;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  for (let i = 0; i < 100; i++) {
+    const beta = (await page.evaluate(
+      () => (window as any).__gecko.camera().beta,
+    )) as number;
+    if (beta > Math.PI / 2 + 0.3) break;
+    y -= 5;
+    await page.mouse.move(x, y);
+  }
+  await page.mouse.up();
+  await page.evaluate(() => (window as any).__gecko.settled());
+  expect(
+    await page.evaluate(() => (window as any).__gecko.camera().beta),
+  ).toBeGreaterThan(Math.PI / 2);
+  await check();
+  expect(errors).toEqual([]);
+});
+
 /** The color in the middle of the canvas, as three numbers. */
 async function centerPixel(page: import("@playwright/test").Page) {
   return page.evaluate(() => {

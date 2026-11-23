@@ -1414,7 +1414,70 @@ export class Viewer {
     const data = this.dataOf(hit.pickedMesh.name);
     const quad = Math.floor(hit.faceId / 2);
     if (!data || quad < 0 || quad >= data.faces.length) return null;
-    return { face: data.faces[quad], block: data.blocks[quad] };
+    const face = data.faces[quad];
+    const drawnAsFace = this.surfaces.faces.some((slot) => slot.data === data);
+    if (!drawnAsFace || !hit.pickedPoint || !hit.ray) {
+      return { face, block: data.blocks[quad] };
+    }
+    return {
+      face,
+      block: this.blockBehind(
+        face,
+        data.blocks[quad],
+        hit.pickedPoint,
+        hit.ray.direction,
+      ),
+    };
+  }
+
+  /**
+   * Which block a click on a face drawn once for two blocks takes: the one
+   * **behind** it, as for a face on the outside, which only has that one.
+   *
+   * Such a face is drawn from whichever of its two sides the view lists
+   * first, and taking that side's block made the choice arbitrary: of the
+   * faces between two layers, clicked from the same side, some came out as
+   * the faces of the layer below and some as the layer above, and a pillow
+   * of them was refused for taking both sides. A block a filter hides is
+   * not behind anything on screen, so the one still shown is taken.
+   */
+  private blockBehind(
+    face: number,
+    drawn: number,
+    at: Vector3,
+    looking: Vector3,
+  ): number {
+    const view = this.view;
+    if (!view) return drawn;
+    const shown = this.quadsShown();
+    const sides: number[] = [];
+    for (let q = 0; q < view.quadFaces.length; q++) {
+      if (view.quadFaces[q] !== face) continue;
+      if (shown && !shown.has(q)) continue;
+      sides.push(view.quadBlocks[q]);
+    }
+    if (sides.length !== 2) return sides.length === 1 ? sides[0] : drawn;
+    // The middle of each block, from the corners of its own faces.
+    const middle = (block: number) => {
+      const sum = new Vector3(0, 0, 0);
+      let n = 0;
+      for (let q = 0; q < view.quadBlocks.length; q++) {
+        if (view.quadBlocks[q] !== block) continue;
+        for (let k = 0; k < 4; k++) {
+          const p = view.quads[q * 4 + k] * 3;
+          sum.addInPlaceFromFloats(
+            view.positions[p],
+            view.positions[p + 1],
+            view.positions[p + 2],
+          );
+          n++;
+        }
+      }
+      return n === 0 ? at : sum.scaleInPlace(1 / n);
+    };
+    const depth = (block: number) =>
+      Vector3.Dot(middle(block).subtract(at), looking);
+    return depth(sides[0]) >= depth(sides[1]) ? sides[0] : sides[1];
   }
 
   /** The surface data behind a mesh, by the name it was given. */

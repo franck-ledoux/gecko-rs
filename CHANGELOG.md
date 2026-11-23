@@ -22,6 +22,13 @@ moves, and a pillowing never takes a cell beside it off the model.
   offers the blocks behind the pillow surface instead when those would pass,
   and the page selects their faces, so `P` again pillows them.
   The `tolerance` of `pillow` and `pillow_chord` is no longer read.
+- **A click on a face between two blocks takes the block behind it.** With
+  internal faces shown, such a face is drawn once, and a click took the block
+  of whichever side the view listed first: of the faces between two layers,
+  clicked from the same side, some came out as faces of the layer below and
+  some of the layer above, and pillowing them was refused for taking both
+  sides. It is now the block on the far side of the face, as for a face on
+  the outside; with a group hidden, the block still shown.
 - **A pillow surface refused for taking two sides says which faces.** The
   message names the edge, and the two faces along it with the block each
   was picked from, as plain numbers.
