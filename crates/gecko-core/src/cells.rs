@@ -580,8 +580,15 @@ pub enum BlockingError {
          open pillow surface has to end on the outer boundary"
     )]
     PillowEndsInside(CellId),
-    #[error("the faces of the pillow surface take opposite sides of it along edge {0:?}")]
-    PillowTwoSides(CellId),
+    /// Along an edge, two faces of the pillow surface picked from opposite
+    /// sides of it: the edge, then each face with the block it was picked
+    /// on.
+    #[error(
+        "the faces of the pillow surface take opposite sides of it along edge {0}: \
+         face {1} is taken from block {2}, face {3} from block {4}, which is on the \
+         other side"
+    )]
+    PillowTwoSides(CellId, CellId, CellId, CellId, CellId),
     #[error(
         "the pillow surface is closed and its faces take its outside — a closed \
          pillow surface takes its inside"

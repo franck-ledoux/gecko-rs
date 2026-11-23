@@ -70,3 +70,13 @@ macro_rules! sentinel_id {
 }
 
 sentinel_id!(CellId, "CellId");
+
+/// The bare number, as a reader is shown it and types it back.
+impl fmt::Display for CellId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.get() {
+            Some(n) => write!(f, "{n}"),
+            None => write!(f, "(none)"),
+        }
+    }
+}

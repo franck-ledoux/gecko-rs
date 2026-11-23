@@ -22,6 +22,9 @@ moves, and a pillowing never takes a cell beside it off the model.
   offers the blocks behind the pillow surface instead when those would pass,
   and the page selects their faces, so `P` again pillows them.
   The `tolerance` of `pillow` and `pillow_chord` is no longer read.
+- **A pillow surface refused for taking two sides says which faces.** The
+  message names the edge, and the two faces along it with the block each
+  was picked from, as plain numbers.
 - **A script with an empty list in it runs.** `gecko.group("A", {})` — which
   the page writes into the history when a group is emptied — was refused
   with "invalid type: map, expected u32", so a saved script stopped there.

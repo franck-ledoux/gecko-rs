@@ -460,10 +460,22 @@ fn a_pillow_surface_takes_one_side_of_itself() {
     let top = seen(&b, [0.25, 0.5, 1.0], left);
     // The top of the left block from below, and the wall between the two
     // from the right: the layer would have to change sides at their edge.
-    assert!(matches!(
-        b.pillow(&[top, seen(&b, [0.5, 0.5, 0.5], right)]),
-        Err(BlockingError::PillowTwoSides(_))
-    ));
+    let wall = seen(&b, [0.5, 0.5, 0.5], right);
+    let refused = b.pillow(&[top, wall]).expect_err("two sides");
+    assert!(
+        matches!(refused, BlockingError::PillowTwoSides(..)),
+        "{refused:?}"
+    );
+    // And it says which faces, and from which blocks, in numbers a reader
+    // can find on the page.
+    let said = refused.to_string();
+    for (face, block) in [top, wall] {
+        assert!(
+            said.contains(&format!("face {face} ")) && said.contains(&format!("block {block}")),
+            "{said}"
+        );
+    }
+    assert!(!said.contains("CellId"), "{said}");
     assert_eq!(cells(&b), before);
     // Both from the left block: one side, and it goes round that block.
     b.pillow(&[top, seen(&b, [0.5, 0.5, 0.5], left)])

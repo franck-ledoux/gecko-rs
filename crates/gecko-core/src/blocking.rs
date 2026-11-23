@@ -3682,9 +3682,16 @@ impl Blocking {
         }
 
         for (name, (_, by)) in &along {
-            if let [(_, a, b), (_, c, d)] = by[..] {
+            if let [(i, a, b), (j, c, d)] = by[..] {
                 if (c, d) != (b, a) {
-                    return Err(BlockingError::PillowTwoSides(*name));
+                    let (one, two) = (&plans[i], &plans[j]);
+                    return Err(BlockingError::PillowTwoSides(
+                        *name,
+                        self.face_name(one.0),
+                        self.block_name(one.1),
+                        self.face_name(two.0),
+                        self.block_name(two.1),
+                    ));
                 }
             }
         }
