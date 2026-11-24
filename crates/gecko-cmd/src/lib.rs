@@ -373,6 +373,10 @@ pub enum Command {
     RemoveBlock {
         block: u32,
     },
+    /// Take several blocks away, as one step.
+    RemoveBlocks {
+        blocks: Vec<u32>,
+    },
     /// Take away one face of a patch.
     ///
     /// Whatever it was welded to keeps its own cells, as for a block. A
@@ -425,17 +429,26 @@ pub enum Command {
     },
     /// Lay a layer of hexahedra along a patch of surface faces.
     ///
-    /// Each entry is a face and the block it was picked on — the pair a
-    /// click gives. The blocks are drawn in and the layer fills the space,
-    /// so the model's surface does not move.
+    /// Each entry is a face and the block it is taken from. The block may
+    /// be left out, and is then found: every face takes the same side of
+    /// the surface, and a closed one its inside. The blocks are drawn in
+    /// and the layer fills the space, so the model's surface does not move.
     Pillow {
-        faces: Vec<PickedFace>,
+        faces: Vec<PillowFace>,
         /// No longer read: a node drawn in is no longer placed by
         /// proximity but goes where the cells still attached to it allow
         /// (see `Session::settle_pulled`). Kept so that a script that
         /// passes it still runs.
         #[serde(default = "default_snap")]
         tolerance: f64,
+    },
+    /// Lay a layer of hexahedra round a set of blocks, towards them: along
+    /// every face between a block of the set and one outside it and, with
+    /// `outer` — the default — along their faces on the outer boundary too.
+    PillowBlocks {
+        blocks: Vec<u32>,
+        #[serde(default = "closing")]
+        outer: bool,
     },
     /// Grow a new block out of each of these faces, along the normal at the
     /// center of each.
@@ -624,6 +637,24 @@ pub enum Command {
 pub struct PickedFace {
     pub face: u32,
     pub block: u32,
+}
+
+impl From<PickedFace> for PillowFace {
+    fn from(p: PickedFace) -> Self {
+        PillowFace {
+            face: p.face,
+            block: Some(p.block),
+        }
+    }
+}
+
+/// A face of a pillow surface, and maybe the block it is taken from. Left
+/// out, the side is found: see [`Blocking::pillow_sides`].
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct PillowFace {
+    pub face: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1323,27 +1354,56 @@ impl Session {
                     view_changed: true,
                 })
             }
-            Command::Pillow { faces, tolerance } => {
-                let patch: Vec<_> = faces
-                    .iter()
-                    .map(|f| (CellId::from_raw(f.face), CellId::from_raw(f.block)))
-                    .collect();
-                // Kept to try the blocks behind instead, should this one be
-                // refused: the attempt below changes the structure.
-                let untouched = self.blocking.snapshot()?;
-                let pulled = self.blocking.pillow_traced(&patch)?;
-                // The layer leaves a copy of each node where it was, and
-                // that copy keeps what the node was pinned to. The one that
-                // went in may only slide on what its neighbours are on —
-                // a neighbour never loses its classification to a
-                // pillowing — and when it cannot, nothing is done.
-                let _ = tolerance;
-                if let Err(SessionError::PillowStuck { node, why, .. }) =
-                    self.settle_pulled(&pulled)
-                {
-                    let offer = self.offer_behind(untouched, &patch);
-                    return Err(SessionError::PillowStuck { node, why, offer });
+            Command::RemoveBlocks { blocks } => {
+                if blocks.is_empty() {
+                    return Err(BlockingError::EmptyPatch.into());
                 }
+                for block in &blocks {
+                    self.blocking.remove_block(CellId::from_raw(*block))?;
+                }
+                Ok(Outcome {
+                    script: None,
+                    message: format!(
+                        "{} block{} removed — {} nodes, {} edges, {} faces, {} blocks",
+                        blocks.len(),
+                        if blocks.len() == 1 { "" } else { "s" },
+                        self.blocking.nb_nodes(),
+                        self.blocking.nb_edges(),
+                        self.blocking.nb_faces(),
+                        self.blocking.nb_blocks(),
+                    ),
+                    view_changed: true,
+                })
+            }
+            Command::PillowBlocks { blocks, outer } => {
+                let ids: Vec<CellId> = blocks.iter().map(|b| CellId::from_raw(*b)).collect();
+                let patch = self.blocking.block_set_surface(&ids, outer)?;
+                self.pillow_patch(&patch)?;
+                Ok(Outcome {
+                    script: None,
+                    message: format!(
+                        "pillowed round {} block{}, along {} face{} — \
+                         {} nodes, {} edges, {} faces, {} blocks",
+                        ids.len(),
+                        if ids.len() == 1 { "" } else { "s" },
+                        patch.len(),
+                        if patch.len() == 1 { "" } else { "s" },
+                        self.blocking.nb_nodes(),
+                        self.blocking.nb_edges(),
+                        self.blocking.nb_faces(),
+                        self.blocking.nb_blocks(),
+                    ),
+                    view_changed: true,
+                })
+            }
+            Command::Pillow { faces, tolerance } => {
+                let given: Vec<_> = faces
+                    .iter()
+                    .map(|f| (CellId::from_raw(f.face), f.block.map(CellId::from_raw)))
+                    .collect();
+                let patch = self.blocking.pillow_sides(&given)?;
+                let _ = tolerance;
+                self.pillow_patch(&patch)?;
                 Ok(Outcome {
                     script: None,
                     message: format!(
@@ -1960,6 +2020,24 @@ impl Session {
         for (node, on, at) in placed {
             self.blocking.set_node_class(node, on)?;
             self.blocking.set_position(node, at)?;
+        }
+        Ok(())
+    }
+
+    /// Lay the layer along a pillow surface whose sides are known.
+    fn pillow_patch(&mut self, patch: &[(CellId, CellId)]) -> Result<(), SessionError> {
+        // Kept to try the blocks behind instead, should this one be
+        // refused: the attempt below changes the structure.
+        let untouched = self.blocking.snapshot()?;
+        let pulled = self.blocking.pillow_traced(patch)?;
+        // The layer leaves a copy of each node where it was, and that copy
+        // keeps what the node was pinned to. The one that went in may only
+        // slide on what its neighbours are on — a neighbour never loses its
+        // classification to a pillowing — and when it cannot, nothing is
+        // done.
+        if let Err(SessionError::PillowStuck { node, why, .. }) = self.settle_pulled(&pulled) {
+            let offer = self.offer_behind(untouched, patch);
+            return Err(SessionError::PillowStuck { node, why, offer });
         }
         Ok(())
     }

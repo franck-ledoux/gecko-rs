@@ -74,8 +74,10 @@ shorthand for a call with one table.
 | `gecko.extrude_patch(face, 0.5)`                                    | the whole sheet, into blocks; ± either way                           |
 | `gecko.smooth{ rounds = 5, share = 0.5 }`                           | a smart Laplacian, geometry respected                                |
 | `gecko.remove_block(id)`, `gecko.glue_faces(a, b)`                  |                                                                      |
+| `gecko.remove_blocks({ id, … })`                                    | several, as one step                                                 |
 | `gecko.extrude_face(face, block, height)`                           |                                                                      |
-| `gecko.pillow({ {face, block}, … })`                                |                                                                      |
+| `gecko.pillow({ {face, block}, … })`                                | a bare `face` has its block found                                    |
+| `gecko.pillow_blocks({ id, … }, { outer = true })`                  | round the blocks, towards them                                       |
 | `gecko.remove_chord(face, block)`                                   | the whole thread through a face                                      |
 | `gecko.pillow_chord(face, block)`                                   | an o-grid along it                                                   |
 | `gecko.split_sheet(edge, 0.5)`, `gecko.remove_sheet(edge[, close])` | `close = false` leaves the gap open                                  |

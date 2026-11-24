@@ -572,3 +572,140 @@ fn a_pillow_surface_across_a_ring_of_blocks_opens_it() {
         .collect();
     assert!(blocks.iter().any(|c| near(*c, far_side)), "{blocks:?}");
 }
+
+// --- a pillow surface whose sides are found --------------------------------
+
+/// The faces of a surface with their sides left out.
+fn bare(surface: &[(CellId, CellId)]) -> Vec<(CellId, Option<CellId>)> {
+    surface.iter().map(|(f, _)| (*f, None)).collect()
+}
+
+#[test]
+fn the_faces_between_two_layers_take_one_side_whatever_side_each_was_picked_from() {
+    // Four columns cut at mid height: the four faces at z = 0.5 are each
+    // between a block below and one above.
+    let mut b = cube();
+    cut(&mut b, 0, 0.5);
+    cut(&mut b, 1, 0.5);
+    cut(&mut b, 2, 0.5);
+    let quarters = [[0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]];
+    let below: Vec<_> = quarters
+        .iter()
+        .map(|[x, y]| seen(&b, [*x, *y, 0.5], [*x, *y, 0.25]))
+        .collect();
+    let above: Vec<_> = quarters
+        .iter()
+        .map(|[x, y]| seen(&b, [*x, *y, 0.5], [*x, *y, 0.75]))
+        .collect();
+    // Given nothing, one side for all of them.
+    let found = b.pillow_sides(&bare(&below)).unwrap();
+    assert!(found == below || found == above, "{found:?}");
+    // Given the first from above, they all are — the mix of sides a click
+    // could give made one.
+    let mut given = bare(&below);
+    given[0].1 = Some(above[0].1);
+    assert_eq!(b.pillow_sides(&given).unwrap(), above);
+    let mut given = bare(&above);
+    given[2].1 = Some(below[2].1);
+    assert_eq!(b.pillow_sides(&given).unwrap(), below);
+    // And that pillows.
+    b.pillow(&b.pillow_sides(&given).unwrap())
+        .expect("one side");
+    assert_eq!(b.nb_blocks(), 12);
+}
+
+#[test]
+fn a_closed_surface_given_no_side_takes_its_inside() {
+    let mut b = cube();
+    for axis in 0..3 {
+        cut(&mut b, axis, 1.0 / 3.0);
+        cut(&mut b, axis, 2.0 / 3.0);
+    }
+    let middle = [0.5; 3];
+    let inside: Vec<_> = (0..3)
+        .flat_map(|axis| [1.0 / 3.0, 2.0 / 3.0].map(move |v| (axis, v)))
+        .map(|(axis, v)| {
+            let mut f = middle;
+            f[axis] = v;
+            seen(&b, f, middle)
+        })
+        .collect();
+    // Whichever face the side is carried from: some of them have the
+    // middle block as their first side and some the block outside.
+    for first in 0..inside.len() {
+        let mut turned = inside.clone();
+        turned.rotate_left(first);
+        assert_eq!(
+            b.pillow_sides(&bare(&turned)).unwrap(),
+            turned,
+            "from {first}"
+        );
+    }
+}
+
+#[test]
+fn a_face_of_no_block_and_a_block_off_its_face_are_refused() {
+    let b = cube();
+    let (top, block) = face_at(&b, 2, 1.0);
+    assert!(matches!(
+        b.pillow_sides(&[(top, Some(top))]),
+        Err(BlockingError::FaceNotOnBlock(..))
+    ));
+    assert!(matches!(
+        b.pillow_sides(&[]),
+        Err(BlockingError::EmptyPatch)
+    ));
+    assert_eq!(b.pillow_sides(&[(top, None)]).unwrap(), vec![(top, block)]);
+}
+
+// --- a pillow surface round a set of blocks --------------------------------
+
+/// The block centred here.
+fn block_near(b: &Blocking, at: [f64; 3]) -> CellId {
+    b.block_faces()
+        .into_iter()
+        .map(|s| s.block)
+        .find(|block| {
+            b.hex_corners(*block)
+                .is_some_and(|c| near(centre(b, &c), at))
+        })
+        .expect("a block there")
+}
+
+#[test]
+fn the_surface_round_blocks_is_their_faces_on_anything_else() {
+    let mut b = cube();
+    cut(&mut b, 0, 0.5);
+    cut(&mut b, 1, 0.5);
+    // The two blocks at x < 0.5: an L of nothing — a slab of two, with the
+    // wall at x = 0.5 between them and the rest.
+    let one = block_near(&b, [0.25, 0.25, 0.5]);
+    let two = block_near(&b, [0.25, 0.75, 0.5]);
+    let blocks = [one, two];
+    let inner = b.block_set_surface(&blocks, false).unwrap();
+    // The wall at x = 0.5, half of it in each block; the face between the
+    // two is not on it.
+    assert_eq!(inner.len(), 2, "{inner:?}");
+    assert!(inner.iter().all(|(_, block)| blocks.contains(block)));
+    // With the outer boundary: five faces of each block's six.
+    assert_eq!(b.block_set_surface(&blocks, true).unwrap().len(), 10);
+    // Both pillow, towards the blocks.
+    let mut open = b.clone();
+    open.pillow(&inner)
+        .expect("open, ending on the outer boundary");
+    assert_eq!(open.nb_blocks(), 6);
+    b.pillow(&b.block_set_surface(&blocks, true).unwrap())
+        .expect("closed round the two");
+    assert_eq!(b.nb_blocks(), 4 + 10);
+}
+
+#[test]
+fn a_set_of_every_block_has_no_inner_surface() {
+    let b = cube();
+    let only = face_at(&b, 2, 1.0).1;
+    assert!(matches!(
+        b.block_set_surface(&[only], false),
+        Err(BlockingError::EmptyPatch)
+    ));
+    assert_eq!(b.block_set_surface(&[only], true).unwrap().len(), 6);
+}

@@ -129,6 +129,17 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
     command(lua, &gecko, &kernel, "remove_block", |lua, a| {
         Ok(json!({ "op": "remove_block", "block": at(lua, &a, 0)? }))
     })?;
+    command(lua, &gecko, &kernel, "remove_blocks", |lua, a| {
+        Ok(json!({ "op": "remove_blocks", "blocks": at(lua, &a, 0)? }))
+    })?;
+    command(lua, &gecko, &kernel, "pillow_blocks", |lua, a| {
+        let o = options(lua, &a, 1)?;
+        Ok(with(
+            json!({ "op": "pillow_blocks", "blocks": at(lua, &a, 0)? }),
+            &o,
+            &["outer"],
+        ))
+    })?;
     command(lua, &gecko, &kernel, "glue_faces", |lua, a| {
         Ok(json!({
             "op": "glue_faces",
@@ -165,11 +176,18 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
     })?;
     command(lua, &gecko, &kernel, "pillow", |lua, a| {
         // A list of `{face, block}` pairs, which is what a Lua table of
-        // two-element tables comes out as.
+        // two-element tables comes out as — or of bare faces, whose block
+        // the kernel finds.
         let patch: Vec<Json> = match at(lua, &a, 0)? {
             Json::Array(pairs) => pairs
                 .iter()
-                .map(|p| json!({ "face": p[0], "block": p[1] }))
+                .map(|p| match p {
+                    Json::Array(pair) if pair.len() > 1 => {
+                        json!({ "face": pair[0], "block": pair[1] })
+                    }
+                    Json::Array(pair) => json!({ "face": pair.first() }),
+                    face => json!({ "face": face }),
+                })
                 .collect(),
             _ => Vec::new(),
         };

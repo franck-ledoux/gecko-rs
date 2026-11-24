@@ -120,6 +120,17 @@ pub fn line(command: &Command) -> String {
             tolerance,
         } => format!("gecko.pillow_chord({face}, {block}, {{ tolerance = {tolerance} }})"),
         Command::RemoveBlock { block } => format!("gecko.remove_block({block})"),
+        Command::RemoveBlocks { blocks } => format!("gecko.remove_blocks({})", numbers(blocks)),
+        Command::PillowBlocks { blocks, outer } => {
+            if *outer {
+                format!("gecko.pillow_blocks({})", numbers(blocks))
+            } else {
+                format!(
+                    "gecko.pillow_blocks({}, {{ outer = false }})",
+                    numbers(blocks)
+                )
+            }
+        }
         Command::RemoveSheet { edge, close } => {
             if *close {
                 format!("gecko.remove_sheet({edge})")
@@ -131,9 +142,13 @@ pub fn line(command: &Command) -> String {
             format!("gecko.split_sheet({edge}, {})", number(*at))
         }
         Command::Pillow { faces, tolerance } => {
+            // A face whose side was left to be found is written bare.
             let patch = faces
                 .iter()
-                .map(|f| format!("{{{}, {}}}", f.face, f.block))
+                .map(|f| match f.block {
+                    Some(block) => format!("{{{}, {block}}}", f.face),
+                    None => f.face.to_string(),
+                })
                 .collect::<Vec<_>>()
                 .join(", ");
             format!(

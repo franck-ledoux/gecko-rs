@@ -3,6 +3,18 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
+## Unreleased
+
+- **A pillow surface of faces has its sides found.** `gecko.pillow` takes a
+  bare face as well as a `{face, block}` pair, and the kernel carries the
+  side of the first face given a block across the rest; a closed surface
+  given none takes its inside.
+- **A pillowing round a set of blocks.** `gecko.pillow_blocks(blocks, {
+  outer = … })` lays the layer along their boundary, towards them, checked
+  as any other pillow surface; their faces on the outer boundary are part of
+  it unless `outer = false`. `gecko.remove_blocks(blocks)` takes several
+  away as one step.
+
 ## 0.2.4
 
 Pillowing, given rules. What can be pillowed is now checked before a node

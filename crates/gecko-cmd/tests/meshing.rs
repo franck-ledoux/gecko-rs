@@ -342,7 +342,7 @@ fn a_pillowed_cylinder_meshes_the_right_way_out() {
         .collect();
     assert_eq!(patch.len(), 4, "the four faces on the tube");
     s.apply(Command::Pillow {
-        faces: patch,
+        faces: patch.into_iter().map(Into::into).collect(),
         tolerance: gecko_cmd::SNAP_SHARE,
     })
     .unwrap();

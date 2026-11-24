@@ -3730,6 +3730,193 @@ impl Blocking {
         Ok(())
     }
 
+    /// A pillow surface given as faces, with the block of each found: the
+    /// side each face is taken from.
+    ///
+    /// A face on the outer boundary has one block and that is its side. A
+    /// face between two blocks has two, and the side is carried across the
+    /// surface from face to face along the edges they share, so that every
+    /// face takes the same side of it — the one of the first face given a
+    /// block, if any is. A block given is kept, even one that disagrees:
+    /// the check that follows says which faces do. Given none, a closed
+    /// surface takes its inside, and an open one the side of its first face
+    /// in the order its blocks are listed.
+    pub fn pillow_sides(
+        &self,
+        faces: &[(CellId, Option<CellId>)],
+    ) -> Result<Vec<(CellId, CellId)>, BlockingError> {
+        if faces.is_empty() {
+            return Err(BlockingError::EmptyPatch);
+        }
+        let mut ids: Vec<FaceId> = Vec::with_capacity(faces.len());
+        let mut which: Vec<Option<usize>> = Vec::with_capacity(faces.len());
+        for (face, block) in faces {
+            let id = self
+                .face_at(*face)
+                .ok_or(BlockingError::NoSuchFace(*face))?;
+            let f = self.faces.get(id).expect("live");
+            if f.sides.iter().all(|s| s.is_none()) {
+                return Err(BlockingError::NotABlock(*face));
+            }
+            let side = match block {
+                None => None,
+                Some(block) => {
+                    let at = self
+                        .block_at(*block)
+                        .ok_or(BlockingError::FaceNotOnBlock(*face, *block))?;
+                    Some(
+                        f.sides
+                            .iter()
+                            .position(|s| s.is_some_and(|s| s.block == at))
+                            .ok_or(BlockingError::FaceNotOnBlock(*face, *block))?,
+                    )
+                }
+            };
+            ids.push(id);
+            which.push(side);
+        }
+        let given = which.iter().any(|w| w.is_some());
+
+        // Each edge of the surface, with each face along it and the way
+        // that face's own node order runs along it.
+        let mut along: HashMap<EdgeId, Vec<(usize, bool)>> = HashMap::new();
+        for (i, id) in ids.iter().enumerate() {
+            let f = self.faces.get(*id).expect("live");
+            for k in 0..4 {
+                let (a, b) = (f.nodes[k], f.nodes[(k + 1) % 4]);
+                along.entry(f.edges[k]).or_default().push((i, a < b));
+            }
+        }
+        let has = |i: usize, w: usize| self.faces.get(ids[i]).expect("live").sides[w].is_some();
+
+        // Faces given a block first, so that the side they carry is the
+        // one that spreads; then whatever is left, a piece at a time.
+        let mut order: Vec<usize> = (0..ids.len()).filter(|i| which[*i].is_some()).collect();
+        order.extend((0..ids.len()).filter(|i| which[*i].is_none()));
+        let mut queue: std::collections::VecDeque<usize> = order
+            .iter()
+            .copied()
+            .filter(|i| which[*i].is_some())
+            .collect();
+        let mut next = 0;
+        loop {
+            let Some(i) = queue.pop_front() else {
+                // A piece no block was given for: its first face takes the
+                // first side it has.
+                while next < order.len() && which[order[next]].is_some() {
+                    next += 1;
+                }
+                let Some(&i) = order.get(next) else { break };
+                which[i] = Some(if has(i, 0) { 0 } else { 1 });
+                queue.push_back(i);
+                continue;
+            };
+            let wi = which[i].expect("set before queued");
+            let f = self.faces.get(ids[i]).expect("live");
+            for k in 0..4 {
+                let by = &along[&f.edges[k]];
+                // Through two faces only: a branching surface has no one
+                // side to carry, and the check names the edge.
+                let [(p, fwd_p), (q, fwd_q)] = by[..] else {
+                    continue;
+                };
+                let (me_fwd, (j, other_fwd)) = if p == i {
+                    (fwd_p, (q, fwd_q))
+                } else {
+                    (fwd_q, (p, fwd_p))
+                };
+                if which[j].is_some() {
+                    continue;
+                }
+                // Seen from side 1 a face runs backwards. Two faces of one
+                // side run along their shared edge in opposite directions.
+                let runs = me_fwd == (wi == 0);
+                let wj = if other_fwd == !runs { 0 } else { 1 };
+                if has(j, wj) {
+                    which[j] = Some(wj);
+                    queue.push_back(j);
+                }
+            }
+        }
+
+        // Closed and told nothing: the inside, which is the sign of the
+        // volume the faces enclose, each wound away from its side.
+        let closed = along.values().all(|by| by.len() == 2);
+        if closed && !given {
+            let mut volume = 0.0;
+            for (i, id) in ids.iter().enumerate() {
+                let f = self.faces.get(*id).expect("live");
+                let winding = if which[i] == Some(1) {
+                    reversed(f.nodes)
+                } else {
+                    f.nodes
+                };
+                let points = winding.map(|n| self.nodes.get(n).expect("live").at);
+                let normal = quad_normal(points);
+                let centre = self.middle(&points);
+                volume += (0..3).map(|k| centre[k] * normal[k]).sum::<f64>();
+            }
+            if volume < 0.0 && (0..ids.len()).all(|i| has(i, 1 - which[i].unwrap_or(0))) {
+                for w in which.iter_mut() {
+                    *w = w.map(|w| 1 - w);
+                }
+            }
+        }
+
+        Ok(ids
+            .iter()
+            .zip(&which)
+            .map(|(id, w)| {
+                let f = self.faces.get(*id).expect("live");
+                let side = f.sides[w.unwrap_or(0)]
+                    .or(f.sides[1 - w.unwrap_or(0)])
+                    .expect("a block on one side at least");
+                (self.face_name(*id), self.block_name(side.block))
+            })
+            .collect())
+    }
+
+    /// The pillow surface round a set of blocks, each face taken from the
+    /// block of the set it belongs to: every face of theirs with a block
+    /// outside the set on its other side, and — with `outer` — every one
+    /// with nothing there, on the outer boundary of the block structure.
+    ///
+    /// A layer laid along it goes towards the blocks: they are drawn in,
+    /// and the layer fills the space between them and the rest.
+    pub fn block_set_surface(
+        &self,
+        blocks: &[CellId],
+        outer: bool,
+    ) -> Result<Vec<(CellId, CellId)>, BlockingError> {
+        let mut set: Vec<BlockId> = Vec::with_capacity(blocks.len());
+        for block in blocks {
+            let at = self
+                .block_at(*block)
+                .ok_or(BlockingError::NoSuchBlock(*block))?;
+            if !set.contains(&at) {
+                set.push(at);
+            }
+        }
+        let mut out = Vec::new();
+        for at in &set {
+            for f in self.blocks.get(*at).expect("live").faces {
+                let face = self.faces.get(f).expect("live");
+                let other = face.sides.iter().flatten().find(|s| s.block != *at);
+                let keep = match other {
+                    None => outer,
+                    Some(s) => !set.contains(&s.block),
+                };
+                if keep {
+                    out.push((self.face_name(f), self.block_name(*at)));
+                }
+            }
+        }
+        if out.is_empty() {
+            return Err(BlockingError::EmptyPatch);
+        }
+        Ok(out)
+    }
+
     /// The pillow surface that goes round the blocks behind this one: the
     /// faces given, and every face of those blocks that has another block
     /// on its other side.

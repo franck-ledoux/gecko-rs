@@ -431,7 +431,8 @@ fn a_node_pillowed_along_its_side_keeps_the_side() {
         faces: vec![gecko_cmd::PickedFace {
             face: inside["id"].as_u64().unwrap() as u32,
             block: inside["block"].as_u64().unwrap() as u32,
-        }],
+        }
+        .into()],
         tolerance: gecko_cmd::SNAP_SHARE,
     })
     .expect("a layer");

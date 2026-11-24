@@ -1457,7 +1457,7 @@ fn cut(s: &mut Session, axis: usize, value: f64) {
 
 fn pillow(s: &mut Session, faces: Vec<gecko_cmd::PickedFace>) -> Result<String, String> {
     s.apply(Command::Pillow {
-        faces,
+        faces: faces.into_iter().map(Into::into).collect(),
         tolerance: SNAP_SHARE,
     })
     .map(|o| o.message)
