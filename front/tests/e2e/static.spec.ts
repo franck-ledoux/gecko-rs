@@ -4006,7 +4006,9 @@ test("an edge goes on two curves, and a face on two surfaces", async ({
   );
   await page.evaluate(() => (window as any).__gecko.settled());
 
-  // The top face may not: its edges are on curves neither surface holds.
+  // The top face too: `A` lays a face down, so its corners are taken onto
+  // the rim of the two surfaces rather than the face being refused for
+  // where they were.
   const top = (await page.evaluate(() => {
     // Drawn positions are shifted by the scene's origin, so the face is
     // the highest one rather than the one at a given height.
@@ -4032,7 +4034,9 @@ test("an edge goes on two curves, and a face on two surfaces", async ({
   );
   await page.evaluate(() => (window as any).__gecko.showVerbs());
   await page.keyboard.press("a");
-  await expect(page.locator("#status")).toContainText("cannot stay on");
+  await expect(page.locator("#status")).toContainText(
+    `face ${top.face} put on patch 2 (surfaces 1, 3)`,
+  );
   expect(errors).toEqual([]);
 });
 
@@ -4077,9 +4081,11 @@ test("U takes a lit edge or picked faces off the geometry", async ({
   expect(errors).toEqual([]);
 });
 
-test("the geometry is merged", async ({ page }) => {
+test("the geometry is merged, and a face laid down on the merge", async ({
+  page,
+}) => {
   // The fast way onto a model cut finer than the blocking needs: merge the
-  // pieces once.
+  // pieces once, and lay a face down on them in one gesture.
   const errors = await boot(page);
   await boxedAndPinned(page);
   await expect(page.locator("#merge-smooth")).toBeEnabled();
@@ -4142,6 +4148,27 @@ test("the geometry is merged", async ({ page }) => {
   );
   await expect(page.locator("#status")).toContainText("surface 1+3 selected");
 
+  // The bottom face, laid down on it with A: its corners go onto the rim.
+  const bottom = (await page.evaluate(() => {
+    const s = (window as any).__gecko.surface("faces");
+    let best = -1;
+    let at = Infinity;
+    for (let q = 0; q < s.quads; q++) {
+      let z = 0;
+      for (let k = 0; k < 4; k++) z += s.positions[(q * 4 + k) * 3 + 2] / 4;
+      if (z < at) {
+        at = z;
+        best = q;
+      }
+    }
+    return { face: s.faces[best], block: s.blocks[best] };
+  })) as { face: number; block: number };
+  await page.evaluate((p) => (window as any).__gecko.choose(p), bottom);
+  await page.evaluate(() => (window as any).__gecko.showVerbs());
+  await page.keyboard.press("a");
+  await expect(page.locator("#status")).toContainText(
+    `face ${bottom.face} put on surface 1+3`,
+  );
   expect(errors).toEqual([]);
 });
 

@@ -2079,7 +2079,9 @@ async function boot() {
         ? { op: "classify_node", nodes, on }
         : what === "edge"
           ? { op: "classify_edge", edges: [edge], on }
-          : { op: "classify_face", faces, on },
+          : // A face is said to cover what it is put on: its corners and
+            // sides go on the rim, in the same gesture.
+            { op: "classify_face", faces, on, down: true },
     );
     if (reply.ok) {
       if (what === "nodes") viewer.selectNodes([]);

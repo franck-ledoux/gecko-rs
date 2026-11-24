@@ -651,10 +651,18 @@ pub enum Command {
     },
     /// Put faces on a surface, or on several taken as one, or on nothing.
     /// See [`ClassifyEdge`](Command::ClassifyEdge).
+    ///
+    /// With `down`, the face is said to **cover** what it is put on, and its
+    /// boundary goes on that boundary: each corner onto the nearest point
+    /// of the rim — a corner of the rim within the snap tolerance, or else
+    /// the rim curve — and each side along the curve, or the two adjacent
+    /// curves, its ends are on. One gesture instead of one per cell.
     ClassifyFace {
         faces: Vec<u32>,
         #[serde(default)]
         on: Option<Place>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        down: bool,
     },
     /// Merge curves, or surfaces, of the geometry into one.
     ///
@@ -1683,7 +1691,9 @@ impl Session {
                     view_changed: true,
                 })
             }
-            Command::ClassifyFace { faces, on: None } => {
+            Command::ClassifyFace {
+                faces, on: None, ..
+            } => {
                 let names = cells(&faces, "face")?;
                 for face in &names {
                     self.blocking.set_face_free(*face)?;
@@ -1732,10 +1742,14 @@ impl Session {
             Command::ClassifyFace {
                 faces,
                 on: Some(on),
+                down,
             } => {
                 let on = self.place(&on, gecko_geom::SURFACE)?;
                 let names = cells(&faces, "face")?;
                 for face in &names {
+                    if down {
+                        self.lay_down(*face, on)?;
+                    }
                     self.blocking.set_face_class(*face, Some(on))?;
                 }
                 self.settle_classification();
@@ -2168,6 +2182,183 @@ impl Session {
         }
         let tag = self.composites.group(dim, &members);
         Ok(On { dim, tag })
+    }
+
+    /// Put a face's corners and sides on the rim of what it is to cover.
+    ///
+    /// The rim is every curve of the model on which exactly one of the
+    /// target's surfaces lies — a seam between two of them is inside it,
+    /// not on its rim. A corner of the face goes to the nearest point of
+    /// the rim, and is on a corner of the rim if one is within the snap
+    /// tolerance of that point, or else on the curve. A side is on the
+    /// curve its two ends share, or on the two curves meeting at a corner
+    /// of the rim that its ends are on, taken as one; on the target itself
+    /// when neither. A target with no rim, a closed surface, takes the
+    /// corners itself.
+    fn lay_down(&mut self, face: CellId, on: On) -> Result<(), SessionError> {
+        let geometry = self.geometry.clone().ok_or(SessionError::NoGeometry)?;
+        let (nodes, edges) = self
+            .blocking
+            .face_cells(face)
+            .ok_or(BlockingError::NoSuchFace(face))?;
+        let pieces = |composites: &Composites, tag: i32| -> Vec<i32> {
+            composites
+                .members(tag)
+                .map(|(_, m)| m.to_vec())
+                .unwrap_or_else(|| vec![tag])
+        };
+        let target = pieces(&self.composites, on.tag);
+        let reach = self.tolerance.max(0.0) * geometry.span();
+
+        /// Where a side of the face goes.
+        enum Side {
+            Curve(i32),
+            Pair(Vec<i32>),
+            Across,
+        }
+
+        let (placed, sides) = {
+            let model = Model::new(&geometry, &self.composites);
+            let rim: Vec<i32> = model
+                .visible(gecko_geom::CURVE)
+                .into_iter()
+                .filter(|&c| {
+                    pieces(&self.composites, c).iter().all(|&p| {
+                        geometry
+                            .containing(gecko_geom::CURVE, p)
+                            .iter()
+                            .filter(|e| e.0 == gecko_geom::SURFACE && target.contains(&e.1))
+                            .count()
+                            == 1
+                    })
+                })
+                .collect();
+            let corners: Vec<i32> = model
+                .visible(gecko_geom::CORNER)
+                .into_iter()
+                .filter(|&p| {
+                    let up = model.containing(gecko_geom::CORNER, p);
+                    rim.iter().any(|r| up.contains(&(gecko_geom::CURVE, *r)))
+                })
+                .collect();
+
+            let mut placed: Vec<(CellId, On, [f64; 3])> = Vec::new();
+            for node in nodes {
+                let at = self
+                    .blocking
+                    .position(node)
+                    .ok_or(BlockingError::NoSuchNode(node))?;
+                let landed = rim
+                    .iter()
+                    .filter_map(|&r| {
+                        let q = model.project(gecko_geom::CURVE, r, at)?;
+                        Some((apart(q, at), r, q))
+                    })
+                    .min_by(|a, b| a.0.total_cmp(&b.0));
+                let (class, to) = match landed {
+                    Some((_, curve, q)) => corners
+                        .iter()
+                        .filter_map(|&p| {
+                            let c = model.project(gecko_geom::CORNER, p, q)?;
+                            Some((apart(c, q), p, c))
+                        })
+                        .filter(|(d, _, _)| *d <= reach)
+                        .min_by(|a, b| a.0.total_cmp(&b.0))
+                        .map(|(_, p, c)| {
+                            (
+                                On {
+                                    dim: gecko_geom::CORNER,
+                                    tag: p,
+                                },
+                                c,
+                            )
+                        })
+                        .unwrap_or((
+                            On {
+                                dim: gecko_geom::CURVE,
+                                tag: curve,
+                            },
+                            q,
+                        )),
+                    None => (on, model.project(on.dim, on.tag, at).unwrap_or(at)),
+                };
+                placed.push((node, class, to));
+            }
+
+            // The curves of the rim a node is on: its own, or those through
+            // its corner.
+            let along = |class: On| -> Vec<i32> {
+                match class.dim {
+                    gecko_geom::CURVE => vec![class.tag],
+                    gecko_geom::CORNER => {
+                        let up = model.containing(gecko_geom::CORNER, class.tag);
+                        rim.iter()
+                            .copied()
+                            .filter(|r| up.contains(&(gecko_geom::CURVE, *r)))
+                            .collect()
+                    }
+                    _ => Vec::new(),
+                }
+            };
+            let class_of = |n: CellId| placed.iter().find(|p| p.0 == n).map(|p| p.1);
+            let mut sides: Vec<(CellId, Side)> = Vec::new();
+            for edge in edges {
+                let (a, b) = self
+                    .blocking
+                    .edge_ends(edge)
+                    .ok_or(BlockingError::NoSuchEdge(edge))?;
+                let (Some(ca), Some(cb)) = (class_of(a), class_of(b)) else {
+                    continue;
+                };
+                let (la, lb) = (along(ca), along(cb));
+                let side = if let Some(c) = la.iter().find(|c| lb.contains(c)) {
+                    Side::Curve(*c)
+                } else if let Some((x, y)) = la
+                    .iter()
+                    .flat_map(|x| lb.iter().map(move |y| (*x, *y)))
+                    .find(|(x, y)| {
+                        corners.iter().any(|p| {
+                            let up = model.containing(gecko_geom::CORNER, *p);
+                            up.contains(&(gecko_geom::CURVE, *x))
+                                && up.contains(&(gecko_geom::CURVE, *y))
+                        })
+                    })
+                {
+                    let mut both = pieces(&self.composites, x);
+                    both.extend(pieces(&self.composites, y));
+                    Side::Pair(both)
+                } else {
+                    Side::Across
+                };
+                sides.push((edge, side));
+            }
+            (placed, sides)
+        };
+
+        for (node, class, to) in placed {
+            // A frozen node stays where it is and as it is: that is what
+            // frozen means, and the check after this says if the face
+            // cannot then be what it was told.
+            if !self.blocking.is_frozen(node) {
+                self.blocking.set_node_class(node, Some(class))?;
+                self.blocking.set_position(node, to)?;
+            }
+        }
+        for (edge, side) in sides {
+            let class = match side {
+                Side::Curve(tag) => On {
+                    dim: gecko_geom::CURVE,
+                    tag,
+                },
+                Side::Pair(both) => On {
+                    dim: gecko_geom::CURVE,
+                    tag: self.composites.group(gecko_geom::CURVE, &both),
+                },
+                Side::Across => on,
+            };
+            self.blocking.set_edge_class(edge, Some(class))?;
+        }
+        Ok(())
     }
 
     /// Every cell on something a merge has taken, onto what stands in for
@@ -3101,6 +3292,10 @@ impl Session {
 
 /// How a handful of nodes reads in a message: by name while you could
 /// still look them up, by number once you could not.
+fn apart(a: [f64; 3], b: [f64; 3]) -> f64 {
+    (0..3).map(|k| (a[k] - b[k]).powi(2)).sum::<f64>().sqrt()
+}
+
 /// Raw names as cells, refusing an empty list.
 fn cells(raw: &[u32], what: &str) -> Result<Vec<CellId>, SessionError> {
     if raw.is_empty() {

@@ -274,12 +274,19 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
             "on": { "dim": at(lua, &a, 1)?, "tag": at(lua, &a, 2)? },
         }))
     })?;
+    // `{ down = true }`: the face covers what it is put on, and its corners
+    // and sides go on the rim of it.
     command(lua, &gecko, &kernel, "classify_face", |lua, a| {
-        Ok(json!({
-            "op": "classify_face",
-            "faces": list(lua, &a, 0)?,
-            "on": { "dim": at(lua, &a, 1)?, "tag": at(lua, &a, 2)? },
-        }))
+        let o = options(lua, &a, 3)?;
+        Ok(with(
+            json!({
+                "op": "classify_face",
+                "faces": list(lua, &a, 0)?,
+                "on": { "dim": at(lua, &a, 1)?, "tag": at(lua, &a, 2)? },
+            }),
+            &o,
+            &["down"],
+        ))
     })?;
     // Off the model, and kept off: the settling leaves them on nothing.
     command(lua, &gecko, &kernel, "unclassify_edge", |lua, a| {

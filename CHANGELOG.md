@@ -45,6 +45,9 @@ the day a tag was cut.
   within* in the settings panel.
 - **A merge is drawn and picked as one entity**, in one color, named by its
   pieces; the seams and corners it swallowed are not drawn.
+- **A face is laid down on what it covers.** `classify_face(…, { down =
+  true })`, and `A` on picked faces, takes the face's corners onto the rim
+  of the surfaces and its sides along it, in the same gesture.
 
 ## 0.2.5
 

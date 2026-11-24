@@ -1784,6 +1784,7 @@ fn a_face_is_put_on_two_surfaces_taken_as_one() {
         .apply(Command::ClassifyFace {
             faces: vec![bottom],
             on: Some(on_many(2, &[1, 3])),
+            down: false,
         })
         .unwrap();
     assert!(out.message.contains("surfaces 1, 3"), "{}", out.message);
@@ -1807,6 +1808,7 @@ fn a_face_is_put_on_two_surfaces_taken_as_one() {
         .apply(Command::ClassifyFace {
             faces: vec![top],
             on: Some(on_many(2, &[1, 3])),
+            down: false,
         })
         .unwrap_err()
         .to_string();
@@ -1816,6 +1818,7 @@ fn a_face_is_put_on_two_surfaces_taken_as_one() {
         .apply(Command::ClassifyFace {
             faces: vec![bottom],
             on: Some(on_many(1, &[201, 202])),
+            down: false,
         })
         .unwrap_err()
         .to_string();
@@ -1844,6 +1847,7 @@ fn a_face_on_two_surfaces_may_be_bounded_by_an_edge_on_two_curves() {
     s.apply(Command::ClassifyFace {
         faces: vec![bottom],
         on: Some(on_many(2, &[1, 4])),
+        down: false,
     })
     .unwrap();
     s.apply(Command::Smooth {
@@ -1983,6 +1987,7 @@ fn a_face_taken_off_the_model_stays_off_and_leaves_its_edges_alone() {
         .apply(Command::ClassifyFace {
             faces: vec![bottom],
             on: None,
+            down: false,
         })
         .unwrap();
     assert_eq!(out.message, format!("face {bottom} on nothing now"));
@@ -2002,6 +2007,7 @@ fn a_face_taken_off_the_model_stays_off_and_leaves_its_edges_alone() {
     s.apply(Command::ClassifyFace {
         faces: vec![bottom],
         on: Some(on_many(2, &[1, 3])),
+        down: false,
     })
     .unwrap();
     assert!(s.blocking().face_class(cell).is_some_and(|on| on.tag < 0));
@@ -2011,6 +2017,7 @@ fn a_face_taken_off_the_model_stays_off_and_leaves_its_edges_alone() {
         .apply(Command::ClassifyFace {
             faces: vec![999_999],
             on: None,
+            down: false,
         })
         .unwrap_err()
         .to_string();
@@ -2044,6 +2051,7 @@ fn a_pillow_opening_onto_a_face_on_two_surfaces_leaves_its_new_cells_there() {
     s.apply(Command::ClassifyFace {
         faces: vec![bottom],
         on: Some(on_many(2, &[1, 3])),
+        down: false,
     })
     .unwrap();
     let patch = s
@@ -2264,6 +2272,7 @@ fn merging_two_surfaces_puts_what_was_on_their_seam_on_the_merge() {
         .apply(Command::ClassifyFace {
             faces: vec![bottom],
             on: Some(Spot { dim: 2, tag: 1 }.into()),
+            down: false,
         })
         .unwrap();
     assert!(out.message.ends_with("on surface 1+3"), "{}", out.message);
@@ -2277,6 +2286,122 @@ fn merging_two_surfaces_puts_what_was_on_their_seam_on_the_merge() {
         })
         .unwrap();
     assert!(out.message.ends_with("on surface 1+3"), "{}", out.message);
+}
+
+#[test]
+fn a_face_laid_down_takes_its_corners_and_sides_onto_the_rim() {
+    // The box block stands a tenth clear of the geometry all round. Its
+    // bottom face, put down on surface 1, takes its four corners onto the
+    // four corners of the surface and its sides onto the four curves —
+    // in one command, nodes and edges and face.
+    let mut s = Session::new().unwrap();
+    s.apply(Command::LoadGeometry {
+        msh: BOX.to_string(),
+        name: "box.msh".to_string(),
+    })
+    .unwrap();
+    s.apply(Command::BoxGeometry {
+        surfaces: vec![],
+        margin: 0.1,
+    })
+    .unwrap();
+    let bottom = face_named(&s, [0.5, 0.5, -1.0]);
+    let out = s
+        .apply(Command::ClassifyFace {
+            faces: vec![bottom],
+            on: Some(Spot { dim: 2, tag: 1 }.into()),
+            down: true,
+        })
+        .unwrap();
+    assert_eq!(out.message, format!("face {bottom} put on surface 1"));
+    assert!(
+        s.script().contains(&format!(
+            "gecko.classify_face({{{bottom}}}, 2, 1, {{ down = true }})"
+        )),
+        "{}",
+        s.script()
+    );
+    for (at, corner) in [
+        ([0.0, 0.0, 0.0], 101),
+        ([1.0, 0.0, 0.0], 102),
+        ([1.0, 1.0, 0.0], 103),
+        ([0.0, 1.0, 0.0], 104),
+    ] {
+        let n = gecko_core::CellId::from_raw(node_at(&s, at));
+        assert_eq!(
+            s.blocking().node_class(n),
+            Some(On {
+                dim: 0,
+                tag: corner
+            })
+        );
+    }
+    let front = gecko_core::CellId::from_raw(edge_between(&s, [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]));
+    assert_eq!(
+        s.blocking().edge_class(front),
+        Some(On { dim: 1, tag: 201 })
+    );
+    assert_eq!(
+        s.blocking()
+            .face_class(gecko_core::CellId::from_raw(bottom)),
+        Some(On { dim: 2, tag: 1 })
+    );
+    // The top is where it was: only the face laid down was laid down.
+    assert_eq!(classified(&s)["nodes"], 4, "{}", classified(&s));
+}
+
+#[test]
+fn a_face_laid_down_across_a_cut_rim_runs_its_side_along_both_curves() {
+    // The rim of the bottom of the box is four curves meeting at corners.
+    // With corner 102 out of reach, the bottom-front side has its ends on
+    // curve 201 and on curve 202, and is put on the two taken as one.
+    let mut s = Session::new().unwrap();
+    s.apply(Command::LoadGeometry {
+        msh: BOX.to_string(),
+        name: "box.msh".to_string(),
+    })
+    .unwrap();
+    s.apply(Command::BoxGeometry {
+        surfaces: vec![],
+        margin: 0.1,
+    })
+    .unwrap();
+    // Pull one corner of the bottom face in along the front, so that it
+    // lands on curve 201 short of corner 102. The box stands clear by a
+    // share of the model's size, so its corners are found, not named.
+    let all = nodes(&s);
+    let low = all
+        .iter()
+        .map(|n| n["pos"][2].as_f64().unwrap())
+        .fold(f64::INFINITY, f64::min);
+    let (corner, at) = all
+        .iter()
+        .filter(|n| (n["pos"][2].as_f64().unwrap() - low).abs() < 1e-9)
+        .map(|n| {
+            let p: Vec<f64> = (0..3).map(|k| n["pos"][k].as_f64().unwrap()).collect();
+            (n["id"].as_u64().unwrap() as u32, p)
+        })
+        .max_by(|a, b| (a.1[0] - a.1[1]).total_cmp(&(b.1[0] - b.1[1])))
+        .unwrap();
+    s.apply(Command::MoveNode {
+        node: corner,
+        to: [0.7, at[1], at[2]],
+        snap: 0.0,
+        carrying: vec![],
+    })
+    .unwrap();
+    let bottom = face_named(&s, [0.5, 0.5, -1.0]);
+    s.apply(Command::ClassifyFace {
+        faces: vec![bottom],
+        on: Some(Spot { dim: 2, tag: 1 }.into()),
+        down: true,
+    })
+    .unwrap();
+    let n = gecko_core::CellId::from_raw(corner);
+    assert_eq!(s.blocking().node_class(n), Some(On { dim: 1, tag: 201 }));
+    let right = gecko_core::CellId::from_raw(edge_between(&s, [0.7, 0.0, 0.0], [1.0, 1.0, 0.0]));
+    let on = s.blocking().edge_class(right).expect("on something");
+    assert!(on.dim == 1 && on.tag < 0, "{on:?}");
 }
 
 #[test]
@@ -2345,6 +2470,7 @@ fn a_merge_is_drawn_and_picked_as_one_entity() {
         .apply(Command::ClassifyFace {
             faces: vec![bottom],
             on: Some(Spot { dim: 2, tag }.into()),
+            down: false,
         })
         .unwrap();
     assert!(out.message.ends_with("on surface 1+2"), "{}", out.message);

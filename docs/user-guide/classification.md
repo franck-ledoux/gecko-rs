@@ -252,6 +252,28 @@ single surface holds both. What the boundary does **not** already allow is
 refused, saying what the ends or edges are on: the next settling would take
 it straight back. Put the ends on first, then the edge, then the face.
 
+### Laying a face down
+
+A face put on a surface usually **covers** it: its corners belong on the
+surface's rim and its sides along it. Saying so puts the lot there at once:
+
+```lua
+gecko.classify_face(512, 2, {2, 3}, { down = true })
+```
+
+Each corner goes to the nearest point of the rim — onto a corner of the rim
+if one is within the snap tolerance, or else onto the rim curve it landed
+on — and each side onto the curve its two ends share, or onto the two
+curves meeting at a corner of the rim that its ends are on, taken as one.
+The rim is the curves on which exactly one of the surfaces lies, so the seam
+between two of them is inside it. `A` on picked faces does this.
+
+With a [merged](geometry.md#merging-pieces-of-it) geometry it is one
+gesture for the whole of a side of the blocking: on a shell whose rim is
+curves 2 and 4 and whose inside is surfaces 2 and 3, merged, the bottom face
+of the box laid down on surface 2 takes its four corners onto the rim and its
+four sides along it.
+
 With the mouse it is the same `A` as for nodes. Press `M` and click every
 curve (or surface) it spans, then press `A` with the cells picked: nodes if
 any are picked, else the edge whose sheet is lit, else the picked faces. The

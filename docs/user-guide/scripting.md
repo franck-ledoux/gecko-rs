@@ -88,6 +88,7 @@ shorthand for a call with one table.
 | `gecko.unclassify_edge(ids)`, `unclassify_face(ids)`                 | kept on nothing until put back                                       |
 | `gecko.merge_curves(tags)`, `merge_surfaces(tags)`                   | one entity standing in for the pieces                                |
 | `gecko.merge_smooth{ angle }`                                        | merges what meets within `angle`°, 10 by default                     |
+| `gecko.classify_face(ids, dim, tag, { down = true })`                | corners and sides onto the rim too                                   |
 | `gecko.freeze_node(ids)`, `gecko.thaw_node(ids)`                     |                                                                      |
 | `gecko.load_geometry(path)`, `gecko.clear_geometry()`                |                                                                      |
 | `gecko.files()`                                                      | what can be opened by name here                                      |

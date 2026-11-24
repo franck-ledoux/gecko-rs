@@ -221,8 +221,13 @@ pub fn line(command: &Command) -> String {
             Some(on) => format!("gecko.classify_edge({}, {})", numbers(edges), place(on)),
             None => format!("gecko.unclassify_edge({})", numbers(edges)),
         },
-        Command::ClassifyFace { faces, on } => match on {
-            Some(on) => format!("gecko.classify_face({}, {})", numbers(faces), place(on)),
+        Command::ClassifyFace { faces, on, down } => match on {
+            Some(on) => format!(
+                "gecko.classify_face({}, {}{})",
+                numbers(faces),
+                place(on),
+                if *down { ", { down = true }" } else { "" }
+            ),
             None => format!("gecko.unclassify_face({})", numbers(faces)),
         },
         Command::Merge { dim, tags } => format!(
