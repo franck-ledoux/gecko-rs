@@ -43,6 +43,11 @@ the day a tag was cut.
   within 10° of straight beyond how much they turn anyway. It says what it
   merged and the nearest miss. How far from smooth still counts is *merge
   within* in the settings panel.
+- **A seam down one surface is merged into it.** The cut a CAD export
+  leaves down a cylinder, with the same surface on both sides, goes into
+  the surface, and the corners at its ends go onto the closed rims through
+  them. A crease is measured against how much each surface folds anyway
+  between its own triangles, so a coarsely faceted cylinder is no crease.
 - **A merge is drawn and picked as one entity**, in one color, named by its
   pieces; the seams and corners it swallowed are not drawn.
 - **A face is laid down on what it covers.** `classify_face(…, { down =

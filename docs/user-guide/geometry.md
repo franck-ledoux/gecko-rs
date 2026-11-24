@@ -154,7 +154,14 @@ onto the merge, which contains it.
 flat, then curves at a corner where they are the only two left, run along
 the same surfaces, and meet within 10° of straight — **beyond** how much
 each turns at its next node anyway, since a circle drawn with 22 segments
-turns 16° at every node and is no less smooth for it. It says what it merged
+turns 16° at every node and is no less smooth for it.
+
+A crease is measured the same way, against how much each surface folds on
+its own between its triangles: a cylinder drawn with 24 facets folds 15°
+at every edge along it. So the **seam down a cylinder** — a curve with the
+one surface on both sides of it — goes into the surface, and a corner left
+with nothing through it but a closed curve, such as where that seam met the
+rim, goes onto the curve. It says what it merged
 and the nearest miss, so a join that was nearly smooth enough is a number
 to raise rather than a mystery: `gecko.merge_smooth{ angle = 20 }`.
 

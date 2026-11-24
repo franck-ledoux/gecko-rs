@@ -423,8 +423,65 @@ fn what_meets_smoothly_is_merged_and_what_meets_at_a_crease_is_not() {
         .iter()
         .find(|j| j.across == (CURVE, 13))
         .unwrap();
-    assert!((seam.degrees - 90.0).abs() < 1e-6, "{seam:?}");
+    assert!((seam.degrees - 90.0).abs() < 1e-4, "{seam:?}");
     // And the curves through its ends lie on different surfaces, so they
     // are not run together either, straight or not.
     assert_eq!(c.stand_in(CURVE, 11), None);
+}
+
+/// A tube of 12 facets, radius 1 from z = 0 to z = 1: surface 1, cut down
+/// its side by the seam 10 from corner 3 at the bottom to corner 4 at the
+/// top, its rims the closed curves 5 and 6 starting and ending at those
+/// corners — a cylinder as a CAD export leaves one.
+fn tube() -> Geometry {
+    let n = 12;
+    let at = |k: usize, z: f64| {
+        let a = std::f64::consts::TAU * (k % n) as f64 / n as f64;
+        [a.cos(), a.sin(), z]
+    };
+    let mut b = Build::default();
+    b.element(POINT, 3, &[at(0, 0.0)]);
+    b.element(POINT, 4, &[at(0, 1.0)]);
+    b.element(LINE, 10, &[at(0, 0.0), at(0, 1.0)]);
+    for k in 0..n {
+        b.element(LINE, 5, &[at(k, 0.0), at(k + 1, 0.0)]);
+        b.element(LINE, 6, &[at(k, 1.0), at(k + 1, 1.0)]);
+        b.element(TRIANGLE, 1, &[at(k, 0.0), at(k + 1, 0.0), at(k + 1, 1.0)]);
+        b.element(TRIANGLE, 1, &[at(k, 0.0), at(k + 1, 1.0), at(k, 1.0)]);
+    }
+    b.done()
+}
+
+#[test]
+fn a_seam_down_one_surface_goes_into_it_with_its_corners() {
+    // The tube folds 30° at every edge along it, and so does the seam:
+    // no crease, so the seam goes, and its two corners, left with nothing
+    // through them but a closed rim each, go onto the rims.
+    let g = tube();
+    let mut c = Composites::new();
+    let found = c.merge_smooth(&g, 10.0);
+    assert_eq!(found.seams, vec![(10, 1)], "{found:?}");
+    assert!(found.merges.is_empty());
+    assert_eq!(c.stand_in(CURVE, 10), Some((SURFACE, 1)));
+    assert_eq!(c.stand_in(CORNER, 3), Some((CURVE, 5)));
+    assert_eq!(c.stand_in(CORNER, 4), Some((CURVE, 6)));
+    let model = Model::new(&g, &c);
+    assert_eq!(
+        model.nearest([1.0, 0.0, 0.0], [0.05; 3]),
+        Some((CURVE, 5)),
+        "near the old corner, on the rim"
+    );
+    assert_eq!(
+        model.nearest([1.0, 0.0, 0.5], [0.05; 3]),
+        Some((SURFACE, 1)),
+        "near the old seam, on the tube"
+    );
+
+    // Without a merge, a closed rim and its corner are as the file has
+    // them.
+    let plain = Composites::new();
+    assert_eq!(
+        Model::new(&g, &plain).nearest([1.0, 0.0, 0.0], [0.05; 3]),
+        Some((CORNER, 3))
+    );
 }

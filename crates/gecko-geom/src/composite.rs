@@ -55,6 +55,10 @@ pub struct Composites {
     /// merged, the corner where two curves merged meet. Worked out again at
     /// every merge, from the geometry and the merges alone.
     stand_in: BTreeMap<(u8, i32), (u8, i32)>,
+    /// Curves swallowed by the one surface on both sides of them: the seam
+    /// a CAD export leaves down a cylinder, which is not a join between two
+    /// pieces but a cut of one, `(curve, surface)`.
+    seams: BTreeSet<(i32, i32)>,
 }
 
 /// Why a merge was refused.
@@ -175,6 +179,13 @@ impl Composites {
             })
             .collect();
         self.stand_in.extend(taken);
+        // A seam goes into its surface, or into what that surface went into.
+        let seams: Vec<((u8, i32), (u8, i32))> = self
+            .seams
+            .iter()
+            .map(|&(c, s)| ((crate::CURVE, c), self.image(crate::SURFACE, s)))
+            .collect();
+        self.stand_in.extend(seams);
         // From the top down, so that a corner sees what the curves through
         // it have already become.
         for dim in [crate::CURVE, CORNER] {
@@ -186,12 +197,28 @@ impl Composites {
                 if self.stand_in.contains_key(&(dim, tag)) {
                     continue;
                 }
-                let images: Vec<(u8, i32)> = geometry
+                // One image per way in: a closed curve passes through its
+                // own corner twice, once at each end, and a corner on one
+                // with nothing else through it is no corner at all.
+                let up: Vec<(u8, i32)> = geometry
                     .containing(dim, tag)
                     .iter()
+                    .copied()
                     .filter(|e| e.0 == dim + 1)
-                    .map(|e| self.stand_in.get(e).copied().unwrap_or(*e))
                     .collect();
+                let mut images: Vec<(u8, i32)> = Vec::new();
+                for e in &up {
+                    let image = self.stand_in.get(e).copied().unwrap_or(*e);
+                    let ways = match dim {
+                        CORNER => ends_at(geometry, tag, e.1).max(1),
+                        _ => 1,
+                    };
+                    images.extend(std::iter::repeat_n(image, ways));
+                }
+                // Only where something was swallowed: a closed circle and
+                // its one corner are as the file has them until a merge or
+                // a seam touches them.
+                let touched = up.iter().any(|e| self.stand_in.contains_key(e));
                 let Some(lowest) = images.iter().map(|e| e.0).min() else {
                     continue;
                 };
@@ -202,7 +229,7 @@ impl Composites {
                 }
                 let only = *low.iter().next().expect("one");
                 let through = images.iter().filter(|e| **e == only).count();
-                if self.merged.contains(&only.1) && through >= 2 {
+                if through >= 2 && (self.merged.contains(&only.1) || touched) {
                     self.stand_in.insert((dim, tag), only);
                 }
             }
@@ -229,6 +256,9 @@ impl Composites {
                 continue;
             }
             let smooth = *angle <= degrees;
+            if a == b && self.stand_in.contains_key(&(crate::CURVE, *curve)) {
+                continue;
+            }
             out.joins.push(Join {
                 dim: crate::SURFACE,
                 across: (crate::CURVE, *curve),
@@ -236,7 +266,7 @@ impl Composites {
                 degrees: *angle,
                 merged: smooth,
             });
-            if smooth {
+            if smooth && a != b {
                 union.join(*a, *b);
             }
         }
@@ -244,6 +274,16 @@ impl Composites {
             if let Ok(tag) = self.merge(geometry, crate::SURFACE, &group) {
                 out.merges.push(tag);
             }
+        }
+        // A seam down one surface, smooth across, goes into it.
+        for join in &out.joins {
+            if join.merged && join.pair.0 == join.pair.1 {
+                self.seams.insert((join.across.1, join.pair.0));
+                out.seams.push((join.across.1, join.pair.0));
+            }
+        }
+        if !out.seams.is_empty() {
+            self.settle_merges(geometry);
         }
         // Then curves, at corners, as the surfaces now are.
         let mut union = Union::default();
@@ -293,6 +333,12 @@ impl Composites {
             }
         }
         out
+    }
+
+    /// Everything something now stands in for, and what: what changes the
+    /// picture of the geometry when it changes.
+    pub fn taken(&self) -> Vec<((u8, i32), (u8, i32))> {
+        self.stand_in.iter().map(|(e, by)| (*e, *by)).collect()
     }
 
     /// Whether a composite is a merge of the geometry.
@@ -398,7 +444,7 @@ impl<'a> Model<'a> {
     /// found at all — a point near the corner between two merged curves is
     /// on the merged curve.
     pub fn nearest(&self, p: [f64; 3], tolerance: [f64; 3]) -> Option<(u8, i32)> {
-        if self.composites.merged.is_empty() {
+        if self.composites.stand_in.is_empty() {
             return self.geometry.nearest(p, tolerance);
         }
         for dim in [CORNER, crate::CURVE, crate::SURFACE] {
@@ -660,6 +706,8 @@ fn apart(p: [f64; 3], q: [f64; 3]) -> f64 {
 pub struct Smoothing {
     /// The merges it made, by tag.
     pub merges: Vec<i32>,
+    /// The seams it took into their surface, `(curve, surface)`.
+    pub seams: Vec<(i32, i32)>,
     /// Every join it looked at.
     pub joins: Vec<Join>,
 }
@@ -733,6 +781,38 @@ fn creases(geometry: &Geometry) -> Vec<(i32, i32, i32, f64)> {
             }
         }
     }
+    // How much each surface folds on its own, at the worst of its interior
+    // edges: how coarsely it is faceted. A cylinder of 24 facets folds 15°
+    // at every edge along it, and a seam down it folding as much is no
+    // crease; a CAD surface is smooth inside, so this is never a feature.
+    // The edges along curves are left out — a seam is what is measured,
+    // not what it is measured against.
+    let on_curves: BTreeSet<(u32, u32)> = geometry
+        .curves()
+        .iter()
+        .flat_map(|c| c.segments.iter().map(|s| (s[0].min(s[1]), s[0].max(s[1]))))
+        .collect();
+    let mut bends: BTreeMap<i32, f64> = geometry.surfaces().iter().map(|s| (s.tag, 0.0)).collect();
+    for ((p, q), around) in &beside {
+        if on_curves.contains(&(*p, *q)) {
+            continue;
+        }
+        let [(sa, ca), (sb, cb)] = around[..] else {
+            continue;
+        };
+        if sa != sb {
+            continue;
+        }
+        let (pp, qq) = (nodes[*p as usize], nodes[*q as usize]);
+        let (Some(da), Some(db)) = (
+            lean(pp, qq, nodes[ca as usize]),
+            lean(pp, qq, nodes[cb as usize]),
+        ) else {
+            continue;
+        };
+        let worst = bends.entry(sa).or_insert(0.0);
+        *worst = worst.max(folded(da, db));
+    }
     let mut out = Vec::new();
     for curve in geometry.curves() {
         let surfaces: Vec<i32> = geometry
@@ -741,17 +821,24 @@ fn creases(geometry: &Geometry) -> Vec<(i32, i32, i32, f64)> {
             .filter(|e| e.0 == crate::SURFACE)
             .map(|e| e.1)
             .collect();
-        let [a, b] = surfaces[..] else { continue };
+        let (a, b) = match surfaces[..] {
+            [a, b] => (a, b),
+            // The one surface on both sides: a seam down it.
+            [a] => (a, a),
+            _ => continue,
+        };
         let mut worst: Option<f64> = None;
         for seg in &curve.segments {
             let key = (seg[0].min(seg[1]), seg[0].max(seg[1]));
             let Some(around) = beside.get(&key) else {
                 continue;
             };
-            let third = |s: i32| around.iter().find(|(t, _)| *t == s).map(|(_, c)| *c);
-            let (Some(ca), Some(cb)) = (third(a), third(b)) else {
-                continue;
-            };
+            let thirds: Vec<u32> = around
+                .iter()
+                .filter(|(t, _)| *t == a || *t == b)
+                .map(|(_, c)| *c)
+                .collect();
+            let [ca, cb] = thirds[..] else { continue };
             let (p, q) = (nodes[seg[0] as usize], nodes[seg[1] as usize]);
             let (Some(da), Some(db)) = (
                 lean(p, q, nodes[ca as usize]),
@@ -759,9 +846,11 @@ fn creases(geometry: &Geometry) -> Vec<(i32, i32, i32, f64)> {
             ) else {
                 continue;
             };
-            // Flat is the two leaning exactly away from each other.
-            let cos = (da[0] * db[0] + da[1] * db[1] + da[2] * db[2]).clamp(-1.0, 1.0);
-            let off = 180.0 - cos.acos().to_degrees();
+            // Flat is the two leaning exactly away from each other — less
+            // what each surface bends anyway at the triangle's other two
+            // edges: a cylinder drawn in 24 facets bends 15° at every one,
+            // and a seam down it bending as much is no crease.
+            let off = (folded(da, db) - bends[&a].max(bends[&b])).max(0.0);
             worst = Some(worst.map_or(off, |w: f64| w.max(off)));
         }
         if let Some(w) = worst {
@@ -769,6 +858,13 @@ fn creases(geometry: &Geometry) -> Vec<(i32, i32, i32, f64)> {
         }
     }
     out
+}
+
+/// How far from flat two triangles meet along an edge, given how each
+/// leans away from it.
+fn folded(da: [f64; 3], db: [f64; 3]) -> f64 {
+    let cos = (da[0] * db[0] + da[1] * db[1] + da[2] * db[2]).clamp(-1.0, 1.0);
+    180.0 - cos.acos().to_degrees()
 }
 
 /// The unit direction from the segment `p q` towards `c`, square to it.
@@ -825,4 +921,29 @@ fn bend(geometry: &Geometry, node: u32, a: i32, b: i32) -> Option<f64> {
     };
     let ((da, ta), (db, tb)) = (leaving(a)?, leaving(b)?);
     Some((turn(da, db) - ta.max(tb)).max(0.0))
+}
+
+/// How many ends of a curve's segments are at a corner's node: one where
+/// the curve ends there, two where a closed curve passes through it.
+fn ends_at(geometry: &Geometry, corner: i32, curve: i32) -> usize {
+    let Some(node) = geometry
+        .corners()
+        .iter()
+        .find(|c| c.tag == corner)
+        .map(|c| c.node)
+    else {
+        return 0;
+    };
+    let Some(c) = geometry.curves().iter().find(|c| c.tag == curve) else {
+        return 0;
+    };
+    // A closed curve's segments meet end to end at every node, so a node
+    // inside it is two ends and so is its own corner: what tells them
+    // apart is that the corner is the curve's start and its end.
+    let ends = c
+        .segments
+        .iter()
+        .map(|s| usize::from(s[0] == node) + usize::from(s[1] == node))
+        .sum::<usize>();
+    ends.min(2)
 }

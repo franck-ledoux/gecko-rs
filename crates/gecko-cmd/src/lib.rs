@@ -1016,8 +1016,8 @@ impl Session {
     /// chance for it to come out differently.
     /// The merges, as a thing to compare: what changes the picture of the
     /// geometry when it changes.
-    fn merges_now(&self) -> Vec<i32> {
-        self.composites.merges().collect()
+    fn merges_now(&self) -> Vec<((u8, i32), (u8, i32))> {
+        self.composites.taken()
     }
 
     fn restore(&mut self, state: State) {
@@ -1802,10 +1802,40 @@ impl Session {
                 let geometry = self.geometry.clone().ok_or(SessionError::NoGeometry)?;
                 let found = self.composites.merge_smooth(&geometry, angle);
                 self.follow_merges()?;
-                if !found.merges.is_empty() {
+                if !found.merges.is_empty() || !found.seams.is_empty() {
                     self.geometry_generation += 1;
                 }
-                let made: Vec<String> = found.merges.iter().map(|m| self.merge_said(*m)).collect();
+                let mut made: Vec<String> =
+                    found.merges.iter().map(|m| self.merge_said(*m)).collect();
+                // A seam is not a merge of two things but the cut down one,
+                // gone: said as what it went into, with any corner that
+                // went with it onto what is left through it.
+                for (curve, surface) in &found.seams {
+                    made.push(format!(
+                        "curve {curve} into {}",
+                        name_in(
+                            On {
+                                dim: gecko_geom::SURFACE,
+                                tag: self.composites.image(gecko_geom::SURFACE, *surface).1,
+                            },
+                            &self.composites
+                        )
+                    ));
+                }
+                for ((dim, tag), by) in self.composites.taken() {
+                    if dim == gecko_geom::CORNER && !self.composites.is_merged(by.1) {
+                        made.push(format!(
+                            "corner {tag} into {}",
+                            name_in(
+                                On {
+                                    dim: by.0,
+                                    tag: by.1
+                                },
+                                &self.composites
+                            )
+                        ));
+                    }
+                }
                 // The nearest miss, so that a join that was nearly smooth
                 // enough is a number to adjust rather than a mystery.
                 let miss = found
@@ -1819,6 +1849,8 @@ impl Session {
                             match j.dim {
                                 gecko_geom::CURVE =>
                                     format!("curves {} and {}", j.pair.0, j.pair.1),
+                                _ if j.pair.0 == j.pair.1 =>
+                                    format!("surface {} with itself", j.pair.0),
                                 _ => format!("surfaces {} and {}", j.pair.0, j.pair.1),
                             },
                             name_of(On {
