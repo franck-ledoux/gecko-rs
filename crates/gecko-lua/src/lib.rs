@@ -317,6 +317,10 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
     command(lua, &gecko, &kernel, "merge_surfaces", |lua, a| {
         Ok(json!({ "op": "merge", "dim": 2, "tags": list(lua, &a, 0)? }))
     })?;
+    command(lua, &gecko, &kernel, "merge_smooth", |lua, a| {
+        let o = options(lua, &a, 0)?;
+        Ok(with(json!({ "op": "merge_smooth" }), &o, &["angle"]))
+    })?;
     command(lua, &gecko, &kernel, "classify", |lua, a| {
         let o = options(lua, &a, 0)?;
         Ok(with(json!({ "op": "classify" }), &o, &["tolerance"]))

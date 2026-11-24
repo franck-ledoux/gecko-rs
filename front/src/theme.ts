@@ -176,6 +176,11 @@ export const MAX_BOX_MARGIN = 0.5;
  *  dropped by hand, which are the same question asked twice. */
 export const SNAP_SHARE = 0.02;
 export const MAX_SNAP = 0.1;
+/** How far from smooth a join may be and still be merged, in degrees: the
+ *  kernel's own default, and as far as the slider goes. Past 45° a crease
+ *  is a crease. */
+export const MERGE_ANGLE = 10;
+export const MAX_MERGE_ANGLE = 45;
 
 /** How many segments an edge is divided into when its sheet has not been
  *  set, and the most the drawer offers. The kernel's own default is the
@@ -245,6 +250,7 @@ export interface ViewPrefs {
    *  the outer boundary as well as along the ones between them and the
    *  rest. */
   pillow: { outer: boolean };
+  merge: { angle: number };
   /** Nodes carry how they are colored, how big they are drawn, and
    *  whether they are drawn at all. Hiding them is for looking at the
    *  shape of a blocking rather than working on it: a handle on every
@@ -294,6 +300,7 @@ export const DEFAULTS: ViewPrefs = {
   segments: SEGMENTS,
   smooth: { rounds: SMOOTH_ROUNDS, share: SMOOTH_SHARE },
   pillow: { outer: true },
+  merge: { angle: MERGE_ANGLE },
   // By their classification to begin with: putting the blocking onto the
   // model is what the whole session is for, so what each cell is attached
   // to is the thing worth seeing before anything else.
@@ -420,6 +427,13 @@ export function loadPrefs(): ViewPrefs {
         typeof stored.segments === "number" && Number.isFinite(stored.segments)
           ? Math.min(MAX_SEGMENTS, Math.max(1, Math.round(stored.segments)))
           : DEFAULTS.segments,
+      merge: {
+        angle: within(
+          stored.merge?.angle,
+          MAX_MERGE_ANGLE,
+          DEFAULTS.merge.angle,
+        ),
+      },
       pillow: {
         outer:
           typeof stored.pillow?.outer === "boolean"

@@ -360,3 +360,71 @@ fn a_merge_is_refused_what_it_cannot_be() {
         Some((CORNER, 23))
     );
 }
+
+/// `pair`, with the second square folded up square to the first along
+/// curve 13.
+fn folded() -> Geometry {
+    let f = [1.0, 0.0, 1.0];
+    let g = [1.0, 1.0, 1.0];
+    let mut b = Build::default();
+    for (p, tag) in [(A, 21), (C, 23), (D, 24), (E, 25), (f, 26), (g, 27)] {
+        b.element(POINT, tag, &[p]);
+    }
+    for (from, to, tag) in [
+        (A, C, 11),
+        (C, D, 13),
+        (D, E, 14),
+        (E, A, 15),
+        (C, f, 16),
+        (f, g, 17),
+        (g, D, 18),
+    ] {
+        b.element(LINE, tag, &[from, to]);
+    }
+    for t in [[A, C, D], [A, D, E]] {
+        b.element(TRIANGLE, 1, &t);
+    }
+    for t in [[C, f, g], [C, g, D]] {
+        b.element(TRIANGLE, 2, &t);
+    }
+    b.done()
+}
+
+#[test]
+fn what_meets_smoothly_is_merged_and_what_meets_at_a_crease_is_not() {
+    // Flat across curve 13: the two squares are one surface, and the two
+    // straight runs through its ends are one curve each.
+    let g = pair();
+    let mut c = Composites::new();
+    let found = c.merge_smooth(&g, 10.0);
+    assert_eq!(found.merges.len(), 3, "{found:?}");
+    let surface = c.image(SURFACE, 1);
+    assert_eq!(c.image(SURFACE, 2), surface);
+    assert_eq!(c.image(CURVE, 13), surface, "the seam went into it");
+    assert_eq!(c.image(CURVE, 11), c.image(CURVE, 16), "the bottom run");
+    assert_eq!(c.image(CURVE, 14), c.image(CURVE, 18), "the top run");
+    assert_ne!(c.image(CURVE, 11), c.image(CURVE, 14));
+    // The outer corners turn 90°, and stay.
+    assert_eq!(c.stand_in(CORNER, 21), None);
+    let seam = found
+        .joins
+        .iter()
+        .find(|j| j.across == (CURVE, 13))
+        .expect("the seam was looked at");
+    assert!(seam.merged && seam.degrees < 1e-9, "{seam:?}");
+
+    // Folded square, it is a crease: nothing merged, and it says how far.
+    let g = folded();
+    let mut c = Composites::new();
+    let found = c.merge_smooth(&g, 10.0);
+    assert!(found.merges.is_empty(), "{found:?}");
+    let seam = found
+        .joins
+        .iter()
+        .find(|j| j.across == (CURVE, 13))
+        .unwrap();
+    assert!((seam.degrees - 90.0).abs() < 1e-6, "{seam:?}");
+    // And the curves through its ends lie on different surfaces, so they
+    // are not run together either, straight or not.
+    assert_eq!(c.stand_in(CURVE, 11), None);
+}

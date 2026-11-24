@@ -209,6 +209,92 @@ impl Composites {
         }
     }
 
+    /// Merge what meets smoothly: surfaces across a curve where they meet
+    /// within `degrees` of flat, then curves at a corner where they are the
+    /// only two left and meet within `degrees` of straight, running along
+    /// the same surfaces. What a CAD export cuts a closed surface or a
+    /// closed curve into, put back together.
+    ///
+    /// Each join is said with how far it is from smooth, the merged ones
+    /// and the ones that were not, so a reader can see why.
+    pub fn merge_smooth(&mut self, geometry: &Geometry, degrees: f64) -> Smoothing {
+        let mut out = Smoothing::default();
+        // Surfaces, across their shared curves.
+        let creases = creases(geometry);
+        let mut union = Union::default();
+        for (curve, a, b, angle) in &creases {
+            if self.stand_in.contains_key(&(crate::SURFACE, *a))
+                || self.stand_in.contains_key(&(crate::SURFACE, *b))
+            {
+                continue;
+            }
+            let smooth = *angle <= degrees;
+            out.joins.push(Join {
+                dim: crate::SURFACE,
+                across: (crate::CURVE, *curve),
+                pair: (*a, *b),
+                degrees: *angle,
+                merged: smooth,
+            });
+            if smooth {
+                union.join(*a, *b);
+            }
+        }
+        for group in union.groups() {
+            if let Ok(tag) = self.merge(geometry, crate::SURFACE, &group) {
+                out.merges.push(tag);
+            }
+        }
+        // Then curves, at corners, as the surfaces now are.
+        let mut union = Union::default();
+        for corner in geometry.corners() {
+            if self.stand_in.contains_key(&(CORNER, corner.tag)) {
+                continue;
+            }
+            let through: Vec<i32> = geometry
+                .containing(CORNER, corner.tag)
+                .iter()
+                .filter(|e| e.0 == crate::CURVE)
+                .filter(|e| self.image(e.0, e.1).0 == crate::CURVE)
+                .map(|e| e.1)
+                .collect();
+            let [a, b] = through[..] else { continue };
+            if self.stand_in.contains_key(&(crate::CURVE, a))
+                || self.stand_in.contains_key(&(crate::CURVE, b))
+            {
+                continue;
+            }
+            let on = |c: i32| -> BTreeSet<(u8, i32)> {
+                geometry
+                    .containing(crate::CURVE, c)
+                    .iter()
+                    .filter(|e| e.0 == crate::SURFACE)
+                    .map(|e| self.image(e.0, e.1))
+                    .collect()
+            };
+            let Some(angle) = bend(geometry, corner.node, a, b) else {
+                continue;
+            };
+            let smooth = angle <= degrees && on(a) == on(b);
+            out.joins.push(Join {
+                dim: crate::CURVE,
+                across: (CORNER, corner.tag),
+                pair: (a, b),
+                degrees: angle,
+                merged: smooth,
+            });
+            if smooth {
+                union.join(a, b);
+            }
+        }
+        for group in union.groups() {
+            if let Ok(tag) = self.merge(geometry, crate::CURVE, &group) {
+                out.merges.push(tag);
+            }
+        }
+        out
+    }
+
     /// Whether a composite is a merge of the geometry.
     pub fn is_merged(&self, tag: i32) -> bool {
         self.merged.contains(&tag)
@@ -567,4 +653,176 @@ impl<'a> Model<'a> {
 
 fn apart(p: [f64; 3], q: [f64; 3]) -> f64 {
     (0..3).map(|k| (p[k] - q[k]).powi(2)).sum::<f64>().sqrt()
+}
+
+/// What [`Composites::merge_smooth`] found.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Smoothing {
+    /// The merges it made, by tag.
+    pub merges: Vec<i32>,
+    /// Every join it looked at.
+    pub joins: Vec<Join>,
+}
+
+/// Two entities meeting, and how far from smooth.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Join {
+    /// Of the two entities: surfaces or curves.
+    pub dim: u8,
+    /// What they meet along, or at.
+    pub across: (u8, i32),
+    pub pair: (i32, i32),
+    /// From flat, for surfaces; from straight, for curves.
+    pub degrees: f64,
+    pub merged: bool,
+}
+
+/// Union–find over tags, groups handed back sorted.
+#[derive(Default)]
+struct Union {
+    parent: BTreeMap<i32, i32>,
+}
+
+impl Union {
+    fn root(&mut self, x: i32) -> i32 {
+        let p = *self.parent.entry(x).or_insert(x);
+        if p == x {
+            return x;
+        }
+        let r = self.root(p);
+        self.parent.insert(x, r);
+        r
+    }
+
+    fn join(&mut self, a: i32, b: i32) {
+        let (ra, rb) = (self.root(a), self.root(b));
+        if ra != rb {
+            self.parent.insert(ra.max(rb), ra.min(rb));
+        }
+    }
+
+    fn groups(mut self) -> Vec<Vec<i32>> {
+        let keys: Vec<i32> = self.parent.keys().copied().collect();
+        let mut by: BTreeMap<i32, Vec<i32>> = BTreeMap::new();
+        for k in keys {
+            let r = self.root(k);
+            by.entry(r).or_default().push(k);
+        }
+        by.into_values().filter(|g| g.len() > 1).collect()
+    }
+}
+
+/// Every curve bounding exactly two surfaces, with the worst crease along
+/// it: how far from flat the two surfaces meet, in degrees, over every
+/// segment of the curve.
+///
+/// Read off the two triangles on a segment, one in each surface, by the
+/// way each leans away from it — which needs no orientation, so two
+/// surfaces wound against each other are measured the same.
+fn creases(geometry: &Geometry) -> Vec<(i32, i32, i32, f64)> {
+    let nodes = geometry.nodes();
+    let mut beside: BTreeMap<(u32, u32), Vec<(i32, u32)>> = BTreeMap::new();
+    for surface in geometry.surfaces() {
+        for t in &surface.triangles {
+            for k in 0..3 {
+                let (a, b, c) = (t[k], t[(k + 1) % 3], t[(k + 2) % 3]);
+                beside
+                    .entry((a.min(b), a.max(b)))
+                    .or_default()
+                    .push((surface.tag, c));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for curve in geometry.curves() {
+        let surfaces: Vec<i32> = geometry
+            .containing(crate::CURVE, curve.tag)
+            .iter()
+            .filter(|e| e.0 == crate::SURFACE)
+            .map(|e| e.1)
+            .collect();
+        let [a, b] = surfaces[..] else { continue };
+        let mut worst: Option<f64> = None;
+        for seg in &curve.segments {
+            let key = (seg[0].min(seg[1]), seg[0].max(seg[1]));
+            let Some(around) = beside.get(&key) else {
+                continue;
+            };
+            let third = |s: i32| around.iter().find(|(t, _)| *t == s).map(|(_, c)| *c);
+            let (Some(ca), Some(cb)) = (third(a), third(b)) else {
+                continue;
+            };
+            let (p, q) = (nodes[seg[0] as usize], nodes[seg[1] as usize]);
+            let (Some(da), Some(db)) = (
+                lean(p, q, nodes[ca as usize]),
+                lean(p, q, nodes[cb as usize]),
+            ) else {
+                continue;
+            };
+            // Flat is the two leaning exactly away from each other.
+            let cos = (da[0] * db[0] + da[1] * db[1] + da[2] * db[2]).clamp(-1.0, 1.0);
+            let off = 180.0 - cos.acos().to_degrees();
+            worst = Some(worst.map_or(off, |w: f64| w.max(off)));
+        }
+        if let Some(w) = worst {
+            out.push((curve.tag, a, b, w));
+        }
+    }
+    out
+}
+
+/// The unit direction from the segment `p q` towards `c`, square to it.
+fn lean(p: [f64; 3], q: [f64; 3], c: [f64; 3]) -> Option<[f64; 3]> {
+    let along = [q[0] - p[0], q[1] - p[1], q[2] - p[2]];
+    let to = [c[0] - p[0], c[1] - p[1], c[2] - p[2]];
+    let ll = along.iter().map(|x| x * x).sum::<f64>();
+    if ll <= 0.0 {
+        return None;
+    }
+    let t = (0..3).map(|k| to[k] * along[k]).sum::<f64>() / ll;
+    let d = [0, 1, 2].map(|k| to[k] - t * along[k]);
+    let n = d.iter().map(|x| x * x).sum::<f64>().sqrt();
+    (n > 0.0).then(|| d.map(|x| x / n))
+}
+
+/// How far from straight two curves meet at a node, **beyond** how far
+/// each already turns at its next node: a curve drawn as a polygon turns
+/// at every node, and a circle of 22 segments turns 16° at each — which is
+/// no kink, and a corner where two such halves meet turning just as much is
+/// not one either.
+fn bend(geometry: &Geometry, node: u32, a: i32, b: i32) -> Option<f64> {
+    let nodes = geometry.nodes();
+    let unit = |from: u32, to: u32| -> Option<[f64; 3]> {
+        let (p, q) = (nodes[from as usize], nodes[to as usize]);
+        let d = [q[0] - p[0], q[1] - p[1], q[2] - p[2]];
+        let n = d.iter().map(|x| x * x).sum::<f64>().sqrt();
+        (n > 0.0).then(|| d.map(|x| x / n))
+    };
+    let turn = |u: [f64; 3], v: [f64; 3]| {
+        let cos = (u[0] * v[0] + u[1] * v[1] + u[2] * v[2]).clamp(-1.0, 1.0);
+        180.0 - cos.acos().to_degrees()
+    };
+    // The first node along a curve from this one, and how much the curve
+    // turns there — nothing, when the curve is one segment long.
+    let leaving = |tag: i32| -> Option<([f64; 3], f64)> {
+        let curve = geometry.curves().iter().find(|c| c.tag == tag)?;
+        let first = curve
+            .segments
+            .iter()
+            .find(|s| s[0] == node || s[1] == node)?;
+        let next = if first[0] == node { first[1] } else { first[0] };
+        let out = unit(node, next)?;
+        let own = curve
+            .segments
+            .iter()
+            .filter(|s| *s != first && (s[0] == next || s[1] == next))
+            .find_map(|s| {
+                let after = if s[0] == next { s[1] } else { s[0] };
+                Some(turn(unit(next, node)?, unit(next, after)?))
+            })
+            .unwrap_or(0.0);
+        Some((out, own))
+    };
+    let ((da, ta), (db, tb)) = (leaving(a)?, leaving(b)?);
+    Some((turn(da, db) - ta.max(tb)).max(0.0))
 }

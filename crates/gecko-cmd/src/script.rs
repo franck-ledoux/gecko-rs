@@ -234,6 +234,10 @@ pub fn line(command: &Command) -> String {
             },
             numbers(tags)
         ),
+        Command::MergeSmooth { angle } => format!(
+            "gecko.merge_smooth({})",
+            braces(option("angle", *angle, crate::MERGE_ANGLE_DEGREES))
+        ),
         Command::FreezeNode { nodes, frozen } => format!(
             "gecko.{}({})",
             if *frozen { "freeze_node" } else { "thaw_node" },

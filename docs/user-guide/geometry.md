@@ -140,6 +140,7 @@ So say it once, of the geometry:
 ```lua
 gecko.merge_curves({2, 4})      -- one curve, curve 2+4
 gecko.merge_surfaces({2, 3})    -- one surface, surface 2+3
+gecko.merge_smooth()            -- or find them: what meets smoothly
 ```
 
 A merge **stands in for its pieces** from then on. Proximity finds it rather
@@ -149,7 +150,18 @@ inside the two surfaces, the corners where the two curves meet — stop being
 anywhere a node can be. What was already on a piece, or on a join, is moved
 onto the merge, which contains it.
 
-With the mouse: `M`, click the pieces, `⇧M`.
+`merge_smooth` merges surfaces across a curve where they meet within 10° of
+flat, then curves at a corner where they are the only two left, run along
+the same surfaces, and meet within 10° of straight — **beyond** how much
+each turns at its next node anyway, since a circle drawn with 22 segments
+turns 16° at every node and is no less smooth for it. It says what it merged
+and the nearest miss, so a join that was nearly smooth enough is a number
+to raise rather than a mystery: `gecko.merge_smooth{ angle = 20 }`.
+
+With the mouse: `⇧K`, or the button beside the magnet, for the smooth ones;
+`M`, click the pieces, `⇧M` for any others. How far from smooth still counts
+is **merge within** in the settings panel, in degrees, and it is what `⇧K`
+sends.
 
 A merge is **drawn as one entity**: one color, one click, named by its
 pieces — `surface 2+3` — and the joins it swallowed are no longer drawn.

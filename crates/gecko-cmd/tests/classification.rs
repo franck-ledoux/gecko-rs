@@ -2141,6 +2141,88 @@ $Elements\n\
 $EndElements\n";
 
 #[test]
+fn a_flat_seam_and_the_straight_runs_through_it_are_merged() {
+    let mut s = Session::new().unwrap();
+    s.apply(Command::LoadGeometry {
+        msh: FLAT.to_string(),
+        name: "flat.msh".to_string(),
+    })
+    .unwrap();
+    let out = s
+        .apply(Command::MergeSmooth {
+            angle: gecko_cmd::MERGE_ANGLE_DEGREES,
+        })
+        .unwrap();
+    assert!(
+        out.message.contains("surface 1+2, across curve 13"),
+        "{}",
+        out.message
+    );
+    assert!(
+        out.message.contains("curve 11+16, across corner 23"),
+        "{}",
+        out.message
+    );
+    assert!(
+        out.message.contains("curve 14+18, across corner 24"),
+        "{}",
+        out.message
+    );
+    assert!(
+        out.message.contains("90.0° off"),
+        "the nearest miss: {}",
+        out.message
+    );
+    assert!(
+        s.script().contains("gecko.merge_smooth()"),
+        "{}",
+        s.script()
+    );
+
+    // A cube on it: the node at C, where the seam starts, goes on the
+    // merged bottom run, not on a corner nobody wants any more.
+    s.apply(Command::CreateCube {
+        origin: [0.0, 0.0, 0.0],
+        size: 1.0,
+    })
+    .unwrap();
+    s.apply(Command::Classify {
+        tolerance: SNAP_SHARE,
+    })
+    .unwrap();
+    let at_c = gecko_core::CellId::from_raw(node_at(&s, [1.0, 0.0, 0.0]));
+    let on = s.blocking().node_class(at_c).expect("on something");
+    assert!(on.dim == 1 && on.tag < 0, "{on:?}");
+    // And an edge from it to D lies along the seam: on the merged surface.
+    let seam = edge_between(&s, [1.0, 0.0, 0.0], [1.0, 1.0, 0.0]);
+    let on = s
+        .blocking()
+        .edge_class(gecko_core::CellId::from_raw(seam))
+        .expect("on something");
+    assert!(on.dim == 2 && on.tag < 0, "{on:?}");
+
+    // Once, and undone in one step.
+    s.apply(Command::Undo).unwrap();
+    s.apply(Command::Undo).unwrap();
+    s.apply(Command::Undo).unwrap();
+    let out = s
+        .apply(Command::Merge {
+            dim: 1,
+            tags: vec![11, 16],
+        })
+        .unwrap();
+    assert!(out.message.contains("curve 11+16"), "{}", out.message);
+    let err = s
+        .apply(Command::Merge {
+            dim: 1,
+            tags: vec![16, 17],
+        })
+        .unwrap_err()
+        .to_string();
+    assert_eq!(err, "curve 16 is merged already");
+}
+
+#[test]
 fn merging_two_surfaces_puts_what_was_on_their_seam_on_the_merge() {
     // The bottom and front of the box, at 90°: not smooth, but merged when
     // asked. The bottom-front edge was on curve 201, which the merge
@@ -2151,6 +2233,18 @@ fn merging_two_surfaces_puts_what_was_on_their_seam_on_the_merge() {
         tolerance: SNAP_SHARE,
     })
     .unwrap();
+    let out = s
+        .apply(Command::MergeSmooth {
+            angle: gecko_cmd::MERGE_ANGLE_DEGREES,
+        })
+        .unwrap();
+    assert!(
+        out.message
+            .starts_with("nothing meets within 10° of smooth"),
+        "{}",
+        out.message
+    );
+
     let edge = gecko_core::CellId::from_raw(edge_between(&s, [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]));
     s.apply(Command::Merge {
         dim: 2,
@@ -2192,9 +2286,8 @@ fn a_merge_is_drawn_and_picked_as_one_entity() {
     // not drawn at all.
     let geometry = gecko_geom::Geometry::read(FLAT).unwrap();
     let mut composites = gecko_geom::Composites::new();
-    composites.merge(&geometry, 2, &[1, 2]).unwrap();
-    composites.merge(&geometry, 1, &[11, 16]).unwrap();
-    composites.merge(&geometry, 1, &[14, 18]).unwrap();
+    let flat = composites.merge_smooth(&geometry, 10.0);
+    assert_eq!(flat.merges.len(), 3);
     let buffer = gecko_cmd::GeometryBuffer::of(&geometry, &composites, [0.0; 3]);
     let surface = composites.image(2, 1).1;
     assert!(surface < 0);
@@ -2223,22 +2316,14 @@ fn a_merge_is_drawn_and_picked_as_one_entity() {
             .unwrap()
     };
     let before = generation(&s);
-    s.apply(Command::Merge {
-        dim: 2,
-        tags: vec![1, 2],
-    })
-    .unwrap();
+    s.apply(Command::MergeSmooth { angle: 10.0 }).unwrap();
     let merged = generation(&s);
     assert!(merged > before);
     s.apply(Command::Undo).unwrap();
     assert!(generation(&s) > merged);
 
     // The merge is named by its tag too: what a click on it answers.
-    s.apply(Command::Merge {
-        dim: 2,
-        tags: vec![1, 2],
-    })
-    .unwrap();
+    s.apply(Command::MergeSmooth { angle: 10.0 }).unwrap();
     s.apply(Command::CreateCube {
         origin: [0.0, 0.0, 0.0],
         size: 1.0,

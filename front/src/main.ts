@@ -23,6 +23,7 @@ import {
   MAX_NODE_SIZE,
   MAX_SEGMENTS,
   MAX_SMOOTH_ROUNDS,
+  MAX_MERGE_ANGLE,
   MAX_SNAP,
   PRESETS,
   SHOT_SCALES,
@@ -794,6 +795,17 @@ async function boot() {
   };
   share("box-margin", "margin", MAX_BOX_MARGIN);
   share("snap", "snap", MAX_SNAP);
+
+  // In degrees, as a crease is said: a share of nothing in particular.
+  const mergeAngle = $<HTMLInputElement>("merge-angle");
+  mergeAngle.max = String(MAX_MERGE_ANGLE);
+  mergeAngle.value = String(prefs.merge.angle);
+  $("merge-angle-n").textContent = `${prefs.merge.angle}°`;
+  mergeAngle.addEventListener("input", () => {
+    prefs.merge.angle = Number(mergeAngle.value);
+    $("merge-angle-n").textContent = `${prefs.merge.angle}°`;
+    savePrefs(prefs);
+  });
 
   // Two of them, because smoothing is "how many times" and "how far each
   // time" and neither alone says anything useful.
@@ -1664,6 +1676,14 @@ async function boot() {
       tags: picked.map((s) => s.tag),
     });
     if (reply.ok) viewer.selectGeom([]);
+    message = reply.message;
+    await refresh();
+  }
+
+  /** Merge whatever meets smoothly: what a CAD export cut a closed curve
+   *  or surface into, put back together. */
+  async function mergeSmooth() {
+    const reply = await send({ op: "merge_smooth", angle: prefs.merge.angle });
     message = reply.message;
     await refresh();
   }
@@ -2758,7 +2778,7 @@ async function boot() {
     );
     // Nothing to aim at, box or classify onto without one.
     const loaded = stats.geometry.surfaces !== undefined;
-    for (const id of ["picking", "box", "classify"]) {
+    for (const id of ["picking", "box", "classify", "merge-smooth"]) {
       $<HTMLButtonElement>(id).disabled = !loaded;
     }
     if (!loaded && viewer.aimedAtGeometry) setPicking("blocks");
@@ -3021,6 +3041,7 @@ async function boot() {
     coarser: () => resegment(-1),
     freeze: freezeNode,
     merge: mergePicked,
+    "merge-smooth": mergeSmooth,
     unclassify,
     glue: glueSelection,
     remove: removeSelection,
@@ -3127,6 +3148,7 @@ async function boot() {
     ["picking", "picking"],
     ["box", "box"],
     ["classify", "classify"],
+    ["merge-smooth", "merge-smooth"],
     ["attach", "attach"],
     ["mesh", "mesh"],
     ["glue", "glue"],

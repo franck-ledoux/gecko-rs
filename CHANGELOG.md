@@ -38,6 +38,11 @@ the day a tag was cut.
   everywhere: `classify` puts the blocking on it, a click on a piece picks
   it, and the joins it swallowed — a seam, the corners of a rim — are no
   longer anywhere a node can be.
+- **What meets smoothly is merged for you.** `gecko.merge_smooth()`, or
+  `⇧K`: surfaces across a curve within 10° of flat, curves at a corner
+  within 10° of straight beyond how much they turn anyway. It says what it
+  merged and the nearest miss. How far from smooth still counts is *merge
+  within* in the settings panel.
 - **A merge is drawn and picked as one entity**, in one color, named by its
   pieces; the seams and corners it swallowed are not drawn.
 

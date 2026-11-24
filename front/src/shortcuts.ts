@@ -22,6 +22,7 @@ export const ACTIONS = [
   "picking",
   "classify",
   "merge",
+  "merge-smooth",
   "attach",
   "mesh",
   "export",
@@ -192,11 +193,19 @@ export const SHORTCUTS: readonly Shortcut[] = [
     group: "Geometry",
   },
   {
+    show: "⇧K",
+    key: "k",
+    shift: true,
+    action: "merge-smooth",
+    does: "merge smooth joins, or the selection",
+    group: "Geometry",
+  },
+  {
     show: "⇧M",
     key: "m",
     shift: true,
     action: "merge",
-    does: "merge the selected entities",
+    does: "",
     group: "Geometry",
   },
   {

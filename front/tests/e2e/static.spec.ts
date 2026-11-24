@@ -4082,6 +4082,21 @@ test("the geometry is merged", async ({ page }) => {
   // pieces once.
   const errors = await boot(page);
   await boxedAndPinned(page);
+  await expect(page.locator("#merge-smooth")).toBeEnabled();
+
+  // The box's faces meet at 90°: nothing smooth, at the slider's angle.
+  await page.keyboard.press("Shift+K");
+  await expect(page.locator("#status")).toContainText(
+    "nothing meets within 10° of smooth",
+  );
+  await openParams(page);
+  await page.locator("[data-test=merge-angle]").fill("45");
+  await expect(page.locator("[data-test=merge-angle-value]")).toHaveText("45°");
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  await page.keyboard.press("Shift+K");
+  await expect(page.locator("#status")).toContainText(
+    "nothing meets within 45° of smooth",
+  );
 
   // Fewer than two is not a merge.
   await page.evaluate(() =>

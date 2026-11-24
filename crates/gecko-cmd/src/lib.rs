@@ -208,6 +208,14 @@ fn default_share() -> f64 {
     SMOOTH_SHARE
 }
 
+/// How far from smooth a join may be and still be merged, by default: the
+/// continuity tolerance, as for a pillow.
+pub const MERGE_ANGLE_DEGREES: f64 = PILLOW_ANGLE_DEGREES;
+
+fn default_merge_angle() -> f64 {
+    MERGE_ANGLE_DEGREES
+}
+
 fn default_segments() -> u32 {
     SEGMENTS
 }
@@ -658,6 +666,13 @@ pub enum Command {
     Merge {
         dim: u8,
         tags: Vec<i32>,
+    },
+    /// Merge whatever meets smoothly: surfaces across a curve within
+    /// `angle` degrees of flat, then curves at a corner within `angle` of
+    /// straight, beyond how much they turn anyway.
+    MergeSmooth {
+        #[serde(default = "default_merge_angle")]
+        angle: f64,
     },
     /// Stop nodes moving, or let them move again.
     FreezeNode {
@@ -1766,6 +1781,47 @@ impl Session {
                 Ok(Outcome {
                     script: None,
                     message: format!("merged into {}", self.merge_said(tag)),
+                    view_changed: true,
+                })
+            }
+            Command::MergeSmooth { angle } => {
+                let geometry = self.geometry.clone().ok_or(SessionError::NoGeometry)?;
+                let found = self.composites.merge_smooth(&geometry, angle);
+                self.follow_merges()?;
+                if !found.merges.is_empty() {
+                    self.geometry_generation += 1;
+                }
+                let made: Vec<String> = found.merges.iter().map(|m| self.merge_said(*m)).collect();
+                // The nearest miss, so that a join that was nearly smooth
+                // enough is a number to adjust rather than a mystery.
+                let miss = found
+                    .joins
+                    .iter()
+                    .filter(|j| !j.merged)
+                    .min_by(|a, b| a.degrees.total_cmp(&b.degrees))
+                    .map(|j| {
+                        format!(
+                            "; the nearest miss is {} at {}, {:.1}° off",
+                            match j.dim {
+                                gecko_geom::CURVE =>
+                                    format!("curves {} and {}", j.pair.0, j.pair.1),
+                                _ => format!("surfaces {} and {}", j.pair.0, j.pair.1),
+                            },
+                            name_of(On {
+                                dim: j.across.0,
+                                tag: j.across.1
+                            }),
+                            j.degrees
+                        )
+                    })
+                    .unwrap_or_default();
+                Ok(Outcome {
+                    script: None,
+                    message: if made.is_empty() {
+                        format!("nothing meets within {angle}° of smooth{miss}")
+                    } else {
+                        format!("merged {}{miss}", made.join(", and "))
+                    },
                     view_changed: true,
                 })
             }
