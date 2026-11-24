@@ -20,6 +20,8 @@ the day a tag was cut.
   Pick curves or surfaces with `M`, then `A`: the picked nodes as before,
   else the edge whose sheet is lit, else the picked faces. The entities
   have to be of one dimension.
+- Messages and errors name a cell by its number — `node 3`, not
+  `node CellId(3)` — the number a script names it by.
 
 ## 0.2.5
 

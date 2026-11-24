@@ -1099,7 +1099,7 @@ impl Session {
                 Ok(Outcome {
                     script: None,
                     message: format!(
-                        "face {face:?} laid on surface {surface} — corners {:?} at {}{}",
+                        "face {face} laid on surface {surface} — corners {:?} at {}{}",
                         quad.corners,
                         squareness.join(", "),
                         match composed {
@@ -1153,7 +1153,7 @@ impl Session {
                 Ok(Outcome {
                     script: None,
                     message: format!(
-                        "face {:?} laid{on_surface} on {followed} point{}{welded} — \
+                        "face {} laid{on_surface} on {followed} point{}{welded} — \
                          {} nodes, {} edges, {} faces, {} patches",
                         laid.face,
                         if followed == 1 { "" } else { "s" },
@@ -1215,7 +1215,7 @@ impl Session {
                 Ok(Outcome {
                     script: None,
                     message: format!(
-                        "block {block:?} laid on {followed} point{} — {} thick{welded}, \
+                        "block {block} laid on {followed} point{} — {} thick{welded}, \
                          {} nodes, {} edges, {} faces, {} blocks",
                         if followed == 1 { "" } else { "s" },
                         format_args!("{thickness:.3}"),
@@ -1292,11 +1292,10 @@ impl Session {
                         )
                     } else {
                         match self.blocking.node_class(node) {
-                            Some(on) => format!(
-                                "node {node:?} moved along {}",
-                                name_in(on, &self.composites)
-                            ),
-                            None => format!("node {node:?} moved to {landed:?}"),
+                            Some(on) => {
+                                format!("node {node} moved along {}", name_in(on, &self.composites))
+                            }
+                            None => format!("node {node} moved to {landed:?}"),
                         }
                     },
                     view_changed: true,
@@ -1308,7 +1307,7 @@ impl Session {
                 Ok(Outcome {
                     script: None,
                     message: format!(
-                        "block {block:?} removed — {} nodes, {} edges, {} faces, {} blocks",
+                        "block {block} removed — {} nodes, {} edges, {} faces, {} blocks",
                         self.blocking.nb_nodes(),
                         self.blocking.nb_edges(),
                         self.blocking.nb_faces(),
@@ -1323,7 +1322,7 @@ impl Session {
                 Ok(Outcome {
                     script: None,
                     message: format!(
-                        "face {face:?} removed — {} nodes, {} edges, {} faces, {} patches",
+                        "face {face} removed — {} nodes, {} edges, {} faces, {} patches",
                         self.blocking.nb_nodes(),
                         self.blocking.nb_edges(),
                         self.blocking.nb_faces(),
@@ -1342,7 +1341,7 @@ impl Session {
                 Ok(Outcome {
                     script: None,
                     message: format!(
-                        "sheet through {edge:?} removed{} — \
+                        "sheet through {edge} removed{} — \
                          {} nodes, {} edges, {} faces, {} blocks",
                         if close { "" } else { ", gap left open" },
                         self.blocking.nb_nodes(),
@@ -1359,7 +1358,7 @@ impl Session {
                 Ok(Outcome {
                     script: None,
                     message: format!(
-                        "chord through face {face:?} removed, {} block{} — \
+                        "chord through face {face} removed, {} block{} — \
                          {} nodes, {} edges, {} faces, {} blocks",
                         gone.len(),
                         if gone.len() == 1 { "" } else { "s" },
@@ -1409,7 +1408,7 @@ impl Session {
                 Ok(Outcome {
                     script: None,
                     message: format!(
-                        "sheet through {edge:?} cut at {at:.3} — {} nodes, {} edges, {} faces, {} blocks",
+                        "sheet through {edge} cut at {at:.3} — {} nodes, {} edges, {} faces, {} blocks",
                         self.blocking.nb_nodes(),
                         self.blocking.nb_edges(),
                         self.blocking.nb_faces(),
@@ -1728,7 +1727,7 @@ impl Session {
                 Ok(Outcome {
                     script: None,
                     message: format!(
-                        "block {id:?} boxes {round} — \
+                        "block {id} boxes {round} — \
                          {} nodes, {} edges, {} faces, {} blocks",
                         self.blocking.nb_nodes(),
                         self.blocking.nb_edges(),
@@ -1853,7 +1852,7 @@ impl Session {
                 Ok(Outcome {
                     script: None,
                     message: format!(
-                        "the sheet through {edge:?} is in {segments} segment{}",
+                        "the sheet through {edge} is in {segments} segment{}",
                         plural(segments as usize)
                     ),
                     // The blocking has not moved; what changed is a number
@@ -1927,7 +1926,7 @@ impl Session {
                     .iter()
                     .map(|u| {
                         format!(
-                            "; node {:?} kept {} and left {}",
+                            "; node {} kept {} and left {}",
                             u.node,
                             name_in(u.kept, &self.composites),
                             name_in(u.dropped, &self.composites)
@@ -1937,7 +1936,7 @@ impl Session {
                 Ok(Outcome {
                     script: None,
                     message: format!(
-                        "faces {first:?} and {second:?} glued — {} nodes, {} edges, {} faces, {} blocks{dropped}",
+                        "faces {first} and {second} glued — {} nodes, {} edges, {} faces, {} blocks{dropped}",
                         self.blocking.nb_nodes(),
                         self.blocking.nb_edges(),
                         self.blocking.nb_faces(),
@@ -2033,7 +2032,7 @@ impl Session {
         Ok(Outcome {
             script: None,
             message: format!(
-                "block {:?} added — {} nodes, {} edges, {} faces, {} blocks",
+                "block {} added — {} nodes, {} edges, {} faces, {} blocks",
                 id,
                 self.blocking.nb_nodes(),
                 self.blocking.nb_edges(),
@@ -2872,12 +2871,12 @@ fn listed(cells: &[CellId], what: &str) -> String {
 
 fn these(nodes: &[CellId]) -> String {
     match nodes {
-        [one] => format!("node {one:?}"),
+        [one] => format!("node {one}"),
         _ if nodes.len() <= 4 => format!(
             "nodes {}",
             nodes
                 .iter()
-                .map(|n| format!("{n:?}"))
+                .map(|n| format!("{n}"))
                 .collect::<Vec<_>>()
                 .join(", ")
         ),

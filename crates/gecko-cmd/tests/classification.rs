@@ -1884,3 +1884,26 @@ fn a_node_may_be_put_on_two_curves_taken_as_one() {
         .to_string();
     assert!(err.contains("not on several"), "{err}");
 }
+
+#[test]
+fn a_message_names_a_cell_by_the_number_a_reader_types_back() {
+    // Not `CellId(3)`: the number in a message is the one a script names
+    // the cell by, and the type of it is nobody's business.
+    let mut s = on_the_box();
+    let node = node_at(&s, [0.0, 0.0, 0.0]);
+    let out = s
+        .apply(Command::ClassifyNode {
+            nodes: vec![node],
+            on: Some(Spot { dim: 1, tag: 201 }.into()),
+        })
+        .unwrap();
+    assert_eq!(out.message, format!("node {node} put on curve 201"));
+    let err = s
+        .apply(Command::ClassifyNode {
+            nodes: vec![999_999],
+            on: None,
+        })
+        .unwrap_err()
+        .to_string();
+    assert_eq!(err, "no node is named 999999");
+}

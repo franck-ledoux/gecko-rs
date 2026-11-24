@@ -531,29 +531,29 @@ pub struct BlockFace {
 
 #[derive(Debug, Error)]
 pub enum BlockingError {
-    #[error("no node is named {0:?}")]
+    #[error("no node is named {0}")]
     NoSuchNode(CellId),
-    #[error("no face is named {0:?}")]
+    #[error("no face is named {0}")]
     NoSuchFace(CellId),
     #[error("a face cannot be glued to itself")]
     SameFace,
-    #[error("face {0:?} is already glued to another block")]
+    #[error("face {0} is already glued to another block")]
     AlreadyGlued(CellId),
-    #[error("no block is named {0:?}")]
+    #[error("no block is named {0}")]
     NoSuchBlock(CellId),
-    #[error("no edge is named {0:?}")]
+    #[error("no edge is named {0}")]
     NoSuchEdge(CellId),
-    #[error("the sheet through edge {0:?} meets itself the wrong way round")]
+    #[error("the sheet through edge {0} meets itself the wrong way round")]
     TangledSheet(CellId),
     #[error("a cut has to fall strictly inside the edge, not at {0}")]
     BadParameter(f64),
-    #[error("the sheet through edge {0:?} does not close into a surface")]
+    #[error("the sheet through edge {0} does not close into a surface")]
     BrokenSheet(CellId),
-    #[error("the chord through face {0:?} comes back through a block it has already crossed")]
+    #[error("the chord through face {0} comes back through a block it has already crossed")]
     TangledChord(CellId),
-    #[error("{0:?} is a patch — an open sheet of faces — and this needs a block")]
+    #[error("patch {0} is an open sheet of faces, and this needs a block")]
     NotABlock(CellId),
-    #[error("face {0:?} belongs to a block — take the block away, not one of its sides")]
+    #[error("face {0} belongs to a block — take the block away, not one of its sides")]
     NotAPatch(CellId),
     #[error(
         "a face of a block grows away from it, and {0} goes the other way — \
@@ -562,21 +562,21 @@ pub enum BlockingError {
     Inwards(f64),
     #[error("nothing was selected to pillow")]
     EmptyPatch,
-    #[error("face {0:?} is not a face of block {1:?}")]
+    #[error("face {0} is not a face of block {1}")]
     FaceNotOnBlock(CellId, CellId),
-    #[error("face {0:?} is inside the model, with a block on each side")]
+    #[error("face {0} is inside the model, with a block on each side")]
     NotOnTheSurface(CellId),
     #[error("could not find the face a new layer should be glued along")]
     LostFace,
     #[error(
-        "the pillow surface is in more than one piece: face {0:?} shares no edge \
+        "the pillow surface is in more than one piece: face {0} shares no edge \
          with the rest of it"
     )]
     PillowApart(CellId),
-    #[error("edge {0:?} is shared by more than two faces of the pillow surface")]
+    #[error("edge {0} is shared by more than two faces of the pillow surface")]
     PillowBranches(CellId),
     #[error(
-        "the pillow surface stops at edge {0:?}, inside the block structure — an \
+        "the pillow surface stops at edge {0}, inside the block structure — an \
          open pillow surface has to end on the outer boundary"
     )]
     PillowEndsInside(CellId),
@@ -596,9 +596,9 @@ pub enum BlockingError {
     PillowOutside,
     #[error("an extrusion has to go somewhere: {0} is not a positive distance")]
     BadHeight(f64),
-    #[error("node {0:?} is frozen; thaw it before moving it")]
+    #[error("node {0} is frozen; thaw it before moving it")]
     Frozen(CellId),
-    #[error("nodes {0:?} and {1:?} are both frozen, and not in the same place")]
+    #[error("nodes {0} and {1} are both frozen, and not in the same place")]
     FrozenApart(CellId, CellId),
 }
 
