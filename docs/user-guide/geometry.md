@@ -128,6 +128,34 @@ nodes, and the entity to put them on. See
 A box is built round the **surfaces** in the selection, a curve having no
 thickness to contain anything.
 
+## Merging pieces of it
+
+A CAD export cuts a closed curve in two at a pair of corners, and a closed
+surface in two along a seam. The blocking does not care: a rim is one rim,
+a skin one skin. Left as they are, the pieces make every cell on them be told
+by hand that it spans two of them.
+
+So say it once, of the geometry:
+
+```lua
+gecko.merge_curves({2, 4})      -- one curve, curve 2+4
+gecko.merge_surfaces({2, 3})    -- one surface, surface 2+3
+```
+
+A merge **stands in for its pieces** from then on. Proximity finds it rather
+than them, so `classify` puts the blocking on it; picking one of its pieces
+picks all of it; and the joins between the pieces it swallows — the seam
+inside the two surfaces, the corners where the two curves meet — stop being
+anywhere a node can be. What was already on a piece, or on a join, is moved
+onto the merge, which contains it.
+
+With the mouse: `M`, click the pieces, `⇧M`.
+
+A merge is **drawn as one entity**: one color, one click, named by its
+pieces — `surface 2+3` — and the joins it swallowed are no longer drawn.
+
+A piece belongs to one merge. Undo takes a merge back like anything else.
+
 ## A box round it
 
 `B`, or the box button, adds **one block**: a box containing the geometry, or

@@ -225,6 +225,15 @@ pub fn line(command: &Command) -> String {
             Some(on) => format!("gecko.classify_face({}, {})", numbers(faces), place(on)),
             None => format!("gecko.unclassify_face({})", numbers(faces)),
         },
+        Command::Merge { dim, tags } => format!(
+            "gecko.merge_{}({})",
+            if *dim == gecko_geom::CURVE {
+                "curves"
+            } else {
+                "surfaces"
+            },
+            numbers(tags)
+        ),
         Command::FreezeNode { nodes, frozen } => format!(
             "gecko.{}({})",
             if *frozen { "freeze_node" } else { "thaw_node" },

@@ -2473,7 +2473,9 @@ export class Viewer {
       // A corner or a curve buried inside a solid blocking is not on the
       // screen, so it is not under the pointer either.
       if (this.behindTheShell(x, y, hit.distance)) continue;
-      const tag = Number(hit.pickedMesh.name.split("-").pop());
+      // After the group's own prefix, sign and all: a merge's tag is
+      // below zero, and `geom-surfaces--1` split on dashes reads as 1.
+      const tag = Number(hit.pickedMesh.name.slice(`geom-${group}-`.length));
       if (!Number.isFinite(tag)) continue;
       const p = hit.pickedPoint;
       return {
@@ -2685,7 +2687,9 @@ export class Viewer {
 
   /** The entity tags on screen in one group, in the order they are drawn. */
   geomTags(group: GeomGroup): number[] {
-    return this.geomMeshes[group].map((m) => Number(m.name.split("-").pop()));
+    return this.geomMeshes[group].map((m) =>
+      Number(m.name.slice(`geom-${group}-`.length)),
+    );
   }
 
   /** The color and opacity one geometric entity is drawn in — everything

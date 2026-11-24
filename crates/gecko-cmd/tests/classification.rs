@@ -2101,3 +2101,166 @@ fn a_pillow_opening_onto_a_face_on_two_surfaces_leaves_its_new_cells_there() {
         assert_eq!(e["on"], on_patch, "edge {}", e["id"]);
     }
 }
+
+/// Two unit squares side by side in z = 0, surfaces 1 and 2, meeting along
+/// curve 13 from C (1,0,0) to D (1,1,0): flat across it, and the curves
+/// along the bottom (11, 16) and the top (14, 18) running straight through
+/// its ends — what a CAD export leaves of one rectangle cut in two.
+const FLAT: &str = "\
+$MeshFormat\n\
+2.2 0 8\n\
+$EndMeshFormat\n\
+$Nodes\n\
+6\n\
+1 0 0 0\n\
+2 1 0 0\n\
+3 1 1 0\n\
+4 0 1 0\n\
+5 2 0 0\n\
+6 2 1 0\n\
+$EndNodes\n\
+$Elements\n\
+17\n\
+1 15 2 0 21 1\n\
+2 15 2 0 23 2\n\
+3 15 2 0 24 3\n\
+4 15 2 0 25 4\n\
+5 15 2 0 26 5\n\
+6 15 2 0 27 6\n\
+7 1 2 0 11 1 2\n\
+8 1 2 0 13 2 3\n\
+9 1 2 0 14 3 4\n\
+10 1 2 0 15 4 1\n\
+11 1 2 0 16 2 5\n\
+12 1 2 0 17 5 6\n\
+13 1 2 0 18 6 3\n\
+14 2 2 0 1 1 2 3\n\
+15 2 2 0 1 1 3 4\n\
+16 2 2 0 2 2 5 6\n\
+17 2 2 0 2 2 6 3\n\
+$EndElements\n";
+
+#[test]
+fn merging_two_surfaces_puts_what_was_on_their_seam_on_the_merge() {
+    // The bottom and front of the box, at 90°: not smooth, but merged when
+    // asked. The bottom-front edge was on curve 201, which the merge
+    // swallowed; it is on the merged surface now. Picking one of the two
+    // surfaces afterwards means the merge.
+    let mut s = on_the_box();
+    s.apply(Command::Classify {
+        tolerance: SNAP_SHARE,
+    })
+    .unwrap();
+    let edge = gecko_core::CellId::from_raw(edge_between(&s, [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]));
+    s.apply(Command::Merge {
+        dim: 2,
+        tags: vec![3, 1],
+    })
+    .unwrap();
+    let on = s.blocking().edge_class(edge).expect("on something");
+    assert!(on.dim == 2 && on.tag < 0, "{on:?}");
+    assert!(
+        s.script().contains("gecko.merge_surfaces({3, 1})"),
+        "{}",
+        s.script()
+    );
+
+    let bottom = face_named(&s, [0.5, 0.5, 0.0]);
+    let out = s
+        .apply(Command::ClassifyFace {
+            faces: vec![bottom],
+            on: Some(Spot { dim: 2, tag: 1 }.into()),
+        })
+        .unwrap();
+    assert!(out.message.ends_with("on surface 1+3"), "{}", out.message);
+
+    // The seam itself was swallowed: an edge put on it is put on what
+    // swallowed it.
+    let out = s
+        .apply(Command::ClassifyEdge {
+            edges: vec![edge.get().unwrap()],
+            on: Some(Spot { dim: 1, tag: 201 }.into()),
+        })
+        .unwrap();
+    assert!(out.message.ends_with("on surface 1+3"), "{}", out.message);
+}
+
+#[test]
+fn a_merge_is_drawn_and_picked_as_one_entity() {
+    // Every triangle of the two squares under the merge's own tag, so one
+    // color and one click; the seam and the corners at its ends, swallowed,
+    // not drawn at all.
+    let geometry = gecko_geom::Geometry::read(FLAT).unwrap();
+    let mut composites = gecko_geom::Composites::new();
+    composites.merge(&geometry, 2, &[1, 2]).unwrap();
+    composites.merge(&geometry, 1, &[11, 16]).unwrap();
+    composites.merge(&geometry, 1, &[14, 18]).unwrap();
+    let buffer = gecko_cmd::GeometryBuffer::of(&geometry, &composites, [0.0; 3]);
+    let surface = composites.image(2, 1).1;
+    assert!(surface < 0);
+    assert!(buffer.triangle_tags.iter().all(|t| *t == surface));
+    assert!(!buffer.segment_tags.contains(&13), "the seam is not drawn");
+    assert!(
+        !buffer.segment_tags.contains(&11),
+        "nor a piece by its own tag"
+    );
+    assert!(buffer.segment_tags.contains(&composites.image(1, 11).1));
+    assert!(!buffer.corner_tags.contains(&23) && !buffer.corner_tags.contains(&24));
+    assert_eq!(buffer.corner_tags.len(), 4, "the four outer corners");
+
+    // And the session redraws it: the geometry's generation moves on a
+    // merge, and back on its undo.
+    let mut s = Session::new().unwrap();
+    s.apply(Command::LoadGeometry {
+        msh: FLAT.to_string(),
+        name: "flat.msh".to_string(),
+    })
+    .unwrap();
+    let generation = |s: &Session| {
+        serde_json::from_str::<serde_json::Value>(&s.stats_json()).unwrap()["geometry"]
+            ["generation"]
+            .as_u64()
+            .unwrap()
+    };
+    let before = generation(&s);
+    s.apply(Command::Merge {
+        dim: 2,
+        tags: vec![1, 2],
+    })
+    .unwrap();
+    let merged = generation(&s);
+    assert!(merged > before);
+    s.apply(Command::Undo).unwrap();
+    assert!(generation(&s) > merged);
+
+    // The merge is named by its tag too: what a click on it answers.
+    s.apply(Command::Merge {
+        dim: 2,
+        tags: vec![1, 2],
+    })
+    .unwrap();
+    s.apply(Command::CreateCube {
+        origin: [0.0, 0.0, 0.0],
+        size: 1.0,
+    })
+    .unwrap();
+    s.apply(Command::Classify {
+        tolerance: SNAP_SHARE,
+    })
+    .unwrap();
+    let entities: Vec<serde_json::Value> = serde_json::from_str(&s.entities_json()).unwrap();
+    let named = entities
+        .iter()
+        .find(|e| e["merged"] == true && e["dim"] == 2)
+        .expect("the merged surface is listed");
+    assert_eq!(named["name"], "surface 1+2");
+    let tag = named["tag"].as_i64().unwrap() as i32;
+    let bottom = face_named(&s, [0.5, 0.5, 0.0]);
+    let out = s
+        .apply(Command::ClassifyFace {
+            faces: vec![bottom],
+            on: Some(Spot { dim: 2, tag }.into()),
+        })
+        .unwrap();
+    assert!(out.message.ends_with("on surface 1+2"), "{}", out.message);
+}

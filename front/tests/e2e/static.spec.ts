@@ -4077,6 +4077,59 @@ test("U takes a lit edge or picked faces off the geometry", async ({
   expect(errors).toEqual([]);
 });
 
+test("the geometry is merged", async ({ page }) => {
+  // The fast way onto a model cut finer than the blocking needs: merge the
+  // pieces once.
+  const errors = await boot(page);
+  await boxedAndPinned(page);
+
+  // Fewer than two is not a merge.
+  await page.evaluate(() =>
+    (window as any).__gecko.selectGeom([{ dim: 2, tag: 1 }]),
+  );
+  await page.keyboard.press("Shift+M");
+  await expect(page.locator("#status")).toContainText("pick two curves");
+
+  await page.evaluate(() =>
+    (window as any).__gecko.selectGeom([
+      { dim: 2, tag: 1 },
+      { dim: 2, tag: 3 },
+    ]),
+  );
+  await page.keyboard.press("Shift+M");
+  await expect(page.locator("#status")).toContainText(
+    "merged into surface 1+3, across curve 201",
+  );
+  await page.evaluate(() => (window as any).__gecko.settled());
+  expect(
+    await page.evaluate(() => (window as any).__gecko.geomSelection()),
+  ).toEqual([]);
+
+  // Drawn as one: five surfaces where there were six, the merge under its
+  // own tag, and the seam it swallowed not drawn at all.
+  await page.evaluate(() => (window as any).__gecko.settled());
+  const surfaces = (await page.evaluate(() =>
+    (window as any).__gecko.geomTags("surfaces"),
+  )) as number[];
+  expect(surfaces).toHaveLength(5);
+  const merged = surfaces.find((t) => t < 0)!;
+  expect(merged).toBeDefined();
+  expect(
+    (await page.evaluate(() =>
+      (window as any).__gecko.geomTags("curves"),
+    )) as number[],
+  ).not.toContain(201);
+
+  // Picked as one, and named by what it is made of.
+  await page.evaluate(
+    (tag) => (window as any).__gecko.toggleEntity({ dim: 2, tag }),
+    merged,
+  );
+  await expect(page.locator("#status")).toContainText("surface 1+3 selected");
+
+  expect(errors).toEqual([]);
+});
+
 test("freezing and unclassifying take the whole selection", async ({
   page,
 }) => {

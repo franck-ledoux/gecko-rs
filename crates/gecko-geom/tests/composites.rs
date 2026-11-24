@@ -1,7 +1,7 @@
 //! Entities made of other entities: sides, and the surfaces that will come.
 
 use gecko_geom::msh::{Element, Msh, LINE, POINT, TRIANGLE};
-use gecko_geom::{Composites, Geometry, Model, CORNER, CURVE, SURFACE};
+use gecko_geom::{Composites, Geometry, MergeError, Model, CORNER, CURVE, SURFACE};
 use std::collections::HashMap;
 
 #[derive(Default)]
@@ -278,4 +278,85 @@ fn a_side_across_two_surfaces_is_inside_the_patch_of_both() {
     let model = Model::new(&g, &c);
     assert!(!model.containing(SURFACE, both).contains(&(CURVE, side)));
     assert!(!model.containing(CURVE, side).contains(&(CURVE, other)));
+}
+
+#[test]
+fn two_surfaces_merged_swallow_the_seam_between_them() {
+    // Surfaces 1 and 2 meet along curve 13; merged, they are one surface
+    // and the seam is no longer anywhere a node can be found.
+    let g = pair();
+    let mut c = Composites::new();
+    let both = c.merge(&g, SURFACE, &[2, 1]).unwrap();
+    assert!(c.is_merged(both));
+    assert_eq!(c.stand_in(SURFACE, 1), Some((SURFACE, both)));
+    assert_eq!(c.stand_in(CURVE, 13), Some((SURFACE, both)), "the seam");
+    // The corners at the seam's ends still have a curve of their own on
+    // either side, so they stay.
+    assert_eq!(c.stand_in(CORNER, 23), None);
+    let model = Model::new(&g, &c);
+
+    // Near the middle of the seam, on the surface: not on curve 13.
+    let reach = [0.05, 0.05, 0.05];
+    assert_eq!(
+        model.nearest([1.0, 0.5, 0.01], reach),
+        Some((SURFACE, both))
+    );
+    // And on the rest as before.
+    assert_eq!(model.nearest([0.5, 0.0, 0.01], reach), Some((CURVE, 11)));
+    assert!(!model.visible(CURVE).contains(&13));
+    assert!(model.visible(SURFACE) == vec![both]);
+}
+
+#[test]
+fn two_curves_merged_swallow_the_corner_between_them() {
+    // The bottom of the pair is curves 11 and 16, meeting at corner 23,
+    // where the seam 13 starts too. With the surfaces merged the seam has
+    // gone into the surface, and with the curves merged the corner has
+    // nothing left through it but the merged curve.
+    let g = pair();
+    let mut c = Composites::new();
+    let both = c.merge(&g, SURFACE, &[1, 2]).unwrap();
+    let bottom = c.merge(&g, CURVE, &[11, 16]).unwrap();
+    assert_eq!(c.stand_in(CORNER, 23), Some((CURVE, bottom)));
+    assert_eq!(c.swallowed(bottom), vec![(CORNER, 23)]);
+    assert_eq!(c.swallowed(both), vec![(CURVE, 13)]);
+    let model = Model::new(&g, &c);
+    assert_eq!(
+        model.nearest([1.0, 0.0, 0.0], [0.05; 3]),
+        Some((CURVE, bottom)),
+        "near the corner, on the merged curve"
+    );
+    // The far ends are ends still.
+    assert_eq!(model.nearest(A, [0.05; 3]), Some((CORNER, 21)));
+    // A node held by the merged curve slides on it, not on a piece of it.
+    assert_eq!(
+        model.destination(&[(CURVE, bottom)], [1.2, 0.0, 0.0]),
+        Some((CURVE, bottom))
+    );
+}
+
+#[test]
+fn a_merge_is_refused_what_it_cannot_be() {
+    let g = pair();
+    let mut c = Composites::new();
+    assert_eq!(c.merge(&g, SURFACE, &[1]), Err(MergeError::TooFew));
+    assert_eq!(
+        c.merge(&g, CORNER, &[21, 23]),
+        Err(MergeError::NotMergeable)
+    );
+    assert_eq!(
+        c.merge(&g, SURFACE, &[1, 9]),
+        Err(MergeError::NotThere("surface 9".to_string()))
+    );
+    c.merge(&g, CURVE, &[11, 16]).unwrap();
+    assert_eq!(
+        c.merge(&g, CURVE, &[16, 17]),
+        Err(MergeError::Taken("curve 16".to_string()))
+    );
+    // Without a merge nothing changed: a corner is a corner.
+    let plain = Composites::new();
+    assert_eq!(
+        Model::new(&g, &plain).nearest([1.0, 0.0, 0.0], [0.05; 3]),
+        Some((CORNER, 23))
+    );
 }

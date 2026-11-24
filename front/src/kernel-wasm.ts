@@ -11,6 +11,7 @@ import initWasm, { initSync, Session } from "./pkg/gecko";
 import type {
   Chord,
   Direct,
+  Entity,
   Group,
   Kernel,
   Reply,
@@ -139,6 +140,10 @@ export class WasmKernel implements Kernel {
 
   groups(): Group[] {
     return JSON.parse(this.session.groupsJson()) as Group[];
+  }
+
+  entities(): Entity[] {
+    return JSON.parse(this.session.entitiesJson()) as Entity[];
   }
 
   version(): string {

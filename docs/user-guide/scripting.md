@@ -86,6 +86,7 @@ shorthand for a call with one table.
 | `gecko.classify_node(ids, dim, tag)`, `unclassify_node(ids)`         | one id or a list                                                     |
 | `gecko.classify_edge(ids, dim, tag)`, `classify_face(ids, dim, tag)` | `tag` may be a list, taken as one                                    |
 | `gecko.unclassify_edge(ids)`, `unclassify_face(ids)`                 | kept on nothing until put back                                       |
+| `gecko.merge_curves(tags)`, `merge_surfaces(tags)`                   | one entity standing in for the pieces                                |
 | `gecko.freeze_node(ids)`, `gecko.thaw_node(ids)`                     |                                                                      |
 | `gecko.load_geometry(path)`, `gecko.clear_geometry()`                |                                                                      |
 | `gecko.files()`                                                      | what can be opened by name here                                      |

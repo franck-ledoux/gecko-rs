@@ -566,7 +566,22 @@ pub struct GeometryBuffer {
 }
 
 impl GeometryBuffer {
-    pub fn of(geometry: &Geometry, center: [f64; 3]) -> GeometryBuffer {
+    /// The geometry as it is drawn and picked: a merge as **one** entity,
+    /// every piece of it tagged with the merge's own tag so that it takes
+    /// one color and answers one click, and the joins it swallowed — the
+    /// seam inside two surfaces merged, the corner between two curves
+    /// merged — not drawn at all, being nothing a node can be on any more.
+    pub fn of(
+        geometry: &Geometry,
+        composites: &gecko_geom::Composites,
+        center: [f64; 3],
+    ) -> GeometryBuffer {
+        // The tag an entity is drawn under, or none when a merge one
+        // dimension up swallowed it.
+        let drawn = |dim: u8, tag: i32| match composites.image(dim, tag) {
+            (d, t) if d == dim => Some(t),
+            _ => None,
+        };
         let positions = geometry
             .nodes()
             .iter()
@@ -582,20 +597,31 @@ impl GeometryBuffer {
         let mut triangles = Vec::with_capacity(geometry.nb_triangles() * 3);
         let mut triangle_tags = Vec::with_capacity(geometry.nb_triangles());
         for surface in geometry.surfaces() {
+            let Some(tag) = drawn(gecko_geom::SURFACE, surface.tag) else {
+                continue;
+            };
             for t in &surface.triangles {
                 triangles.extend_from_slice(t);
-                triangle_tags.push(surface.tag);
+                triangle_tags.push(tag);
             }
         }
 
         let mut segments = Vec::with_capacity(geometry.nb_segments() * 2);
         let mut segment_tags = Vec::with_capacity(geometry.nb_segments());
         for curve in geometry.curves() {
+            let Some(tag) = drawn(gecko_geom::CURVE, curve.tag) else {
+                continue;
+            };
             for s in &curve.segments {
                 segments.extend_from_slice(s);
-                segment_tags.push(curve.tag);
+                segment_tags.push(tag);
             }
         }
+        let corners: Vec<&gecko_geom::Corner> = geometry
+            .corners()
+            .iter()
+            .filter(|c| drawn(gecko_geom::CORNER, c.tag).is_some())
+            .collect();
 
         GeometryBuffer {
             center,
@@ -604,8 +630,8 @@ impl GeometryBuffer {
             triangle_tags,
             segments,
             segment_tags,
-            corners: geometry.corners().iter().map(|c| c.node).collect(),
-            corner_tags: geometry.corners().iter().map(|c| c.tag).collect(),
+            corners: corners.iter().map(|c| c.node).collect(),
+            corner_tags: corners.iter().map(|c| c.tag).collect(),
         }
     }
 

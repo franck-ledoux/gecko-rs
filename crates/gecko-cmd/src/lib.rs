@@ -14,7 +14,7 @@ pub mod script;
 pub mod view;
 pub mod vtk;
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 use crate::groups::{GroupError, Groups};
@@ -50,6 +50,8 @@ pub enum SessionError {
     Unplaceable(String),
     #[error("{0}")]
     Group(#[from] GroupError),
+    #[error("{0}")]
+    Merge(#[from] gecko_geom::MergeError),
     /// A pillowing that would have taken a cell off what it is on: a node
     /// pulled in whose neighbours leave it nowhere to go.
     #[error(
@@ -646,6 +648,17 @@ pub enum Command {
         #[serde(default)]
         on: Option<Place>,
     },
+    /// Merge curves, or surfaces, of the geometry into one.
+    ///
+    /// Said once of the model rather than of every cell on it: the merged
+    /// entity then stands in for its pieces everywhere — proximity finds it,
+    /// `classify` puts cells on it, and the joins between the pieces it
+    /// swallows stop being anywhere a node can be. What a CAD export cuts a
+    /// closed curve or a closed surface into, put back together.
+    Merge {
+        dim: u8,
+        tags: Vec<i32>,
+    },
     /// Stop nodes moving, or let them move again.
     FreezeNode {
         nodes: Vec<u32>,
@@ -978,8 +991,15 @@ impl Session {
     /// Nothing is settled afterwards. The state was settled when it was
     /// taken, and running the classification over it again would be a
     /// chance for it to come out differently.
+    /// The merges, as a thing to compare: what changes the picture of the
+    /// geometry when it changes.
+    fn merges_now(&self) -> Vec<i32> {
+        self.composites.merges().collect()
+    }
+
     fn restore(&mut self, state: State) {
         let was = self.geometry.as_ref().map(Arc::as_ptr);
+        let merges = self.merges_now();
         self.blocking = state.blocking;
         self.geometry = state.geometry;
         self.composites = state.composites;
@@ -989,7 +1009,9 @@ impl Session {
         // Forwards even when the geometry goes backwards: the number says
         // "not the one you last drew", and a client that saw it fall would
         // have no reason to trust it the next time it rose.
-        if was != self.geometry.as_ref().map(Arc::as_ptr) {
+        // A merge taken back changes what is drawn as much as a geometry
+        // taken back does.
+        if was != self.geometry.as_ref().map(Arc::as_ptr) || merges != self.merges_now() {
             self.geometry_generation += 1;
         }
     }
@@ -1735,6 +1757,18 @@ impl Session {
                     view_changed: true,
                 })
             }
+            Command::Merge { dim, tags } => {
+                let geometry = self.geometry.clone().ok_or(SessionError::NoGeometry)?;
+                let tag = self.composites.merge(&geometry, dim, &tags)?;
+                self.follow_merges()?;
+                // Drawn and picked as one now: the picture is another one.
+                self.geometry_generation += 1;
+                Ok(Outcome {
+                    script: None,
+                    message: format!("merged into {}", self.merge_said(tag)),
+                    view_changed: true,
+                })
+            }
             Command::FreezeNode { nodes, frozen } => {
                 let names = self.named(&nodes)?;
                 for node in &names {
@@ -2026,8 +2060,15 @@ impl Session {
             return Err(SessionError::BadCommand("no entity named".to_string()));
         }
         for &tag in &tags {
-            // A composite is named by its members, never by its number,
-            // which is an accident of the order they were made in.
+            // A merge is an entity of the model and may be named by its
+            // tag — it is what a click on it answers. Any other composite
+            // is named by its members, never by its number, which is an
+            // accident of the order they were made in.
+            if self.composites.is_merged(tag)
+                && self.composites.members(tag).is_some_and(|(d, _)| d == dim)
+            {
+                continue;
+            }
             if tag <= 0 || geometry.containing(dim, tag).is_empty() {
                 return Err(SessionError::NoSuchEntity(name_of(On { dim, tag })));
             }
@@ -2037,8 +2078,101 @@ impl Session {
                 "a node is on one corner or another, not on several".to_string(),
             ));
         }
-        let tag = self.composites.group(dim, &tags);
+        // A piece of a merge means the merge: it is what the model has
+        // now, and a cell put on one of its pieces would be put on what
+        // the merge was made to get rid of.
+        let images: BTreeSet<(u8, i32)> = tags
+            .iter()
+            .map(|&t| self.composites.image(dim, t))
+            .collect();
+        if images.len() == 1 {
+            let (dim, tag) = *images.iter().next().expect("one");
+            if dim < at_least {
+                return Err(SessionError::Unplaceable(format!(
+                    "{} is no lower than {}",
+                    name_in(On { dim, tag }, &self.composites),
+                    ["a corner", "a curve", "a surface"][at_least as usize]
+                )));
+            }
+            return Ok(On { dim, tag });
+        }
+        let mut members: Vec<i32> = Vec::new();
+        for (d, t) in images {
+            if d != dim {
+                return Err(SessionError::Unplaceable(format!(
+                    "{} is inside {} now",
+                    name_of(On { dim, tag: tags[0] }),
+                    name_in(On { dim: d, tag: t }, &self.composites)
+                )));
+            }
+            match self.composites.members(t) {
+                Some((_, inside)) => members.extend_from_slice(inside),
+                None => members.push(t),
+            }
+        }
+        let tag = self.composites.group(dim, &members);
         Ok(On { dim, tag })
+    }
+
+    /// Every cell on something a merge has taken, onto what stands in for
+    /// it: a node on the corner between two curves merged is on the merged
+    /// curve now, an edge on the seam between two surfaces merged on the
+    /// merged surface. Nothing moves — what took them contains them.
+    fn follow_merges(&mut self) -> Result<(), SessionError> {
+        let image = |on: On, composites: &Composites| {
+            composites
+                .stand_in(on.dim, on.tag)
+                .map(|(dim, tag)| On { dim, tag })
+        };
+        let nodes: Vec<(CellId, On)> = self
+            .blocking
+            .nodes_in_full()
+            .filter_map(|(n, _, on, _)| Some((n, image(on?, &self.composites)?)))
+            .collect();
+        for (n, on) in nodes {
+            self.blocking.set_node_class(n, Some(on))?;
+        }
+        let edges: Vec<(CellId, On)> = self
+            .blocking
+            .edges()
+            .filter_map(|(e, _, _, on)| Some((e, image(on?, &self.composites)?)))
+            .collect();
+        for (e, on) in edges {
+            self.blocking.set_edge_class(e, Some(on))?;
+        }
+        let faces: Vec<(CellId, On)> = self
+            .blocking
+            .faces()
+            .filter_map(|(f, _)| Some((f, image(self.blocking.face_class(f)?, &self.composites)?)))
+            .collect();
+        for (f, on) in faces {
+            self.blocking.set_face_class(f, Some(on))?;
+        }
+        Ok(())
+    }
+
+    /// A merge as a message says it: what it is, what it is made of, and
+    /// what it swallowed.
+    fn merge_said(&self, tag: i32) -> String {
+        let on = match self.composites.members(tag) {
+            Some((dim, _)) => On { dim, tag },
+            None => return format!("entity {tag}"),
+        };
+        let swallowed: Vec<String> = self
+            .composites
+            .swallowed(tag)
+            .into_iter()
+            .map(|(dim, tag)| name_of(On { dim, tag }))
+            .collect();
+        format!(
+            "{}{}",
+            name_in(on, &self.composites),
+            if swallowed.is_empty() {
+                String::new()
+            } else {
+                format!(", across {}", swallowed.join(", "))
+            }
+        )
     }
 
     /// What a node is on, as a message says it.
@@ -2404,7 +2538,12 @@ impl Session {
             let shared: Vec<(u8, i32)> = allowed
                 .iter()
                 .copied()
-                .filter(|e| !gecko_geom::Composites::is_composite(e.1) || pairs.contains(e))
+                .filter(|e| {
+                    (!gecko_geom::Composites::is_composite(e.1)
+                        || composites.is_merged(e.1)
+                        || pairs.contains(e))
+                        && composites.stand_in(e.0, e.1).is_none()
+                })
                 .collect();
             let open = |on: On| on.dim >= cell.at_least && allowed.contains(&(on.dim, on.tag));
             if let Some(on) = cell.already.filter(|on| open(*on)) {
@@ -2507,7 +2646,7 @@ impl Session {
     pub fn geometry_buffer(&self) -> Vec<u8> {
         let center = self.origin.unwrap_or([0.0; 3]);
         match &self.geometry {
-            Some(geometry) => GeometryBuffer::of(geometry, center).to_bytes(),
+            Some(geometry) => GeometryBuffer::of(geometry, &self.composites, center).to_bytes(),
             None => GeometryBuffer::empty(center),
         }
     }
@@ -2706,9 +2845,17 @@ impl Session {
         let Some(geometry) = &self.geometry else {
             return "[]".to_string();
         };
+        // With what stands in for it, when a merge took it: a page picking
+        // a piece of a merge means the merge, and has to light all of it.
+        let composites = &self.composites;
         let of = |dim: u8, tags: Vec<i32>| {
             tags.into_iter()
-                .map(move |tag| serde_json::json!({ "dim": dim, "tag": tag }))
+                .map(move |tag| match composites.stand_in(dim, tag) {
+                    Some((d, t)) => serde_json::json!({
+                        "dim": dim, "tag": tag, "in": { "dim": d, "tag": t },
+                    }),
+                    None => serde_json::json!({ "dim": dim, "tag": tag }),
+                })
         };
         let all: Vec<_> = of(
             gecko_geom::CORNER,
@@ -2722,6 +2869,19 @@ impl Session {
             gecko_geom::SURFACE,
             geometry.surfaces().iter().map(|s| s.tag).collect(),
         ))
+        // And every composite, merged or not, with what it is made of: a
+        // tag below zero is otherwise a number nobody can read.
+        .chain((0..self.composites.len()).filter_map(|k| {
+            let tag = -(k as i32 + 1);
+            let (dim, members) = self.composites.members(tag)?;
+            Some(serde_json::json!({
+                "dim": dim,
+                "tag": tag,
+                "members": members,
+                "merged": self.composites.is_merged(tag),
+                "name": name_in(On { dim, tag }, &self.composites),
+            }))
+        }))
         .collect();
         serde_json::Value::Array(all).to_string()
     }
@@ -2960,6 +3120,20 @@ fn spot_json(on: On) -> serde_json::Value {
 fn name_in(on: On, composites: &Composites) -> String {
     match composites.members(on.tag) {
         None => name_of(on),
+        // A merge is one entity of the model, and named as one: by its
+        // pieces, run together.
+        Some((dim, members)) if composites.is_merged(on.tag) => {
+            let list: Vec<String> = members.iter().map(|m| m.to_string()).collect();
+            format!(
+                "{} {}",
+                if dim == gecko_geom::CURVE {
+                    "curve"
+                } else {
+                    "surface"
+                },
+                list.join("+")
+            )
+        }
         Some((dim, members)) => {
             let what = if dim == gecko_geom::CURVE {
                 "curves"

@@ -310,6 +310,13 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
             &["margin"],
         ))
     })?;
+    // Pieces of the geometry run together, once, for the whole model.
+    command(lua, &gecko, &kernel, "merge_curves", |lua, a| {
+        Ok(json!({ "op": "merge", "dim": 1, "tags": list(lua, &a, 0)? }))
+    })?;
+    command(lua, &gecko, &kernel, "merge_surfaces", |lua, a| {
+        Ok(json!({ "op": "merge", "dim": 2, "tags": list(lua, &a, 0)? }))
+    })?;
     command(lua, &gecko, &kernel, "classify", |lua, a| {
         let o = options(lua, &a, 0)?;
         Ok(with(json!({ "op": "classify" }), &o, &["tolerance"]))

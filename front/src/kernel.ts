@@ -125,6 +125,19 @@ export interface Group {
   blocks: number;
 }
 
+/** An entity of the geometry, as the kernel lists it. */
+export interface Entity {
+  dim: number;
+  tag: number;
+  /** The merge standing in for it: its pieces, and the joins it swallowed. */
+  in?: { dim: number; tag: number };
+  /** For a composite: what it is made of, whether it is a merge of the
+   *  geometry, and what the kernel calls it. */
+  members?: number[];
+  merged?: boolean;
+  name?: string;
+}
+
 export interface Kernel {
   /** The same session, as JSON: the door Lua goes through. */
   readonly direct: Direct;
@@ -164,6 +177,10 @@ export interface Kernel {
    *  it is, whether it is written into the mesh, and how many blocks are
    *  in it. */
   groups(): Group[];
+
+  /** Every entity of the geometry, with the merge that took it, if one
+   *  did: what a click on one piece of a merge has to light. */
+  entities(): Entity[];
 
   /** Which version of gecko this is: the kernel's own, so it cannot
    *  disagree with the release it was built from. */

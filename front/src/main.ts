@@ -35,7 +35,13 @@ import { capture, fileName, save, saveBlob, shotName } from "./capture";
 import { Interpreter, type Answer } from "./lua";
 import * as files from "./files";
 import type { Coloring } from "./surface";
-import { GEOM_GROUPS, spotName, type GeomGroup, type Spot } from "./geometry";
+import {
+  GEOM_GROUPS,
+  nameComposites,
+  spotName,
+  type GeomGroup,
+  type Spot,
+} from "./geometry";
 import type { Axis } from "./axes";
 import "./style.css";
 
@@ -1618,6 +1624,8 @@ async function boot() {
    */
   function toggleEntity(spot: Spot) {
     const same = (a: Spot, b: Spot) => a.dim === b.dim && a.tag === b.tag;
+    // A merge is drawn as one entity under its own tag, so a click on it
+    // is a click on the merge: nothing to gather here.
     const picked = viewer.geomSelection;
     const out = picked.some((s) => same(s, spot));
     const now = out ? picked.filter((s) => !same(s, spot)) : [...picked, spot];
@@ -1629,9 +1637,35 @@ async function boot() {
         ? "nothing selected — a box would take the whole geometry"
         : now.length === 1
           ? `${spotName(now[0])} selected` +
-            (now[0].dim === 2 ? " — Q lays a quadrangle on it" : "")
+            (now[0].dim === 2 && now[0].tag > 0
+              ? " — Q lays a quadrangle on it"
+              : "")
           : `${now.length} entities selected`,
     );
+  }
+
+  /**
+   * Merge the picked curves, or the picked surfaces, of the geometry into
+   * one: said once of the model, so that `K` puts the blocking on the
+   * merge rather than every cell having to be told.
+   */
+  async function mergePicked() {
+    const picked = viewer.geomSelection;
+    const dim = picked[0]?.dim;
+    if (picked.length < 2 || dim === 0 || picked.some((s) => s.dim !== dim)) {
+      say(
+        "pick two curves or more, or two surfaces or more — press M and click them",
+      );
+      return;
+    }
+    const reply = await send({
+      op: "merge",
+      dim,
+      tags: picked.map((s) => s.tag),
+    });
+    if (reply.ok) viewer.selectGeom([]);
+    message = reply.message;
+    await refresh();
   }
 
   /**
@@ -2687,6 +2721,9 @@ async function boot() {
     drawGroups();
     lookAtGroups();
     restandLayer();
+    // Every time: a composite is made by classifying an edge as much as by
+    // merging, and a name the status line cannot read is a tag below zero.
+    nameComposites(kernel.entities());
     // Only when it has actually changed. The geometry is the big buffer and
     // the one that never moves; re-sending it because a node was dragged is
     // the whole cost this generation number exists to avoid.
@@ -2983,6 +3020,7 @@ async function boot() {
     finer: () => resegment(1),
     coarser: () => resegment(-1),
     freeze: freezeNode,
+    merge: mergePicked,
     unclassify,
     glue: glueSelection,
     remove: removeSelection,
@@ -3281,6 +3319,7 @@ async function boot() {
     surfaceSelection: () => viewer.surfaceSelection,
     geomSelection: () => viewer.geomSelection,
     selectGeom: (spots: Spot[]) => viewer.selectGeom(spots),
+    toggleEntity: (spot: Spot) => toggleEntity(spot),
     pickGeometry: (x: number, y: number) => viewer.pickGeometry(x, y),
     geomCount: (group: GeomGroup) => viewer.geomCount(group),
     skinCount: () => viewer.skinCount,

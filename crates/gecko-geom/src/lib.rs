@@ -23,7 +23,7 @@ pub mod quad;
 pub mod where_on;
 
 pub use bounds::BoundsError;
-pub use composite::{Composites, Model};
+pub use composite::{Composites, MergeError, Model};
 pub use model::{Corner, Curve, Geometry, Surface};
 pub use msh::{Msh, MshError, PhysicalName, LINE, POINT, TRIANGLE};
 pub use quad::{Quad, QuadError};

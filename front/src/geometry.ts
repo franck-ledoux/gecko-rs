@@ -42,8 +42,24 @@ export const DIM_OF: Record<GeomGroup, number> = {
 };
 export const GROUP_OF: readonly GeomGroup[] = ["corners", "curves", "surfaces"];
 
+/** What the kernel calls the composites — merges and sides — by tag: a
+ *  tag below zero is otherwise a number nobody can read. */
+const composites = new Map<string, string>();
+
+/** Learn the composites' names, from the kernel's list of entities. */
+export function nameComposites(
+  entities: readonly { dim: number; tag: number; name?: string }[],
+) {
+  composites.clear();
+  for (const e of entities) {
+    if (e.tag < 0 && e.name) composites.set(`${e.dim}:${e.tag}`, e.name);
+  }
+}
+
 /** How an entity reads in a message, the same way the kernel says it. */
 export function spotName(on: Spot): string {
+  const known = composites.get(`${on.dim}:${on.tag}`);
+  if (known) return known;
   return `${GROUP_OF[on.dim]?.replace(/s$/, "") ?? "?"} ${on.tag}`;
 }
 

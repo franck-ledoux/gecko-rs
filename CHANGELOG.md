@@ -32,6 +32,14 @@ the day a tag was cut.
   nothing: the settling never gave a cell a composite. It now gives one
   when the cell's ends or edges are themselves on it and nothing else holds
   them all.
+- **Pieces of the geometry are merged.** `gecko.merge_curves`,
+  `gecko.merge_surfaces`, or `⇧M` on picked entities, run a curve or a
+  surface a CAD export cut in two back into one, standing in for its pieces
+  everywhere: `classify` puts the blocking on it, a click on a piece picks
+  it, and the joins it swallowed — a seam, the corners of a rim — are no
+  longer anywhere a node can be.
+- **A merge is drawn and picked as one entity**, in one color, named by its
+  pieces; the seams and corners it swallowed are not drawn.
 
 ## 0.2.5
 

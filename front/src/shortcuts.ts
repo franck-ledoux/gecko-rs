@@ -21,6 +21,7 @@ export const ACTIONS = [
   "box",
   "picking",
   "classify",
+  "merge",
   "attach",
   "mesh",
   "export",
@@ -191,10 +192,18 @@ export const SHORTCUTS: readonly Shortcut[] = [
     group: "Geometry",
   },
   {
+    show: "⇧M",
+    key: "m",
+    shift: true,
+    action: "merge",
+    does: "merge the selected entities",
+    group: "Geometry",
+  },
+  {
     show: "A",
     key: "a",
     action: "attach",
-    does: "put the selected nodes, edge or faces on the selected entities",
+    does: "put the selection on those entities",
     group: "Geometry",
   },
   {
@@ -223,7 +232,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     show: "U",
     key: "u",
     action: "unclassify",
-    does: "take the selected nodes, edge or faces off the geometry",
+    does: "take the selection off the geometry",
     group: "Geometry",
   },
   {

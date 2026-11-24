@@ -30,7 +30,7 @@
 //! that appeared under a reader who never asked for it is worse than no
 //! name.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::Geometry;
 use crate::where_on::CORNER;
@@ -47,6 +47,34 @@ pub struct Composites {
     /// is what makes the same group the same entry however it was asked
     /// for — a side walked the other way round is the same side.
     groups: Vec<(u8, Vec<i32>)>,
+    /// The composites that are **merges**: said once of the geometry rather
+    /// than of a cell, standing in for their members everywhere.
+    merged: BTreeSet<i32>,
+    /// What stands in for an entity a merge has taken: its members, and the
+    /// joins between them it swallowed — the seam inside two surfaces
+    /// merged, the corner where two curves merged meet. Worked out again at
+    /// every merge, from the geometry and the merges alone.
+    stand_in: BTreeMap<(u8, i32), (u8, i32)>,
+}
+
+/// Why a merge was refused.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum MergeError {
+    #[error("a merge takes two entities or more")]
+    TooFew,
+    #[error("only curves and surfaces are merged")]
+    NotMergeable,
+    #[error("there is no {0} on the model")]
+    NotThere(String),
+    #[error("{0} is merged already")]
+    Taken(String),
+}
+
+fn named(dim: u8, tag: i32) -> String {
+    format!(
+        "{} {tag}",
+        ["corner", "curve", "surface"][dim.min(2) as usize]
+    )
 }
 
 impl Composites {
@@ -94,6 +122,121 @@ impl Composites {
         self.groups
             .get((-tag - 1) as usize)
             .map(|(dim, members)| (*dim, members.as_slice()))
+    }
+
+    /// Merge entities of the geometry into one, which then stands in for
+    /// them: proximity finds it rather than them, and the joins between
+    /// them stop being entities a node can be found on.
+    ///
+    /// Of the joins, an entity is swallowed when at least two of the
+    /// entities one dimension up through it are taken by the same merge and
+    /// that merge is the lowest-dimensional thing through it: curve 5
+    /// between merged surfaces 2 and 3, a corner between merged curves 2
+    /// and 4 — even with curve 5 through it as well, since curve 5 went into
+    /// the surface. A corner where a merged curve meets a curve of its own
+    /// is a junction still, and stays.
+    pub fn merge(
+        &mut self,
+        geometry: &Geometry,
+        dim: u8,
+        members: &[i32],
+    ) -> Result<i32, MergeError> {
+        if dim == CORNER || dim > crate::SURFACE {
+            return Err(MergeError::NotMergeable);
+        }
+        let mut sorted: Vec<i32> = members.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        if sorted.len() < 2 {
+            return Err(MergeError::TooFew);
+        }
+        for &m in &sorted {
+            if m <= 0 || geometry.containing(dim, m).is_empty() {
+                return Err(MergeError::NotThere(named(dim, m)));
+            }
+            if self.stand_in.contains_key(&(dim, m)) {
+                return Err(MergeError::Taken(named(dim, m)));
+            }
+        }
+        let tag = self.group(dim, &sorted);
+        self.merged.insert(tag);
+        self.settle_merges(geometry);
+        Ok(tag)
+    }
+
+    fn settle_merges(&mut self, geometry: &Geometry) {
+        self.stand_in.clear();
+        let taken: Vec<((u8, i32), (u8, i32))> = self
+            .merged
+            .iter()
+            .flat_map(|&tag| {
+                let (dim, members) = self.members(tag).expect("a merge is a composite");
+                members.iter().map(move |&m| ((dim, m), (dim, tag)))
+            })
+            .collect();
+        self.stand_in.extend(taken);
+        // From the top down, so that a corner sees what the curves through
+        // it have already become.
+        for dim in [crate::CURVE, CORNER] {
+            let tags: Vec<i32> = match dim {
+                CORNER => geometry.corners().iter().map(|c| c.tag).collect(),
+                _ => geometry.curves().iter().map(|c| c.tag).collect(),
+            };
+            for tag in tags {
+                if self.stand_in.contains_key(&(dim, tag)) {
+                    continue;
+                }
+                let images: Vec<(u8, i32)> = geometry
+                    .containing(dim, tag)
+                    .iter()
+                    .filter(|e| e.0 == dim + 1)
+                    .map(|e| self.stand_in.get(e).copied().unwrap_or(*e))
+                    .collect();
+                let Some(lowest) = images.iter().map(|e| e.0).min() else {
+                    continue;
+                };
+                let low: BTreeSet<(u8, i32)> =
+                    images.iter().copied().filter(|e| e.0 == lowest).collect();
+                if low.len() != 1 {
+                    continue;
+                }
+                let only = *low.iter().next().expect("one");
+                let through = images.iter().filter(|e| **e == only).count();
+                if self.merged.contains(&only.1) && through >= 2 {
+                    self.stand_in.insert((dim, tag), only);
+                }
+            }
+        }
+    }
+
+    /// Whether a composite is a merge of the geometry.
+    pub fn is_merged(&self, tag: i32) -> bool {
+        self.merged.contains(&tag)
+    }
+
+    /// What stands in for an entity a merge took, if one did.
+    pub fn stand_in(&self, dim: u8, tag: i32) -> Option<(u8, i32)> {
+        self.stand_in.get(&(dim, tag)).copied()
+    }
+
+    /// An entity as the model now has it: what stands in for it, or itself.
+    pub fn image(&self, dim: u8, tag: i32) -> (u8, i32) {
+        self.stand_in(dim, tag).unwrap_or((dim, tag))
+    }
+
+    /// Every merge, by tag.
+    pub fn merges(&self) -> impl Iterator<Item = i32> + '_ {
+        self.merged.iter().copied()
+    }
+
+    /// The entities each merge swallowed besides its members.
+    pub fn swallowed(&self, tag: i32) -> Vec<(u8, i32)> {
+        let members = self.members(tag).map(|(_, m)| m).unwrap_or(&[]);
+        self.stand_in
+            .iter()
+            .filter(|(e, by)| by.1 == tag && !(by.0 == e.0 && members.contains(&e.1)))
+            .map(|(e, _)| *e)
+            .collect()
     }
 
     pub fn len(&self) -> usize {
@@ -163,8 +306,44 @@ impl<'a> Model<'a> {
     /// run of curves; coming across it by being near it would put a cell on
     /// a side nobody mentioned, and the members are right there to be found
     /// instead.
+    ///
+    /// A **merge** is the exception, being a thing said of the geometry:
+    /// it is found in place of its members, and what it swallowed is not
+    /// found at all — a point near the corner between two merged curves is
+    /// on the merged curve.
     pub fn nearest(&self, p: [f64; 3], tolerance: [f64; 3]) -> Option<(u8, i32)> {
-        self.geometry.nearest(p, tolerance)
+        if self.composites.merged.is_empty() {
+            return self.geometry.nearest(p, tolerance);
+        }
+        for dim in [CORNER, crate::CURVE, crate::SURFACE] {
+            let best = self
+                .visible(dim)
+                .into_iter()
+                .filter_map(|tag| self.distance(dim, tag, p).map(|d| (d, tag)))
+                .filter(|(d, _)| *d <= tolerance[dim as usize])
+                .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+            if let Some((_, tag)) = best {
+                return Some((dim, tag));
+            }
+        }
+        None
+    }
+
+    /// The entities of a dimension as the model now has them: the
+    /// geometry's own that no merge took, and the merges.
+    pub fn visible(&self, dim: u8) -> Vec<i32> {
+        let mut tags: Vec<i32> = match dim {
+            CORNER => self.geometry.corners().iter().map(|c| c.tag).collect(),
+            crate::CURVE => self.geometry.curves().iter().map(|c| c.tag).collect(),
+            _ => self.geometry.surfaces().iter().map(|s| s.tag).collect(),
+        };
+        tags.retain(|t| self.composites.stand_in(dim, *t).is_none());
+        tags.extend(
+            self.composites
+                .merges()
+                .filter(|m| self.composites.members(*m).is_some_and(|(d, _)| d == dim)),
+        );
+        tags
     }
 
     /// Everything containing an entity, itself included.
@@ -338,7 +517,9 @@ impl<'a> Model<'a> {
         let found: Vec<(f64, (u8, i32))> = self
             .entities()
             .into_iter()
-            .filter(|e| !Composites::is_composite(e.1) || on.contains(e))
+            .filter(|e| {
+                !Composites::is_composite(e.1) || self.composites.is_merged(e.1) || on.contains(e)
+            })
             .filter(|e| {
                 let up = self.containing(e.0, e.1);
                 on.iter().all(|o| up.contains(o))
@@ -378,6 +559,8 @@ impl<'a> Model<'a> {
             let (dim, _) = self.composites.members(name).expect("a composite");
             out.push((dim, name));
         }
+        // What a merge took is not anywhere a node can be any more.
+        out.retain(|e| self.composites.stand_in(e.0, e.1).is_none());
         out
     }
 }
