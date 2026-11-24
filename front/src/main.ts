@@ -2061,24 +2061,45 @@ async function boot() {
     await refresh();
   }
 
-  /** Take the selected nodes off the geometry. They stay where they are;
-   *  what changes is that they may now go anywhere. */
-  async function unclassifyNode() {
+  /**
+   * Take the picked nodes off the geometry, or else the lit edge, or else
+   * the picked faces — the same order `A` reads the selection in.
+   *
+   * A node stays where it is and may now go anywhere. An edge or a face is
+   * **kept** on nothing: its boundary would otherwise hand straight back
+   * what it implies, and taking a cell off the wrong thing is the point.
+   * It stays off until `A` puts it somewhere, or `K` decides everything
+   * again.
+   */
+  async function unclassify() {
     const picked = viewer.selectedNodes;
-    if (picked.length === 0) {
-      say("pick a node first — click one");
+    if (picked.length > 0) {
+      const nodes = picked.filter((n) => viewer.nodeState(n)?.on);
+      if (nodes.length === 0) {
+        say(
+          picked.length === 1
+            ? `node ${picked[0]} is on nothing already`
+            : "none of them is on anything",
+        );
+        return;
+      }
+      const reply = await send({ op: "classify_node", nodes });
+      message = reply.message;
+      await refresh();
       return;
     }
-    const nodes = picked.filter((n) => viewer.nodeState(n)?.on);
-    if (nodes.length === 0) {
-      say(
-        picked.length === 1
-          ? `node ${picked[0]} is on nothing already`
-          : "none of them is on anything",
-      );
+    const edge = viewer.selectedEdge;
+    const faces = [...new Set(viewer.selection.map((p) => p.face))];
+    if (edge === null && faces.length === 0) {
+      say("pick what to take off first — nodes, an edge, or faces");
       return;
     }
-    const reply = await send({ op: "classify_node", nodes });
+    const reply = await send(
+      edge !== null
+        ? { op: "classify_edge", edges: [edge] }
+        : { op: "classify_face", faces },
+    );
+    if (reply.ok) clearSelection();
     message = reply.message;
     await refresh();
   }
@@ -2962,7 +2983,7 @@ async function boot() {
     finer: () => resegment(1),
     coarser: () => resegment(-1),
     freeze: freezeNode,
-    unclassify: unclassifyNode,
+    unclassify,
     glue: glueSelection,
     remove: removeSelection,
     slot: slotSheet,

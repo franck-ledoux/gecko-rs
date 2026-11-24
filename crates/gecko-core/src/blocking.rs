@@ -70,6 +70,9 @@ pub struct Edge {
     pub ends: [NodeId; 2],
     pub segments: u32,
     pub on: Option<On>,
+    /// Taken off the model by hand, and kept off: the settling leaves it
+    /// on nothing rather than handing back what its ends imply.
+    pub free: bool,
 }
 
 /// A face, wound as **side 0** sees it, outward. Side 1 reads the same list
@@ -85,6 +88,8 @@ pub struct Face {
     pub edges: [EdgeId; 4],
     pub sides: [Option<Side>; 2],
     pub on: Option<On>,
+    /// As for an [`Edge`]: on nothing by hand, and kept there.
+    pub free: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -822,6 +827,7 @@ impl Blocking {
                 edges,
                 sides: [Some(side), None],
                 on: f.on,
+                free: f.free,
             });
             self.blocks.get_mut(side.block).expect("live").faces[side.slot as usize] = copy;
             let f = self.faces.get_mut(face).expect("live");
@@ -1302,6 +1308,7 @@ impl Blocking {
             ends: [from, to],
             segments: like.1,
             on: like.0,
+            free: false,
         });
         known.by_pair.insert(key, id);
         id
@@ -1321,6 +1328,7 @@ impl Blocking {
             edges,
             sides: [None, None],
             on: None,
+            free: false,
         });
         known.by_quad.insert(key, id);
         id
@@ -1945,6 +1953,7 @@ impl Blocking {
                 // Nought meaning nobody has said, as everywhere else.
                 segments: 0,
                 on: None,
+                free: false,
             })
         });
         // The faces first, with no side filled in: the block they belong to
@@ -1969,6 +1978,7 @@ impl Blocking {
                 edges: fedges,
                 sides: [None, None],
                 on: None,
+                free: false,
             })
         });
         let block = self.blocks.insert(Block {
@@ -2038,6 +2048,7 @@ impl Blocking {
                 ends: [nodes[k], nodes[(k + 1) % 4]],
                 segments: 0,
                 on: None,
+                free: false,
             })
         });
         // No side at all, which is what an open sheet is: a face that
@@ -2048,6 +2059,7 @@ impl Blocking {
             edges,
             sides: [None, None],
             on: None,
+            free: false,
         });
         self.forget();
         Ok(self.face_name(face))
@@ -2116,6 +2128,7 @@ impl Blocking {
                 ends: [nodes[k], nodes[(k + 1) % 4]],
                 segments: 0,
                 on: None,
+                free: false,
             }),
         });
         let welded = shared.iter().flatten().count();
@@ -2125,6 +2138,7 @@ impl Blocking {
             edges,
             sides: [None, None],
             on: None,
+            free: false,
         });
         self.forget();
 
@@ -2375,26 +2389,71 @@ impl Blocking {
         self.edge(edge).ok().and_then(|e| e.on)
     }
 
+    /// Put an edge on something, or on nothing. A class given by hand ends
+    /// whatever hold [`set_edge_free`](Self::set_edge_free) had on it.
     pub fn set_edge_class(&mut self, edge: CellId, on: Option<On>) -> Result<(), BlockingError> {
         let id = self.edge_at(edge).ok_or(BlockingError::NoSuchEdge(edge))?;
-        self.edges
+        let e = self
+            .edges
             .get_mut(id)
-            .ok_or(BlockingError::NoSuchEdge(edge))?
-            .on = on;
+            .ok_or(BlockingError::NoSuchEdge(edge))?;
+        e.on = on;
+        if on.is_some() {
+            e.free = false;
+        }
         Ok(())
+    }
+
+    /// Take an edge off the model and keep it off: the settling leaves it
+    /// on nothing until it is given a class again, or the whole blocking
+    /// is classified again.
+    pub fn set_edge_free(&mut self, edge: CellId) -> Result<(), BlockingError> {
+        let id = self.edge_at(edge).ok_or(BlockingError::NoSuchEdge(edge))?;
+        let e = self
+            .edges
+            .get_mut(id)
+            .ok_or(BlockingError::NoSuchEdge(edge))?;
+        e.on = None;
+        e.free = true;
+        Ok(())
+    }
+
+    pub fn is_edge_free(&self, edge: CellId) -> bool {
+        self.edge(edge).map(|e| e.free).unwrap_or(false)
     }
 
     pub fn face_class(&self, face: CellId) -> Option<On> {
         self.face(face).ok().and_then(|f| f.on)
     }
 
+    /// As [`set_edge_class`](Self::set_edge_class), for a face.
     pub fn set_face_class(&mut self, face: CellId, on: Option<On>) -> Result<(), BlockingError> {
         let id = self.face_at(face).ok_or(BlockingError::NoSuchFace(face))?;
-        self.faces
+        let f = self
+            .faces
             .get_mut(id)
-            .ok_or(BlockingError::NoSuchFace(face))?
-            .on = on;
+            .ok_or(BlockingError::NoSuchFace(face))?;
+        f.on = on;
+        if on.is_some() {
+            f.free = false;
+        }
         Ok(())
+    }
+
+    /// As [`set_edge_free`](Self::set_edge_free), for a face.
+    pub fn set_face_free(&mut self, face: CellId) -> Result<(), BlockingError> {
+        let id = self.face_at(face).ok_or(BlockingError::NoSuchFace(face))?;
+        let f = self
+            .faces
+            .get_mut(id)
+            .ok_or(BlockingError::NoSuchFace(face))?;
+        f.on = None;
+        f.free = true;
+        Ok(())
+    }
+
+    pub fn is_face_free(&self, face: CellId) -> bool {
+        self.face(face).map(|f| f.free).unwrap_or(false)
     }
 
     pub fn faces(&self) -> impl Iterator<Item = (CellId, [CellId; 4])> + '_ {
@@ -2461,6 +2520,9 @@ impl Blocking {
             .edges
             .iter()
             .map(|(id, edge)| {
+                if edge.free {
+                    return (id, None);
+                }
                 let [a, b] = edge.ends.map(|n| self.nodes.get(n).expect("live"));
                 let already = edge.on;
                 let middle = self.middle(&[a.at, b.at]);
@@ -2500,6 +2562,9 @@ impl Blocking {
             .faces
             .iter()
             .map(|(id, face)| {
+                if face.free {
+                    return (id, None);
+                }
                 let sides: Vec<Option<On>> = face
                     .edges
                     .iter()
@@ -2541,12 +2606,18 @@ impl Blocking {
         }
     }
 
+    /// Every edge and face on nothing, and no longer held there: what a
+    /// classification of the whole blocking starts from.
     pub fn unclassify_cells(&mut self) {
         for id in self.edges.ids().collect::<Vec<_>>() {
-            self.edges.get_mut(id).expect("live").on = None;
+            let e = self.edges.get_mut(id).expect("live");
+            e.on = None;
+            e.free = false;
         }
         for id in self.faces.ids().collect::<Vec<_>>() {
-            self.faces.get_mut(id).expect("live").on = None;
+            let f = self.faces.get_mut(id).expect("live");
+            f.on = None;
+            f.free = false;
         }
     }
 

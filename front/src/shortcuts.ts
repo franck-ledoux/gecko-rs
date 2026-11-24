@@ -223,7 +223,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     show: "U",
     key: "u",
     action: "unclassify",
-    does: "take the selected node off the geometry",
+    does: "take the selected nodes, edge or faces off the geometry",
     group: "Geometry",
   },
   {

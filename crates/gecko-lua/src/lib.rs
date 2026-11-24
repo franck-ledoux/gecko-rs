@@ -281,6 +281,13 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
             "on": { "dim": at(lua, &a, 1)?, "tag": at(lua, &a, 2)? },
         }))
     })?;
+    // Off the model, and kept off: the settling leaves them on nothing.
+    command(lua, &gecko, &kernel, "unclassify_edge", |lua, a| {
+        Ok(json!({ "op": "classify_edge", "edges": list(lua, &a, 0)? }))
+    })?;
+    command(lua, &gecko, &kernel, "unclassify_face", |lua, a| {
+        Ok(json!({ "op": "classify_face", "faces": list(lua, &a, 0)? }))
+    })?;
     command(lua, &gecko, &kernel, "unclassify_node", |lua, a| {
         Ok(json!({ "op": "classify_node", "nodes": list(lua, &a, 0)? }))
     })?;

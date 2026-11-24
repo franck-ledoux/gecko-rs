@@ -217,12 +217,14 @@ pub fn line(command: &Command) -> String {
             Some(on) => format!("gecko.classify_node({}, {})", numbers(nodes), place(on)),
             None => format!("gecko.unclassify_node({})", numbers(nodes)),
         },
-        Command::ClassifyEdge { edges, on } => {
-            format!("gecko.classify_edge({}, {})", numbers(edges), place(on))
-        }
-        Command::ClassifyFace { faces, on } => {
-            format!("gecko.classify_face({}, {})", numbers(faces), place(on))
-        }
+        Command::ClassifyEdge { edges, on } => match on {
+            Some(on) => format!("gecko.classify_edge({}, {})", numbers(edges), place(on)),
+            None => format!("gecko.unclassify_edge({})", numbers(edges)),
+        },
+        Command::ClassifyFace { faces, on } => match on {
+            Some(on) => format!("gecko.classify_face({}, {})", numbers(faces), place(on)),
+            None => format!("gecko.unclassify_face({})", numbers(faces)),
+        },
         Command::FreezeNode { nodes, frozen } => format!(
             "gecko.{}({})",
             if *frozen { "freeze_node" } else { "thaw_node" },

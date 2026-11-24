@@ -629,15 +629,22 @@ pub enum Command {
     /// that runs along two curves has to be told. It then keeps it for as
     /// long as its ends allow, and is refused here if they do not already:
     /// a class the next settling would take away is not one worth giving.
+    ///
+    /// Nothing takes them off the model **and keeps them off**: the
+    /// settling would otherwise hand straight back what their ends imply,
+    /// which is how a cell on the wrong thing is put right by hand. They
+    /// stay on nothing until given a class again, or until `classify`.
     ClassifyEdge {
         edges: Vec<u32>,
-        on: Place,
+        #[serde(default)]
+        on: Option<Place>,
     },
-    /// Put faces on a surface, or on several taken as one. See
-    /// [`ClassifyEdge`](Command::ClassifyEdge).
+    /// Put faces on a surface, or on several taken as one, or on nothing.
+    /// See [`ClassifyEdge`](Command::ClassifyEdge).
     ClassifyFace {
         faces: Vec<u32>,
-        on: Place,
+        #[serde(default)]
+        on: Option<Place>,
     },
     /// Stop nodes moving, or let them move again.
     FreezeNode {
@@ -1628,7 +1635,32 @@ impl Session {
                     view_changed: true,
                 })
             }
-            Command::ClassifyEdge { edges, on } => {
+            Command::ClassifyEdge { edges, on: None } => {
+                let names = cells(&edges, "edge")?;
+                for edge in &names {
+                    self.blocking.set_edge_free(*edge)?;
+                }
+                Ok(Outcome {
+                    script: None,
+                    message: format!("{} on nothing now", listed(&names, "edge")),
+                    view_changed: true,
+                })
+            }
+            Command::ClassifyFace { faces, on: None } => {
+                let names = cells(&faces, "face")?;
+                for face in &names {
+                    self.blocking.set_face_free(*face)?;
+                }
+                Ok(Outcome {
+                    script: None,
+                    message: format!("{} on nothing now", listed(&names, "face")),
+                    view_changed: true,
+                })
+            }
+            Command::ClassifyEdge {
+                edges,
+                on: Some(on),
+            } => {
                 let on = self.place(&on, gecko_geom::CURVE)?;
                 let names = cells(&edges, "edge")?;
                 for edge in &names {
@@ -1660,7 +1692,10 @@ impl Session {
                     view_changed: true,
                 })
             }
-            Command::ClassifyFace { faces, on } => {
+            Command::ClassifyFace {
+                faces,
+                on: Some(on),
+            } => {
                 let on = self.place(&on, gecko_geom::SURFACE)?;
                 let names = cells(&faces, "face")?;
                 for face in &names {

@@ -85,6 +85,7 @@ shorthand for a call with one table.
 | `gecko.move_node(id, {x,y,z}, { carrying = {…}, snap = 0 })`         | moves those nodes and nothing else                                   |
 | `gecko.classify_node(ids, dim, tag)`, `unclassify_node(ids)`         | one id or a list                                                     |
 | `gecko.classify_edge(ids, dim, tag)`, `classify_face(ids, dim, tag)` | `tag` may be a list, taken as one                                    |
+| `gecko.unclassify_edge(ids)`, `unclassify_face(ids)`                 | kept on nothing until put back                                       |
 | `gecko.freeze_node(ids)`, `gecko.thaw_node(ids)`                     |                                                                      |
 | `gecko.load_geometry(path)`, `gecko.clear_geometry()`                |                                                                      |
 | `gecko.files()`                                                      | what can be opened by name here                                      |

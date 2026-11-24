@@ -22,6 +22,11 @@ the day a tag was cut.
   have to be of one dimension.
 - Messages and errors name a cell by its number — `node 3`, not
   `node CellId(3)` — the number a script names it by.
+- **`U` takes an edge or faces off the geometry, and keeps them off.** The
+  picked nodes as before, else the edge whose sheet is lit, else the picked
+  faces. An edge or face taken off stays on nothing through every settling
+  until `A` puts it somewhere or `classify()` decides again;
+  `gecko.unclassify_edge` and `gecko.unclassify_face` from a script.
 
 ## 0.2.5
 

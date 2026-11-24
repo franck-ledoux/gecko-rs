@@ -1667,7 +1667,7 @@ fn an_edge_is_put_on_two_curves_taken_as_one_and_keeps_them() {
     let out = s
         .apply(Command::ClassifyEdge {
             edges: vec![edge],
-            on: on_many(1, &[201, 202]),
+            on: Some(on_many(1, &[201, 202])),
         })
         .unwrap();
     assert!(
@@ -1703,7 +1703,7 @@ fn an_edge_is_put_on_two_curves_taken_as_one_and_keeps_them() {
     // The same curves the other way round are the same composite.
     s.apply(Command::ClassifyEdge {
         edges: vec![edge],
-        on: on_many(1, &[202, 201]),
+        on: Some(on_many(1, &[202, 201])),
     })
     .unwrap();
     assert_eq!(s.blocking().edge_class(cell), Some(on));
@@ -1734,7 +1734,7 @@ fn an_edge_whose_ends_do_not_allow_it_is_refused_and_left_alone() {
     let err = s
         .apply(Command::ClassifyEdge {
             edges: vec![edge],
-            on: on_many(1, &[201, 202]),
+            on: Some(on_many(1, &[201, 202])),
         })
         .unwrap_err()
         .to_string();
@@ -1759,7 +1759,7 @@ fn an_edge_whose_ends_do_not_allow_it_is_refused_and_left_alone() {
         let err = s
             .apply(Command::ClassifyEdge {
                 edges: vec![edge],
-                on,
+                on: Some(on),
             })
             .unwrap_err()
             .to_string();
@@ -1783,7 +1783,7 @@ fn a_face_is_put_on_two_surfaces_taken_as_one() {
     let out = s
         .apply(Command::ClassifyFace {
             faces: vec![bottom],
-            on: on_many(2, &[1, 3]),
+            on: Some(on_many(2, &[1, 3])),
         })
         .unwrap();
     assert!(out.message.contains("surfaces 1, 3"), "{}", out.message);
@@ -1806,7 +1806,7 @@ fn a_face_is_put_on_two_surfaces_taken_as_one() {
     let err = s
         .apply(Command::ClassifyFace {
             faces: vec![top],
-            on: on_many(2, &[1, 3]),
+            on: Some(on_many(2, &[1, 3])),
         })
         .unwrap_err()
         .to_string();
@@ -1815,7 +1815,7 @@ fn a_face_is_put_on_two_surfaces_taken_as_one() {
     let err = s
         .apply(Command::ClassifyFace {
             faces: vec![bottom],
-            on: on_many(1, &[201, 202]),
+            on: Some(on_many(1, &[201, 202])),
         })
         .unwrap_err()
         .to_string();
@@ -1838,12 +1838,12 @@ fn a_face_on_two_surfaces_may_be_bounded_by_an_edge_on_two_curves() {
     let bottom = face_named(&s, [0.5, 0.5, 0.0]);
     s.apply(Command::ClassifyEdge {
         edges: vec![edge],
-        on: on_many(1, &[201, 211]),
+        on: Some(on_many(1, &[201, 211])),
     })
     .unwrap();
     s.apply(Command::ClassifyFace {
         faces: vec![bottom],
-        on: on_many(2, &[1, 4]),
+        on: Some(on_many(2, &[1, 4])),
     })
     .unwrap();
     s.apply(Command::Smooth {
@@ -1906,4 +1906,113 @@ fn a_message_names_a_cell_by_the_number_a_reader_types_back() {
         .unwrap_err()
         .to_string();
     assert_eq!(err, "no node is named 999999");
+}
+
+#[test]
+fn an_edge_taken_off_the_model_stays_off_until_told_otherwise() {
+    // Its ends still say curve 201, and the settling after every command
+    // would hand that straight back: taking it off has to be kept.
+    let mut s = on_the_box();
+    s.apply(Command::Classify {
+        tolerance: SNAP_SHARE,
+    })
+    .unwrap();
+    let edge = edge_between(&s, [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]);
+    let cell = gecko_core::CellId::from_raw(edge);
+
+    let out = s
+        .apply(Command::ClassifyEdge {
+            edges: vec![edge],
+            on: None,
+        })
+        .unwrap();
+    assert_eq!(out.message, format!("edge {edge} on nothing now"));
+    assert_eq!(s.blocking().edge_class(cell), None);
+    assert!(s.blocking().is_edge_free(cell));
+    s.apply(Command::Smooth {
+        rounds: 5,
+        share: 0.5,
+    })
+    .unwrap();
+    assert_eq!(s.blocking().edge_class(cell), None, "kept off");
+    assert!(
+        s.script()
+            .contains(&format!("gecko.unclassify_edge({{{edge}}})")),
+        "{}",
+        s.script()
+    );
+
+    // Given a class again, it is held by its ends as before.
+    s.apply(Command::ClassifyEdge {
+        edges: vec![edge],
+        on: Some(on_many(1, &[201, 202])),
+    })
+    .unwrap();
+    assert!(!s.blocking().is_edge_free(cell));
+    assert!(s.blocking().edge_class(cell).is_some());
+
+    // And `classify` decides everything again, a freed edge included.
+    s.apply(Command::ClassifyEdge {
+        edges: vec![edge],
+        on: None,
+    })
+    .unwrap();
+    s.apply(Command::Classify {
+        tolerance: SNAP_SHARE,
+    })
+    .unwrap();
+    assert_eq!(s.blocking().edge_class(cell), Some(On { dim: 1, tag: 201 }));
+    s.apply(Command::Undo).unwrap();
+    assert_eq!(s.blocking().edge_class(cell), None, "undo frees it again");
+    assert!(s.blocking().is_edge_free(cell));
+}
+
+#[test]
+fn a_face_taken_off_the_model_stays_off_and_leaves_its_edges_alone() {
+    let mut s = on_the_box();
+    s.apply(Command::Classify {
+        tolerance: SNAP_SHARE,
+    })
+    .unwrap();
+    let bottom = face_named(&s, [0.5, 0.5, 0.0]);
+    let cell = gecko_core::CellId::from_raw(bottom);
+    assert_eq!(s.blocking().face_class(cell), Some(On { dim: 2, tag: 1 }));
+    let edge = edge_between(&s, [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]);
+
+    let out = s
+        .apply(Command::ClassifyFace {
+            faces: vec![bottom],
+            on: None,
+        })
+        .unwrap();
+    assert_eq!(out.message, format!("face {bottom} on nothing now"));
+    s.apply(Command::Smooth {
+        rounds: 5,
+        share: 0.5,
+    })
+    .unwrap();
+    assert_eq!(s.blocking().face_class(cell), None, "kept off");
+    assert_eq!(
+        s.blocking().edge_class(gecko_core::CellId::from_raw(edge)),
+        Some(On { dim: 1, tag: 201 }),
+        "its edges keep what they are on"
+    );
+
+    // Put back by hand, on two surfaces.
+    s.apply(Command::ClassifyFace {
+        faces: vec![bottom],
+        on: Some(on_many(2, &[1, 3])),
+    })
+    .unwrap();
+    assert!(s.blocking().face_class(cell).is_some_and(|on| on.tag < 0));
+
+    // A face that is not there is said so.
+    let err = s
+        .apply(Command::ClassifyFace {
+            faces: vec![999_999],
+            on: None,
+        })
+        .unwrap_err()
+        .to_string();
+    assert_eq!(err, "no face is named 999999");
 }

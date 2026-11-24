@@ -19,7 +19,7 @@ not move it at all, its entity being a single point.
 | `A`                       | put the picked nodes on the picked entities   |
 | `K`, or the magnet button | put the whole blocking on whatever is nearest |
 | `L`                       | lock the picked nodes, or let them go         |
-| `U`                       | take the picked nodes off the geometry        |
+| `U`                       | take the picked cells off the geometry        |
 
 A press and release on a handle without moving it is a pick; anything
 further is still a drag. Locking and unclassifying are things you *say*
@@ -336,6 +336,22 @@ gecko.classify_node({a, b, c, d}, 1, 205)   -- or four of them, in one act
 
 A constraint that gave way when pulled hard enough would be a constraint you
 could not rely on.
+
+An edge or a face comes off the same way, and is **kept** off: its ends or
+edges would otherwise hand straight back what they imply, after the very
+next command. It stays on nothing until it is put somewhere by hand, or
+`classify()` decides everything again.
+
+```lua
+gecko.unclassify_edge({514, 5889})
+gecko.unclassify_face(512)
+```
+
+`U` reads the selection as `A` does: the picked nodes, else the edge whose
+sheet is lit, else the picked faces.
+
+A face on the wrong surface does not need taking off first: pick it, pick
+what it should be on, and `A` puts it there.
 
 With the mouse: pick the nodes and press `U`. They stay where they are and
 may now go anywhere — and when you drop one somewhere else it takes hold of

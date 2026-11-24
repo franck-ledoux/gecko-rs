@@ -55,3 +55,15 @@ for _, line in ipairs({
 }) do
   assert(script:find(line, 1, true), "the history says " .. line .. ":\n" .. script)
 end
+
+-- Off the model, and kept off through a smoothing.
+gecko.unclassify_edge(edge_between(a, b).id)
+gecko.unclassify_face({ bottom })
+gecko.smooth{ rounds = 2 }
+assert(edge_between(a, b).on == nil, "the edge stays on nothing")
+for _, f in ipairs(gecko.faces()) do
+  if f.id == bottom then assert(f.on == nil, "the face stays on nothing") end
+end
+script = gecko.script()
+assert(script:find("gecko.unclassify_edge({" .. edge_between(a, b).id .. "})", 1, true), script)
+assert(script:find("gecko.unclassify_face({" .. bottom .. "})", 1, true), script)

@@ -4036,6 +4036,47 @@ test("an edge goes on two curves, and a face on two surfaces", async ({
   expect(errors).toEqual([]);
 });
 
+test("U takes a lit edge or picked faces off the geometry", async ({
+  page,
+}) => {
+  const errors = await boot(page);
+  await boxedAndPinned(page);
+  await page.evaluate(() => (window as any).__gecko.apply({ op: "classify" }));
+  await page.evaluate(() => (window as any).__gecko.refresh());
+
+  const edge = (await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    return (g.edgeNames() as number[])[0];
+  })) as number;
+  await page.evaluate((e) => (window as any).__gecko.pickEdgeByName(e), edge);
+  await page.keyboard.press("u");
+  await expect(page.locator("#status")).toContainText(
+    `edge ${edge} on nothing now`,
+  );
+  await page.evaluate(() => (window as any).__gecko.settled());
+  expect(
+    await page.evaluate(() => (window as any).__gecko.selectedEdge()),
+  ).toBeNull();
+
+  const face = (await page.evaluate(() => {
+    const s = (window as any).__gecko.surface("faces");
+    return { face: s.faces[0], block: s.blocks[0] };
+  })) as { face: number; block: number };
+  await page.evaluate((p) => (window as any).__gecko.choose(p), face);
+  await page.keyboard.press("u");
+  await expect(page.locator("#status")).toContainText(
+    `face ${face.face} on nothing now`,
+  );
+
+  // Nothing picked: it says what to pick.
+  await page.evaluate(() => (window as any).__gecko.settled());
+  await page.keyboard.press("u");
+  await expect(page.locator("#status")).toContainText(
+    "pick what to take off first",
+  );
+  expect(errors).toEqual([]);
+});
+
 test("freezing and unclassifying take the whole selection", async ({
   page,
 }) => {
