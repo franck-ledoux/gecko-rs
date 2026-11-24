@@ -16,7 +16,7 @@ not move it at all, its entity being a single point.
 | click a node              | pick it, or put it out again                  |
 | hold `W` and drag         | catch every handle inside the band            |
 | drag a picked handle      | move every picked node with it                |
-| `A`                       | put the picked nodes on the picked entity     |
+| `A`                       | put the picked nodes on the picked entities   |
 | `K`, or the magnet button | put the whole blocking on whatever is nearest |
 | `L`                       | lock the picked nodes, or let them go         |
 | `U`                       | take the picked nodes off the geometry        |
@@ -251,6 +251,12 @@ lies inside surfaces 2 and 3 when each curve bounds one of them, though no
 single surface holds both. What the boundary does **not** already allow is
 refused, saying what the ends or edges are on: the next settling would take
 it straight back. Put the ends on first, then the edge, then the face.
+
+With the mouse it is the same `A` as for nodes. Press `M` and click every
+curve (or surface) it spans, then press `A` with the cells picked: nodes if
+any are picked, else the edge whose sheet is lit, else the picked faces. The
+entities have to be of one dimension, and the button stays grey until they
+are.
 
 [`classify()`](#putting-the-blocking-on-the-model) decides everything
 again, and that includes these.

@@ -3922,6 +3922,120 @@ test("four corners go onto one curve in one gesture", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test("an edge goes on two curves, and a face on two surfaces", async ({
+  page,
+}) => {
+  // A cell spanning several entities is told so: the entities are picked
+  // together and taken as one.
+  const errors = await boot(page);
+  await boxedAndPinned(page);
+  await page.evaluate(() => (window as any).__gecko.apply({ op: "classify" }));
+  await page.evaluate(() => (window as any).__gecko.refresh());
+
+  // The bottom-front edge, from (0,0,0) to (1,0,0): on curve 201 now.
+  const edge = (await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    return (g.edgeNames() as number[]).find((n) => {
+      const m = g.edgeMidpoint(n) as number[];
+      return (
+        Math.abs(m[0] - 0.5) < 1e-6 &&
+        Math.abs(m[1]) < 1e-6 &&
+        Math.abs(m[2]) < 1e-6
+      );
+    });
+  })) as number;
+  expect(edge).toBeDefined();
+  await page.evaluate((e) => (window as any).__gecko.pickEdgeByName(e), edge);
+  // An edge and nothing to put it on is not enough.
+  await expect(page.locator("#attach")).toBeDisabled();
+
+  // Two curves and a surface do not go together.
+  await page.evaluate(() =>
+    (window as any).__gecko.selectGeom([
+      { dim: 1, tag: 201 },
+      { dim: 2, tag: 1 },
+    ]),
+  );
+  await page.evaluate(() => (window as any).__gecko.showVerbs());
+  await expect(page.locator("#attach")).toBeDisabled();
+
+  await page.evaluate(() =>
+    (window as any).__gecko.selectGeom([
+      { dim: 1, tag: 201 },
+      { dim: 1, tag: 202 },
+    ]),
+  );
+  await page.evaluate(() => (window as any).__gecko.showVerbs());
+  await expect(page.locator("#attach")).toBeEnabled();
+  await page.keyboard.press("a");
+  await expect(page.locator("#status")).toContainText(
+    `edge ${edge} put on side 1 (curves 201, 202)`,
+  );
+  expect(
+    await page.evaluate(() => (window as any).__gecko.selectedEdge()),
+  ).toBeNull();
+
+  // The bottom face, across surfaces 1 and 3.
+  const bottom = (await page.evaluate(() => {
+    // Drawn positions are shifted by the scene's origin, so the face is
+    // the lowest one rather than the one at a given height.
+    const s = (window as any).__gecko.surface("faces");
+    let best = -1;
+    let at = Infinity;
+    for (let q = 0; q < s.quads; q++) {
+      let z = 0;
+      for (let k = 0; k < 4; k++) z += s.positions[(q * 4 + k) * 3 + 2] / 4;
+      if (z < at) {
+        at = z;
+        best = q;
+      }
+    }
+    return { face: s.faces[best], block: s.blocks[best] };
+  })) as { face: number; block: number };
+  await page.evaluate((p) => (window as any).__gecko.choose(p), bottom);
+  await page.evaluate(() =>
+    (window as any).__gecko.selectGeom([
+      { dim: 2, tag: 1 },
+      { dim: 2, tag: 3 },
+    ]),
+  );
+  await page.evaluate(() => (window as any).__gecko.showVerbs());
+  await page.keyboard.press("a");
+  await expect(page.locator("#status")).toContainText(
+    `face ${bottom.face} put on patch 2 (surfaces 1, 3)`,
+  );
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // The top face may not: its edges are on curves neither surface holds.
+  const top = (await page.evaluate(() => {
+    // Drawn positions are shifted by the scene's origin, so the face is
+    // the highest one rather than the one at a given height.
+    const s = (window as any).__gecko.surface("faces");
+    let best = -1;
+    let at = -Infinity;
+    for (let q = 0; q < s.quads; q++) {
+      let z = 0;
+      for (let k = 0; k < 4; k++) z += s.positions[(q * 4 + k) * 3 + 2] / 4;
+      if (z > at) {
+        at = z;
+        best = q;
+      }
+    }
+    return { face: s.faces[best], block: s.blocks[best] };
+  })) as { face: number; block: number };
+  await page.evaluate((p) => (window as any).__gecko.choose(p), top);
+  await page.evaluate(() =>
+    (window as any).__gecko.selectGeom([
+      { dim: 2, tag: 1 },
+      { dim: 2, tag: 3 },
+    ]),
+  );
+  await page.evaluate(() => (window as any).__gecko.showVerbs());
+  await page.keyboard.press("a");
+  await expect(page.locator("#status")).toContainText("cannot stay on");
+  expect(errors).toEqual([]);
+});
+
 test("freezing and unclassifying take the whole selection", async ({
   page,
 }) => {

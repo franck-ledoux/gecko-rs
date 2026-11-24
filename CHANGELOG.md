@@ -16,6 +16,10 @@ the day a tag was cut.
   included.
 - An edge on several curves may bound a face on several surfaces even when
   no one surface holds both curves.
+- **`A` puts an edge or faces on what is picked, and on several of it.**
+  Pick curves or surfaces with `M`, then `A`: the picked nodes as before,
+  else the edge whose sheet is lit, else the picked faces. The entities
+  have to be of one dimension.
 
 ## 0.2.5
 

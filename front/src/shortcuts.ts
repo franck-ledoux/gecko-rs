@@ -194,7 +194,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     show: "A",
     key: "a",
     action: "attach",
-    does: "put the selected nodes on that entity",
+    does: "put the selected nodes, edge or faces on the selected entities",
     group: "Geometry",
   },
   {

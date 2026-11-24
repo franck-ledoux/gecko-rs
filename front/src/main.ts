@@ -1325,6 +1325,7 @@ async function boot() {
     viewer.selectedEdge = edge;
     order = order.filter((kind) => kind !== "edge");
     noted("edge", true);
+    showVerbs();
     viewer.showSheet(sheet.edges);
     lit = sheet.segments;
     $<HTMLButtonElement>("remove").disabled = false;
@@ -1463,13 +1464,20 @@ async function boot() {
   /**
    * Which verbs the two selections make available.
    *
-   * Attaching needs nodes to move and one entity to move them to, and a
-   * button that tells you so before you press it beats a message that
-   * tells you afterwards.
+   * Attaching needs something to put — nodes, an edge or faces — and
+   * entities of one dimension to put it on, and a button that tells you so
+   * before you press it beats a message that tells you afterwards.
    */
   function showVerbs() {
+    const entities = viewer.geomSelection;
+    const something =
+      viewer.selectedNodes.length > 0 ||
+      viewer.selectedEdge !== null ||
+      viewer.selection.length > 0;
     $<HTMLButtonElement>("attach").disabled =
-      viewer.selectedNodes.length === 0 || viewer.geomSelection.length !== 1;
+      !something ||
+      entities.length === 0 ||
+      entities.some((s) => s.dim !== entities[0].dim);
   }
 
   function clearSelection() {
@@ -1973,29 +1981,60 @@ async function boot() {
     await refresh();
   }
 
+  /**
+   * The picked nodes, or else the lit edge, or else the picked faces, onto
+   * the picked entities.
+   *
+   * Several entities of one dimension are taken as one: an edge running
+   * along two curves, a face lying across two surfaces, or the end of such
+   * an edge sliding along both. The kernel names them once and refuses a
+   * cell whose boundary does not allow it, saying why.
+   */
   async function attach() {
-    const nodes = viewer.selectedNodes;
     const picked = viewer.geomSelection;
-    if (nodes.length === 0) {
+    const nodes = viewer.selectedNodes;
+    const edge = viewer.selectedEdge;
+    const faces = [...new Set(viewer.selection.map((p) => p.face))];
+    const what =
+      nodes.length > 0
+        ? "nodes"
+        : edge !== null
+          ? "edge"
+          : faces.length
+            ? "faces"
+            : null;
+    if (what === null) {
+      say("pick what to put on it first — nodes, an edge, or faces");
+      return;
+    }
+    if (picked.length === 0) {
       say(
-        "pick some nodes first — click them, or hold shift and drag a box round them",
+        "pick what to put them on — press M and click a curve, a surface or a corner",
       );
       return;
     }
-    if (picked.length !== 1) {
-      say(
-        picked.length === 0
-          ? "pick what to put them on — press M and click a curve, a surface or a corner"
-          : "one entity at a time: a node goes on one thing",
-      );
+    const dim = picked[0].dim;
+    if (picked.some((s) => s.dim !== dim)) {
+      say("one kind of entity at a time: curves, or surfaces, or a corner");
       return;
     }
-    const reply = await send({ op: "classify_node", nodes, on: picked[0] });
-    message = reply.message;
+    const tags = picked.map((s) => s.tag);
+    const on = { dim, tag: tags.length === 1 ? tags[0] : tags };
+    const reply = await send(
+      what === "nodes"
+        ? { op: "classify_node", nodes, on }
+        : what === "edge"
+          ? { op: "classify_edge", edges: [edge], on }
+          : { op: "classify_face", faces, on },
+    );
     if (reply.ok) {
-      viewer.selectNodes([]);
+      if (what === "nodes") viewer.selectNodes([]);
+      else clearSelection();
       viewer.selectGeom([]);
     }
+    // After the letting go, which has its own word to say about an empty
+    // selection: what was done is the news.
+    message = reply.message;
     await refresh();
   }
 
@@ -2111,6 +2150,8 @@ async function boot() {
    *  two faces and a pillow as many faces or blocks as you like, so the
    *  selection just grows and each verb says what it can do with it. */
   function cellVerbs() {
+    // Attaching takes faces as well as nodes, so it is a verb on cells too.
+    showVerbs();
     const faces = viewer.selection.length;
     const blocks = viewer.selectedBlocks.length;
     $<HTMLButtonElement>("glue").disabled = faces !== 2;
