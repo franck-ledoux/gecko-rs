@@ -2016,3 +2016,88 @@ fn a_face_taken_off_the_model_stays_off_and_leaves_its_edges_alone() {
         .to_string();
     assert_eq!(err, "no face is named 999999");
 }
+
+#[test]
+fn a_pillow_opening_onto_a_face_on_two_surfaces_leaves_its_new_cells_there() {
+    // The shell case: the bottom face of the box is put on surfaces 1 and
+    // 3 taken as one, its corners on the ring of curves round it, and the
+    // other five faces pillowed. The layer opens onto the bottom face, so
+    // the inner block's bottom face, the four faces the layer leaves
+    // beside it in that plane, and every edge between them lie on the
+    // patch — and nothing but the patch holds their ends.
+    let mut s = on_the_box();
+    s.apply(Command::Classify {
+        tolerance: SNAP_SHARE,
+    })
+    .unwrap();
+    let ring: Vec<u32> = nodes(&s)
+        .iter()
+        .filter(|n| n["pos"][2].as_f64().unwrap().abs() < 1e-9)
+        .map(|n| n["id"].as_u64().unwrap() as u32)
+        .collect();
+    s.apply(Command::ClassifyNode {
+        nodes: ring,
+        on: Some(on_many(1, &[201, 202, 203, 204])),
+    })
+    .unwrap();
+    let bottom = face_named(&s, [0.5, 0.5, 0.0]);
+    s.apply(Command::ClassifyFace {
+        faces: vec![bottom],
+        on: Some(on_many(2, &[1, 3])),
+    })
+    .unwrap();
+    let patch = s
+        .blocking()
+        .face_class(gecko_core::CellId::from_raw(bottom))
+        .unwrap();
+
+    let others: Vec<gecko_cmd::PillowFace> =
+        serde_json::from_str::<Vec<serde_json::Value>>(&s.faces_json())
+            .unwrap()
+            .into_iter()
+            .filter(|f| f["id"].as_u64().unwrap() as u32 != bottom)
+            .map(|f| gecko_cmd::PillowFace {
+                face: f["id"].as_u64().unwrap() as u32,
+                block: Some(f["block"].as_u64().unwrap() as u32),
+            })
+            .collect();
+    assert_eq!(others.len(), 5);
+    s.apply(Command::Pillow {
+        faces: others,
+        tolerance: SNAP_SHARE,
+    })
+    .unwrap();
+
+    let at: std::collections::HashMap<u64, f64> = nodes(&s)
+        .iter()
+        .map(|n| (n["id"].as_u64().unwrap(), n["pos"][2].as_f64().unwrap()))
+        .collect();
+    let on_patch = serde_json::json!({ "dim": 2, "tag": patch.tag });
+    let flat: Vec<serde_json::Value> =
+        serde_json::from_str::<Vec<serde_json::Value>>(&s.faces_json())
+            .unwrap()
+            .into_iter()
+            .filter(|f| f["center"][2].as_f64().unwrap().abs() < 1e-9)
+            .collect();
+    assert_eq!(flat.len(), 5, "the inner face and four beside it");
+    for f in &flat {
+        assert_eq!(f["on"], on_patch, "face {}", f["id"]);
+    }
+    // The edges in that plane that run inside it, between nodes that are
+    // not both on the ring of curves.
+    let inside: Vec<serde_json::Value> = edges(&s)
+        .into_iter()
+        .filter(|e| {
+            e["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|n| at[&n.as_u64().unwrap()].abs() < 1e-9)
+        })
+        .filter(|e| e["on"]["dim"] != 1)
+        .collect();
+    assert_eq!(inside.len(), 8, "the inner ring and the four spokes");
+    for e in &inside {
+        assert_eq!(e["on"], on_patch, "edge {}", e["id"]);
+    }
+}

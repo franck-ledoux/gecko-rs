@@ -77,10 +77,12 @@ Three things are worth knowing about them:
 - **The same run of curves is always the same side.** Asking twice gives one
   name, which is what makes the operation repeatable and a script replayable.
 - **A side is never guessed at.** Proximity does not return one, and
-  inference from a cell's boundary does not reach for one — the diagonal of a
-  face has the same two ends as the side beside it. A cell *keeps* a side it
-  was deliberately put on, and inherits one by being cut from a cell that
-  was, and that is all.
+  inference from a cell's boundary does not reach for one merely because its
+  ends touch it — the diagonal of a face has the same two ends, on corners,
+  as the side beside it. A cell *keeps* a side it was deliberately put on,
+  inherits one by being cut from a cell that was, and is given one when its
+  ends or edges are themselves **on** it and nothing else holds them all:
+  the edges and faces a pillow leaves inside a face put on two surfaces.
 
 The same machinery takes surfaces rather than curves, for a face of a
 blocking that spans several geometric surfaces. Nothing more is needed when

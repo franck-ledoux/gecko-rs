@@ -27,6 +27,11 @@ the day a tag was cut.
   faces. An edge or face taken off stays on nothing through every settling
   until `A` puts it somewhere or `classify()` decides again;
   `gecko.unclassify_edge` and `gecko.unclassify_face` from a script.
+- **A pillow opening onto a face on several surfaces leaves its new cells
+  there.** The faces and edges it makes in that face's plane were on
+  nothing: the settling never gave a cell a composite. It now gives one
+  when the cell's ends or edges are themselves on it and nothing else holds
+  them all.
 
 ## 0.2.5
 

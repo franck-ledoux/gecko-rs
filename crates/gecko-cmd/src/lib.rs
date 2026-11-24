@@ -2394,11 +2394,17 @@ impl Session {
             // put on a side stays there. What it may be **given** does
             // not: the diagonal of a face has the same two ends as the
             // side beside it, and nothing should hand it one.
+            //
+            // Except a composite the boundary is itself **on**: ends on
+            // the patch of two surfaces are not ends that merely touch it,
+            // and when nothing but the patch holds them both — a pillow
+            // opening onto a face put on it leaves exactly that — the cell
+            // between them is on it. The same rule as `destination`.
             let allowed = model.shared(&pairs);
             let shared: Vec<(u8, i32)> = allowed
                 .iter()
                 .copied()
-                .filter(|e| !gecko_geom::Composites::is_composite(e.1))
+                .filter(|e| !gecko_geom::Composites::is_composite(e.1) || pairs.contains(e))
                 .collect();
             let open = |on: On| on.dim >= cell.at_least && allowed.contains(&(on.dim, on.tag));
             if let Some(on) = cell.already.filter(|on| open(*on)) {
@@ -2409,9 +2415,8 @@ impl Session {
                 .iter()
                 .filter(|e| e.0 == lowest)
                 .min_by(|a, b| {
-                    let far = |e: &(u8, i32)| {
-                        geometry.distance(e.0, e.1, cell.middle).unwrap_or(f64::MAX)
-                    };
+                    let far =
+                        |e: &(u8, i32)| model.distance(e.0, e.1, cell.middle).unwrap_or(f64::MAX);
                     far(a).partial_cmp(&far(b)).expect("a finite distance")
                 })
                 .map(|(dim, tag)| On {

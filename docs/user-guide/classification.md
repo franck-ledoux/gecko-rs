@@ -258,6 +258,13 @@ any are picked, else the edge whose sheet is lit, else the picked faces. The
 entities have to be of one dimension, and the button stays grey until they
 are.
 
+What is built **inside** such a cell follows it. A pillow opening onto a
+face on surfaces 2 and 3 draws that face's corners in along the patch, and
+the faces and edges it leaves in that plane have ends that are themselves on
+the patch, with nothing else holding them all: those go on the patch too.
+Ends that merely *touch* a composite — two corners at the ends of a side —
+never give a cell that side.
+
 [`classify()`](#putting-the-blocking-on-the-model) decides everything
 again, and that includes these.
 
