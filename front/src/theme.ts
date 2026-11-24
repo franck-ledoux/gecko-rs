@@ -241,6 +241,10 @@ export interface ViewPrefs {
   /** What a smoothing pass does: how many times over, and how far along
    *  the way to the middle of its neighbors a node goes each time. */
   smooth: { rounds: number; share: number };
+  /** Whether pillowing a set of blocks lays the layer along their faces on
+   *  the outer boundary as well as along the ones between them and the
+   *  rest. */
+  pillow: { outer: boolean };
   /** Nodes carry how they are colored, how big they are drawn, and
    *  whether they are drawn at all. Hiding them is for looking at the
    *  shape of a blocking rather than working on it: a handle on every
@@ -289,6 +293,7 @@ export const DEFAULTS: ViewPrefs = {
   box: { margin: BOX_MARGIN, snap: SNAP_SHARE },
   segments: SEGMENTS,
   smooth: { rounds: SMOOTH_ROUNDS, share: SMOOTH_SHARE },
+  pillow: { outer: true },
   // By their classification to begin with: putting the blocking onto the
   // model is what the whole session is for, so what each cell is attached
   // to is the thing worth seeing before anything else.
@@ -415,6 +420,12 @@ export function loadPrefs(): ViewPrefs {
         typeof stored.segments === "number" && Number.isFinite(stored.segments)
           ? Math.min(MAX_SEGMENTS, Math.max(1, Math.round(stored.segments)))
           : DEFAULTS.segments,
+      pillow: {
+        outer:
+          typeof stored.pillow?.outer === "boolean"
+            ? stored.pillow.outer
+            : DEFAULTS.pillow.outer,
+      },
       smooth: {
         rounds:
           typeof stored.smooth?.rounds === "number" && Number.isFinite(stored.smooth.rounds)

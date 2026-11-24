@@ -122,6 +122,7 @@ export type Target =
   | { kind: "node"; name: number }
   | { kind: "edge"; name: number }
   | { kind: "face"; face: number; block: number }
+  | { kind: "block"; block: number }
   | { kind: "spot"; spot: Spot };
 
 /** Whether two answers are the same cell — so a pointer wandering across
@@ -133,6 +134,7 @@ export function sameTarget(a: Target | null, b: Target | null): boolean {
     const other = b as { face: number; block: number };
     return a.face === other.face && a.block === other.block;
   }
+  if (a.kind === "block") return a.block === (b as { block: number }).block;
   if (a.kind === "spot") {
     const other = (b as { spot: Spot }).spot;
     return a.spot.dim === other.dim && a.spot.tag === other.tag;
@@ -809,6 +811,9 @@ export class Viewer {
   /** What the user has picked, in order. The first is the anchor — a glue
    *  leaves the seam where it is — so the two are drawn differently. */
   private picked: Pick[] = [];
+  /** The blocks picked, in the order they were — a selection of its own,
+   *  drawn on the blocks layer. */
+  private pickedBlocks: number[] = [];
   readonly axes: AxisGizmo;
   /** The ambient occlusion, switched on and off by the preferences. */
   private readonly occlusion: Occlusion;
@@ -1360,6 +1365,10 @@ export class Viewer {
       highlight: new Map(
         this.picked.map((p, n) => [p.face, n === 0 ? ANCHOR : MATE]),
       ),
+      // On the blocks layer only: a face drawn once for two blocks would
+      // light up for either of them on the faces layer.
+      highlightBlocks:
+        group === "blocks" ? new Set(this.pickedBlocks) : undefined,
       classified: this.classifiedFaces(),
       only: this.quadsShown(),
     };
@@ -1396,6 +1405,16 @@ export class Viewer {
     this.rebuildSurface("blocks");
   }
 
+  /** Which blocks are picked, in the order they were picked. */
+  get selectedBlocks(): number[] {
+    return [...this.pickedBlocks];
+  }
+
+  selectBlocks(blocks: readonly number[]) {
+    this.pickedBlocks = [...blocks];
+    this.rebuildSurface("blocks");
+  }
+
   /**
    * Screen coordinates -> the face and block under them.
    *
@@ -1403,6 +1422,12 @@ export class Viewer {
    * the quadrangle carries both names whichever group is on screen.
    */
   pickSurface(x: number, y: number): Pick | null {
+    return this.pickQuad(x, y)?.pick ?? null;
+  }
+
+  /** The face and block under a pointer position, and which of the two
+   *  layers they were drawn on: a block's is a pick of the block. */
+  private pickQuad(x: number, y: number): { pick: Pick; group: Group } | null {
     const hit = this.scene.pick(
       x,
       y,
@@ -1416,17 +1441,21 @@ export class Viewer {
     if (!data || quad < 0 || quad >= data.faces.length) return null;
     const face = data.faces[quad];
     const drawnAsFace = this.surfaces.faces.some((slot) => slot.data === data);
+    const group: Group = drawnAsFace ? "faces" : "blocks";
     if (!drawnAsFace || !hit.pickedPoint || !hit.ray) {
-      return { face, block: data.blocks[quad] };
+      return { pick: { face, block: data.blocks[quad] }, group };
     }
     return {
-      face,
-      block: this.blockBehind(
+      pick: {
         face,
-        data.blocks[quad],
-        hit.pickedPoint,
-        hit.ray.direction,
-      ),
+        block: this.blockBehind(
+          face,
+          data.blocks[quad],
+          hit.pickedPoint,
+          hit.ray.direction,
+        ),
+      },
+      group,
     };
   }
 
@@ -1514,8 +1543,13 @@ export class Viewer {
     if (node !== null) return { kind: "node", name: node };
     const edge = this.pickEdge(x, y);
     if (edge !== null) return { kind: "edge", name: edge };
-    const face = this.pickSurface(x, y);
-    return face === null ? null : { kind: "face", ...face };
+    // Whatever is drawn nearest: a face on the faces layer is a face, and
+    // one of a shrunk block on the blocks layer is that block.
+    const quad = this.pickQuad(x, y);
+    if (quad === null) return null;
+    return quad.group === "blocks"
+      ? { kind: "block", block: quad.pick.block }
+      : { kind: "face", ...quad.pick };
   }
 
   /** What the halo is ringing, for a test to read as state rather than as
@@ -1768,6 +1802,7 @@ export class Viewer {
   private haloLines(target: Target): number[][] {
     if (target.kind === "edge") return this.haloEdge(target.name);
     if (target.kind === "face") return this.haloFace(target);
+    if (target.kind === "block") return this.haloBlock(target.block);
     if (target.kind === "spot" && target.spot.dim === CURVE) {
       const curve = this.geometry
         ? geomCurves(this.geometry).find((c) => c.tag === target.spot.tag)
@@ -1837,6 +1872,37 @@ export class Viewer {
       }
     }
     return [];
+  }
+
+  /** The sides of a block as the blocks layer draws it, shrunk: each of
+   *  its twelve edges once. */
+  private haloBlock(block: number): number[][] {
+    const out: number[][] = [];
+    const seen = new Set<string>();
+    for (const slot of this.surfaces.blocks) {
+      for (let q = 0; q < slot.data.faces.length; q++) {
+        if (slot.data.blocks[q] !== block) continue;
+        const corner = (k: number) => {
+          const v = q * 12 + k * 3;
+          return [
+            slot.data.positions[v],
+            slot.data.positions[v + 1],
+            slot.data.positions[v + 2],
+          ];
+        };
+        for (let k = 0; k < 4; k++) {
+          const [a, b] = [corner(k), corner((k + 1) % 4)];
+          const key = [a, b]
+            .map((p) => p.map((x) => x.toFixed(6)).join(","))
+            .sort()
+            .join("|");
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push([...a, ...b]);
+        }
+      }
+    }
+    return out;
   }
 
   /** The ball, made the first time one is wanted and kept thereafter. */
@@ -3960,6 +4026,28 @@ export class Viewer {
 
   /** The center of a drawn face, in **CSS pixels** — the inverse of
    *  `pickSurface`, and what lets a test aim a real mouse at a real face. */
+  /** Where the middle of a block is drawn on the blocks layer, in CSS
+   *  pixels, or nothing when it is not drawn there. */
+  blockScreen(name: number): [number, number] | null {
+    const mid = new Vector3(0, 0, 0);
+    let n = 0;
+    for (const { data } of this.surfaces.blocks) {
+      for (let q = 0; q < data.blocks.length; q++) {
+        if (data.blocks[q] !== name) continue;
+        for (let k = 0; k < 4; k++) {
+          const v = (q * 4 + k) * 3;
+          mid.addInPlaceFromFloats(
+            data.positions[v],
+            data.positions[v + 1],
+            data.positions[v + 2],
+          );
+          n++;
+        }
+      }
+    }
+    return n === 0 ? null : this.toScreen(mid.scaleInPlace(1 / n));
+  }
+
   faceScreen(name: number): [number, number] | null {
     for (const group of ["faces", "blocks"] as Group[]) {
       for (const { data } of this.surfaces[group]) {
@@ -4263,6 +4351,7 @@ export class Viewer {
     positions: Float32Array;
     faces: Uint32Array;
     blocks: Uint32Array;
+    tints: Float32Array;
   } | null {
     const slots = this.surfaces[group];
     if (!slots.length) return null;
@@ -4272,10 +4361,15 @@ export class Viewer {
     const positions: number[] = [];
     const faces: number[] = [];
     const blocks: number[] = [];
+    // The color of each quadrangle, off its first corner, three apiece.
+    const tints: number[] = [];
     let quads = 0;
     for (const { data } of slots) {
       for (let v = 0; v < data.colors.length; v += 4) {
         seen.add(data.colors.slice(v, v + 3).join(","));
+      }
+      for (let v = 0; v < data.colors.length; v += 16) {
+        tints.push(...data.colors.slice(v, v + 3));
       }
       quads += data.indices.length / 6;
       positions.push(...data.positions);
@@ -4289,6 +4383,7 @@ export class Viewer {
       positions: new Float32Array(positions),
       faces: new Uint32Array(faces),
       blocks: new Uint32Array(blocks),
+      tints: new Float32Array(tints),
     };
   }
 

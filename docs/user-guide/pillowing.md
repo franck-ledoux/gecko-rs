@@ -10,6 +10,22 @@ point of it.
 Click the faces you want, then the pillow button, or `P`. Every selected face
 is lit, so what the layer will cover is visible before it exists.
 
+A face between two blocks can be taken from either side, and the two give
+different layers. You only say it for the first face: its side is the one
+it was clicked from, and it is carried across the rest of the pillow surface
+from face to face, so every face takes the same side of it whichever way the
+camera was turned when it was clicked. A closed pillow surface given no side
+takes its inside.
+
+Or pick **blocks**, on the Blocks layer, and press `P`: the pillow surface is
+their boundary, and the layer goes towards them — they are drawn in, and the
+layer fills the space between them and the rest. Their faces on the outer
+boundary of the model are part of it, so the layer runs along the model's
+wall too; untick *pillowing blocks takes their outer faces* in the
+**Operations** settings to leave them out, and the pillow surface is then
+only the faces between the blocks and the rest. Either way it is checked as
+below.
+
 To put a layer all the way along a **chord** instead of round a patch you
 picked by hand, see [Chords](chords.md): one click, `⇧P`, and the o-grid runs
 the length of the thread.
@@ -32,6 +48,14 @@ for _, face in ipairs(gecko.faces()) do
 end
 gecko.pillow(patch)
 gecko.stats()   -- {nodes = 16, edges = 32, faces = 24, blocks = 7}
+```
+
+A face can be given bare, `gecko.pillow({ 12, {13, 4}, 14 })`, and its block
+is found as on the page. Round a set of blocks:
+
+```lua
+gecko.pillow_blocks({ 3, 4 })                    -- outer faces too
+gecko.pillow_blocks({ 3, 4 }, { outer = false }) -- only between them and the rest
 ```
 
 ## How thick

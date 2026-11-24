@@ -120,13 +120,15 @@ A refused glue changes nothing at all, and says why.
 
 ## Removing a block
 
-Click any face of it and press the bin button, or `Del`. One click is
-enough:
-the quadrangles are listed per (face, block) pair, so a pick knows which
-block's side it landed on — even for a face that has one on each. The status
-line names the block before you commit to it.
+Show the **Blocks** layer, click the block — it is lit, every face of it —
+and press the bin button, or `Del`. Click more blocks to take several at
+once, as one step of undo. A click picks whatever is drawn nearest under the
+pointer: a shrunk block on the Blocks layer is a block, a face on the Faces
+layer a face. A face of a block is not the block, and `Del` on one says so
+rather than taking the block behind it.
 
-From a script, `gecko.remove_block(id)`, with the names from `gecko.blocks()`.
+From a script, `gecko.remove_block(id)` or `gecko.remove_blocks({ id, … })`,
+with the names from `gecko.blocks()`.
 
 **Whatever it was glued to keeps its own cells.** They are split off on the
 way out, not deleted with it: the neighbor comes out of the operation a

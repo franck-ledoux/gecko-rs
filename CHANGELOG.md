@@ -5,15 +5,22 @@ the day a tag was cut.
 
 ## Unreleased
 
-- **A pillow surface of faces has its sides found.** `gecko.pillow` takes a
-  bare face as well as a `{face, block}` pair, and the kernel carries the
-  side of the first face given a block across the rest; a closed surface
-  given none takes its inside.
-- **A pillowing round a set of blocks.** `gecko.pillow_blocks(blocks, {
-  outer = … })` lays the layer along their boundary, towards them, checked
-  as any other pillow surface; their faces on the outer boundary are part of
-  it unless `outer = false`. `gecko.remove_blocks(blocks)` takes several
-  away as one step.
+Blocks are picked as blocks.
+
+- **A click on the Blocks layer picks the block.** It is lit, every face of
+  it, and more clicks add more. `Del` takes them all, as one step, and `P`
+  pillows round them. A click picks whatever is drawn nearest: a face on
+  the Faces layer is a face. A face of a block is no longer how a block is
+  taken away — `Del` on one says to pick the block.
+- **A pillowing round a set of blocks.** The pillow surface is their
+  boundary and the layer goes towards them, checked as any other. Their
+  faces on the outer boundary are part of it unless *pillowing blocks takes
+  their outer faces* is unticked. `gecko.pillow_blocks(blocks, { outer =
+  … })` from a script; `gecko.remove_blocks(blocks)` takes several away.
+- **A pillow surface of faces has its sides found.** The page says the side
+  of the first face only, the one it was clicked from, and the kernel
+  carries it across the rest; a closed surface given none takes its inside.
+  `gecko.pillow` takes a bare face as well as a `{face, block}` pair.
 
 ## 0.2.4
 

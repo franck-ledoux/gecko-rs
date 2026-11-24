@@ -598,6 +598,7 @@ async function boot() {
    *  click picks a face **and** the block it was on, and two faces of one
    *  block are one block. */
   function chosenBlocks(): number[] {
+    if (viewer.selectedBlocks.length) return viewer.selectedBlocks;
     const seen = new Set<number>(viewer.selection.map((p) => p.block));
     return [...seen].filter((b) => !patchIds.has(b));
   }
@@ -797,6 +798,13 @@ async function boot() {
   rounds.addEventListener("input", () => {
     prefs.smooth.rounds = Number(rounds.value);
     $("smooth-rounds-n").textContent = String(prefs.smooth.rounds);
+    savePrefs(prefs);
+  });
+
+  const outer = $<HTMLInputElement>("pillow-outer");
+  outer.checked = prefs.pillow.outer;
+  outer.addEventListener("change", () => {
+    prefs.pillow.outer = outer.checked;
     savePrefs(prefs);
   });
 
@@ -1180,6 +1188,10 @@ async function boot() {
       pickNode(target.name);
       return;
     }
+    if (target?.kind === "block") {
+      chooseBlock(target.block);
+      return;
+    }
     // An edge cannot be the answer here: pressing one sets `aiming`, and
     // this listener has already returned above while it is set. Asked
     // rather than assumed, so that if some gesture does reach this line
@@ -1469,6 +1481,7 @@ async function boot() {
     viewer.showSheet([]);
     viewer.selectGeom([]);
     viewer.selectNodes([]);
+    viewer.selectBlocks([]);
     order = [];
     showVerbs();
     choose(null);
@@ -1486,7 +1499,7 @@ async function boot() {
   let order: Picked[] = [];
 
   /** The kinds of thing a click can add to a selection. */
-  type Picked = "node" | "face" | "entity" | "edge";
+  type Picked = "node" | "face" | "block" | "entity" | "edge";
 
   /** Note that a click added one, or took one back. */
   function noted(kind: Picked, added: boolean) {
@@ -1523,6 +1536,11 @@ async function boot() {
       }
       if (kind === "face" && faces.length) {
         choose(faces[faces.length - 1]);
+        return;
+      }
+      const blocks = viewer.selectedBlocks;
+      if (kind === "block" && blocks.length) {
+        chooseBlock(blocks[blocks.length - 1]);
         return;
       }
       if (kind === "entity" && entities.length) {
@@ -1657,6 +1675,8 @@ async function boot() {
         return `edge ${target.name}`;
       case "face":
         return `face ${target.face} of block ${target.block}`;
+      case "block":
+        return `block ${target.block}`;
       case "spot":
         return spotName(target.spot);
     }
@@ -2058,14 +2078,15 @@ async function boot() {
       picked = [...picked, pick];
       noted("face", true);
     }
+    // Faces or blocks, not both: a pillow of the two at once has no one
+    // surface to be.
+    if (pick !== null && viewer.selectedBlocks.length) {
+      viewer.selectBlocks([]);
+      order = order.filter((kind) => kind !== "block");
+    }
 
     viewer.select(picked);
-    // No cap: a glue wants two and a pillow wants as many as you like, so
-    // the selection just grows and each verb says what it can do with it.
-    $<HTMLButtonElement>("glue").disabled = picked.length !== 2;
-    $<HTMLButtonElement>("remove").disabled =
-      picked.length === 0 && viewer.selectedEdge === null;
-    $<HTMLButtonElement>("pillow").disabled = picked.length === 0;
+    cellVerbs();
     // The block is named as well as the face: it is what remove and pillow
     // both act on, and a click that changes something unnamed is no good.
     // Two is a glue, and which way round it goes decides where the seam
@@ -2083,6 +2104,48 @@ async function boot() {
             ? `faces ${picked[0].face} and ${picked[1].face} will be welded` +
               ` where they meet — or pillow both`
             : `${picked.length} faces — pillow takes them all`;
+    $("status").textContent = message;
+  }
+
+  /** Which of the verbs on cells the selection allows. No cap: a glue wants
+   *  two faces and a pillow as many faces or blocks as you like, so the
+   *  selection just grows and each verb says what it can do with it. */
+  function cellVerbs() {
+    const faces = viewer.selection.length;
+    const blocks = viewer.selectedBlocks.length;
+    $<HTMLButtonElement>("glue").disabled = faces !== 2;
+    $<HTMLButtonElement>("remove").disabled =
+      faces === 0 && blocks === 0 && viewer.selectedEdge === null;
+    $<HTMLButtonElement>("pillow").disabled = faces === 0 && blocks === 0;
+  }
+
+  /**
+   * Add a block to the selection, or take it back out.
+   *
+   * A block is picked on the blocks layer, as a face is on the faces layer:
+   * whichever is drawn under the pointer. Picking one lets go of any faces.
+   */
+  function chooseBlock(block: number) {
+    let blocks = viewer.selectedBlocks;
+    if (blocks.includes(block)) {
+      blocks = blocks.filter((b) => b !== block);
+      noted("block", false);
+    } else {
+      blocks = [...blocks, block];
+      noted("block", true);
+    }
+    if (viewer.selection.length) {
+      viewer.select([]);
+      order = order.filter((kind) => kind !== "face");
+    }
+    viewer.selectBlocks(blocks);
+    cellVerbs();
+    message =
+      blocks.length === 0
+        ? ""
+        : blocks.length === 1
+          ? `block ${blocks[0]} selected — Del takes it, P pillows round it`
+          : `${blocks.length} blocks selected — Del takes them, P pillows round them`;
     $("status").textContent = message;
   }
 
@@ -2174,11 +2237,22 @@ async function boot() {
 
   async function pillowSelection() {
     const picked = viewer.selection;
-    if (!picked.length) return;
-    const reply = await send({
-      op: "pillow",
-      faces: picked.map((p) => ({ face: p.face, block: p.block })),
-    });
+    const blocks = viewer.selectedBlocks;
+    if (!picked.length && !blocks.length) return;
+    // Blocks: the layer goes round them, towards them. Faces: the side of
+    // the first one, as it was clicked, and the kernel carries that side
+    // across the rest — which side each of the others was clicked from is
+    // a matter of where the camera was.
+    const reply = await send(
+      blocks.length
+        ? { op: "pillow_blocks", blocks, outer: prefs.pillow.outer }
+        : {
+            op: "pillow",
+            faces: picked.map((p, n) =>
+              n === 0 ? { face: p.face, block: p.block } : { face: p.face },
+            ),
+          },
+    );
     // Refused, with a pillow surface that would pass: that one is selected
     // instead, so that P again takes it. Nothing was changed, so there is
     // nothing to redraw, and the names in the offer are still good.
@@ -2233,17 +2307,22 @@ async function boot() {
     }
     const edge = viewer.selectedEdge;
     const [first] = viewer.selection;
+    const blocks = viewer.selectedBlocks;
+    // A face of a block is not the block: that is picked on the blocks
+    // layer, and taking one away because one of its faces was picked would
+    // take what nobody pointed at.
+    if (edge === null && !blocks.length && first && !isPatch(first)) {
+      say("a face of a block stays with it — show the blocks and pick the block to take it");
+      return;
+    }
     const command =
       edge !== null
         ? { op: "remove_sheet", edge }
-        : first === undefined
-          ? null
-          : // A face of an open sheet is a face; a face of a block is the
-            // way you point at the block. One key, and the kernel's own
-            // answer about which it is.
-            isPatch(first)
-            ? { op: "remove_face", face: first.face }
-            : { op: "remove_block", block: first.block };
+        : blocks.length
+          ? { op: "remove_blocks", blocks }
+          : first === undefined
+            ? null
+            : { op: "remove_face", face: first.face };
     if (!command) return;
     const reply = await send(command);
     clearSelection();
@@ -3169,8 +3248,11 @@ async function boot() {
     aimedSides: () => viewer.aimedSides,
     pickSurface: (x: number, y: number) => viewer.pickSurface(x, y),
     faceScreen: (name: number) => viewer.faceScreen(name),
+    blockScreen: (name: number) => viewer.blockScreen(name),
     edgeScreen: (name: number) => viewer.edgeScreen(name),
     selection: () => viewer.selection,
+    selectedBlocks: () => viewer.selectedBlocks,
+    chooseBlock: (block: number) => chooseBlock(block),
     selectedNodes: () => viewer.selectedNodes,
     selectNodes: (names: number[]) => viewer.selectNodes(names),
     /** What a selection made from outside the pointer would have done to

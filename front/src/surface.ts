@@ -17,7 +17,7 @@
  */
 
 import type { MeshView, View } from "./decode";
-import { colorForId, FAMILY, hexToRgb } from "./palette";
+import { ANCHOR, colorForId, FAMILY, hexToRgb } from "./palette";
 
 /**
  * One color for everything, one per cell name, or one per **kind of thing
@@ -51,6 +51,9 @@ export interface SurfaceOptions {
    *  what the user has picked. Keyed by face name, so a selected face stands
    *  out on both meshes at once. */
   highlight?: ReadonlyMap<number, string>;
+  /** Blocks to paint in the color of a pick, every face of them: what the
+   *  user has picked when it is blocks. */
+  highlightBlocks?: ReadonlySet<number>;
   /** The color a face wears for what it is classified on, keyed by face
    *  name, and only when `coloring` is `class`. Beaten by `highlight`:
    *  what you have picked is more urgent than where it belongs. Only
@@ -305,7 +308,9 @@ function buildFrom(
     faces[i] = view.quadFaces[q];
     blocks[i] = view.quadBlocks[q];
     const c = middle.get(name) ?? [0, 0, 0];
-    const picked = options.highlight?.get(view.quadFaces[q]);
+    const picked =
+      options.highlight?.get(view.quadFaces[q]) ??
+      (options.highlightBlocks?.has(view.quadBlocks[q]) ? ANCHOR : undefined);
     const classified =
       options.coloring === "class" && options.by === "face"
         ? options.classified?.get(view.quadFaces[q])

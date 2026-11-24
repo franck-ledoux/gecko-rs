@@ -851,18 +851,60 @@ test("a block is picked and removed", async ({ page }) => {
   await page.evaluate(() => (window as any).__gecko.settled());
 
   await expect(page.locator("#remove")).toBeDisabled();
+  const box = (await page.locator("#view").boundingBox())!;
 
-  // One click is enough: a pick knows which block's side it landed on.
+  // A face of a block is a face: Del does not take the block behind it.
   const face = (await page.evaluate(() => facingPair()))[0] as number;
   const at = (await page.evaluate(
     (f) => (window as any).__gecko.faceScreen(f),
     face,
   )) as [number, number];
-  const box = (await page.locator("#view").boundingBox())!;
   await page.mouse.click(box.x + at[0], box.y + at[1]);
+  await expect(page.locator("#status")).toContainText(`face ${face}`);
+  await page.keyboard.press("Delete");
+  await expect(page.locator("#status")).toContainText("pick the block");
+  await expect(page.locator("[data-test=blocks]")).toHaveText("2");
+  await page.keyboard.press("Escape");
 
+  // The block is picked on the blocks layer.
+  await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    g.run("faces");
+    g.run("blocks");
+  });
+  await page.evaluate(() => (window as any).__gecko.settled());
+  const block = (await page.evaluate(
+    () => (window as any).__gecko.surface("blocks").blocks[0],
+  )) as number;
+  const middle = (await page.evaluate(
+    (b) => (window as any).__gecko.blockScreen(b),
+    block,
+  )) as [number, number];
+  await page.mouse.click(box.x + middle[0], box.y + middle[1]);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.selectedBlocks()),
+  ).toEqual([block]);
+  expect(
+    await page.evaluate(() => (window as any).__gecko.selection()),
+  ).toEqual([]);
+  await expect(page.locator("#status")).toContainText(`block ${block} selected`);
   await expect(page.locator("#remove")).toBeEnabled();
-  await expect(page.locator("#status")).toContainText("block");
+
+  // Drawn in the color of a pick, every face of it and nothing else.
+  const tinted = (await page.evaluate((b) => {
+    const s = (window as any).__gecko.surface("blocks");
+    const out: [number, boolean][] = [];
+    for (let q = 0; q < s.quads; q++) {
+      const [r, g, bl] = [s.tints[q * 3], s.tints[q * 3 + 1], s.tints[q * 3 + 2]];
+      out.push([
+        s.blocks[q],
+        Math.abs(r - 1) < 0.01 && Math.abs(g - 0.8) < 0.01 && Math.abs(bl - 0.2) < 0.01,
+      ]);
+    }
+    return out;
+  }, block)) as [number, boolean][];
+  expect(tinted.length).toBe(12);
+  for (const [b, picked] of tinted) expect(picked).toBe(b === block);
 
   await page.locator("#remove").click();
   await page.waitForFunction(
@@ -871,9 +913,81 @@ test("a block is picked and removed", async ({ page }) => {
   await expect(page.locator("[data-test=blocks]")).toHaveText("1");
   await expect(page.locator("[data-test=faces]")).toHaveText("6");
   expect(
-    await page.evaluate(() => (window as any).__gecko.selection()),
+    await page.evaluate(() => (window as any).__gecko.selectedBlocks()),
   ).toEqual([]);
   await expect(page.locator("#remove")).toBeDisabled();
+  expect(errors).toEqual([]);
+});
+
+test("blocks picked are taken away in one step", async ({ page }) => {
+  const errors = await boot(page);
+  for (const n of [8, 16, 24]) {
+    await page.locator("#cube").click();
+    await page.waitForFunction(
+      (k) => (window as any).__gecko.counts().nodes === k,
+      n,
+    );
+  }
+  const blocks = (await page.evaluate(() => [
+    ...new Set((window as any).__gecko.surface("faces").blocks),
+  ])) as number[];
+  expect(blocks.length).toBe(3);
+  await page.evaluate((bs) => {
+    const g = (window as any).__gecko;
+    g.chooseBlock(bs[0]);
+    g.chooseBlock(bs[2]);
+  }, blocks);
+  await expect(page.locator("#status")).toContainText("2 blocks selected");
+  await page.keyboard.press("Delete");
+  await expect(page.locator("[data-test=blocks]")).toHaveText("1");
+  await page.keyboard.press("Control+z");
+  await expect(page.locator("[data-test=blocks]")).toHaveText("3");
+  expect(errors).toEqual([]);
+});
+
+test("blocks picked are pillowed round, with or without their outer faces", async ({
+  page,
+}) => {
+  const errors = await boot(page);
+  await page.evaluate(EDGE_NEAR);
+  await page.locator("#cube").click();
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
+  const edge = (await page.evaluate(() => edgeNear([0.5, 0, 0]))) as number;
+  await page.evaluate(
+    (e) => (window as any).__gecko.apply({ op: "split_sheet", edge: e, at: 0.5 }),
+    edge,
+  );
+  await page.evaluate(() => (window as any).__gecko.refresh());
+  await expect(page.locator("[data-test=blocks]")).toHaveText("2");
+  const one = () =>
+    page.evaluate(() => {
+      const g = (window as any).__gecko;
+      g.chooseBlock(g.surface("faces").blocks[0]);
+    });
+
+  // Outer faces in, by default: the layer goes round all six of its faces.
+  await one();
+  await page.keyboard.press("p");
+  await expect(page.locator("[data-test=blocks]")).toHaveText("8");
+  await expect(page.locator("#status")).toContainText(
+    "pillowed round 1 block, along 6 faces",
+  );
+  await page.keyboard.press("Control+z");
+  await expect(page.locator("[data-test=blocks]")).toHaveText("2");
+
+  // Left out: only the face between the two.
+  await page.evaluate(() => document.body.classList.add("params-open"));
+  await page.locator("[data-test=pillow-outer]").uncheck();
+  // A key pressed in a field is typed into it, not a shortcut.
+  await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+  await one();
+  await page.keyboard.press("p");
+  await expect(page.locator("[data-test=blocks]")).toHaveText("3");
+  await expect(page.locator("#status")).toContainText(
+    "pillowed round 1 block, along 1 face —",
+  );
   expect(errors).toEqual([]);
 });
 

@@ -238,8 +238,8 @@ sixty-four groups is the most a session holds.
 The **Groups** band has a row each: a show box, the group's color, its
 name, how many blocks are in it, whether it is written into the mesh, and
 three buttons — put the selected blocks in, take them out, forget the
-group. Select faces first; a click names the face *and* the block it was
-on, so picking faces is how you pick blocks.
+group. Show the **Blocks** layer and click the blocks first; with faces
+selected instead, the blocks they were picked on are taken.
 
 |               |                                                                                                                              |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------- |

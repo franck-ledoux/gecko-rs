@@ -97,7 +97,7 @@
           <path d="M9.5 12h5" />
         </svg>
       </button>
-      <button id="pillow" disabled title="Pillow the selected faces — P" aria-label="Pillow">
+      <button id="pillow" disabled title="Pillow the selected faces, or round the selected blocks — P" aria-label="Pillow">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M3.5 3.5h17v17h-17Z" />
           <path d="M7.5 7.5h9v9h-9Z" />
@@ -246,6 +246,10 @@
         <input id="smooth-share" type="range" min="0.05" max="1" step="0.05" data-test="smooth-share" />
         <b id="smooth-share-n" data-test="smooth-share-value">50%</b>
       </label>
+      <label class="check"
+        ><input id="pillow-outer" type="checkbox" data-test="pillow-outer" /> pillowing blocks takes
+        their outer faces</label
+      >
 
       <label class="slider"
         ><span>segments</span>

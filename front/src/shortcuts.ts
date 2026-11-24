@@ -134,7 +134,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     show: "Del",
     key: "delete",
     action: "remove",
-    does: "remove the block, or the lit sheet",
+    does: "remove the selected blocks, or the lit sheet",
     group: "Edit",
   },
   { show: "⌫", key: "backspace", action: "remove", does: "", group: "Edit" },
@@ -149,7 +149,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     show: "P",
     key: "p",
     action: "pillow",
-    does: "pillow the selected faces",
+    does: "pillow the selected faces, or round the selected blocks",
     group: "Edit",
   },
   {
