@@ -10,7 +10,7 @@
 //! the line back off rather than writing `gecko.undo()`, so what comes out
 //! is a recipe rather than a diary.
 
-use crate::{Command, Spot};
+use crate::Command;
 
 /// The preamble a saved script needs to stand on its own.
 pub const HEADER: &str = "\
@@ -214,11 +214,15 @@ pub fn line(command: &Command) -> String {
             braces(option("tolerance", *tolerance, crate::SNAP_SHARE))
         ),
         Command::ClassifyNode { nodes, on } => match on {
-            Some(Spot { dim, tag }) => {
-                format!("gecko.classify_node({}, {dim}, {tag})", numbers(nodes))
-            }
+            Some(on) => format!("gecko.classify_node({}, {})", numbers(nodes), place(on)),
             None => format!("gecko.unclassify_node({})", numbers(nodes)),
         },
+        Command::ClassifyEdge { edges, on } => {
+            format!("gecko.classify_edge({}, {})", numbers(edges), place(on))
+        }
+        Command::ClassifyFace { faces, on } => {
+            format!("gecko.classify_face({}, {})", numbers(faces), place(on))
+        }
         Command::FreezeNode { nodes, frozen } => format!(
             "gecko.{}({})",
             if *frozen { "freeze_node" } else { "thaw_node" },
@@ -264,6 +268,14 @@ pub fn line(command: &Command) -> String {
 /// A corner that follows nothing is written `false`, not left out: a `nil`
 /// inside a Lua table literal would end the list there and make the fourth
 /// corner the third. The reader takes it back — `Command`'s `spots`.
+/// `1, 3`, or `1, {2, 4}` for several taken as one.
+fn place(on: &crate::Place) -> String {
+    match &on.tag {
+        crate::Tags::One(tag) => format!("{}, {tag}", on.dim),
+        crate::Tags::Many(tags) => format!("{}, {}", on.dim, numbers(tags)),
+    }
+}
+
 fn spots(on: &[Option<crate::Spot>]) -> String {
     on.iter()
         .map(|spot| match spot {

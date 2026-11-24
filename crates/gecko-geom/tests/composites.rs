@@ -252,3 +252,30 @@ fn a_composite_surface_works_the_same_way() {
         Some((SURFACE, 1))
     );
 }
+
+#[test]
+fn a_side_across_two_surfaces_is_inside_the_patch_of_both() {
+    // Curve 11 bounds surface 1 only and curve 16 surface 2 only, so no
+    // surface holds the pair — but the patch of both does, and a face put
+    // on that patch must be allowed an edge put on that side.
+    let g = pair();
+    let mut c = Composites::new();
+    let side = c.group(CURVE, &[11, 16]);
+    let both = c.group(SURFACE, &[1, 2]);
+    let one = c.group(SURFACE, &[1, 1]);
+    let model = Model::new(&g, &c);
+
+    let up = model.containing(CURVE, side);
+    assert!(up.contains(&(SURFACE, both)), "{up:?}");
+    assert!(!up.contains(&(SURFACE, 1)), "{up:?}");
+    assert!(!up.contains(&(SURFACE, 2)), "{up:?}");
+    // A group of one is the surface itself, so nothing new there either.
+    assert_eq!(one, 1);
+
+    // And a patch is not inside a side, nor a side inside a side it is
+    // not made of.
+    let other = c.group(CURVE, &[13, 14]);
+    let model = Model::new(&g, &c);
+    assert!(!model.containing(SURFACE, both).contains(&(CURVE, side)));
+    assert!(!model.containing(CURVE, side).contains(&(CURVE, other)));
+}

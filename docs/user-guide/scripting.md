@@ -64,38 +64,39 @@ Required arguments are positional; optional ones live in a table at the
 end. That is why `gecko.mesh{ segments = 8 }` has no brackets — Lua's own
 shorthand for a call with one table.
 
-|                                                                     |                                                                      |
-| ------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| `gecko.create_cube{ origin = {0,0,0}, size = 1 }`                   | and `add_block{ … }` with eight corners                              |
-| `gecko.face_on_surface(tag)`                                        | a quadrangle on a geometric surface                                  |
-| `gecko.add_face({ {x,y,z}, … }, { on = …, surface = … })`           | one by hand, welded to what it is laid against                       |
-| `gecko.add_slab({ {x,y,z}, … }, { thickness = … })`                 | a thin block on four points, welded the same way                     |
-| `gecko.remove_face(id)`                                             | one face of a patch                                                  |
-| `gecko.extrude_patch(face, 0.5)`                                    | the whole sheet, into blocks; ± either way                           |
-| `gecko.smooth{ rounds = 5, share = 0.5 }`                           | a smart Laplacian, geometry respected                                |
-| `gecko.remove_block(id)`, `gecko.glue_faces(a, b)`                  |                                                                      |
-| `gecko.remove_blocks({ id, … })`                                    | several, as one step                                                 |
-| `gecko.extrude_face(face, block, height)`                           |                                                                      |
-| `gecko.pillow({ {face, block}, … })`                                | a bare `face` has its block found                                    |
-| `gecko.pillow_blocks({ id, … }, { outer = true })`                  | round the blocks, towards them                                       |
-| `gecko.remove_chord(face, block)`                                   | the whole thread through a face                                      |
-| `gecko.pillow_chord(face, block)`                                   | an o-grid along it                                                   |
-| `gecko.split_sheet(edge, 0.5)`, `gecko.remove_sheet(edge[, close])` | `close = false` leaves the gap open                                  |
-| `gecko.set_segments(edge, 8)`                                       | on the whole sheet                                                   |
-| `gecko.move_node(id, {x,y,z}, { carrying = {…}, snap = 0 })`        | moves those nodes and nothing else                                   |
-| `gecko.classify_node(ids, dim, tag)`, `unclassify_node(ids)`        | one id or a list                                                     |
-| `gecko.freeze_node(ids)`, `gecko.thaw_node(ids)`                    |                                                                      |
-| `gecko.load_geometry(path)`, `gecko.clear_geometry()`               |                                                                      |
-| `gecko.files()`                                                     | what can be opened by name here                                      |
-| `gecko.box_geometry{ surfaces = {…}, margin = 0.02 }`               | 2% round each half-side by default                                   |
-| `gecko.classify{ tolerance = 0.02 }`                                |                                                                      |
-| `gecko.mesh{ segments = 10 }`, `gecko.clear_mesh()`                 |                                                                      |
-| `gecko.export_vtk(path)`                                            | meshes first if it has to                                            |
-| `gecko.undo()`, `gecko.set_history(n)`                              |                                                                      |
-| `gecko.group(name, blocks, { written = true })`                     | put blocks in a group, making it if there is none of that name       |
-| `gecko.ungroup(name, blocks)`                                       | take them out; the group stays                                       |
-| `gecko.rename_group(name, to)`, `gecko.drop_group(name)`            |                                                                      |
-| `gecko.reset()`                                                     | an empty session: no blocks, no geometry, no mesh — one step of undo |
+|                                                                      |                                                                      |
+| -------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `gecko.create_cube{ origin = {0,0,0}, size = 1 }`                    | and `add_block{ … }` with eight corners                              |
+| `gecko.face_on_surface(tag)`                                         | a quadrangle on a geometric surface                                  |
+| `gecko.add_face({ {x,y,z}, … }, { on = …, surface = … })`            | one by hand, welded to what it is laid against                       |
+| `gecko.add_slab({ {x,y,z}, … }, { thickness = … })`                  | a thin block on four points, welded the same way                     |
+| `gecko.remove_face(id)`                                              | one face of a patch                                                  |
+| `gecko.extrude_patch(face, 0.5)`                                     | the whole sheet, into blocks; ± either way                           |
+| `gecko.smooth{ rounds = 5, share = 0.5 }`                            | a smart Laplacian, geometry respected                                |
+| `gecko.remove_block(id)`, `gecko.glue_faces(a, b)`                   |                                                                      |
+| `gecko.remove_blocks({ id, … })`                                     | several, as one step                                                 |
+| `gecko.extrude_face(face, block, height)`                            |                                                                      |
+| `gecko.pillow({ {face, block}, … })`                                 | a bare `face` has its block found                                    |
+| `gecko.pillow_blocks({ id, … }, { outer = true })`                   | round the blocks, towards them                                       |
+| `gecko.remove_chord(face, block)`                                    | the whole thread through a face                                      |
+| `gecko.pillow_chord(face, block)`                                    | an o-grid along it                                                   |
+| `gecko.split_sheet(edge, 0.5)`, `gecko.remove_sheet(edge[, close])`  | `close = false` leaves the gap open                                  |
+| `gecko.set_segments(edge, 8)`                                        | on the whole sheet                                                   |
+| `gecko.move_node(id, {x,y,z}, { carrying = {…}, snap = 0 })`         | moves those nodes and nothing else                                   |
+| `gecko.classify_node(ids, dim, tag)`, `unclassify_node(ids)`         | one id or a list                                                     |
+| `gecko.classify_edge(ids, dim, tag)`, `classify_face(ids, dim, tag)` | `tag` may be a list, taken as one                                    |
+| `gecko.freeze_node(ids)`, `gecko.thaw_node(ids)`                     |                                                                      |
+| `gecko.load_geometry(path)`, `gecko.clear_geometry()`                |                                                                      |
+| `gecko.files()`                                                      | what can be opened by name here                                      |
+| `gecko.box_geometry{ surfaces = {…}, margin = 0.02 }`                | 2% round each half-side by default                                   |
+| `gecko.classify{ tolerance = 0.02 }`                                 |                                                                      |
+| `gecko.mesh{ segments = 10 }`, `gecko.clear_mesh()`                  |                                                                      |
+| `gecko.export_vtk(path)`                                             | meshes first if it has to                                            |
+| `gecko.undo()`, `gecko.set_history(n)`                               |                                                                      |
+| `gecko.group(name, blocks, { written = true })`                      | put blocks in a group, making it if there is none of that name       |
+| `gecko.ungroup(name, blocks)`                                        | take them out; the group stays                                       |
+| `gecko.rename_group(name, to)`, `gecko.drop_group(name)`             |                                                                      |
+| `gecko.reset()`                                                      | an empty session: no blocks, no geometry, no mesh — one step of undo |
 
 And the reads, each a plain table: `nodes()`, `edges()`, `faces()`,
 `blocks()`, `groups()`, `entities()`, `stats()`, `sheet(edge)`,

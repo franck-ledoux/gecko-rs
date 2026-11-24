@@ -3,6 +3,20 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
+## Unreleased
+
+- **An edge along several curves, a face across several surfaces.**
+  `gecko.classify_edge(edges, 1, {2, 4})` puts edges on curves 2 and 4
+  taken as one, and `gecko.classify_face(faces, 2, {2, 3})` faces on two
+  surfaces; `classify_node` takes a list the same way, for the ends of
+  such an edge. Inference never gives a cell more than one entity, so this
+  is said by hand, and kept for as long as the cell's boundary allows it —
+  a class the boundary does not already allow is refused, saying what the
+  ends or edges are on. `classify()` decides everything again, these
+  included.
+- An edge on several curves may bound a face on several surfaces even when
+  no one surface holds both curves.
+
 ## 0.2.5
 
 Blocks are picked as blocks.

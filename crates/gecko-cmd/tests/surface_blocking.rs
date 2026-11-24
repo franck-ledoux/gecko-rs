@@ -247,7 +247,7 @@ fn an_edge_is_never_handed_a_side_it_was_not_put_on() {
     for (node, tag) in fresh.iter().zip([21, 23, 24, 25]) {
         s.apply(Command::ClassifyNode {
             nodes: vec![*node],
-            on: Some(gecko_cmd::Spot { dim: 0, tag }),
+            on: Some(gecko_cmd::Spot { dim: 0, tag }.into()),
         })
         .unwrap();
     }

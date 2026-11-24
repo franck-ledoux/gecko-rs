@@ -43,6 +43,11 @@ pub enum SessionError {
     Quad(#[from] gecko_geom::QuadError),
     #[error("no geometry is loaded — open a .msh first")]
     NoGeometry,
+    #[error("there is no {0} on the model")]
+    NoSuchEntity(String),
+    /// A cell told to go somewhere it cannot be, or cannot stay.
+    #[error("{0}")]
+    Unplaceable(String),
     #[error("{0}")]
     Group(#[from] GroupError),
     /// A pillowing that would have taken a cell off what it is on: a node
@@ -208,6 +213,48 @@ fn default_segments() -> u32 {
 /// A removal closes the gap behind it unless it is told not to.
 fn closing() -> bool {
     true
+}
+
+/// Where a cell is put by hand: one entity of the model, or several of one
+/// dimension taken as one.
+///
+/// Several is what a cell spanning more than one entity needs — an edge
+/// running along two curves, a face lying across two surfaces — and a cell
+/// is classified on one entity, so the several are named once as a
+/// composite and the cell is put on that.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Place {
+    /// 0 a corner, 1 a curve, 2 a surface.
+    pub dim: u8,
+    /// The gmsh entity tag, or a list of them.
+    pub tag: Tags,
+}
+
+/// One tag, or several: `3` and `[2, 4]` both read, so a page that has only
+/// ever sent one goes on working.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum Tags {
+    One(i32),
+    Many(Vec<i32>),
+}
+
+impl From<Spot> for Place {
+    fn from(s: Spot) -> Self {
+        Place {
+            dim: s.dim,
+            tag: Tags::One(s.tag),
+        }
+    }
+}
+
+impl Tags {
+    pub fn list(&self) -> Vec<i32> {
+        match self {
+            Tags::One(t) => vec![*t],
+            Tags::Many(ts) => ts.clone(),
+        }
+    }
 }
 
 /// A geometric entity, as a command names one.
@@ -573,7 +620,24 @@ pub enum Command {
         nodes: Vec<u32>,
         /// Nothing frees the nodes.
         #[serde(default)]
-        on: Option<Spot>,
+        on: Option<Place>,
+    },
+    /// Put edges on an entity of the model, or on several taken as one.
+    ///
+    /// Inference never puts a cell on more than one entity — the diagonal
+    /// of a face has the same two ends as the side beside it — so an edge
+    /// that runs along two curves has to be told. It then keeps it for as
+    /// long as its ends allow, and is refused here if they do not already:
+    /// a class the next settling would take away is not one worth giving.
+    ClassifyEdge {
+        edges: Vec<u32>,
+        on: Place,
+    },
+    /// Put faces on a surface, or on several taken as one. See
+    /// [`ClassifyEdge`](Command::ClassifyEdge).
+    ClassifyFace {
+        faces: Vec<u32>,
+        on: Place,
     },
     /// Stop nodes moving, or let them move again.
     FreezeNode {
@@ -1537,10 +1601,10 @@ impl Session {
                 })
             }
             Command::ClassifyNode { nodes, on } => {
-                let on = on.map(|s| On {
-                    dim: s.dim,
-                    tag: s.tag,
-                });
+                let on = match on {
+                    Some(place) => Some(self.place(&place, gecko_geom::CORNER)?),
+                    None => None,
+                };
                 // Every name checked before anything moves. Half a gesture
                 // carried out is worse than none of it: the undo would put
                 // back a state nobody asked for either.
@@ -1562,6 +1626,78 @@ impl Session {
                         }
                         None => format!("{} on nothing now", these(&names)),
                     },
+                    view_changed: true,
+                })
+            }
+            Command::ClassifyEdge { edges, on } => {
+                let on = self.place(&on, gecko_geom::CURVE)?;
+                let names = cells(&edges, "edge")?;
+                for edge in &names {
+                    self.blocking.set_edge_class(*edge, Some(on))?;
+                }
+                self.settle_classification();
+                for edge in &names {
+                    if self.blocking.edge_class(*edge) != Some(on) {
+                        let ends: Vec<String> = self
+                            .blocking
+                            .edges()
+                            .find(|e| e.0 == *edge)
+                            .map(|(_, a, b, _)| [a, b].map(|n| self.class_of_node(n)).to_vec())
+                            .unwrap_or_default();
+                        return Err(SessionError::Unplaceable(format!(
+                            "edge {edge} cannot stay on {}: its ends are on {}",
+                            name_in(on, &self.composites),
+                            ends.join(" and ")
+                        )));
+                    }
+                }
+                Ok(Outcome {
+                    script: None,
+                    message: format!(
+                        "{} put on {}",
+                        listed(&names, "edge"),
+                        name_in(on, &self.composites)
+                    ),
+                    view_changed: true,
+                })
+            }
+            Command::ClassifyFace { faces, on } => {
+                let on = self.place(&on, gecko_geom::SURFACE)?;
+                let names = cells(&faces, "face")?;
+                for face in &names {
+                    self.blocking.set_face_class(*face, Some(on))?;
+                }
+                self.settle_classification();
+                for face in &names {
+                    if self.blocking.face_class(*face) != Some(on) {
+                        let sides: Vec<String> = self
+                            .blocking
+                            .faces()
+                            .find(|f| f.0 == *face)
+                            .map(|(_, edges)| {
+                                edges
+                                    .iter()
+                                    .map(|e| match self.blocking.edge_class(*e) {
+                                        Some(c) => name_in(c, &self.composites),
+                                        None => "nothing".to_string(),
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        return Err(SessionError::Unplaceable(format!(
+                            "face {face} cannot stay on {}: its edges are on {}",
+                            name_in(on, &self.composites),
+                            sides.join(", ")
+                        )));
+                    }
+                }
+                Ok(Outcome {
+                    script: None,
+                    message: format!(
+                        "{} put on {}",
+                        listed(&names, "face"),
+                        name_in(on, &self.composites)
+                    ),
                     view_changed: true,
                 })
             }
@@ -1835,6 +1971,48 @@ impl Session {
             }
         }
         Ok(names)
+    }
+
+    /// What a [`Place`] names, checked against the model: every tag an
+    /// entity of that dimension, and several made one composite.
+    ///
+    /// `at_least` is the lowest dimension the cell may go on — an edge is
+    /// never pinned to a point, nor a face to a curve.
+    fn place(&mut self, place: &Place, at_least: u8) -> Result<On, SessionError> {
+        let geometry = self.geometry.as_deref().ok_or(SessionError::NoGeometry)?;
+        let dim = place.dim;
+        if dim > gecko_geom::SURFACE || dim < at_least {
+            return Err(SessionError::Unplaceable(format!(
+                "nothing of dimension {dim} can be put there — {}",
+                ["a corner", "a curve", "a surface"][at_least as usize].to_string() + " at least"
+            )));
+        }
+        let tags = place.tag.list();
+        if tags.is_empty() {
+            return Err(SessionError::BadCommand("no entity named".to_string()));
+        }
+        for &tag in &tags {
+            // A composite is named by its members, never by its number,
+            // which is an accident of the order they were made in.
+            if tag <= 0 || geometry.containing(dim, tag).is_empty() {
+                return Err(SessionError::NoSuchEntity(name_of(On { dim, tag })));
+            }
+        }
+        if dim == gecko_geom::CORNER && tags.len() > 1 {
+            return Err(SessionError::Unplaceable(
+                "a node is on one corner or another, not on several".to_string(),
+            ));
+        }
+        let tag = self.composites.group(dim, &tags);
+        Ok(On { dim, tag })
+    }
+
+    /// What a node is on, as a message says it.
+    fn class_of_node(&self, node: CellId) -> String {
+        match self.blocking.node_class(node) {
+            Some(on) => name_in(on, &self.composites),
+            None => "nothing".to_string(),
+        }
     }
 
     fn named(&self, nodes: &[u32]) -> Result<Vec<CellId>, SessionError> {
@@ -2668,6 +2846,30 @@ impl Session {
 
 /// How a handful of nodes reads in a message: by name while you could
 /// still look them up, by number once you could not.
+/// Raw names as cells, refusing an empty list.
+fn cells(raw: &[u32], what: &str) -> Result<Vec<CellId>, SessionError> {
+    if raw.is_empty() {
+        return Err(SessionError::BadCommand(format!("no {what} named")));
+    }
+    Ok(raw.iter().copied().map(CellId::from_raw).collect())
+}
+
+/// `edge 514`, `edges 514, 5889`, or `7 edges`.
+fn listed(cells: &[CellId], what: &str) -> String {
+    match cells {
+        [one] => format!("{what} {one}"),
+        _ if cells.len() <= 4 => format!(
+            "{what}s {}",
+            cells
+                .iter()
+                .map(|n| format!("{n}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        _ => format!("{} {what}s", cells.len()),
+    }
+}
+
 fn these(nodes: &[CellId]) -> String {
     match nodes {
         [one] => format!("node {one:?}"),

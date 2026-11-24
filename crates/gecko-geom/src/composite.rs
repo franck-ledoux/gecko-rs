@@ -192,6 +192,27 @@ impl<'a> Model<'a> {
             up.retain(|e| !(e.0 == dim && members.contains(&e.1)));
             let mut out = vec![(dim, tag)];
             out.extend(up);
+            // And it is inside another composite when each of its members
+            // is inside one of that one's: a run of curves 2 and 4 is in
+            // the patch of surfaces 2 and 3 when curve 2 bounds one of them
+            // and curve 4 the other, though no single surface holds both.
+            // Without this an edge put on such a run could never bound a
+            // face put on such a patch.
+            for k in 0..self.composites.len() {
+                let name = -(k as i32 + 1);
+                if name == tag {
+                    continue;
+                }
+                let (group, theirs) = self.composites.members(name).expect("a composite");
+                let under = members.iter().all(|&m| {
+                    theirs
+                        .iter()
+                        .any(|&t| self.geometry.containing(dim, m).contains(&(group, t)))
+                });
+                if under {
+                    out.push((group, name));
+                }
+            }
             return out;
         }
 

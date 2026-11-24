@@ -224,6 +224,37 @@ geometry is measured.
     model; false of one assembled from parts meshed separately, where it
     reports fewer containments and never wrong ones.
 
+## On several entities at once
+
+An edge of a shell often runs along **two curves** — across the corner
+where they meet — and a face across **two surfaces**. Inference never says
+so: the diagonal of a face has the same two ends as the side beside it, and
+a cell is only ever *given* one entity. So it is said by hand:
+
+```lua
+gecko.classify_edge({514, 5889}, 1, {2, 4})   -- along curves 2 and 4
+gecko.classify_face(4609, 2, {2, 3})          -- across surfaces 2 and 3
+gecko.classify_node(n, 1, {2, 4})             -- an end, sliding along both
+```
+
+The several are named once, as a [composite](faces.md), and the cell is put
+on that. The same list in any order is the same composite, and the status
+line prints it by what it is made of:
+
+- `side 1 (curves 2, 4)` for curves,
+- `patch 2 (surfaces 2, 3)` for surfaces.
+
+It is **kept** for as long as the cell's boundary allows it: an edge whose
+ends are on curve 2, curve 4 or a corner of either, a face whose edges are
+each on something inside surfaces 2 or 3 — and an edge on curves 2 and 4
+lies inside surfaces 2 and 3 when each curve bounds one of them, though no
+single surface holds both. What the boundary does **not** already allow is
+refused, saying what the ends or edges are on: the next settling would take
+it straight back. Put the ends on first, then the edge, then the face.
+
+[`classify()`](#putting-the-blocking-on-the-model) decides everything
+again, and that includes these.
+
 ## Cutting something that is classified
 
 Cut an edge lying on a curve and you get **a node and two edges, all three

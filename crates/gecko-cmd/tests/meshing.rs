@@ -322,7 +322,7 @@ fn a_pillowed_cylinder_meshes_the_right_way_out() {
         assert_eq!(four.len(), 4);
         s.apply(Command::ClassifyNode {
             nodes: four,
-            on: Some(gecko_cmd::Spot { dim: 1, tag }),
+            on: Some(gecko_cmd::Spot { dim: 1, tag }.into()),
         })
         .unwrap();
     }

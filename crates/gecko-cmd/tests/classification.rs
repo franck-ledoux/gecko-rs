@@ -1,6 +1,6 @@
 //! Putting the blocking on the geometry.
 
-use gecko_cmd::{Command, Session, Spot, SNAP_SHARE};
+use gecko_cmd::{Command, Place, Session, Spot, Tags, SNAP_SHARE};
 use gecko_core::On;
 
 /// The unit cube's boundary, every entity of it named: eight corners, twelve
@@ -262,7 +262,7 @@ fn an_edge_goes_where_its_two_ends_agree_and_nowhere_else() {
     for (node, tag) in ends.iter().zip([101, 103]) {
         s.apply(Command::ClassifyNode {
             nodes: vec![*node],
-            on: Some(Spot { dim: 0, tag }),
+            on: Some(Spot { dim: 0, tag }.into()),
         })
         .expect("put on a corner");
     }
@@ -308,7 +308,10 @@ fn an_edge_goes_where_its_two_ends_agree_and_nowhere_else() {
     // face has one end on a curve too.
     s.apply(Command::ClassifyNode {
         nodes: vec![ends[1]],
-        on: Some(Spot { dim: 0, tag: 103 }),
+        on: Some(Place {
+            dim: 0,
+            tag: Tags::One(103),
+        }),
     })
     .unwrap();
     assert!(found(&s)["on"].is_null(), "{}", found(&s));
@@ -320,7 +323,10 @@ fn a_node_on_a_surface_slides_on_it_and_does_not_come_off() {
     let node = nodes(&s)[0]["id"].as_u64().unwrap() as u32;
     s.apply(Command::ClassifyNode {
         nodes: vec![node],
-        on: Some(Spot { dim: 2, tag: 1 }),
+        on: Some(Place {
+            dim: 2,
+            tag: Tags::One(1),
+        }),
     })
     .unwrap();
 
@@ -368,7 +374,10 @@ fn a_node_on_a_corner_cannot_move_at_all() {
     let node = nodes(&s)[0]["id"].as_u64().unwrap() as u32;
     s.apply(Command::ClassifyNode {
         nodes: vec![node],
-        on: Some(Spot { dim: 0, tag: 107 }),
+        on: Some(Place {
+            dim: 0,
+            tag: Tags::One(107),
+        }),
     })
     .unwrap();
     s.apply(Command::MoveNode {
@@ -552,14 +561,17 @@ fn what_a_cell_is_on_survives_being_named() {
 
 #[test]
 fn the_same_names_mean_the_same_thing_in_the_kernel() {
-    // `On` is what the block structure stores, `Spot` what a command
+    // `On` is what the block structure stores, `Place` what a command
     // carries, and the two are different types in different crates on
     // purpose. This is the one place they have to agree.
     let mut s = on_the_box();
     let node = nodes(&s)[0]["id"].as_u64().unwrap() as u32;
     s.apply(Command::ClassifyNode {
         nodes: vec![node],
-        on: Some(Spot { dim: 1, tag: 205 }),
+        on: Some(Place {
+            dim: 1,
+            tag: Tags::One(205),
+        }),
     })
     .unwrap();
     assert_eq!(
@@ -623,7 +635,7 @@ fn on_the_bend() -> (Session, u32) {
             .expect("a corner of the cube");
         s.apply(Command::ClassifyNode {
             nodes: vec![node["id"].as_u64().unwrap() as u32],
-            on: Some(Spot { dim: 0, tag }),
+            on: Some(Spot { dim: 0, tag }.into()),
         })
         .unwrap();
     }
@@ -808,7 +820,10 @@ fn under_the_lid() -> Session {
         }
         s.apply(Command::ClassifyNode {
             nodes: vec![node["id"].as_u64().unwrap() as u32],
-            on: Some(Spot { dim: 1, tag: 201 }),
+            on: Some(Place {
+                dim: 1,
+                tag: Tags::One(201),
+            }),
         })
         .unwrap();
     }
@@ -950,7 +965,10 @@ fn four_corners_go_onto_one_curve_in_one_command() {
     let out = s
         .apply(Command::ClassifyNode {
             nodes: bottom.clone(),
-            on: Some(Spot { dim: 1, tag: 201 }),
+            on: Some(Place {
+                dim: 1,
+                tag: Tags::One(201),
+            }),
         })
         .unwrap();
     assert!(out.message.contains("curve 201"), "{}", out.message);
@@ -983,7 +1001,10 @@ fn a_name_no_node_answers_to_leaves_the_others_alone() {
     assert!(s
         .apply(Command::ClassifyNode {
             nodes: vec![first, 9999],
-            on: Some(Spot { dim: 0, tag: 101 }),
+            on: Some(Place {
+                dim: 0,
+                tag: Tags::One(101)
+            }),
         })
         .is_err());
     assert_eq!(classified(&s)["nodes"], 0, "the first one went on anyway");
@@ -1079,7 +1100,10 @@ fn what_each_carried_node_does_with_the_offset_is_its_own_business() {
     // Curve 201 runs along y = z = 0; the node at the origin is put on it.
     s.apply(Command::ClassifyNode {
         nodes: vec![bottom[0]],
-        on: Some(Spot { dim: 1, tag: 201 }),
+        on: Some(Place {
+            dim: 1,
+            tag: Tags::One(201),
+        }),
     })
     .unwrap();
     let before = at(&s, &bottom);
@@ -1132,7 +1156,7 @@ fn classify_at_z(session: &mut Session, z: f64, on: Spot) -> usize {
     session
         .apply(Command::ClassifyNode {
             nodes: at.clone(),
-            on: Some(on),
+            on: Some(on.into()),
         })
         .expect("classified");
     at.len()
@@ -1237,12 +1261,18 @@ fn a_weld_between_two_strangers_says_which_classification_it_dropped() {
         .collect();
     s.apply(Command::ClassifyNode {
         nodes: first_block_floor[..4].to_vec(),
-        on: Some(Spot { dim: 2, tag: 1 }),
+        on: Some(Place {
+            dim: 2,
+            tag: Tags::One(1),
+        }),
     })
     .unwrap();
     s.apply(Command::ClassifyNode {
         nodes: first_block_floor[4..].to_vec(),
-        on: Some(Spot { dim: 2, tag: 2 }),
+        on: Some(Place {
+            dim: 2,
+            tag: Tags::One(2),
+        }),
     })
     .unwrap();
 
@@ -1574,4 +1604,283 @@ fn a_pillow_surface_across_the_blocks_keeps_the_walls() {
             assert_eq!(after.get(id), Some(on), "face {id} changed");
         }
     }
+}
+
+/// The node at a point, by name.
+fn node_at(s: &Session, want: [f64; 3]) -> u32 {
+    nodes(s)
+        .into_iter()
+        .find(|n| {
+            let p = n["pos"].as_array().unwrap();
+            (0..3).all(|k| (p[k].as_f64().unwrap() - want[k]).abs() < 1e-9)
+        })
+        .expect("a node there")["id"]
+        .as_u64()
+        .unwrap() as u32
+}
+
+/// The edge between two points, by name.
+fn edge_between(s: &Session, a: [f64; 3], b: [f64; 3]) -> u32 {
+    let (a, b) = (node_at(s, a), node_at(s, b));
+    edges(s)
+        .into_iter()
+        .find(|e| {
+            let ends: Vec<u32> = e["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|n| n.as_u64().unwrap() as u32)
+                .collect();
+            ends == [a, b] || ends == [b, a]
+        })
+        .expect("an edge there")["id"]
+        .as_u64()
+        .unwrap() as u32
+}
+
+/// The face whose centre is nearest a point, by name.
+fn face_named(s: &Session, want: [f64; 3]) -> u32 {
+    face_at(s, want)["id"].as_u64().unwrap() as u32
+}
+
+fn on_many(dim: u8, tags: &[i32]) -> Place {
+    Place {
+        dim,
+        tag: Tags::Many(tags.to_vec()),
+    }
+}
+
+#[test]
+fn an_edge_is_put_on_two_curves_taken_as_one_and_keeps_them() {
+    // Inference never gives a cell more than one entity, so an edge along
+    // two curves has to be told — and once told, a later settling of the
+    // whole blocking must not take it back.
+    let mut s = on_the_box();
+    s.apply(Command::Classify {
+        tolerance: SNAP_SHARE,
+    })
+    .unwrap();
+    let edge = edge_between(&s, [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]);
+    let cell = gecko_core::CellId::from_raw(edge);
+    assert_eq!(s.blocking().edge_class(cell), Some(On { dim: 1, tag: 201 }));
+
+    let out = s
+        .apply(Command::ClassifyEdge {
+            edges: vec![edge],
+            on: on_many(1, &[201, 202]),
+        })
+        .unwrap();
+    assert!(
+        out.message.contains("curves 201, 202"),
+        "says what it is made of: {}",
+        out.message
+    );
+    let on = s.blocking().edge_class(cell).expect("on something");
+    assert!(on.tag < 0 && on.dim == 1, "on a composite: {on:?}");
+
+    // The settling after an ordinary edit leaves it where it was.
+    s.apply(Command::Smooth {
+        rounds: 5,
+        share: 0.5,
+    })
+    .unwrap();
+    assert_eq!(s.blocking().edge_class(cell), Some(on));
+
+    // `classify` is the one that decides everything again, nodes and
+    // what was put by hand included.
+    s.apply(Command::Classify {
+        tolerance: SNAP_SHARE,
+    })
+    .unwrap();
+    assert_eq!(s.blocking().edge_class(cell), Some(On { dim: 1, tag: 201 }));
+    s.apply(Command::Undo).unwrap();
+    assert_eq!(
+        s.blocking().edge_class(cell),
+        Some(on),
+        "and undo puts it back"
+    );
+
+    // The same curves the other way round are the same composite.
+    s.apply(Command::ClassifyEdge {
+        edges: vec![edge],
+        on: on_many(1, &[202, 201]),
+    })
+    .unwrap();
+    assert_eq!(s.blocking().edge_class(cell), Some(on));
+
+    // And the script says it the way it was asked.
+    assert!(
+        s.script()
+            .contains(&format!("gecko.classify_edge({{{edge}}}, 1, {{201, 202}})")),
+        "{}",
+        s.script()
+    );
+}
+
+#[test]
+fn an_edge_whose_ends_do_not_allow_it_is_refused_and_left_alone() {
+    // The top-front edge runs between corners 105 and 106, which neither
+    // curve 201 nor 202 reaches: the next settling would take the class
+    // straight back, so it is not given.
+    let mut s = on_the_box();
+    s.apply(Command::Classify {
+        tolerance: SNAP_SHARE,
+    })
+    .unwrap();
+    let edge = edge_between(&s, [0.0, 0.0, 1.0], [1.0, 0.0, 1.0]);
+    let cell = gecko_core::CellId::from_raw(edge);
+    let before = s.blocking().edge_class(cell);
+
+    let err = s
+        .apply(Command::ClassifyEdge {
+            edges: vec![edge],
+            on: on_many(1, &[201, 202]),
+        })
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("corner 105") && err.contains("corner 106"),
+        "{err}"
+    );
+    assert_eq!(s.blocking().edge_class(cell), before);
+
+    // Nor onto a corner, an entity that is not there, or nothing at all.
+    for (on, says) in [
+        (
+            Place {
+                dim: 0,
+                tag: Tags::One(105),
+            },
+            "a curve at least",
+        ),
+        (on_many(1, &[205, 299]), "no curve 299"),
+        (on_many(1, &[]), "no entity named"),
+    ] {
+        let err = s
+            .apply(Command::ClassifyEdge {
+                edges: vec![edge],
+                on,
+            })
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(says), "{err}");
+    }
+}
+
+#[test]
+fn a_face_is_put_on_two_surfaces_taken_as_one() {
+    // The bottom face: its four edges are on the bottom ring, each of
+    // which bounds surface 1, so the patch of 1 and 3 may hold it. The top
+    // face may not — curve 207 bounds neither.
+    let mut s = on_the_box();
+    s.apply(Command::Classify {
+        tolerance: SNAP_SHARE,
+    })
+    .unwrap();
+    let bottom = face_named(&s, [0.5, 0.5, 0.0]);
+    let top = face_named(&s, [0.5, 0.5, 1.0]);
+
+    let out = s
+        .apply(Command::ClassifyFace {
+            faces: vec![bottom],
+            on: on_many(2, &[1, 3]),
+        })
+        .unwrap();
+    assert!(out.message.contains("surfaces 1, 3"), "{}", out.message);
+    let on = s
+        .blocking()
+        .face_class(gecko_core::CellId::from_raw(bottom))
+        .expect("on something");
+    assert!(on.tag < 0 && on.dim == 2, "{on:?}");
+    s.apply(Command::Smooth {
+        rounds: 5,
+        share: 0.5,
+    })
+    .unwrap();
+    assert_eq!(
+        s.blocking()
+            .face_class(gecko_core::CellId::from_raw(bottom)),
+        Some(on)
+    );
+
+    let err = s
+        .apply(Command::ClassifyFace {
+            faces: vec![top],
+            on: on_many(2, &[1, 3]),
+        })
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("curve 207"), "{err}");
+    // A face is never put on a curve.
+    let err = s
+        .apply(Command::ClassifyFace {
+            faces: vec![bottom],
+            on: on_many(1, &[201, 202]),
+        })
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("a surface at least"), "{err}");
+}
+
+#[test]
+fn a_face_on_two_surfaces_may_be_bounded_by_an_edge_on_two_curves() {
+    // The case of a shell: an edge running along two curves that no one
+    // surface holds both of, under a face lying across the two surfaces
+    // they bound. Curve 201 bounds surfaces 1 and 3, curve 211 surfaces 4
+    // and 5; the bottom face's front edge is put on both, and the bottom
+    // face on surfaces 1 and 4.
+    let mut s = on_the_box();
+    s.apply(Command::Classify {
+        tolerance: SNAP_SHARE,
+    })
+    .unwrap();
+    let edge = edge_between(&s, [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]);
+    let bottom = face_named(&s, [0.5, 0.5, 0.0]);
+    s.apply(Command::ClassifyEdge {
+        edges: vec![edge],
+        on: on_many(1, &[201, 211]),
+    })
+    .unwrap();
+    s.apply(Command::ClassifyFace {
+        faces: vec![bottom],
+        on: on_many(2, &[1, 4]),
+    })
+    .unwrap();
+    s.apply(Command::Smooth {
+        rounds: 5,
+        share: 0.5,
+    })
+    .unwrap();
+    let face = s
+        .blocking()
+        .face_class(gecko_core::CellId::from_raw(bottom))
+        .expect("still on something");
+    assert!(face.tag < 0, "{face:?}");
+}
+
+#[test]
+fn a_node_may_be_put_on_two_curves_taken_as_one() {
+    // The ends of an edge along two curves want to slide along both, past
+    // the corner where they meet.
+    let mut s = on_the_box();
+    let node = node_at(&s, [1.0, 0.0, 0.0]);
+    s.apply(Command::ClassifyNode {
+        nodes: vec![node],
+        on: Some(on_many(1, &[201, 202])),
+    })
+    .unwrap();
+    let on = s
+        .blocking()
+        .node_class(gecko_core::CellId::from_raw(node))
+        .expect("on something");
+    assert!(on.tag < 0 && on.dim == 1, "{on:?}");
+    // But never on two corners.
+    let err = s
+        .apply(Command::ClassifyNode {
+            nodes: vec![node],
+            on: Some(on_many(0, &[101, 102])),
+        })
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("not on several"), "{err}");
 }

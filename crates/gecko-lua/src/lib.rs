@@ -265,6 +265,22 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
             "on": { "dim": at(lua, &a, 1)?, "tag": at(lua, &a, 2)? },
         }))
     })?;
+    // An edge along two curves, a face across two surfaces: the tag may
+    // be a list, and the several are taken as one.
+    command(lua, &gecko, &kernel, "classify_edge", |lua, a| {
+        Ok(json!({
+            "op": "classify_edge",
+            "edges": list(lua, &a, 0)?,
+            "on": { "dim": at(lua, &a, 1)?, "tag": at(lua, &a, 2)? },
+        }))
+    })?;
+    command(lua, &gecko, &kernel, "classify_face", |lua, a| {
+        Ok(json!({
+            "op": "classify_face",
+            "faces": list(lua, &a, 0)?,
+            "on": { "dim": at(lua, &a, 1)?, "tag": at(lua, &a, 2)? },
+        }))
+    })?;
     command(lua, &gecko, &kernel, "unclassify_node", |lua, a| {
         Ok(json!({ "op": "classify_node", "nodes": list(lua, &a, 0)? }))
     })?;
