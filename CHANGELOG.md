@@ -3,7 +3,7 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
-## Unreleased
+## 0.2.6
 
 - **An edge along several curves, a face across several surfaces.**
   `gecko.classify_edge(edges, 1, {2, 4})` puts edges on curves 2 and 4
