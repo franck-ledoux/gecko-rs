@@ -31,7 +31,36 @@ import { ANCHOR, colorForId, FAMILY, hexToRgb } from "./palette";
  * blocking has taken hold of the geometry, and that is a question with
  * four answers.
  */
-export type Coloring = "uniform" | "id" | "class" | "group";
+export type Coloring = "uniform" | "id" | "class" | "group" | "quality";
+
+/**
+ * The color a cell of quality `q` is drawn in — the worst scaled Jacobian of
+ * its corners. Green at one, through yellow and orange, to red at nought,
+ * and a darker red for a cell turned inside out, so that those are never
+ * mistaken for the merely poor.
+ */
+export function qualityColor(q: number): [number, number, number] {
+  if (q < 0) return [0.62, 0.05, 0.08];
+  const stops: [number, [number, number, number]][] = [
+    [0, [0.92, 0.18, 0.14]],
+    [0.2, [0.97, 0.5, 0.13]],
+    [0.5, [0.96, 0.84, 0.26]],
+    [1, [0.27, 0.72, 0.36]],
+  ];
+  for (let i = 1; i < stops.length; i++) {
+    const [b, cb] = stops[i];
+    if (q <= b) {
+      const [a, ca] = stops[i - 1];
+      const t = (q - a) / (b - a);
+      return [0, 1, 2].map((k) => ca[k] + (cb[k] - ca[k]) * t) as [
+        number,
+        number,
+        number,
+      ];
+    }
+  }
+  return stops[stops.length - 1][1];
+}
 
 export interface SurfaceOptions {
   /** Which name picks the color, and which center the shrink pulls towards. */
@@ -432,7 +461,8 @@ export function edgeSegments(view: View, shrink: number): Float32Array {
  * arithmetic per quadrangle is worth keeping to what it needs.
  *
  * Colored by the **block** each quadrangle came out of, so a hexahedron
- * wears the color of the block it was cut from and the two pictures agree.
+ * wears the color of the block it was cut from and the two pictures agree —
+ * or by the **quality** of the hexahedron it is a face of.
  */
 export function buildMesh(
   mesh: MeshView,
@@ -469,7 +499,9 @@ export function buildMesh(
     const rgb =
       options.coloring === "id"
         ? hexToRgb(colorForId(mesh.blocks[q], FAMILY.blocks))
-        : uniform;
+        : options.coloring === "quality"
+          ? qualityColor(mesh.quality[q])
+          : uniform;
     for (let k = 0; k < 4; k++) {
       const node = mesh.quads[q * 4 + k];
       for (let axis = 0; axis < 3; axis++) {

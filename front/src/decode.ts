@@ -344,6 +344,10 @@ export interface MeshView {
   quads: Uint32Array;
   /** The block each quadrangle came out of. */
   blocks: Uint32Array;
+  /** The quality of the hexahedron each quadrangle is a face of: the worst
+   *  scaled Jacobian of its corners — one for a cube, below nought for a
+   *  cell turned inside out. */
+  quality: Float32Array;
 }
 
 const MESH_MAGIC = 0x314d_4b47; // "GKM1" little-endian
@@ -368,7 +372,7 @@ export function decodeMesh(bytes: Uint8Array): MeshView {
   if (head.getUint32(0, true) !== MESH_MAGIC)
     throw new Error("mesh buffer: bad magic");
   const version = head.getUint32(4, true);
-  if (version !== 1)
+  if (version !== 2)
     throw new Error(`mesh buffer: version ${version} not understood`);
 
   const center: [number, number, number] = [
@@ -379,8 +383,9 @@ export function decodeMesh(bytes: Uint8Array): MeshView {
   const nNodes = head.getUint32(32, true);
   const nQuads = head.getUint32(36, true);
 
-  // Three f32 a node; four indices and a block apiece for the quadrangles.
-  const expected = MESH_HEADER + nNodes * 12 + nQuads * 20;
+  // Three f32 a node; four indices, a block and a quality apiece for the
+  // quadrangles.
+  const expected = MESH_HEADER + nNodes * 12 + nQuads * 24;
   if (expected !== bytes.byteLength) {
     throw new Error(
       `mesh buffer: header declares ${expected} bytes, buffer holds ${bytes.byteLength}`,
@@ -401,5 +406,6 @@ export function decodeMesh(bytes: Uint8Array): MeshView {
     positions: take((b, o, n) => new Float32Array(b, o, n), nNodes * 3),
     quads: take((b, o, n) => new Uint32Array(b, o, n), nQuads * 4),
     blocks: take((b, o, n) => new Uint32Array(b, o, n), nQuads),
+    quality: take((b, o, n) => new Float32Array(b, o, n), nQuads),
   };
 }

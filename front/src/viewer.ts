@@ -90,6 +90,7 @@ import {
   edgeSegments,
   groupColor,
   meshEdges,
+  type Coloring,
   type SurfaceData,
   type SurfaceOptions,
 } from "./surface";
@@ -741,6 +742,12 @@ export class Viewer {
   private meshView?: MeshView;
   private meshSkin?: Mesh;
   private meshWire?: LinesMesh;
+  /** The cells below a quality threshold, drawn whole wherever they are:
+   *  most of a mesh's bad cells are inside it, where its skin never shows
+   *  them. */
+  private badView?: MeshView;
+  private badCells?: Mesh;
+  private badWire?: LinesMesh;
   /** The face being grown, while the pointer is down on it: where it is,
    *  which way is out, and how far the pointer has asked for so far. */
   private growing?: {
@@ -2769,6 +2776,43 @@ export class Viewer {
     this.rebuildMesh();
   }
 
+  /**
+   * Show these cells — every face of each, colored by its quality — or
+   * stop showing them.
+   *
+   * While they are shown the skin is made nearly clear, whatever its own
+   * opacity says: the cells worth looking at are mostly inside it.
+   */
+  setBadCells(view: MeshView | null) {
+    this.badView = view?.blocks.length ? view : undefined;
+    this.rebuildMesh();
+  }
+
+  /** How many cells below the threshold are drawn, for a test to read. */
+  get badCount(): number {
+    return this.badCells ? (this.badView?.blocks.length ?? 0) / 6 : 0;
+  }
+
+  /**
+   * Glide the camera onto a point of the model, from a distance that shows
+   * something `size` across — what "go to the worst cell" needs. The
+   * direction is left alone, as in a recentring.
+   */
+  frameOn(at: [number, number, number], size: number) {
+    const target = new Vector3(
+      at[0] - this.center[0],
+      at[1] - this.center[1],
+      at[2] - this.center[2],
+    );
+    const radius = Math.max(size * 15, this.camera.lowerRadiusLimit ?? 0);
+    this.camera.inertialAlphaOffset = 0;
+    this.camera.inertialBetaOffset = 0;
+    this.camera.inertialRadiusOffset = 0;
+    this.scene.stopAnimation(this.camera);
+    glide(this.camera, "target", this.camera.target.clone(), target);
+    glide(this.camera, "radius", this.camera.radius, radius);
+  }
+
   /** How many quadrangles of skin are **drawn**, for a test to read. What
    *  the kernel holds is in its own stats; this is the picture. */
   get skinCount(): number {
@@ -2780,15 +2824,38 @@ export class Viewer {
     this.meshSkin = undefined;
     this.meshWire?.dispose();
     this.meshWire = undefined;
+    this.badCells?.dispose();
+    this.badCells = undefined;
+    this.badWire?.dispose();
+    this.badWire = undefined;
     const view = this.meshView;
     const layer = this.prefs.mesh;
     if (!view || !layer.visible) return;
+    if (this.badView) {
+      const drawn = this.drawMeshQuads("mesh-bad", this.badView, "quality", 1);
+      this.badCells = drawn.skin;
+      this.badWire = drawn.wire;
+    }
+    const alpha = this.badView ? Math.min(layer.alpha, 0.12) : layer.alpha;
+    const drawn = this.drawMeshQuads("mesh-skin", view, layer.coloring, alpha);
+    this.meshSkin = drawn.skin;
+    this.meshWire = drawn.wire;
+  }
+
+  /** A set of the mesh's quadrangles, as a surface and its grid. */
+  private drawMeshQuads(
+    name: string,
+    view: MeshView,
+    coloring: Coloring,
+    alpha: number,
+  ): { skin: Mesh; wire?: LinesMesh } {
+    const layer = { coloring, alpha };
 
     const data = buildMesh(view, {
       uniform: this.prefs.theme.mesh,
       coloring: layer.coloring,
     });
-    const skin = new Mesh("mesh-skin", this.scene);
+    const skin = new Mesh(name, this.scene);
     const vertices = new VertexData();
     vertices.positions = data.positions;
     vertices.indices = data.indices;
@@ -2808,7 +2875,6 @@ export class Viewer {
     skin.isPickable = false;
     skin.layerMask = MAIN_LAYER;
     skin.renderingGroupId = PASS.blocking;
-    this.meshSkin = skin;
 
     // The element grid, which is the half of this that says what the
     // discretisation actually did.
@@ -2820,14 +2886,14 @@ export class Viewer {
         new Vector3(flat[at + 3], flat[at + 4], flat[at + 5]),
       ]);
     }
-    if (lines.length) {
-      this.meshWire = CreateLineSystem("mesh-edges", { lines }, this.scene);
-      this.meshWire.color = Color3.FromHexString(this.prefs.theme.edges);
-      this.meshWire.alpha = layer.alpha;
-      this.meshWire.isPickable = false;
-      this.meshWire.layerMask = MAIN_LAYER;
-      this.meshWire.renderingGroupId = PASS.blocking;
-    }
+    if (!lines.length) return { skin };
+    const wire = CreateLineSystem(`${name}-edges`, { lines }, this.scene);
+    wire.color = Color3.FromHexString(this.prefs.theme.edges);
+    wire.alpha = layer.alpha;
+    wire.isPickable = false;
+    wire.layerMask = MAIN_LAYER;
+    wire.renderingGroupId = PASS.blocking;
+    return { skin, wire };
   }
 
   /** What a geometric entity is drawn in: one color for its group, or one

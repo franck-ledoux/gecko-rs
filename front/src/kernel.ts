@@ -114,6 +114,32 @@ export interface Direct {
   query(kind: string, arg: string): string;
 }
 
+/** How good a mesh is, as the kernel measures it: the worst scaled Jacobian
+ *  of each cell's corners, summed up. */
+export interface Quality {
+  /** Which mesh this is about, as `stats().mesh.generation` counts them. */
+  generation: number;
+  cells: number;
+  min: number;
+  mean: number;
+  /** The worst cell: where it is in model coordinates, and its block. */
+  worst: {
+    cell: number;
+    block: number;
+    quality: number;
+    center: [number, number, number];
+    /** Corner to opposite corner. */
+    size: number;
+  } | null;
+  /** How many cells are below each threshold, keyed by the threshold. */
+  below: Record<string, number>;
+  /** Where each histogram bin starts; the last runs to one. */
+  bins: number[];
+  histogram: number[];
+  /** The worst blocks, worst first. */
+  blocks: { block: number; worst: number; inverted: number; cells: number }[];
+}
+
 /** One group of blocks, as the kernel describes it. */
 export interface Group {
   name: string;
@@ -155,6 +181,12 @@ export interface Kernel {
   /** The mesh's skin, on the same terms. Empty until something has been
    *  meshed, and empty again as soon as an edit throws it away. */
   mesh(): Uint8Array;
+  /** Every face of every cell of the mesh worse than `below`, the worst
+   *  first, in the mesh buffer's encoding: the cells to look at, inside the
+   *  mesh as well as on its skin. */
+  cellsBelow(below: number): Uint8Array;
+  /** How good the mesh is, or null if there is none. */
+  quality(): Quality | null;
   /** The mesh as a VTK legacy file, or null if there is none. */
   vtk(): string | null;
   stats(): Stats;

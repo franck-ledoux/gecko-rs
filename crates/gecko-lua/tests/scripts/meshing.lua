@@ -22,3 +22,11 @@ gecko.export_vtk(path)
 local file = io.open(path):read("a")
 assert(file:find("DATASET UNSTRUCTURED_GRID"), "a VTK legacy file")
 assert(file:find("CELL_TYPES 32"), "with the cells it said")
+
+-- How good it is: every cell of an untouched cube is a cube.
+local q = gecko.quality()
+assert(q.cells == 2 * 4 * 4, "one figure a cell")
+assert(math.abs(q.min - 1) < 1e-12 and q.below["0"] == 0, "and every one perfect")
+assert(#q.histogram == #q.bins, "a bin a count")
+gecko.clear_mesh()
+assert(gecko.quality() == nil, "no mesh, no figures")

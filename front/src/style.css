@@ -421,3 +421,20 @@ body[data-dropping] #view {
   outline: 2px dashed var(--accent, #6aa9ff);
   outline-offset: -8px;
 }
+
+/* The mesh's quality, in the mesh section of the drawer. */
+#mesh-quality:not(:empty) { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+#mesh-quality .quality-head { font-size: 11px; color: var(--dim); margin-bottom: 6px; }
+#mesh-quality .quality-head b { color: var(--fg); font-weight: 600; }
+#mesh-quality .quality-head b.bad { color: #e5484d; }
+#mesh-quality .histogram {
+  display: flex; align-items: flex-end; gap: 2px; height: 40px;
+  border-bottom: 1px solid var(--line);
+}
+#mesh-quality .histogram .bar { flex: 1; min-width: 0; border-radius: 2px 2px 0 0; }
+#mesh-quality .histogram-axis {
+  display: flex; justify-content: space-between; font-size: 9px; color: var(--dim);
+  margin: 2px 0 6px;
+}
+#mesh-quality .quality-note { font-size: 10px; color: var(--dim); margin: 2px 0 6px; }
+#mesh-quality button { margin-top: 4px; width: 100%; }

@@ -35,7 +35,7 @@ import { actionFor, helpRows, type Action } from "./shortcuts";
 import { capture, fileName, save, saveBlob, shotName } from "./capture";
 import { Interpreter, type Answer } from "./lua";
 import * as files from "./files";
-import type { Coloring } from "./surface";
+import { qualityColor, type Coloring } from "./surface";
 import {
   GEOM_GROUPS,
   nameComposites,
@@ -265,7 +265,7 @@ async function boot() {
      *  is of blocks. The geometry's own groups and the mesh take
      *  neither: a geometry is the thing a blocking is put on, not part of
      *  it, and a mesh is what the blocking was for. */
-    offers: { classified?: boolean; grouped?: boolean } = {},
+    offers: { classified?: boolean; grouped?: boolean; quality?: boolean } = {},
   ) => {
     const one = (value: Coloring, text: string) =>
       `<option value="${value}"${now === value ? " selected" : ""}>${text}</option>`;
@@ -276,6 +276,7 @@ async function boot() {
       one("id", "id") +
       (offers.classified ? one("class", "classification") : "") +
       (offers.grouped ? one("group", "group") : "") +
+      (offers.quality ? one("quality", "quality") : "") +
       `</select></label>`
     );
   };
@@ -674,13 +675,19 @@ async function boot() {
    * step to open before reaching three controls, and a heading saying
    * "skin" over the only thing a mesh can be drawn as.
    */
+  /** Whether the cells below the threshold are drawn, and the threshold:
+   *  kept across redraws of the drawer, as the drawer's other settings
+   *  are. */
+  let qualityShown = false;
+  let qualityBelow = 0.3;
   function drawMeshLayer() {
     const layer = prefs.mesh;
     $("mesh-layer").innerHTML =
       `<label class="check"><input type="checkbox" data-test="mesh-visible"` +
       `${layer.visible ? " checked" : ""} /> show</label>` +
-      modes("mesh", layer.coloring) +
-      slider("mesh-alpha", "opacity", 0, layer.alpha);
+      modes("mesh", layer.coloring, { quality: true }) +
+      slider("mesh-alpha", "opacity", 0, layer.alpha) +
+      `<div id="mesh-quality" data-test="mesh-quality"></div>`;
 
     const find = (test: string) =>
       $("mesh-layer").querySelector<HTMLInputElement>(`[data-test="${test}"]`)!;
@@ -699,9 +706,91 @@ async function boot() {
       prefs.mesh.alpha = Number((e.target as HTMLInputElement).value);
       redraw();
     });
+    // The box was just emptied with the rest of the section.
+    refreshQuality(false);
   }
   drawMeshLayer();
   drawGroups();
+
+  /**
+   * The mesh's quality, in the mesh section of the drawer: the worst cell
+   * and the mean, a histogram, and the cells below a threshold drawn whole
+   * wherever they are — with a way to fly to the worst of them.
+   *
+   * Asked of the kernel each time a mesh is drawn, not kept: a mesh is
+   * replaced whole, and the figures with it.
+   */
+  function refreshQuality(cells = true) {
+    const box = document.getElementById("mesh-quality");
+    const q = kernel.quality();
+    if (!q || !q.cells) {
+      if (box) box.innerHTML = "";
+      if (cells) viewer.setBadCells(null);
+      return;
+    }
+    const inverted = q.below["0"] ?? 0;
+    // Only when what they are drawn from changed: the drawer is redrawn
+    // for every touch of its opacity slider.
+    if (cells) {
+      viewer.setBadCells(
+        qualityShown ? decodeMesh(kernel.cellsBelow(qualityBelow)) : null,
+      );
+    }
+    if (!box) return;
+    const most = Math.max(...q.histogram, 1);
+    const bars = q.histogram
+      .map((n, i) => {
+        const from = q.bins[i];
+        const to = q.bins[i + 1] ?? 1;
+        // Logarithmic: a good mesh has almost every cell in the last bin,
+        // and the handful in the first ones are what the picture is for.
+        const h = n ? 4 + (Math.log(1 + n) / Math.log(1 + most)) * 36 : 0;
+        const [r, g, b] = qualityColor(from < 0 ? -1 : (from + to) / 2);
+        const rgb = `rgb(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)})`;
+        const range = from < 0 ? "inverted" : `${from}–${to}`;
+        return `<span class="bar" title="${range}: ${n}" style="height:${h}px;background:${rgb}"></span>`;
+      })
+      .join("");
+    const shown = qualityShown ? viewer.badCount : 0;
+    box.innerHTML =
+      `<div class="quality-head" data-test="quality-summary">` +
+      `worst <b>${q.min.toFixed(2)}</b> · mean ${q.mean.toFixed(2)}` +
+      (inverted ? ` · <b class="bad">${inverted} inverted</b>` : "") +
+      `</div>` +
+      `<div class="histogram" data-test="quality-histogram">${bars}</div>` +
+      `<div class="histogram-axis"><span>&lt;0</span><span>0.5</span><span>1</span></div>` +
+      `<label class="check"><input type="checkbox" data-test="quality-show"` +
+      `${qualityShown ? " checked" : ""} /> show cells below ` +
+      `<b data-test="quality-threshold">${qualityBelow.toFixed(2)}</b></label>` +
+      `<label class="slider"><span>threshold</span>` +
+      `<input type="range" min="0" max="1" step="0.05" value="${qualityBelow}"` +
+      ` data-test="quality-below" /></label>` +
+      (qualityShown
+        ? `<div class="quality-note" data-test="quality-count">${shown} cell${shown === 1 ? "" : "s"} shown</div>`
+        : "") +
+      `<button data-test="quality-worst">Go to the worst cell</button>`;
+    const find = (test: string) =>
+      box.querySelector<HTMLInputElement>(`[data-test="${test}"]`)!;
+    find("quality-show").addEventListener("change", (e) => {
+      qualityShown = (e.target as HTMLInputElement).checked;
+      refreshQuality();
+    });
+    find("quality-below").addEventListener("change", (e) => {
+      qualityBelow = Number((e.target as HTMLInputElement).value);
+      refreshQuality();
+    });
+    find("quality-below").addEventListener("input", (e) => {
+      box.querySelector('[data-test="quality-threshold"]')!.textContent =
+        Number((e.target as HTMLInputElement).value).toFixed(2);
+    });
+    find("quality-worst").addEventListener("click", () => {
+      if (!q.worst) return;
+      viewer.frameOn(q.worst.center, q.worst.size);
+      say(
+        `worst cell ${q.worst.quality.toFixed(2)}, in block ${q.worst.block}`,
+      );
+    });
+  }
 
   /** The panel is generated from the theme's own keys, so a color added later
    *  needs no new markup. */
@@ -2714,6 +2803,7 @@ async function boot() {
       viewer.setMesh(
         stats.mesh.nodes === undefined ? null : decodeMesh(kernel.mesh()),
       );
+      refreshQuality();
     }
     // The counts in the status line are the same ones; the history is not,
     // and neither is the line itself — a gesture says what it did.
@@ -2769,6 +2859,7 @@ async function boot() {
       viewer.setMesh(
         stats.mesh.nodes === undefined ? null : decodeMesh(kernel.mesh()),
       );
+      refreshQuality();
     }
     // After the geometry, not before: framing has to see everything there
     // is to frame.
@@ -3416,6 +3507,10 @@ async function boot() {
     edgeMidpoint: (edge: number) => viewer.edgeMidpoint(edge),
     choose: (pick: Pick | null) => choose(pick),
     nodeScreen: (name: number) => viewer.nodeScreen(name),
+    /** The kernel's quality figures, and how many cells below the
+     *  threshold are drawn. */
+    quality: () => kernel.quality(),
+    badCellsDrawn: () => viewer.badCount,
     nodePosition: (name: number) => viewer.nodePosition(name),
     center: () => viewer.center,
     apply: (command: Record<string, unknown>) => kernel.apply(command),

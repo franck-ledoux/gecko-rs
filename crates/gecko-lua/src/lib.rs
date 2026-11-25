@@ -56,7 +56,7 @@ pub trait Kernel {
     /// `Session::apply_json` takes and gives.
     fn apply(&self, command: &str) -> String;
 
-    /// A read, by name: `nodes`, `edges`, `faces`, `blocks`, `stats`,
+    /// A read, by name: `nodes`, `edges`, `faces`, `blocks`, `stats`, `quality`,
     /// `entities`, `sheet`, `vtk`. `arg` is whatever that read takes, as
     /// JSON, and the answer is JSON.
     fn query(&self, kind: &str, arg: &str) -> String;
@@ -379,6 +379,7 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
     // --- the reads -------------------------------------------------------
     for kind in [
         "nodes", "edges", "faces", "blocks", "groups", "stats", "entities", "script", "vtk",
+        "quality",
     ] {
         read(lua, &gecko, &kernel, kind, kind)?;
     }

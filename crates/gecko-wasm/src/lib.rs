@@ -104,6 +104,16 @@ impl WasmSession {
 
     /// The mesh's skin, in the same bytes the station sends down its
     /// socket. Empty until something has been meshed.
+    #[wasm_bindgen(js_name = qualityJson)]
+    pub fn quality_json(&self) -> String {
+        self.inner.quality_json()
+    }
+
+    #[wasm_bindgen(js_name = cellsBelowBuffer)]
+    pub fn cells_below_buffer(&self, below: f64) -> Vec<u8> {
+        self.inner.cells_below_buffer(below)
+    }
+
     #[wasm_bindgen(js_name = meshBuffer)]
     pub fn mesh_buffer(&self) -> Vec<u8> {
         self.inner.mesh_buffer()

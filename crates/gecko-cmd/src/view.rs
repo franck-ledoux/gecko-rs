@@ -693,7 +693,7 @@ impl GeometryBuffer {
 }
 
 pub const MESH_MAGIC: [u8; 4] = *b"GKM1";
-pub const MESH_VERSION: u32 = 1;
+pub const MESH_VERSION: u32 = 2;
 /// magic + version + f64 center + two counts.
 pub const MESH_HEADER: usize = 40;
 
@@ -717,17 +717,65 @@ pub struct MeshBuffer {
     pub quads: Vec<u32>,
     /// The block each quadrangle came out of.
     pub blocks: Vec<u32>,
+    /// The quality of the hexahedron each quadrangle is a face of: the
+    /// worst scaled Jacobian of its corners.
+    pub quality: Vec<f32>,
 }
 
 impl MeshBuffer {
     pub fn of(mesh: &Mesh, center: [f64; 3]) -> MeshBuffer {
-        let (quads, blocks) = mesh.skin();
+        let (quads, cells) = mesh.skin_cells();
+        let quality = mesh.quality();
+        let blocks: Vec<CellId> = cells.iter().map(|h| mesh.blocks[*h]).collect();
+        let mut out = MeshBuffer::from_quads(mesh, center, &quads, &blocks);
+        out.quality = cells.iter().map(|h| quality[*h] as f32).collect();
+        out
+    }
+
+    /// Every face of every hexahedron worse than `below`, the worst first
+    /// and no more than `most` of them: the cells to look at, wherever they
+    /// are — most of a mesh's bad cells are inside it, where the skin never
+    /// shows them.
+    pub fn cells_below(mesh: &Mesh, center: [f64; 3], below: f64, most: usize) -> MeshBuffer {
+        const FACES: [[usize; 4]; 6] = [
+            [0, 3, 2, 1],
+            [4, 5, 6, 7],
+            [0, 1, 5, 4],
+            [1, 2, 6, 5],
+            [2, 3, 7, 6],
+            [3, 0, 4, 7],
+        ];
+        let quality = mesh.quality();
+        let mut bad: Vec<usize> = (0..quality.len()).filter(|h| quality[*h] < below).collect();
+        bad.sort_by(|a, b| quality[*a].total_cmp(&quality[*b]).then(a.cmp(b)));
+        bad.truncate(most);
+        let mut quads = Vec::with_capacity(bad.len() * 6);
+        let mut blocks = Vec::with_capacity(bad.len() * 6);
+        let mut q = Vec::with_capacity(bad.len() * 6);
+        for h in bad {
+            for f in FACES {
+                quads.push(f.map(|c| mesh.hexes[h][c]));
+                blocks.push(mesh.blocks[h]);
+                q.push(quality[h] as f32);
+            }
+        }
+        let mut out = MeshBuffer::from_quads(mesh, center, &quads, &blocks);
+        out.quality = q;
+        out
+    }
+
+    fn from_quads(
+        mesh: &Mesh,
+        center: [f64; 3],
+        quads: &[[u32; 4]],
+        blocks: &[CellId],
+    ) -> MeshBuffer {
         // Only the nodes the skin uses, renumbered: the interior ones are
         // most of them, and none of them is drawn.
         let mut seen: HashMap<u32, u32> = HashMap::new();
         let mut positions = Vec::new();
         let mut out = Vec::with_capacity(quads.len() * 4);
-        for quad in &quads {
+        for quad in quads {
             for node in quad {
                 let next = seen.len() as u32;
                 let at = *seen.entry(*node).or_insert_with(|| {
@@ -745,13 +793,19 @@ impl MeshBuffer {
             positions,
             quads: out,
             blocks: blocks.iter().map(|b| b.get().unwrap_or(u32::MAX)).collect(),
+            quality: Vec::new(),
         }
     }
 
     /// The same flat little-endian encoding as the other two.
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(
-            MESH_HEADER + (self.positions.len() + self.quads.len() + self.blocks.len()) * 4,
+            MESH_HEADER
+                + (self.positions.len()
+                    + self.quads.len()
+                    + self.blocks.len()
+                    + self.quality.len())
+                    * 4,
         );
         out.extend_from_slice(&MESH_MAGIC);
         out.extend_from_slice(&MESH_VERSION.to_le_bytes());
@@ -767,6 +821,10 @@ impl MeshBuffer {
             out.extend_from_slice(&x.to_le_bytes());
         }
         for x in &self.blocks {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        // One per quadrangle, or none: an empty buffer has neither.
+        for x in &self.quality {
             out.extend_from_slice(&x.to_le_bytes());
         }
         out

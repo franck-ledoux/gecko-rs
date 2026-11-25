@@ -29,7 +29,10 @@ fn a_blocking_is_meshed_and_the_counts_come_back() {
     assert!(s.mesh_vtk().is_none(), "nothing has been meshed yet");
 
     let out = s.apply(Command::Mesh { segments: 3 }).unwrap();
-    assert_eq!(out.message, "meshed — 64 nodes, 27 hexahedra");
+    assert_eq!(
+        out.message,
+        "meshed — 64 nodes, 27 hexahedra; worst cell 1.00"
+    );
     // Not a change to the blocking, so not a step of undo either.
     assert!(!out.view_changed);
     assert_eq!(mesh(&s)["nodes"], 64);
@@ -217,9 +220,11 @@ fn the_buffer_carries_the_skin_and_nothing_inside_it() {
     // 4 × 4 × 4 lattice — not the 64 of the whole thing.
     assert_eq!(quads, 54);
     assert_eq!(nodes, 56);
+    // Three coordinates a node; four corners, a block and a quality a
+    // quadrangle.
     assert_eq!(
         bytes.len(),
-        MESH_HEADER + (nodes * 3 + quads * 4 + quads) * 4
+        MESH_HEADER + (nodes * 3 + quads * 4 + quads + quads) * 4
     );
 
     // And nothing at all when there is no mesh.
@@ -388,4 +393,59 @@ fn a_pillowed_cylinder_meshes_the_right_way_out() {
         }
     }
     assert_eq!(inside_out, 0, "cells turned inside out");
+}
+
+/// The node of a session nearest a point.
+fn node_near(s: &Session, p: [f64; 3]) -> u32 {
+    let nodes: Vec<serde_json::Value> = serde_json::from_str(&s.nodes_json()).unwrap();
+    let d = |n: &serde_json::Value| {
+        (0..3)
+            .map(|k| (n["pos"][k].as_f64().unwrap() - p[k]).powi(2))
+            .sum::<f64>()
+    };
+    let best = nodes.iter().min_by(|a, b| d(a).total_cmp(&d(b))).unwrap();
+    best["id"].as_u64().unwrap() as u32
+}
+
+#[test]
+fn the_quality_of_a_mesh_is_measured_and_its_worst_cells_can_be_drawn() {
+    let mut s = cube();
+    assert_eq!(s.quality_json(), "null", "no mesh, no figures");
+
+    // A sound cube: every cell a cube.
+    s.apply(Command::Mesh { segments: 3 }).unwrap();
+    let q: serde_json::Value = serde_json::from_str(&s.quality_json()).unwrap();
+    assert_eq!(q["cells"], 27);
+    assert!((q["min"].as_f64().unwrap() - 1.0).abs() < 1e-12);
+    assert_eq!(q["below"]["0.5"], 0);
+    assert_eq!(q["histogram"][9], 27);
+
+    // One corner pushed most of the way through the opposite one: the cells
+    // round it are turned inside out, and the message says so.
+    let corner = node_near(&s, [1.0, 1.0, 1.0]);
+    s.apply(Command::MoveNode {
+        node: corner,
+        to: [0.2, 0.2, 0.2],
+        carrying: vec![],
+        snap: 0.0,
+    })
+    .unwrap();
+    let out = s.apply(Command::Mesh { segments: 3 }).unwrap();
+    assert!(out.message.contains("inverted"), "{}", out.message);
+    let q: serde_json::Value = serde_json::from_str(&s.quality_json()).unwrap();
+    let inverted = q["below"]["0"].as_u64().unwrap();
+    assert!(inverted > 0 && q["min"].as_f64().unwrap() < 0.0, "{q}");
+    let worst = &q["worst"];
+    assert!(worst["quality"].as_f64().unwrap() < 0.0);
+    assert!(worst["size"].as_f64().unwrap() > 0.0);
+    assert_eq!(q["blocks"][0]["inverted"].as_u64().unwrap(), inverted);
+
+    // The cells below a threshold, six faces apiece, in the mesh buffer's
+    // own encoding: the count is in its header.
+    let below_half = q["below"]["0.5"].as_u64().unwrap();
+    let bytes = s.cells_below_buffer(0.5);
+    let quads = u32::from_le_bytes(bytes[36..40].try_into().unwrap()) as u64;
+    assert_eq!(quads, below_half * 6);
+    let none = s.cells_below_buffer(-2.0);
+    assert_eq!(u32::from_le_bytes(none[36..40].try_into().unwrap()), 0);
 }

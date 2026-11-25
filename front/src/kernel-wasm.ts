@@ -14,6 +14,7 @@ import type {
   Entity,
   Group,
   Kernel,
+  Quality,
   Reply,
   Sheet,
   SheetCells,
@@ -54,6 +55,8 @@ export class WasmKernel implements Kernel {
             return this.session.blocksJson();
           case "stats":
             return this.session.statsJson();
+          case "quality":
+            return this.session.qualityJson();
           case "entities":
             return this.session.entitiesJson();
           case "sheet":
@@ -108,6 +111,14 @@ export class WasmKernel implements Kernel {
 
   geometry(): Uint8Array {
     return this.session.geometryBuffer();
+  }
+
+  cellsBelow(below: number): Uint8Array {
+    return this.session.cellsBelowBuffer(below);
+  }
+
+  quality(): Quality | null {
+    return JSON.parse(this.session.qualityJson()) as Quality | null;
   }
 
   mesh(): Uint8Array {

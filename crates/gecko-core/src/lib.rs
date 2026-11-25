@@ -19,6 +19,7 @@ pub mod blocking;
 pub mod cells;
 pub mod ids;
 pub mod mesh;
+pub mod quality;
 pub mod smoothing;
 
 pub use blocking::Blocking;
@@ -31,3 +32,4 @@ pub use cells::{
 };
 pub use ids::CellId;
 pub use mesh::{Mesh, SEGMENTS};
+pub use quality::{hex_quality, summarize, Summary};

@@ -82,6 +82,58 @@ the **show** box in the display panel hides it and keeps it. Before, editing
 the blocking was the only thing that got rid of a mesh, which made it
 something you could put on screen and not take off.
 
+## How good it is
+
+Every hexahedron is measured by its **scaled Jacobian**: at each corner, the
+volume of the three unit edges leaving it — one at a right angle, nought where
+the corner has folded flat, below nought where it has folded through — and the
+cell's figure is the worst of its eight corners. It is the number solvers and
+other meshers quote, so a figure read here can be compared with one read
+anywhere else.
+
+Measured on the **mesh**, not on the blocks. A block whose corners are all
+square can still hold cells turned inside out, where a face of it follows a
+curve that bulges further than the block next to it is thick, and that is
+exactly the case worth catching before a solver does.
+
+Meshing says the worst of it straight away:
+
+```text
+meshed — 37347 nodes, 33198 hexahedra; worst cell 0.42
+meshed — 35034 nodes, 31034 hexahedra; worst cell -1.00, 95 inverted
+```
+
+The **Mesh** section of the display panel has the rest:
+
+- the worst cell, the mean, and how many are inverted;
+- a histogram, from inverted on the left to perfect on the right — on a
+  logarithmic scale, since a good mesh has nearly every cell in the last bin
+  and the handful in the first ones are what it is for;
+- **show cells below** a threshold: every cell worse than it, drawn whole
+  wherever it is — most bad cells are inside the mesh, where its skin never
+  shows them — colored by its quality, with the skin made nearly clear around
+  them;
+- **Go to the worst cell**, which flies the camera there and says which block
+  it is in;
+- and **quality** among the ways to color the mesh: green for a cube,
+  through yellow and orange to red at nought, and a darker red for a cell
+  turned inside out.
+
+From a script:
+
+```lua
+gecko.mesh{ segments = 10 }
+local q = gecko.quality()      -- nil with no mesh
+print(q.min, q.mean, q.below["0"], q.below["0.2"])
+print(q.worst.block, q.worst.quality, q.worst.center[1])
+for _, b in ipairs(q.blocks) do   -- the worst blocks, worst first
+  print(b.block, b.worst, b.inverted)
+end
+```
+
+`q.histogram[i]` counts the cells from `q.bins[i]` up to the next bin's start,
+the last running to one.
+
 ## Writing it out
 
 `⇧E` writes a VTK legacy ASCII file, named for the moment it was taken —

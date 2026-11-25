@@ -2043,7 +2043,7 @@ impl Session {
                         model.and_then(|m| m.project(on.dim, on.tag, at))
                     })
                 };
-                let message = format!("meshed — {}", vtk::count(&mesh));
+                let message = format!("meshed — {}; {}", vtk::count(&mesh), quality_line(&mesh));
                 self.mesh = Some(mesh);
                 self.mesh_generation += 1;
                 Ok(Outcome {
@@ -3280,6 +3280,81 @@ impl Session {
         }
     }
 
+    /// Every face of every hexahedron worse than `below`, the worst first
+    /// and no more than [`MOST_CELLS_SHOWN`] of them, in the mesh buffer's
+    /// encoding — the cells to look at, inside the mesh as well as on it.
+    pub fn cells_below_buffer(&self, below: f64) -> Vec<u8> {
+        let center = self.origin.unwrap_or([0.0; 3]);
+        match &self.mesh {
+            Some(mesh) => MeshBuffer::cells_below(mesh, center, below, MOST_CELLS_SHOWN).to_bytes(),
+            None => MeshBuffer::empty(center),
+        }
+    }
+
+    /// How good the mesh is: the worst corner of its cells, summed up, and
+    /// the blocks the worst of them are in. `null` with no mesh.
+    pub fn quality_json(&self) -> String {
+        let Some(mesh) = &self.mesh else {
+            return "null".to_string();
+        };
+        let quality = mesh.quality();
+        let summary = gecko_core::summarize(&quality);
+        // The worst cell of each block, and how many of its cells are
+        // turned inside out.
+        let mut by_block: HashMap<CellId, (f64, usize, usize)> = HashMap::new();
+        for (h, q) in quality.iter().enumerate() {
+            let entry = by_block
+                .entry(mesh.blocks[h])
+                .or_insert((f64::INFINITY, 0, 0));
+            entry.0 = entry.0.min(*q);
+            entry.1 += usize::from(*q < 0.0);
+            entry.2 += 1;
+        }
+        let mut blocks: Vec<(CellId, (f64, usize, usize))> = by_block.into_iter().collect();
+        blocks.sort_by(|a, b| a.1 .0.total_cmp(&b.1 .0).then(a.0.cmp(&b.0)));
+        blocks.truncate(WORST_BLOCKS_LISTED);
+        let below: serde_json::Map<String, serde_json::Value> = gecko_core::quality::THRESHOLDS
+            .iter()
+            .zip(summary.below)
+            .map(|(t, n)| (format!("{t}"), serde_json::json!(n)))
+            .collect();
+        let worst = summary.worst.map(|h| {
+            serde_json::json!({
+                "cell": h,
+                "block": mesh.blocks[h].get(),
+                "quality": quality[h],
+                "center": mesh.hex_center(h),
+                // Corner to opposite corner: how far back to stand to see it.
+                "size": apart(
+                    mesh.points[mesh.hexes[h][0] as usize],
+                    mesh.points[mesh.hexes[h][6] as usize],
+                ),
+            })
+        });
+        serde_json::json!({
+            "generation": self.mesh_generation,
+            "cells": summary.cells,
+            "min": summary.min,
+            "mean": summary.mean,
+            "worst": worst,
+            "below": below,
+            "bins": gecko_core::quality::BINS,
+            "histogram": summary.histogram,
+            "blocks": blocks
+                .iter()
+                .map(|(b, (q, inverted, cells))| {
+                    serde_json::json!({
+                        "block": b.get(),
+                        "worst": q,
+                        "inverted": inverted,
+                        "cells": cells,
+                    })
+                })
+                .collect::<Vec<_>>(),
+        })
+        .to_string()
+    }
+
     /// The session as a Lua script: what a reader would have typed to
     /// arrive where it now is.
     pub fn script(&self) -> String {
@@ -3317,6 +3392,26 @@ impl Session {
             "segments": geometry.nb_segments(),
             "triangles": geometry.nb_triangles(),
         })
+    }
+}
+
+/// How many cells below a threshold are sent to be drawn, the worst first:
+/// enough to see where the trouble is, not so many that showing them is
+/// the trouble.
+pub const MOST_CELLS_SHOWN: usize = 20_000;
+
+/// How many of the worst blocks the quality read lists.
+pub const WORST_BLOCKS_LISTED: usize = 20;
+
+/// What a mesh's quality comes to in one line: its worst cell, and how
+/// many are turned inside out if any are.
+fn quality_line(mesh: &Mesh) -> String {
+    let summary = gecko_core::summarize(&mesh.quality());
+    let inverted = summary.below[0];
+    if inverted == 0 {
+        format!("worst cell {:.2}", summary.min)
+    } else {
+        format!("worst cell {:.2}, {} inverted", summary.min, inverted)
     }
 }
 

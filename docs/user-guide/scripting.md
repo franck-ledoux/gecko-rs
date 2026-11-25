@@ -103,7 +103,7 @@ shorthand for a call with one table.
 | `gecko.reset()`                                                      | an empty session: no blocks, no geometry, no mesh — one step of undo |
 
 And the reads, each a plain table: `nodes()`, `edges()`, `faces()`,
-`blocks()`, `groups()`, `entities()`, `stats()`, `sheet(edge)`,
+`blocks()`, `groups()`, `entities()`, `stats()`, `quality()`, `sheet(edge)`,
 `sheet_cells(edge)`, `chord(face, block)`, `vtk()`, `script()`.
 
 ```lua

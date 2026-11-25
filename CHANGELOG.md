@@ -5,6 +5,14 @@ the day a tag was cut.
 
 ## Unreleased
 
+- **The mesh's quality, measured and shown.** Every hexahedron's scaled
+  Jacobian — the worst of its eight corners — is measured when it is meshed,
+  and meshing says the worst cell and how many are inverted. The Mesh section
+  of the display panel shows the worst and the mean, a histogram, the cells
+  below a threshold drawn whole wherever they are, and a button that flies to
+  the worst cell; the mesh can be colored by quality. `gecko.quality()` gives
+  the same figures to a script, with the worst blocks listed.
+
 - **Smoothing untangles blocks turned inside out instead of stopping.** A
   corner's score grows without bound as it folds flat, from either side, so a
   corner already folded through was walled in on the wrong side; and a block

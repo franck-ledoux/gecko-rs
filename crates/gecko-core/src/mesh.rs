@@ -84,6 +84,15 @@ impl Mesh {
     /// majority of it and is never seen, so sending it to a browser would
     /// be sending ten times the bytes for the same picture.
     pub fn skin(&self) -> (Vec<[u32; 4]>, Vec<CellId>) {
+        let (quads, hexes) = self.skin_cells();
+        let blocks = hexes.iter().map(|h| self.blocks[*h]).collect();
+        (quads, blocks)
+    }
+
+    /// The same quadrangles, each with the hexahedron it is a face of —
+    /// by its place in [`Mesh::hexes`], so that anything measured per
+    /// hexahedron can be shown on the skin.
+    pub fn skin_cells(&self) -> (Vec<[u32; 4]>, Vec<usize>) {
         // Four corners of each face of a hexahedron, wound outward.
         const FACES: [[usize; 4]; 6] = [
             [0, 3, 2, 1],
@@ -104,7 +113,7 @@ impl Mesh {
             }
         }
         let mut quads = Vec::new();
-        let mut blocks = Vec::new();
+        let mut cells = Vec::new();
         // Walked in order rather than over the map, so the answer does not
         // depend on the order a hash map happened to hand things back in.
         for (h, hex) in self.hexes.iter().enumerate() {
@@ -116,11 +125,11 @@ impl Mesh {
                 };
                 if *count == 1 && *first == h * 6 + f {
                     quads.push(corners.map(|c| hex[c]));
-                    blocks.push(self.blocks[h]);
+                    cells.push(h);
                 }
             }
         }
-        (quads, blocks)
+        (quads, cells)
     }
 }
 

@@ -43,6 +43,7 @@ impl Kernel for Local {
             "faces" => session.faces_json(),
             "blocks" => session.blocks_json(),
             "stats" => session.stats_json(),
+            "quality" => session.quality_json(),
             "patches" => session.patches_json(),
             "groups" => session.groups_json(),
             "entities" => session.entities_json(),

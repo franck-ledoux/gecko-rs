@@ -5419,6 +5419,76 @@ test("the mesh has a band of its own, and can be put away", async ({
   expect(errors).toEqual([]);
 });
 
+test("the mesh's quality is shown, its worst cells drawn, and the worst flown to", async ({
+  page,
+}) => {
+  const errors = await boot(page);
+  // A cube with one corner pushed most of the way through: the cells round
+  // it are turned inside out, on the skin and under it.
+  await openConsole(page);
+  await lua(
+    page,
+    `gecko.create_cube()
+     for _, n in ipairs(gecko.nodes()) do
+       if n.pos[1] > 0.5 and n.pos[2] > 0.5 and n.pos[3] > 0.5 then
+         gecko.move_node(n.id, {0.2, 0.2, 0.2})
+       end
+     end
+     gecko.mesh{ segments = 4 }`,
+  );
+  await page.waitForFunction(
+    () => (window as any).__gecko.quality()?.cells === 64,
+  );
+  const q = await page.evaluate(() => (window as any).__gecko.quality());
+  expect(q.min).toBeLessThan(0);
+  // Out of the way of the drawer, which it would sit over.
+  await page.locator("#console-open").click();
+  await expect(page.locator("#console")).toBeHidden();
+  expect(q.below["0"]).toBeGreaterThan(0);
+
+  // The figures, in the mesh's own section of the drawer.
+  await openSection(page, "mesh");
+  const summary = page.locator("[data-test=quality-summary]");
+  await expect(summary).toContainText(`worst ${q.min.toFixed(2)}`);
+  await expect(summary).toContainText(`${q.below["0"]} inverted`);
+  expect(await page.locator("[data-test=quality-histogram] .bar").count()).toBe(
+    q.histogram.length,
+  );
+
+  // The cells below the threshold, drawn whole — as many as the kernel
+  // counted below it, inside the mesh as well as on it.
+  await page.locator("[data-test=quality-show]").check();
+  await expect(page.locator("[data-test=quality-count]")).toContainText(
+    `${q.below["0.3"]} cell`,
+  );
+  expect(
+    await page.evaluate(() => (window as any).__gecko.badCellsDrawn()),
+  ).toBe(q.below["0.3"]);
+  // Down to the ones turned inside out.
+  await page.locator("[data-test=quality-below]").fill("0");
+  await page.locator("[data-test=quality-below]").dispatchEvent("change");
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__gecko.badCellsDrawn()))
+    .toBe(q.below["0"]);
+
+  // Colored by quality is one of the ways the mesh can be colored.
+  await page.locator('[data-test="mesh-mode"]').selectOption("quality");
+  // Redrawing the section keeps what it was showing.
+  await expect(page.locator("[data-test=quality-show]")).toBeChecked();
+
+  // And the camera goes to the worst cell.
+  await page.locator("[data-test=quality-worst]").click();
+  await expect(page.locator("#status")).toContainText("worst cell");
+  await page.evaluate(() => (window as any).__gecko.settled());
+  const target = (await page.evaluate(
+    () => (window as any).__gecko.camera().target,
+  )) as number[];
+  for (let k = 0; k < 3; k++) {
+    expect(target[k]).toBeCloseTo(q.worst.center[k], 3);
+  }
+  expect(errors).toEqual([]);
+});
+
 /** Open the console and wait for the interpreter to be there. */
 async function openConsole(page: import("@playwright/test").Page) {
   if (
