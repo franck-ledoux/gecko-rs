@@ -3,7 +3,7 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
-## Unreleased
+## 0.2.7
 
 - **Smoothing aims at cubes, and is symmetric.** It used to move each node
   towards the middle of its neighbors, one node after another in the order
