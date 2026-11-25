@@ -1,10 +1,14 @@
-//! Moving the nodes towards the middle of their neighbors, as far as what
-//! they follow allows.
+//! Moving the nodes to where every block is as near a cube as it can be,
+//! as far as what they follow allows.
 //!
-//! Two halves to the name. **Laplacian**: a node goes a share of the way to
-//! the average of its one-ring. **Smart**: the move is taken only if it does
-//! not make the worst corner round that node any worse, which is what keeps
-//! a smoother from turning cells inside out on a concave boundary.
+//! What is minimized is in `gecko_core::smoothing`: per corner, how far
+//! from square it is, growing without bound as it folds flat; per block,
+//! how unevenly it is spaced. Every move is worked out from the same
+//! positions and they are taken together, so the answer does not depend on
+//! the order nodes are named in — and a symmetric configuration stays
+//! symmetric. A step is taken only if the whole is better and no corner
+//! falls below the floor, which is what keeps a smoother from turning cells
+//! inside out on a concave boundary.
 //!
 //! And the classification decides who may move at all. The pair that
 //! matters is the last two rows of the table in `smooth`: an interior node
@@ -102,11 +106,12 @@ fn an_inside_node_pulled_off_center_comes_back() {
     let middle = node_at(&b, [1.0, 1.0, 1.0]);
     b.set_position(middle, [1.4, 1.3, 1.2]).unwrap();
 
-    // All the way to the middle of its ring, which by the grid's own
-    // symmetry is where it started.
+    // All the way to the middle, which by the grid's own symmetry is where
+    // it started — in a few rounds, the first of them short: the corner it
+    // was pulled almost flat against is where the energy is steepest.
     let moved = b.smooth(
         Smoothing {
-            rounds: 1,
+            rounds: 12,
             share: 1.0,
             held: &[],
         },
@@ -116,46 +121,41 @@ fn an_inside_node_pulled_off_center_comes_back() {
     let back = at(&b, middle);
     for k in 0..3 {
         assert!(
-            (back[k] - 1.0).abs() < 1e-9,
+            (back[k] - 1.0).abs() < 1e-8,
             "it should be back at the center, not {back:?}"
         );
     }
 }
 
 #[test]
-fn the_share_is_how_far_along_the_way_it_goes() {
-    // What makes it usable on a model somebody cares about: half a step,
-    // looked at, then half a step again.
+fn the_share_is_how_far_the_first_step_goes() {
+    // What makes it usable on a model somebody cares about: a short step,
+    // looked at, then another.
+    let moved = |share: f64| {
+        let mut b = grid();
+        let middle = node_at(&b, [1.0, 1.0, 1.0]);
+        b.set_position(middle, [1.4, 1.0, 1.0]).unwrap();
+        b.smooth(
+            Smoothing {
+                rounds: 1,
+                share,
+                held: &[],
+            },
+            nowhere,
+        );
+        1.4 - at(&b, middle)[0]
+    };
+    let (quarter, whole) = (moved(0.25), moved(1.0));
+    assert!(quarter > 0.0, "a quarter of a step is a step: {quarter}");
+    assert!(
+        quarter < whole,
+        "and shorter than a whole one: {quarter} {whole}"
+    );
+
+    // Nowhere at all is a share of nought, and no rounds is no rounds.
     let mut b = grid();
     let middle = node_at(&b, [1.0, 1.0, 1.0]);
     b.set_position(middle, [1.4, 1.0, 1.0]).unwrap();
-
-    b.smooth(
-        Smoothing {
-            rounds: 1,
-            share: 0.5,
-            held: &[],
-        },
-        nowhere,
-    );
-    assert!(
-        (at(&b, middle)[0] - 1.2).abs() < 1e-9,
-        "half way, not {:?}",
-        at(&b, middle)
-    );
-
-    // And another round of a half takes half of what is left.
-    b.smooth(
-        Smoothing {
-            rounds: 1,
-            share: 0.5,
-            held: &[],
-        },
-        nowhere,
-    );
-    assert!((at(&b, middle)[0] - 1.1).abs() < 1e-9);
-
-    // Nowhere at all is a share of nought, and no rounds is no rounds.
     let still = at(&b, middle);
     for how in [
         Smoothing {
@@ -259,7 +259,7 @@ fn a_node_on_a_curve_lands_back_on_that_curve() {
     let onto = |on: On, p: [f64; 3]| (on.dim == 1).then_some([p[0], 1.0, 1.2]);
     b.smooth(
         Smoothing {
-            rounds: 3,
+            rounds: 30,
             share: 1.0,
             held: &[],
         },
@@ -272,8 +272,8 @@ fn a_node_on_a_curve_lands_back_on_that_curve() {
         "it should be on the curve, not {landed:?}"
     );
     assert!(
-        (landed[0] - 1.0).abs() < 1e-9,
-        "and settled along it, not {landed:?}"
+        (landed[0] - 1.0).abs() < 1e-6,
+        "and settled along it, half way between its ends, not {landed:?}"
     );
 
     // A curve the node cannot reach without spoiling the blocks round it
@@ -462,22 +462,22 @@ fn a_patch_is_smoothed_by_its_quadrangles_and_nothing_else() {
     );
     assert_eq!(at(&b, middle), [1.4, 1.3, 0.0]);
 
-    // Following the surface it was laid on, it is free, and its four
-    // neighbors put it back in the middle.
+    // Following the surface it was laid on, it is free, and the four
+    // quadrangles round it put it back in the middle.
     b.set_node_class(middle, Some(On { dim: 2, tag: 1 }))
         .unwrap();
     let moved = b.smooth(
         Smoothing {
-            rounds: 1,
+            rounds: 20,
             share: 1.0,
             held: &[],
         },
         onto_the_plane,
     );
-    assert!(moved > 0.4, "it should have moved a long way, not {moved}");
+    assert!(moved > 0.2, "it should have moved a long way, not {moved}");
     let back = at(&b, middle);
     assert!(
-        (back[0] - 1.0).abs() < 1e-9 && (back[1] - 1.0).abs() < 1e-9 && back[2].abs() < 1e-9,
+        (back[0] - 1.0).abs() < 1e-6 && (back[1] - 1.0).abs() < 1e-6 && back[2].abs() < 1e-9,
         "it should be back at the middle of the patch, not {back:?}"
     );
 }
@@ -504,24 +504,47 @@ fn the_two_measures_a_move_is_weighed_by() {
 }
 
 #[test]
-fn a_laplacian_on_an_open_patch_would_collapse_it() {
-    // The teeth of the measure above, and the reason a patch needs one of
-    // its own: every node of an open patch is free to move inwards, and
-    // nothing but the folding of the quadrangles says not to. Without that
-    // weight the whole patch walks into a point in three rounds — measured,
-    // by taking the weight away: nine nodes inside a tenth of a unit.
+fn an_open_patch_does_not_collapse_nor_fold() {
+    // Every node of an open patch is free to slide over the plane, and a
+    // Laplacian walks the whole of it into a point: nothing but the shape
+    // of the quadrangles says not to. Here nothing is gained by shrinking
+    // — the energy does not change with size — and a quadrangle cannot be
+    // folded over on the way to anywhere.
     let mut b = patch_grid();
     for name in b.nodes().map(|(n, _)| n).collect::<Vec<_>>() {
         b.set_node_class(name, Some(On { dim: 2, tag: 1 })).unwrap();
     }
     // A concave outline, which is where a Laplacian does its damage: one
-    // corner of the patch pushed deep inside it.
+    // corner of the patch pushed deep inside it — so deep that the
+    // quadrangle it is a corner of is folded over from the start.
     let bitten = node_at(&b, [2.0, 2.0, 0.0]);
     b.set_position(bitten, [0.9, 0.9, 0.0]).unwrap();
+    let turns = |b: &Blocking| -> Vec<Vec<f64>> {
+        b.block_faces()
+            .iter()
+            .map(|face| {
+                let at = face.nodes.map(|n| b.position(n).unwrap());
+                (0..4)
+                    .map(|k| {
+                        let u = [0, 1].map(|i| at[(k + 1) % 4][i] - at[k][i]);
+                        let v = [0, 1].map(|i| at[(k + 3) % 4][i] - at[k][i]);
+                        u[0] * v[1] - u[1] * v[0]
+                    })
+                    .collect()
+            })
+            .collect()
+    };
+    let unfolded = |t: &Vec<f64>| t.iter().all(|x| *x > 0.0) || t.iter().all(|x| *x < 0.0);
+    let before = turns(&b);
+    assert_eq!(
+        before.iter().filter(|t| unfolded(t)).count(),
+        3,
+        "three quadrangles whole, one folded"
+    );
 
     b.smooth(
         Smoothing {
-            rounds: 3,
+            rounds: 30,
             share: 1.0,
             held: &[],
         },
@@ -533,13 +556,239 @@ fn a_laplacian_on_an_open_patch_would_collapse_it() {
         all.iter().copied().fold(f64::MIN, f64::max) - all.iter().copied().fold(f64::MAX, f64::min)
     };
     assert!(
-        span(0) > 1.9 && span(1) > 1.9,
-        "the patch should have kept its extent, not {:?}",
+        span(0) > 1.5 && span(1) > 1.5,
+        "the patch should have kept most of its extent, not {:?}",
         (span(0), span(1))
     );
-    // And the three corners that are still convex have not budged.
-    for corner in [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0]] {
-        let at = b.position(node_at(&b, corner)).unwrap();
-        assert_eq!(at, corner, "a convex corner of the patch moved");
+    // None that was whole has been folded over.
+    for (was, now) in before.iter().zip(turns(&b)) {
+        if unfolded(was) {
+            assert!(unfolded(&now), "a quadrangle folded: {now:?}");
+        }
+    }
+}
+
+/// One unit cube cut across x at `at`, its corners on the corners of the
+/// model and the four nodes the cut made each on the line of the cube's
+/// edge it is on — free to slide along x and nowhere else.
+fn cut_cube(at: f64) -> (Blocking, Vec<CellId>) {
+    let mut b = Blocking::new().unwrap();
+    b.add_block(cube_corners([0.0, 0.0, 0.0], 1.0)).unwrap();
+    for (n, _) in b.nodes().collect::<Vec<_>>() {
+        b.set_node_class(n, Some(On { dim: 0, tag: 1 })).unwrap();
+    }
+    let (edge, from, _) = b
+        .edges()
+        .map(|(e, a, c, _)| (e, b.position(a).unwrap(), b.position(c).unwrap()))
+        .find(|(_, p, q)| (p[1] - q[1]).abs() < 1e-12 && (p[2] - q[2]).abs() < 1e-12)
+        .expect("an edge along x");
+    let t = if from[0] < 0.5 { at } else { 1.0 - at };
+    b.split_sheet(edge, t).unwrap();
+    let cut: Vec<CellId> = b
+        .nodes()
+        .filter(|(_, p)| (p[0] - at).abs() < 1e-9)
+        .map(|(n, _)| n)
+        .collect();
+    assert_eq!(cut.len(), 4);
+    for n in &cut {
+        let p = b.position(*n).unwrap();
+        let line = (p[1].round() as i32) * 2 + p[2].round() as i32;
+        b.set_node_class(*n, Some(On { dim: 1, tag: line }))
+            .unwrap();
+    }
+    (b, cut)
+}
+
+/// Back onto the cube's edge along x that a tag names.
+fn onto_the_edge(on: On, at: [f64; 3]) -> Option<[f64; 3]> {
+    (on.dim == 1).then(|| [at[0], (on.tag / 2) as f64, (on.tag % 2) as f64])
+}
+
+#[test]
+fn a_cut_dropped_anywhere_goes_to_the_middle_and_mirrors_exactly() {
+    // Two blocks between fixed ends cost least at the same height: a cut
+    // put down at 0.3 ends at 0.5. And the same cut put down at 0.7 ends
+    // at the mirror image of it — to the last digits, because no move
+    // depends on which node was looked at first.
+    let settle = |at: f64| {
+        let (mut b, cut) = cut_cube(at);
+        b.smooth(
+            Smoothing {
+                rounds: 40,
+                share: 0.5,
+                held: &[],
+            },
+            onto_the_edge,
+        );
+        let mut xs: Vec<f64> = cut.iter().map(|n| b.position(*n).unwrap()[0]).collect();
+        xs.sort_by(f64::total_cmp);
+        xs
+    };
+    let low = settle(0.3);
+    let high = settle(0.7);
+    for x in low.iter().chain(&high) {
+        assert!(
+            (x - 0.5).abs() < 1e-6,
+            "the cut should be in the middle: {low:?} {high:?}"
+        );
+    }
+    for (a, c) in low.iter().zip(&high) {
+        assert!(
+            (a - (1.0 - c)).abs() < 1e-9,
+            "mirror images: {low:?} {high:?}"
+        );
+    }
+}
+
+#[test]
+fn a_grid_shoved_about_inside_comes_back_square() {
+    // Three by three by three cubes, the boundary held, and the eight nodes
+    // inside it pushed each its own way: every corner of every block back
+    // to a right angle.
+    let mut b = Blocking::new().unwrap();
+    for i in 0..3 {
+        for j in 0..3 {
+            for k in 0..3 {
+                b.add_block(cube_corners([i as f64, j as f64, k as f64], 1.0))
+                    .unwrap();
+            }
+        }
+    }
+    weld_everything(&mut b);
+    let inside: Vec<CellId> = b
+        .nodes()
+        .filter(|(_, p)| p.iter().all(|x| *x > 0.5 && *x < 2.5))
+        .map(|(n, _)| n)
+        .collect();
+    assert_eq!(inside.len(), 8);
+    for (k, n) in inside.iter().enumerate() {
+        let p = b.position(*n).unwrap();
+        let push = [0.2, -0.15, 0.1].map(|d| d * if k % 2 == 0 { 1.0 } else { -0.7 });
+        b.set_position(*n, [p[0] + push[0], p[1] + push[1], p[2] + push[2]])
+            .unwrap();
+    }
+    assert!(worst(&b) < 0.9, "spoilt to start with: {}", worst(&b));
+    b.smooth(
+        Smoothing {
+            rounds: 60,
+            share: 0.5,
+            held: &[],
+        },
+        nowhere,
+    );
+    assert!(worst(&b) > 0.999, "square again: {}", worst(&b));
+}
+
+#[test]
+fn an_edge_leaving_a_curve_is_drawn_square_to_it() {
+    // Two blocks side by side, the edge between them running from a node
+    // fixed at x = 1.5 along the top down to one free to slide along the
+    // bottom line. Even spacing alone would put the bottom end at 0.5,
+    // where the two blocks are the same size; a right angle at the bottom
+    // puts it at 1.5, straight under the top. The spacing of a block on
+    // its own already prefers square corners; weighing the corners as well
+    // takes it further.
+    let mut b = Blocking::new().unwrap();
+    let block = |x0: f64, x1: f64, t0: f64, t1: f64| {
+        [
+            [x0, 0.0, 0.0],
+            [x1, 0.0, 0.0],
+            [t1, 1.0, 0.0],
+            [t0, 1.0, 0.0],
+            [x0, 0.0, 1.0],
+            [x1, 0.0, 1.0],
+            [t1, 1.0, 1.0],
+            [t0, 1.0, 1.0],
+        ]
+    };
+    b.add_block(block(0.0, 0.5, 0.0, 1.5)).unwrap();
+    b.add_block(block(0.5, 2.0, 1.5, 2.0)).unwrap();
+    weld_everything(&mut b);
+    assert_eq!(b.nb_nodes(), 12);
+    let mut sliding = Vec::new();
+    for (n, p) in b.nodes().collect::<Vec<_>>() {
+        if (p[0] - 0.5).abs() < 1e-12 && p[1] == 0.0 {
+            b.set_node_class(
+                n,
+                Some(On {
+                    dim: 1,
+                    tag: p[2] as i32,
+                }),
+            )
+            .unwrap();
+            sliding.push(n);
+        } else {
+            b.set_frozen(n, true).unwrap();
+        }
+    }
+    assert_eq!(sliding.len(), 2);
+    b.smooth(
+        Smoothing {
+            rounds: 40,
+            share: 0.5,
+            held: &[],
+        },
+        |on: On, p: [f64; 3]| (on.dim == 1).then_some([p[0], 0.0, on.tag as f64]),
+    );
+    for n in sliding {
+        let x = b.position(n).unwrap()[0];
+        // 1.31 measured; 1.16 with the corners weighed for nothing.
+        assert!(
+            x > 1.25,
+            "the bottom end should have gone towards square, to {x}"
+        );
+        assert!(x < 1.5, "but not all the way, spacing counts too: {x}");
+    }
+}
+
+#[test]
+fn no_corner_is_turned_inside_out_however_it_starts() {
+    // Forty grids of three by three by two blocks, every node shoved
+    // a random way and free to slide anywhere — the worst a smoothing can
+    // be handed. The energy grows without bound as a corner folds flat, but
+    // a step can jump clean over that wall: without the floor, three of
+    // these end with a corner inside out. With it, none falls below the
+    // floor, or below where it started if it started lower.
+    let mut seed: u64 = 12345;
+    let mut random = move || {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((seed >> 33) as f64) / (1u64 << 31) as f64 * 2.0 - 1.0
+    };
+    for trial in 0..40 {
+        let mut b = Blocking::new().unwrap();
+        for i in 0..3 {
+            for j in 0..3 {
+                for k in 0..2 {
+                    b.add_block(cube_corners([i as f64, j as f64, k as f64], 1.0))
+                        .unwrap();
+                }
+            }
+        }
+        weld_everything(&mut b);
+        for (n, p) in b.nodes().collect::<Vec<_>>() {
+            let shove = [0.45 * random(), 0.45 * random(), 0.45 * random()];
+            b.set_position(n, [p[0] + shove[0], p[1] + shove[1], p[2] + shove[2]])
+                .unwrap();
+            b.set_node_class(n, Some(On { dim: 2, tag: 1 })).unwrap();
+        }
+        let before = worst(&b);
+        if before <= 0.0 {
+            continue;
+        }
+        b.smooth(
+            Smoothing {
+                rounds: 30,
+                share: 1.0,
+                held: &[],
+            },
+            |_, p| Some(p),
+        );
+        let after = worst(&b);
+        assert!(
+            after >= before.min(gecko_core::smoothing::FLOOR) - 1e-9,
+            "trial {trial}: the worst corner went from {before} to {after}"
+        );
     }
 }

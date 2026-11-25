@@ -3,6 +3,20 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
+## Unreleased
+
+- **Smoothing aims at cubes, and is symmetric.** It used to move each node
+  towards the middle of its neighbors, one node after another in the order
+  of their names, keeping a move only if that node's worst corner got no
+  worse — so the answer depended on the naming, a symmetric blocking came
+  out lopsided, and nodes stopped part way. It now lowers one score for the
+  whole blocking: per corner, how far from square, without bound as it
+  folds flat; per block, how unevenly spaced. Every move is worked out from
+  the same positions and taken together, so a symmetric configuration stays
+  symmetric and a cut put down off the middle goes to the middle. No corner
+  falls below a scaled Jacobian of 0.2, or below where it started. It takes
+  more rounds than before to settle.
+
 ## 0.2.6
 
 - **An edge along several curves, a face across several surfaces.**

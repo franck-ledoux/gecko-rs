@@ -33,10 +33,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::arena::{index, Arena};
 use crate::cells::{
-    across, apart, best_pairing, flatness, mitre, quad_normal, scaled_jacobian, BlockFace,
-    BlockingError, Census, ChordBlock, GroupMasks, Hex, On, Pulled, Settling, Sheet, SheetCells,
-    SheetEdge, Slab, Smoothing, Unmet, EDGE_AXIS, FACE_AXIS, HEX_CORNER_EDGES, HEX_EDGES,
-    HEX_FACES, OPPOSITE, PILLOW_SHARE, SPLIT_FRAME,
+    across, apart, best_pairing, mitre, quad_normal, BlockFace, BlockingError, Census, ChordBlock,
+    GroupMasks, Hex, On, Pulled, Settling, Sheet, SheetCells, SheetEdge, Slab, Smoothing, Unmet,
+    EDGE_AXIS, FACE_AXIS, HEX_EDGES, HEX_FACES, OPPOSITE, PILLOW_SHARE, SPLIT_FRAME,
 };
 use crate::ids::CellId;
 
@@ -481,64 +480,6 @@ impl Blocking {
     }
 
     /// The blocks and loose faces a node is a corner of.
-    fn around_node(&self, node: NodeId) -> (Vec<BlockId>, Vec<FaceId>) {
-        self.climbing(|up| {
-            let faces: Vec<FaceId> = up.node_faces.get(&node).cloned().unwrap_or_default();
-            let mut blocks: Vec<BlockId> = faces
-                .iter()
-                .filter_map(|f| self.faces.get(*f))
-                .flat_map(|f| f.sides.iter().flatten().map(|side| side.block))
-                .collect();
-            blocks.sort_unstable();
-            blocks.dedup();
-            let loose: Vec<FaceId> = faces
-                .into_iter()
-                .filter(|f| {
-                    self.faces
-                        .get(*f)
-                        .is_some_and(|face| face.sides.iter().all(|side| side.is_none()))
-                })
-                .collect();
-            (blocks, loose)
-        })
-    }
-
-    /// The worst corner of anything this node is a corner of.
-    ///
-    /// What a smoothing step is judged by: a Laplacian on a concave
-    /// boundary would happily turn a cell inside out, and this is how it is
-    /// told not to.
-    fn worst_corner_at(&self, node: NodeId) -> f64 {
-        let mut worst = f64::INFINITY;
-        let (blocks, loose) = self.around_node(node);
-        for id in blocks {
-            let corners = self.blocks.get(id).expect("live").nodes;
-            let at = corners.map(|c| self.nodes.get(c).expect("live").at);
-            for (corner, sides) in HEX_CORNER_EDGES.iter().enumerate() {
-                worst = worst.min(scaled_jacobian(at[corner], sides.map(|s| at[s])));
-            }
-        }
-        // The faces of a patch, which can fold without any block being
-        // involved at all.
-        for id in loose {
-            let at = self
-                .faces
-                .get(id)
-                .expect("live")
-                .nodes
-                .map(|c| self.nodes.get(c).expect("live").at);
-            for k in 0..4 {
-                worst = worst.min(flatness(at[k], at[(k + 3) % 4], at[(k + 1) % 4]));
-            }
-        }
-        if worst.is_finite() {
-            worst
-        } else {
-            // A node that is a corner of nothing cannot be made worse.
-            0.0
-        }
-    }
-
     /// Say where some of the nodes are, and put them there.
     fn classify_some(
         &mut self,
@@ -2300,43 +2241,263 @@ impl Blocking {
             })
             .collect();
         movable.sort_by_key(|(name, _)| *name);
+        if movable.is_empty() {
+            return 0.0;
+        }
 
-        let mut furthest = 0.0f64;
-        for _ in 0..how.rounds {
-            for &(name, id) in &movable {
-                let ring: Vec<[f64; 3]> = self
-                    .neighbors(name)
-                    .into_iter()
-                    .filter_map(|other| self.position(other))
-                    .collect();
-                if ring.is_empty() {
-                    continue;
-                }
-                let from = self.nodes.get(id).expect("live").at;
-                let middle = self.middle(&ring);
-                let mut to = [0, 1, 2].map(|k| from[k] + (middle[k] - from[k]) * share);
-                // Back onto whatever it follows, before anybody judges it:
-                // the point to weigh is the one the node would end up at.
-                if let Some(on) = self.nodes.get(id).expect("live").on {
-                    if let Some(onto) = project(on, to) {
-                        to = onto;
+        // What is weighed: every block, and every quadrangle of a patch —
+        // with which way each was turned when the smoothing began, so that
+        // a cell numbered left-handed is not taken for one inside out.
+        let blocks: Vec<([NodeId; 8], f64)> = self
+            .blocks
+            .iter()
+            .map(|(_, b)| {
+                let at = b.nodes.map(|n| self.nodes.get(n).expect("live").at);
+                (b.nodes, crate::smoothing::handedness(&at))
+            })
+            .collect();
+        let quads: Vec<([NodeId; 4], [f64; 3])> = self
+            .faces
+            .iter()
+            .filter(|(_, f)| f.sides.iter().all(|side| side.is_none()))
+            .map(|(_, f)| {
+                let at = f.nodes.map(|n| self.nodes.get(n).expect("live").at);
+                (f.nodes, crate::smoothing::normal_of(&at))
+            })
+            .collect();
+        // Which cells each moving node is a corner of: a node's move is
+        // weighed by those and nothing else.
+        let mut touching: HashMap<NodeId, (Vec<usize>, Vec<usize>)> = HashMap::new();
+        for &(_, id) in &movable {
+            touching.insert(id, (Vec::new(), Vec::new()));
+        }
+        for (k, (nodes, _)) in blocks.iter().enumerate() {
+            for n in nodes {
+                if let Some(t) = touching.get_mut(n) {
+                    if !t.0.contains(&k) {
+                        t.0.push(k);
                     }
                 }
-                let step = apart(from, to);
-                if step == 0.0 {
-                    continue;
+            }
+        }
+        for (k, (nodes, _)) in quads.iter().enumerate() {
+            for n in nodes {
+                if let Some(t) = touching.get_mut(n) {
+                    if !t.1.contains(&k) {
+                        t.1.push(k);
+                    }
                 }
+            }
+        }
 
-                let before = self.worst_corner_at(id);
-                self.nodes.get_mut(id).expect("live").at = to;
-                if self.worst_corner_at(id) < before {
-                    // Not an improvement. A Laplacian on a concave
-                    // boundary would have taken it and turned a cell
-                    // inside out.
-                    self.nodes.get_mut(id).expect("live").at = from;
+        let place = |s: &Self, n: NodeId| s.nodes.get(n).expect("live").at;
+        // A cell's energy and its worst corner, as the nodes now stand.
+        let block = |s: &Self, k: usize| {
+            let (nodes, hand) = blocks[k];
+            crate::smoothing::hex(&nodes.map(|n| place(s, n)), hand)
+        };
+        let face = |s: &Self, k: usize| {
+            let (nodes, normal) = quads[k];
+            crate::smoothing::quad(&nodes.map(|n| place(s, n)), normal)
+        };
+        // The whole of it: the sum, and the worst corner anywhere.
+        let total = |s: &Self| {
+            let mut energy = 0.0;
+            let mut worst = f64::INFINITY;
+            for k in 0..blocks.len() {
+                let (e, w) = block(s, k);
+                energy += e;
+                worst = worst.min(w);
+            }
+            for k in 0..quads.len() {
+                let (e, w) = face(s, k);
+                energy += e;
+                worst = worst.min(w);
+            }
+            (energy, worst)
+        };
+        // How big things are round a node: the step a derivative is taken
+        // over, and the furthest one move may go.
+        let reach = |s: &Self, id: NodeId| {
+            let here = place(s, id);
+            let (bs, qs) = &touching[&id];
+            let mut longest = 0.0f64;
+            for k in bs {
+                for n in blocks[*k].0 {
+                    longest = longest.max(apart(here, place(s, n)));
+                }
+            }
+            for k in qs {
+                for n in quads[*k].0 {
+                    longest = longest.max(apart(here, place(s, n)));
+                }
+            }
+            longest
+        };
+
+        let mut furthest = 0.0f64;
+        // The first step goes `share` of the way; after that each starts
+        // at twice the last one taken, up to a whole one — the line search
+        // halves it again where it has to, and a smoothing that keeps
+        // halving from the same place every round crawls.
+        let mut start = share;
+        // The direction last taken, and the slope and Newton step it was
+        // built from: conjugate gradients, so that a correction keeps
+        // travelling along a row of nodes instead of being found again,
+        // one node further, every round.
+        let mut last: HashMap<NodeId, Remembered> = HashMap::new();
+        for _ in 0..how.rounds {
+            let (before, worst_before) = total(self);
+            if !before.is_finite() {
+                break;
+            }
+            // Every move worked out from the same positions, so that the
+            // answer cannot depend on which node was looked at first — and
+            // a configuration that is symmetric stays symmetric.
+            let mut steps: Vec<(NodeId, [f64; 3])> = Vec::with_capacity(movable.len());
+            let mut slopes: Vec<[f64; 3]> = Vec::with_capacity(movable.len());
+            for &(_, id) in &movable {
+                let (bs, qs) = touching[&id].clone();
+                let local = |s: &Self| -> f64 {
+                    bs.iter().map(|k| block(s, *k).0).sum::<f64>()
+                        + qs.iter().map(|k| face(s, *k).0).sum::<f64>()
+                };
+                let size = reach(self, id);
+                if size <= 0.0 {
                     continue;
                 }
-                furthest = furthest.max(step);
+                let h = size * 1e-5;
+                let from = place(self, id);
+                let here = local(self);
+                // Probed where the node may go: a node on a surface is
+                // weighed sliding over it, not lifted off and dropped back,
+                // or the whole of its step is spent where projection
+                // throws it away.
+                let on = self.nodes.get(id).expect("live").on;
+                let follow = |p: [f64; 3]| on.and_then(|on| project(on, p)).unwrap_or(p);
+                // The slope and the curvature, all nine of it: x, y and z
+                // pull on each other, and a step that ignores it is
+                // halved over and over by the line search.
+                let weigh = |s: &mut Self, d: [f64; 3]| -> f64 {
+                    let p = [0, 1, 2].map(|k| from[k] + d[k]);
+                    s.nodes.get_mut(id).expect("live").at = follow(p);
+                    local(s)
+                };
+                let mut slope = [0.0; 3];
+                let mut bend = [[0.0; 3]; 3];
+                let mut finite = here.is_finite();
+                for a in 0..3 {
+                    let mut d = [0.0; 3];
+                    d[a] = h;
+                    let up = weigh(self, d);
+                    d[a] = -h;
+                    let down = weigh(self, d);
+                    finite &= up.is_finite() && down.is_finite();
+                    slope[a] = (up - down) / (2.0 * h);
+                    bend[a][a] = (up - 2.0 * here + down) / (h * h);
+                    for b in 0..a {
+                        let mut d = [0.0; 3];
+                        let mut corner = |sa: f64, sb: f64, s: &mut Self| {
+                            d = [0.0; 3];
+                            d[a] = sa * h;
+                            d[b] = sb * h;
+                            weigh(s, d)
+                        };
+                        let pp = corner(1.0, 1.0, self);
+                        let pm = corner(1.0, -1.0, self);
+                        let mp = corner(-1.0, 1.0, self);
+                        let mm = corner(-1.0, -1.0, self);
+                        finite &= [pp, pm, mp, mm].iter().all(|e| e.is_finite());
+                        let mixed = (pp - pm - mp + mm) / (4.0 * h * h);
+                        bend[a][b] = mixed;
+                        bend[b][a] = mixed;
+                    }
+                }
+                self.nodes.get_mut(id).expect("live").at = from;
+                if !finite {
+                    continue;
+                }
+                let step = newton(slope, bend, 0.25 * size);
+                steps.push((id, step));
+                slopes.push(slope);
+            }
+            // Polak–Ribière, preconditioned by each node's own Newton step,
+            // and started afresh whenever it would not go downhill.
+            let dot3 = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+            let (mut up, mut down) = (0.0, 0.0);
+            for ((id, z), g) in steps.iter().zip(&slopes) {
+                if let Some((g0, z0, _)) = last.get(id) {
+                    up += dot3(g.map(|x| -x), [0, 1, 2].map(|k| z[k] - z0[k]));
+                    down += dot3(g0.map(|x| -x), *z0);
+                }
+            }
+            let beta = if down > 0.0 {
+                (up / down).max(0.0)
+            } else {
+                0.0
+            };
+            let mut directions: Vec<(NodeId, [f64; 3])> = steps
+                .iter()
+                .map(|(id, z)| {
+                    let d0 = last.get(id).map_or([0.0; 3], |l| l.2);
+                    (*id, [0, 1, 2].map(|k| z[k] + beta * d0[k]))
+                })
+                .collect();
+            let downhill: f64 = directions
+                .iter()
+                .zip(&slopes)
+                .map(|((_, d), g)| dot3(*d, *g))
+                .sum();
+            if downhill >= 0.0 {
+                directions = steps.clone();
+            }
+            for (((id, z), g), (_, d)) in steps.iter().zip(&slopes).zip(&directions) {
+                last.insert(*id, (*g, *z, *d));
+            }
+            let steps = directions;
+
+            // One length for every move, halved until the whole is better
+            // and nothing got worse.
+            let olds: Vec<[f64; 3]> = steps.iter().map(|(id, _)| place(self, *id)).collect();
+            let mut taken = false;
+            let mut length = start;
+            for _ in 0..30 {
+                let mut longest = 0.0f64;
+                for ((id, step), from) in steps.iter().zip(&olds) {
+                    let mut to = [0, 1, 2].map(|k| from[k] + step[k] * length);
+                    // Back onto whatever it follows, before anybody judges
+                    // it: the point to weigh is the one it would end up at.
+                    if let Some(on) = self.nodes.get(*id).expect("live").on {
+                        if let Some(onto) = project(on, to) {
+                            to = onto;
+                        }
+                    }
+                    longest = longest.max(apart(*from, to));
+                    self.nodes.get_mut(*id).expect("live").at = to;
+                }
+                let (after, worst_after) = total(self);
+                let better = after < before - 1e-12 * before.abs().max(1.0);
+                // No corner below the floor that was not already there, and
+                // one that was no worse: a smoother is not allowed to trade
+                // a broken cell for a better average. Above the floor the
+                // energy decides — the worst corner of a pillow round a
+                // corner of the model is one no smoothing can mend, and a
+                // guard that held it would hold everything else too.
+                let safe = worst_after >= worst_before.min(crate::smoothing::FLOOR) - 1e-12;
+                if better && safe {
+                    furthest = furthest.max(longest);
+                    taken = true;
+                    start = (2.0 * length).min(1.0);
+                    break;
+                }
+                for ((id, _), from) in steps.iter().zip(&olds) {
+                    self.nodes.get_mut(*id).expect("live").at = *from;
+                }
+                length *= 0.5;
+            }
+            if !taken {
+                // Nowhere better within reach: settled.
+                break;
             }
         }
         furthest
@@ -4259,3 +4420,86 @@ impl Blocking {
         ]
     }
 }
+
+/// The step to the bottom of the quadratic a slope and a curvature
+/// describe, no longer than `most`.
+///
+/// Where the curvature does not curve up in every direction — a node on a
+/// surface does not move off it, so its energy is flat that way — it is
+/// stiffened until it does, which turns the flat directions into no step
+/// at all and the falling ones into a descent.
+fn newton(slope: [f64; 3], bend: [[f64; 3]; 3], most: f64) -> [f64; 3] {
+    let length = (slope.iter().map(|g| g * g).sum::<f64>()).sqrt();
+    if length == 0.0 || most <= 0.0 {
+        return [0.0; 3];
+    }
+    let scale = (0..3)
+        .map(|k| bend[k][k].abs())
+        .fold(0.0, f64::max)
+        .max(length / most);
+    let mut stiffen = 0.0;
+    for _ in 0..60 {
+        let mut m = bend;
+        for (k, row) in m.iter_mut().enumerate() {
+            row[k] += stiffen;
+        }
+        if let Some(step) = solve_positive(m, slope.map(|g| -g)) {
+            let long = (step.iter().map(|x| x * x).sum::<f64>()).sqrt();
+            if long <= most {
+                return step;
+            }
+        }
+        stiffen = if stiffen == 0.0 {
+            1e-6 * scale
+        } else {
+            stiffen * 4.0
+        };
+    }
+    // As stiff as that, it is a short step down the slope.
+    slope.map(|g| -g / length * most)
+}
+
+/// Solve `m x = r` for a symmetric `m`, by Cholesky — or nothing, when `m`
+/// is not positive definite.
+// Index loops are what a Cholesky factorization is written in.
+#[allow(clippy::needless_range_loop)]
+fn solve_positive(m: [[f64; 3]; 3], r: [f64; 3]) -> Option<[f64; 3]> {
+    let mut l = [[0.0; 3]; 3];
+    for i in 0..3 {
+        for j in 0..=i {
+            let mut sum = m[i][j];
+            for k in 0..j {
+                sum -= l[i][k] * l[j][k];
+            }
+            if i == j {
+                if sum <= 0.0 {
+                    return None;
+                }
+                l[i][i] = sum.sqrt();
+            } else {
+                l[i][j] = sum / l[j][j];
+            }
+        }
+    }
+    let mut y = [0.0; 3];
+    for i in 0..3 {
+        let mut sum = r[i];
+        for k in 0..i {
+            sum -= l[i][k] * y[k];
+        }
+        y[i] = sum / l[i][i];
+    }
+    let mut x = [0.0; 3];
+    for i in (0..3).rev() {
+        let mut sum = y[i];
+        for k in i + 1..3 {
+            sum -= l[k][i] * x[k];
+        }
+        x[i] = sum / l[i][i];
+    }
+    Some(x)
+}
+
+/// What a smoothing remembers of a node from one round to the next: its
+/// slope, its own Newton step, and the direction it was moved in.
+type Remembered = ([f64; 3], [f64; 3], [f64; 3]);

@@ -188,11 +188,10 @@ export const MAX_MERGE_ANGLE = 45;
 export const SEGMENTS = 10;
 export const MAX_SEGMENTS = 60;
 
-/** What a smoothing pass does, and the most the drawer offers: how many
- *  passes, and how far along the way to the middle of its neighbors a
- *  node goes in each. Half, not all: all of it is what makes a Laplacian
- *  swing from one side of a crease to the other and never settle. The
- *  kernel's own defaults are the same two numbers. */
+/** What a smoothing does, and the most the drawer offers: how many
+ *  rounds, and how far the first of them goes. Half, so that somebody can
+ *  watch what is happening to their model. The kernel's own defaults are
+ *  the same two numbers. */
 export const SMOOTH_ROUNDS = 5;
 export const MAX_SMOOTH_ROUNDS = 30;
 export const SMOOTH_SHARE = 0.5;
@@ -243,8 +242,8 @@ export interface ViewPrefs {
   box: { margin: number; snap: number };
   /** How many segments a sheet nobody has set is meshed into. */
   segments: number;
-  /** What a smoothing pass does: how many times over, and how far along
-   *  the way to the middle of its neighbors a node goes each time. */
+  /** What a smoothing does: how many rounds, and how far the first of
+   *  them goes. */
   smooth: { rounds: number; share: number };
   /** Whether pillowing a set of blocks lays the layer along their faces on
    *  the outer boundary as well as along the ones between them and the

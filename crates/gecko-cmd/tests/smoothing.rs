@@ -86,20 +86,20 @@ fn smoothing_goes_through_the_json_door_like_everything_else() {
     })
     .unwrap();
 
-    let raw = s.apply_json(r#"{"op":"smooth","rounds":4,"share":1.0}"#);
+    let raw = s.apply_json(r#"{"op":"smooth","rounds":12,"share":1.0}"#);
     let reply: serde_json::Value = serde_json::from_str(&raw).unwrap();
     assert_eq!(reply["ok"], true, "{raw}");
     assert!(
         reply["outcome"]["message"]
             .as_str()
             .unwrap()
-            .contains("smoothed 4 times"),
+            .contains("smoothed 12 times"),
         "{raw}"
     );
 
     let back = at(&s, middle);
     for k in 0..3 {
-        assert!((back[k] - was[k]).abs() < 1e-9, "it came back to {back:?}");
+        assert!((back[k] - was[k]).abs() < 1e-8, "it came back to {back:?}");
     }
 
     // And it is one step of undo, like every other command.

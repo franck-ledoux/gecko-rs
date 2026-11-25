@@ -2,34 +2,56 @@
 
 A blocking attached to a model is rarely a *tidy* blocking: edges end up
 long in one place and short in another, and corners end up less square than
-they could be. Press `R` and every node moves towards the middle of its
-neighbors — as far as its classification allows.
+they could be. Press `R` and every node moves to where the blocks round it
+are as near cubes as they can be — as far as its classification allows.
 
 ```lua
 gecko.smooth{ rounds = 5, share = 0.5 }
 ```
 
-## Smart, and what that buys
+## What it aims at
 
-Two halves to the name, and both of them earn their keep.
+Every block is scored, and the smoothing lowers the sum of the scores. Two
+parts to a block's score, each of them 1 for a cube of any size and growing
+from there:
 
-**Laplacian**: a node goes a *share* of the way to the average of the nodes
-an edge joins it to. All of the way is what makes a Laplacian swing from one
-side of a crease to the other and never settle; half of it lets you watch
-what is happening to your model. The share and the number of passes are the
-two sliders under *Operations*.
+- **Square corners.** At each of the eight corners, how far the three edges
+  leaving it are from square, measured on the edges' directions alone. It
+  grows without bound as a corner folds flat, so a cell is not turned inside
+  out on the way to anywhere.
+- **Even spacing.** The mean squared edge over the volume to the two
+  thirds. Square corners alone say nothing about where a straight cut
+  through a row of blocks sits — every place makes the same rectangles — and
+  this does: two blocks between fixed ends score best at the same size.
 
-**Smart**: a move is taken only if it does not make the worst corner of the
-cells round that node any worse. A plain Laplacian on a concave boundary
-happily turns cells inside out; this is what stops it. The measure is the
-**scaled Jacobian** at each corner of each cell the node belongs to — the
-volume the three edges leaving a corner span, over the product of their
-lengths, which is 1 at a right angle and negative where the cell is inside
-out.
+Neither part changes when a block is scaled, so nothing is gained by
+shrinking: a blocking free to slide over a surface does not walk into a
+point, as a Laplacian's would. A quadrangle of a patch is scored the same
+way, one dimension down.
+
+## Symmetric, and safe
+
+Every node's move is worked out **from the same positions**, and they are
+taken together: the answer does not depend on which node was looked at
+first, so a configuration that is symmetric stays symmetric, and a cut put
+down off the middle of a symmetric one goes to the middle.
+
+Each node's move is a Newton step on its own score, carrying part of the
+last round's direction with it so that a correction keeps travelling along
+a row of nodes. All the moves are then scaled by **one** length — `share`
+of the way for the first round, and from then on twice what was last taken
+— halved until the whole scores better and no corner has fallen below a
+scaled Jacobian of 0.2 (or, if one was already below that, until none is
+worse than it was). The score's wall alone is not enough: a step can jump
+clean over it.
 
 The consequence worth knowing: on a blocking that is already as good as it
 gets, smoothing does **nothing**, and says so. A cube's corners are right
-angles, and there is no move that improves on a right angle.
+angles and its edges even, and there is no move that improves on that.
+
+It takes rounds. A blocking far from where it settles may need twenty or
+thirty — the rounds slider goes to 30, and `R` again picks up where the last
+left off.
 
 ## What the classification decides
 
@@ -67,7 +89,8 @@ Smoothing is something you ask for: `R`, or `gecko.smooth`, when the
 blocking is where you want it and you want it tidied.
 
 !!! note "Determinism, and how it is checked"
-    Nodes are visited **by name** and each move is applied before the next
-    is worked out, so the answer does not depend on how the map happened to
-    lay its darts out. The same script is run in the terminal and in the
-    page and the bytes it produces are compared.
+    Every move is worked out from the same positions, so the answer does
+    not depend on how the cells happen to be stored. The score uses nothing
+    but the four operations and square roots — its one cube root is worked
+    out by hand — so the terminal and the page round alike: the same script
+    is run in both and the bytes it produces are compared.

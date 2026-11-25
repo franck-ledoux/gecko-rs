@@ -5928,10 +5928,10 @@ test("R smooths the blocking, by what the sliders say", async ({ page }) => {
     () => (window as any).__gecko.stats().blocks === 8,
   );
 
-  // All the way to the middle, once, so where the node lands says that the
-  // slider was the number sent.
+  // All the way to the middle, in rounds enough to get there, so where the
+  // node lands says that the sliders were the numbers sent.
   await openParams(page);
-  await page.locator("[data-test=smooth-rounds]").fill("1");
+  await page.locator("[data-test=smooth-rounds]").fill("20");
   await page.locator("[data-test=smooth-share]").fill("1");
   await expect(page.locator("[data-test=smooth-share-value]")).toHaveText(
     "100%",
@@ -5944,7 +5944,7 @@ test("R smooths the blocking, by what the sliders say", async ({ page }) => {
   );
   await page.keyboard.press("r");
   await expect(page.locator("#status")).toContainText(
-    "smoothed 1 time by 100%",
+    "smoothed 20 times by 100%",
   );
 
   // And the node went back to the middle of its ring, which for this grid

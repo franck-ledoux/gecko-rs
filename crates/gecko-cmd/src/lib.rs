@@ -185,15 +185,12 @@ pub const MAX_SEGMENTS: u32 = 200;
 /// and will, the day a model needs it.
 pub const SNAP_SHARE: f64 = 0.02;
 
-/// How many passes a smoothing makes when nobody says.
+/// How many rounds a smoothing makes when nobody says.
 pub const SMOOTH_ROUNDS: u32 = 5;
 
-/// How far along the way to the middle of its neighbors a node goes in
-/// one pass, when nobody says.
-///
-/// Half, not all: all of it is what makes a Laplacian swing from one side
-/// of a crease to the other and never settle, and half of it lets somebody
-/// watch what is happening to their model.
+/// How far the first round of a smoothing goes, when nobody says: half of
+/// its step, which lets somebody watch what is happening to their model.
+/// Later rounds start from twice the last one taken.
 pub const SMOOTH_SHARE: f64 = 0.5;
 
 fn default_snap() -> f64 {
@@ -535,13 +532,14 @@ pub enum Command {
         face: u32,
         height: f64,
     },
-    /// Move the nodes towards the middle of their neighbors, as far as
-    /// what they are classified on allows: a **smart Laplacian**.
+    /// Move the nodes to where every block is as near a cube as it can be
+    /// — square corners, even spacing — as far as what they are classified
+    /// on allows. See `gecko_core::smoothing`.
     ///
-    /// A node goes `share` of the way to the average of its one-ring, and
-    /// the move is taken only if it does not make the worst corner round
-    /// it worse. Frozen nodes, nodes on a geometric corner, and nodes on
-    /// the blocking's boundary that follow nothing all stay where they are.
+    /// Every move is worked out from the same positions, so a symmetric
+    /// configuration stays symmetric; `share` is how far the first round
+    /// goes. Frozen nodes, nodes on a geometric corner, and nodes on the
+    /// blocking's boundary that follow nothing all stay where they are.
     Smooth {
         #[serde(default = "default_rounds")]
         rounds: u32,

@@ -288,10 +288,10 @@ pub struct SheetCells {
 /// What a smoothing pass is asked to do.
 #[derive(Clone, Copy, Debug)]
 pub struct Smoothing<'a> {
-    /// How many passes. Each one moves every node once.
+    /// How many rounds. Each one moves every node once, all together.
     pub rounds: u32,
-    /// How far along the way to the middle of its neighbors a node goes,
-    /// from 0 (nowhere) to 1 (all the way).
+    /// How far the first round's step goes, from 0 (nowhere) to 1 (the
+    /// whole Newton step); later rounds start at twice the last one taken.
     pub share: f64,
     /// Nodes that must not move whatever their classification allows —
     /// the one somebody has just put somewhere, above all.

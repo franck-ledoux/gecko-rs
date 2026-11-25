@@ -110,4 +110,4 @@ end
 local grid = gecko.stats().mesh
 print(string.format("smoothed: %d nodes, %d hexes, digest %d", grid.nodes, grid.hexes, digest))
 assert(grid.hexes == 216, "two segments each way over twenty-seven blocks: " .. grid.hexes)
-assert(digest == 145834, "the two hosts do not agree on the smoothed bytes: " .. digest)
+assert(digest == 162582, "the two hosts do not agree on the smoothed bytes: " .. digest)

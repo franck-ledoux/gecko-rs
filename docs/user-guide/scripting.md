@@ -72,7 +72,7 @@ shorthand for a call with one table.
 | `gecko.add_slab({ {x,y,z}, … }, { thickness = … })`                  | a thin block on four points, welded the same way                     |
 | `gecko.remove_face(id)`                                              | one face of a patch                                                  |
 | `gecko.extrude_patch(face, 0.5)`                                     | the whole sheet, into blocks; ± either way                           |
-| `gecko.smooth{ rounds = 5, share = 0.5 }`                            | a smart Laplacian, geometry respected                                |
+| `gecko.smooth{ rounds = 5, share = 0.5 }`                            | every block towards a cube, geometry respected                       |
 | `gecko.remove_block(id)`, `gecko.glue_faces(a, b)`                   |                                                                      |
 | `gecko.remove_blocks({ id, … })`                                     | several, as one step                                                 |
 | `gecko.extrude_face(face, block, height)`                            |                                                                      |

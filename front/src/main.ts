@@ -2018,8 +2018,8 @@ async function boot() {
   }
 
   /**
-   * Smooth the blocking: the nodes towards the middle of their neighbors,
-   * as far as what they follow allows.
+   * Smooth the blocking: every block towards a cube — square corners, even
+   * spacing — as far as what the nodes follow allows.
    *
    * How many passes and how far each one goes are the two sliders in the
    * settings panel, sent with the command rather than kept by the kernel.

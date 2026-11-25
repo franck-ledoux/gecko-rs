@@ -19,6 +19,7 @@ pub mod blocking;
 pub mod cells;
 pub mod ids;
 pub mod mesh;
+pub mod smoothing;
 
 pub use blocking::Blocking;
 /// The vocabulary: the plain data the structure is spoken in. See [`cells`].
