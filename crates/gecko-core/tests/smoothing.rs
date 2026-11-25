@@ -555,16 +555,20 @@ fn an_open_patch_does_not_collapse_nor_fold() {
         let all: Vec<f64> = b.nodes().map(|(_, p)| p[k]).collect();
         all.iter().copied().fold(f64::MIN, f64::max) - all.iter().copied().fold(f64::MAX, f64::min)
     };
+    // Not all of it: with every node free and one quadrangle folded right
+    // over, unfolding it draws the rest in somewhat — by a sixth to a third,
+    // depending on the untangling's target. A collapse goes to nothing.
     assert!(
-        span(0) > 1.5 && span(1) > 1.5,
+        span(0) > 1.2 && span(1) > 1.2,
         "the patch should have kept most of its extent, not {:?}",
         (span(0), span(1))
     );
-    // None that was whole has been folded over.
-    for (was, now) in before.iter().zip(turns(&b)) {
-        if unfolded(was) {
-            assert!(unfolded(&now), "a quadrangle folded: {now:?}");
-        }
+    // None has been folded over — and the one that was folded to begin
+    // with is not any more: a corner turned the wrong way used to be
+    // walled in there, its energy growing without bound towards the flat
+    // it would have to pass through.
+    for now in turns(&b) {
+        assert!(unfolded(&now), "a quadrangle is folded: {now:?}");
     }
 }
 
@@ -789,6 +793,43 @@ fn no_corner_is_turned_inside_out_however_it_starts() {
         assert!(
             after >= before.min(gecko_core::smoothing::FLOOR) - 1e-9,
             "trial {trial}: the worst corner went from {before} to {after}"
+        );
+    }
+}
+
+#[test]
+fn a_block_turned_inside_out_is_untangled_rather_than_stopping_everything() {
+    // The node in the middle pushed right through the far side of the
+    // blocks round it: four of the eight are inside out. Their energy is
+    // infinite, and a smoothing that weighed it that way found no step that
+    // lowered the whole, so it moved nothing at all.
+    let mut b = grid();
+    let middle = node_at(&b, [1.0, 1.0, 1.0]);
+    b.set_position(middle, [2.4, 1.3, 1.2]).unwrap();
+    assert!(
+        worst(&b) < 0.0,
+        "the setup should be tangled: {}",
+        worst(&b)
+    );
+
+    b.smooth(
+        Smoothing {
+            rounds: 40,
+            share: 0.5,
+            held: &[],
+        },
+        nowhere,
+    );
+    assert!(
+        worst(&b) > 0.5,
+        "every corner should be sound again, the worst is {}",
+        worst(&b)
+    );
+    let back = at(&b, middle);
+    for k in 0..3 {
+        assert!(
+            (back[k] - 1.0).abs() < 1e-3,
+            "and the node back in the middle, not at {back:?}"
         );
     }
 }

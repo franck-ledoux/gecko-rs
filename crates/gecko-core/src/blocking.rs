@@ -2210,6 +2210,93 @@ impl Blocking {
             .any(|other| self.node_class(other).is_some())
     }
 
+    /// Which way each block's corners turn, as the blocking is put
+    /// together rather than as it now stands.
+    ///
+    /// Two blocks across a face are turned the same way when they walk that
+    /// face in opposite directions, and opposite ways when they walk it the
+    /// same way — so one block's turn settles its neighbours', and theirs
+    /// the next, across each connected piece. Which of the two turns the
+    /// piece as a whole takes is the one its volume adds up to. Reading each
+    /// block's turn off its own volume instead takes a block that has been
+    /// turned inside out for a sound one numbered the other way round, and
+    /// nothing then sees that it needs mending.
+    ///
+    /// A block whose neighbours disagree about it — a piece that cannot be
+    /// turned one way throughout — keeps the turn of its own volume.
+    pub fn handedness(&self) -> HashMap<BlockId, f64> {
+        let own: HashMap<BlockId, f64> = self
+            .blocks
+            .iter()
+            .map(|(id, b)| {
+                let at = b.nodes.map(|n| self.nodes.get(n).expect("live").at);
+                (id, crate::smoothing::handedness(&at))
+            })
+            .collect();
+        let volume = |id: BlockId| {
+            let b = self.blocks.get(id).expect("live");
+            let at = b.nodes.map(|n| self.nodes.get(n).expect("live").at);
+            crate::smoothing::volume(&at)
+        };
+        let walk = |side: &Side| {
+            let b = self.blocks.get(side.block).expect("live");
+            HEX_FACES[side.slot as usize].map(|c| b.nodes[c])
+        };
+        // +1 when two walks of the same four corners go opposite ways.
+        let opposite = |a: [NodeId; 4], b: [NodeId; 4]| -> f64 {
+            let Some(i) = b.iter().position(|n| *n == a[0]) else {
+                return 0.0;
+            };
+            if b[(i + 3) % 4] == a[1] {
+                1.0
+            } else {
+                -1.0
+            }
+        };
+        let mut across: HashMap<BlockId, Vec<(BlockId, f64)>> = HashMap::new();
+        for (_, face) in self.faces.iter() {
+            if let [Some(a), Some(b)] = &face.sides {
+                let same = opposite(walk(a), walk(b));
+                across.entry(a.block).or_default().push((b.block, same));
+                across.entry(b.block).or_default().push((a.block, same));
+            }
+        }
+        let mut out = HashMap::new();
+        let mut ids: Vec<BlockId> = self.blocks.ids().collect();
+        ids.sort_by_key(|id| self.block_name(*id));
+        let mut done: HashSet<BlockId> = HashSet::new();
+        for seed in ids {
+            if done.contains(&seed) {
+                continue;
+            }
+            // Turns relative to the seed, and whether the piece agrees with
+            // itself everywhere.
+            let mut relative: HashMap<BlockId, f64> = HashMap::from([(seed, 1.0)]);
+            let mut queue = vec![seed];
+            let mut consistent = true;
+            while let Some(here) = queue.pop() {
+                let mine = relative[&here];
+                for &(next, same) in across.get(&here).map(Vec::as_slice).unwrap_or(&[]) {
+                    let theirs = mine * same;
+                    match relative.get(&next) {
+                        Some(&known) => consistent &= known == theirs,
+                        None => {
+                            relative.insert(next, theirs);
+                            queue.push(next);
+                        }
+                    }
+                }
+            }
+            let sum: f64 = relative.iter().map(|(id, r)| r * volume(*id)).sum();
+            let turn = if sum < 0.0 { -1.0 } else { 1.0 };
+            for (id, r) in relative {
+                done.insert(id);
+                out.insert(id, if consistent { turn * r } else { own[&id] });
+            }
+        }
+        out
+    }
+
     pub fn smooth(
         &mut self,
         how: Smoothing<'_>,
@@ -2248,21 +2335,28 @@ impl Blocking {
         // What is weighed: every block, and every quadrangle of a patch —
         // with which way each was turned when the smoothing began, so that
         // a cell numbered left-handed is not taken for one inside out.
-        let blocks: Vec<([NodeId; 8], f64)> = self
+        let hands = self.handedness();
+        // And how big each was, which is what untangling it is measured
+        // against.
+        let blocks: Vec<([NodeId; 8], f64, f64)> = self
             .blocks
             .iter()
-            .map(|(_, b)| {
+            .map(|(id, b)| {
                 let at = b.nodes.map(|n| self.nodes.get(n).expect("live").at);
-                (b.nodes, crate::smoothing::handedness(&at))
+                (b.nodes, hands[&id], crate::smoothing::hex_size(&at))
             })
             .collect();
-        let quads: Vec<([NodeId; 4], [f64; 3])> = self
+        let quads: Vec<([NodeId; 4], [f64; 3], f64)> = self
             .faces
             .iter()
             .filter(|(_, f)| f.sides.iter().all(|side| side.is_none()))
             .map(|(_, f)| {
                 let at = f.nodes.map(|n| self.nodes.get(n).expect("live").at);
-                (f.nodes, crate::smoothing::normal_of(&at))
+                (
+                    f.nodes,
+                    crate::smoothing::normal_of(&at),
+                    crate::smoothing::quad_size(&at),
+                )
             })
             .collect();
         // Which cells each moving node is a corner of: a node's move is
@@ -2271,7 +2365,7 @@ impl Blocking {
         for &(_, id) in &movable {
             touching.insert(id, (Vec::new(), Vec::new()));
         }
-        for (k, (nodes, _)) in blocks.iter().enumerate() {
+        for (k, (nodes, _, _)) in blocks.iter().enumerate() {
             for n in nodes {
                 if let Some(t) = touching.get_mut(n) {
                     if !t.0.contains(&k) {
@@ -2280,7 +2374,7 @@ impl Blocking {
                 }
             }
         }
-        for (k, (nodes, _)) in quads.iter().enumerate() {
+        for (k, (nodes, _, _)) in quads.iter().enumerate() {
             for n in nodes {
                 if let Some(t) = touching.get_mut(n) {
                     if !t.1.contains(&k) {
@@ -2292,29 +2386,72 @@ impl Blocking {
 
         let place = |s: &Self, n: NodeId| s.nodes.get(n).expect("live").at;
         // A cell's energy and its worst corner, as the nodes now stand.
-        let block = |s: &Self, k: usize| {
-            let (nodes, hand) = blocks[k];
-            crate::smoothing::hex(&nodes.map(|n| place(s, n)), hand)
+        //
+        // In a round that begins with anything tangled, every cell is
+        // weighed by what untangling it costs instead: a tangled cell's own
+        // energy is infinite or walled in on the wrong side of zero, and a
+        // single inverted block used to stop every node everywhere. Once
+        // nothing is tangled, the rounds go back to squaring cells up.
+        let block = |s: &Self, k: usize, tangled: &[bool]| {
+            let (nodes, hand, size) = blocks[k];
+            let at = nodes.map(|n| place(s, n));
+            let (energy, worst) = crate::smoothing::hex(&at, hand);
+            if tangled[k] {
+                (crate::smoothing::hex_tangle(&at, hand, size), worst)
+            } else {
+                (energy, worst)
+            }
         };
-        let face = |s: &Self, k: usize| {
-            let (nodes, normal) = quads[k];
-            crate::smoothing::quad(&nodes.map(|n| place(s, n)), normal)
+        let face = |s: &Self, k: usize, tangled: &[bool]| {
+            let (nodes, normal, size) = quads[k];
+            let at = nodes.map(|n| place(s, n));
+            let (energy, worst) = crate::smoothing::quad(&at, normal);
+            if tangled[k] {
+                (crate::smoothing::quad_tangle(&at, normal, size), worst)
+            } else {
+                (energy, worst)
+            }
         };
-        // The whole of it: the sum, and the worst corner anywhere.
-        let total = |s: &Self| {
+        // The whole of it: the sum, and the worst corner of the cells that
+        // are not tangled. Those are the ones the floor protects; a tangled
+        // one is on its way up, and what it is charged already says so.
+        let total = |s: &Self, tb: &[bool], tq: &[bool]| {
             let mut energy = 0.0;
             let mut worst = f64::INFINITY;
             for k in 0..blocks.len() {
-                let (e, w) = block(s, k);
+                let (e, w) = block(s, k, tb);
                 energy += e;
-                worst = worst.min(w);
+                if !tb[k] {
+                    worst = worst.min(w);
+                }
             }
             for k in 0..quads.len() {
-                let (e, w) = face(s, k);
+                let (e, w) = face(s, k, tq);
                 energy += e;
-                worst = worst.min(w);
+                if !tq[k] {
+                    worst = worst.min(w);
+                }
             }
             (energy, worst)
+        };
+        // Which cells are tangled, as the nodes now stand: those with a
+        // corner turned the wrong way, or with no energy a step could lower.
+        //
+        // A corner's term grows without bound as it folds flat from either
+        // side, so a corner already through zero is walled in on the wrong
+        // side — its energy finite, and no step across the wall ever lower.
+        let none_b = vec![false; blocks.len()];
+        let none_q = vec![false; quads.len()];
+        let broken = |(energy, worst): (f64, f64)| !energy.is_finite() || worst <= 0.0;
+        let tangles = |s: &Self| -> (Vec<bool>, Vec<bool>) {
+            (
+                (0..blocks.len())
+                    .map(|k| broken(block(s, k, &none_b)))
+                    .collect(),
+                (0..quads.len())
+                    .map(|k| broken(face(s, k, &none_q)))
+                    .collect(),
+            )
         };
         // How big things are round a node: the step a derivative is taken
         // over, and the furthest one move may go.
@@ -2346,8 +2483,28 @@ impl Blocking {
         // travelling along a row of nodes instead of being found again,
         // one node further, every round.
         let mut last: HashMap<NodeId, Remembered> = HashMap::new();
+        let mut was: Option<(Vec<bool>, Vec<bool>)> = None;
         for _ in 0..how.rounds {
-            let (before, worst_before) = total(self);
+            let (mut tb, mut tq) = tangles(self);
+            // While anything is tangled, everything is weighed by what
+            // untangling costs — sound cells included, which cost nothing
+            // until a corner of theirs falls below the target. Weighed by
+            // their own energy instead, a sound cell's corner has a wall at
+            // zero that no step crosses, and a broken block whose mending
+            // needed a neighbour to give a little stayed broken.
+            let untangling = tb.iter().chain(&tq).any(|t| *t);
+            if untangling {
+                tb.iter_mut().for_each(|t| *t = true);
+                tq.iter_mut().for_each(|t| *t = true);
+            }
+            // A cell untangled since the last round is weighed differently
+            // from now on, and directions remembered from the old weighing
+            // would point the conjugate gradients the wrong way.
+            if was.as_ref().is_some_and(|(b, q)| *b != tb || *q != tq) {
+                last.clear();
+            }
+            let (before, worst_before) = total(self, &tb, &tq);
+            was = Some((tb.clone(), tq.clone()));
             if !before.is_finite() {
                 break;
             }
@@ -2359,8 +2516,8 @@ impl Blocking {
             for &(_, id) in &movable {
                 let (bs, qs) = touching[&id].clone();
                 let local = |s: &Self| -> f64 {
-                    bs.iter().map(|k| block(s, *k).0).sum::<f64>()
-                        + qs.iter().map(|k| face(s, *k).0).sum::<f64>()
+                    bs.iter().map(|k| block(s, *k, &tb).0).sum::<f64>()
+                        + qs.iter().map(|k| face(s, *k, &tq).0).sum::<f64>()
                 };
                 let size = reach(self, id);
                 if size <= 0.0 {
@@ -2475,7 +2632,7 @@ impl Blocking {
                     longest = longest.max(apart(*from, to));
                     self.nodes.get_mut(*id).expect("live").at = to;
                 }
-                let (after, worst_after) = total(self);
+                let (after, worst_after) = total(self, &tb, &tq);
                 let better = after < before - 1e-12 * before.abs().max(1.0);
                 // No corner below the floor that was not already there, and
                 // one that was no worse: a smoother is not allowed to trade
@@ -2483,7 +2640,16 @@ impl Blocking {
                 // energy decides — the worst corner of a pillow round a
                 // corner of the model is one no smoothing can mend, and a
                 // guard that held it would hold everything else too.
-                let safe = worst_after >= worst_before.min(crate::smoothing::FLOOR) - 1e-12;
+                //
+                // While something is still tangled, the untangling decides
+                // alone. Mending a block turned inside out takes room from
+                // the blocks round it, and holding every one of them to its
+                // own worst corner left the broken one broken.
+                let safe = if untangling {
+                    true
+                } else {
+                    worst_after >= worst_before.min(crate::smoothing::FLOOR) - 1e-12
+                };
                 if better && safe {
                     furthest = furthest.max(longest);
                     taken = true;

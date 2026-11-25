@@ -49,6 +49,30 @@ The consequence worth knowing: on a blocking that is already as good as it
 gets, smoothing does **nothing**, and says so. A cube's corners are right
 angles and its edges even, and there is no move that improves on that.
 
+## Untangling first
+
+A block **turned inside out** — a corner folded through, the way projecting a
+rough blocking onto curved geometry can leave one — has no score worth
+lowering: the score grows without bound as a corner folds flat, from either
+side, so a corner already through is walled in there. One such block used to
+stop the whole smoothing.
+
+So a round that starts with anything tangled **untangles** instead: every
+corner is charged for how far its volume falls short of a tenth of what a cube
+of the block's size would have — nothing for a corner already past that, and
+more the further it has folded, with no wall anywhere. The floor on the worst
+corner is set aside while it does, since mending a broken block takes room
+from the ones round it. Once nothing is tangled, the rounds go back to
+squaring blocks up.
+
+Which way a block's corners ought to turn is read from how it is joined to its
+neighbours, not from its own volume: a block turned inside out as a whole
+looks, by its volume alone, like a sound one numbered the other way round.
+
+What it cannot mend is a fold **inside** a block: a face projected onto a
+curve that bulges further than the block next to it is thick. The blocks'
+corners are all a smoothing moves.
+
 It takes rounds. A blocking far from where it settles may need twenty or
 thirty — the rounds slider goes to 30, and `R` again picks up where the last
 left off.

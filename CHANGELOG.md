@@ -5,6 +5,16 @@ the day a tag was cut.
 
 ## Unreleased
 
+- **Smoothing untangles blocks turned inside out instead of stopping.** A
+  corner's score grows without bound as it folds flat, from either side, so a
+  corner already folded through was walled in on the wrong side; and a block
+  inverted as a whole had its handedness read off its own volume and passed
+  for sound. One such block stopped the whole smoothing — on a rough blocking
+  of a real part it moved nothing at all. A round that starts with anything
+  tangled now lowers how far each corner's volume falls short of a tenth of a
+  cube's, with no wall anywhere, and the blocks' handedness comes from how
+  they are joined. On that part every block came out sound.
+
 - **The wheel zooms towards the pointer, and a far-away part no longer keeps
   the camera off the rest.** How close the camera could come was a share of
   the whole model's diagonal, so a cube put fifty units from a shell two units

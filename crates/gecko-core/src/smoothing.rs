@@ -137,6 +137,90 @@ pub fn quad(at: &[[f64; 3]; 4], normal: [f64; 3]) -> (f64, f64) {
     (spacing + ORTHOGONALITY * corners / 4.0, worst)
 }
 
+/// Where an untangling aims every corner of a cell turned inside out: the
+/// volume of the corner, over the cube of the cell's mean edge, at least
+/// this high. A unit cube's corners are at one.
+pub const UNTANGLE_TARGET: f64 = 0.1;
+
+/// How a corner short of [`UNTANGLE_TARGET`] is charged: the square of how
+/// far short it is. Zero for a corner already there, finite however badly
+/// folded — which is the point. The energy of a cell turned inside out is
+/// infinite, and a smoothing that weighed it that way could never find a
+/// step that lowered the whole, so one inverted block anywhere stopped every
+/// node everywhere.
+///
+/// Measured by the corner's volume rather than its scaled Jacobian. The
+/// scaled Jacobian stops at minus one, and a corner folded right over sits
+/// on that floor with nothing sloping away from it: an untangling measured
+/// that way stalled with the node still on the wrong side. The volume keeps
+/// growing the further the node goes, so there is always a way back.
+fn short_of_target(volume: f64) -> f64 {
+    let short = (UNTANGLE_TARGET - volume).max(0.0);
+    short * short
+}
+
+/// A hexahedron's mean edge: the size its untangling is measured against.
+pub fn hex_size(at: &[[f64; 3]; 8]) -> f64 {
+    crate::HEX_EDGES
+        .iter()
+        .map(|[a, b]| {
+            let e = sub(at[*b], at[*a]);
+            dot(e, e).sqrt()
+        })
+        .sum::<f64>()
+        / 12.0
+}
+
+/// A quadrangle's mean side, the same for a patch.
+pub fn quad_size(at: &[[f64; 3]; 4]) -> f64 {
+    (0..4)
+        .map(|k| {
+            let e = sub(at[(k + 1) % 4], at[k]);
+            dot(e, e).sqrt()
+        })
+        .sum::<f64>()
+        / 4.0
+}
+
+/// What untangling a hexahedron costs: the shortfall of each of its eight
+/// corners, numbered as [`crate::HEX_CORNER_EDGES`] numbers them, with each
+/// corner's volume measured against `size` cubed.
+///
+/// `size` is how big the cell was when the smoothing began, not how big it
+/// is now. Measured against its own present size, a corner's volume says
+/// nothing about scale, and a patch free to slide drew itself in by a
+/// third to unfold one quadrangle — as readily as it pushed the folded
+/// corner back out.
+pub fn hex_tangle(at: &[[f64; 3]; 8], hand: f64, size: f64) -> f64 {
+    let scale = size * size * size;
+    if scale <= 1e-300 {
+        return 8.0 * short_of_target(0.0);
+    }
+    crate::HEX_CORNER_EDGES
+        .iter()
+        .enumerate()
+        .map(|(c, sides)| {
+            let e = sides.map(|s| sub(at[s], at[c]));
+            short_of_target(dot(e[0], cross(e[1], e[2])) * hand / scale)
+        })
+        .sum()
+}
+
+/// The same for a quadrangle of a patch: each corner's area, measured
+/// against the normal it was laid with, over `size` squared.
+pub fn quad_tangle(at: &[[f64; 3]; 4], normal: [f64; 3], size: f64) -> f64 {
+    let scale = size * size;
+    if scale <= 1e-300 {
+        return 4.0 * short_of_target(0.0);
+    }
+    (0..4)
+        .map(|k| {
+            let (u, v) = (sub(at[(k + 1) % 4], at[k]), sub(at[(k + 3) % 4], at[k]));
+            short_of_target(dot(cross(u, v), normal) / scale)
+        })
+        .sum()
+}
+
 /// Which way a hexahedron's corners turn: the sign of its volume as
 /// numbered, so that a block numbered left-handed is not taken for one
 /// turned inside out.
@@ -151,6 +235,17 @@ pub fn handedness(at: &[[f64; 3]; 8]) -> f64 {
     } else {
         1.0
     }
+}
+
+/// A hexahedron's volume as numbered: positive when its corners turn the
+/// right-handed way.
+pub fn volume(at: &[[f64; 3]; 8]) -> f64 {
+    let mut volume = 0.0;
+    for (c, sides) in crate::HEX_CORNER_EDGES.iter().enumerate() {
+        let e = sides.map(|s| sub(at[s], at[c]));
+        volume += dot(e[0], cross(e[1], e[2])) / 8.0;
+    }
+    volume
 }
 
 /// The normal a quadrangle was laid with: the sum of its corners' cross

@@ -92,6 +92,8 @@ for _, node in ipairs(gecko.nodes()) do
 end
 assert(middle, "the node in the middle")
 
+-- Far enough that one block has a corner turned the wrong way: the first
+-- round untangles it, the second squares things up.
 gecko.move_node(middle, {1.6, 1.4, 0.7})
 gecko.smooth{ rounds = 2, share = 0.6 }
 
@@ -110,4 +112,4 @@ end
 local grid = gecko.stats().mesh
 print(string.format("smoothed: %d nodes, %d hexes, digest %d", grid.nodes, grid.hexes, digest))
 assert(grid.hexes == 216, "two segments each way over twenty-seven blocks: " .. grid.hexes)
-assert(digest == 162582, "the two hosts do not agree on the smoothed bytes: " .. digest)
+assert(digest == 67913, "the two hosts do not agree on the smoothed bytes: " .. digest)
