@@ -3363,6 +3363,10 @@ async function boot() {
       beta: viewer.camera.beta,
       radius: viewer.camera.radius,
       closest: viewer.camera.lowerRadiusLimit,
+      // In model coordinates, like `nodePosition`.
+      target: viewer.camera.target
+        .asArray()
+        .map((x, i) => x + viewer.center[i]),
     }),
     pickNode: (x: number, y: number) => viewer.pickNode(x, y),
     pickHandle: (x: number, y: number) => viewer.pickHandle(x, y),

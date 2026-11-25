@@ -203,13 +203,12 @@ test("dragging a node with the mouse moves it in the kernel", async ({
   // so the view used to turn along with the node.
   //
   // Where the camera *is*, not everything the camera reports: `closest` is
-  // derived from the size of the model, and a node that moved made the model
-  // a different size. That one is supposed to follow.
+  // derived from the size of the blocks, and a node that moved may have
+  // changed it. That one is supposed to follow.
   const stayed = await page.evaluate(() => (window as any).__gecko.camera());
   expect(stayed.alpha).toBe(camera.alpha);
   expect(stayed.beta).toBe(camera.beta);
   expect(stayed.radius).toBe(camera.radius);
-  expect(stayed.closest).not.toBe(camera.closest);
 
   // And it went where the mouse went. The same confusion fed the ray the drag
   // follows, so the node used to travel along a plane belonging to the corner
@@ -541,6 +540,89 @@ test("zooming in stops at the model instead of going through it", async ({
   // It got closer, and it stopped short. With a fixed step per notch the
   // radius sails past the target and the view turns inside out.
   expect(close.radius).toBeLessThan(framed.radius);
+  expect(close.radius).toBeGreaterThanOrEqual(close.closest - 1e-6);
+  expect(errors).toEqual([]);
+});
+
+test("a part far away does not keep the camera off the rest", async ({
+  page,
+}) => {
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
+  await page.evaluate(() =>
+    (window as any).__gecko.apply({
+      op: "create_cube",
+      origin: [48, 0, 0],
+      size: 1,
+    }),
+  );
+  await page.evaluate(() => (window as any).__gecko.refresh());
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // Two unit cubes, fifty apart. How close the camera may come is a matter
+  // of how big a block is: from the model's diagonal it was seventeen, and
+  // neither cube could be looked at from closer than that.
+  const { closest } = await page.evaluate(() =>
+    (window as any).__gecko.camera(),
+  );
+  expect(closest).toBeGreaterThan(0);
+  expect(closest).toBeLessThan(1);
+  expect(errors).toEqual([]);
+});
+
+test("the wheel zooms in on what the pointer is over", async ({ page }) => {
+  const errors = await boot(page);
+  await page.locator("#cube").click();
+  await page.waitForFunction(
+    () => (window as any).__gecko.counts().nodes === 8,
+  );
+  await page.evaluate(() =>
+    (window as any).__gecko.apply({
+      op: "create_cube",
+      origin: [48, 0, 0],
+      size: 1,
+    }),
+  );
+  await page.evaluate(() => (window as any).__gecko.refresh());
+  await page.evaluate(() => (window as any).__gecko.run("recenter"));
+  await page.waitForTimeout(700);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // Framed on both, the camera aims at the empty middle. Point at the
+  // cube at the origin, the middle of its eight corners on screen.
+  const at = (await page.evaluate(() => {
+    const g = (window as any).__gecko;
+    const near = (g.names() as number[]).filter(
+      (n) => g.nodePosition(n)[0] < 10,
+    );
+    const screens = near.map((n) => g.nodeScreen(n) as [number, number]);
+    return [0, 1].map(
+      (i) => screens.reduce((s, p) => s + p[i], 0) / screens.length,
+    );
+  })) as [number, number];
+  const framed = await page.evaluate(() => (window as any).__gecko.camera());
+  expect(framed.target[0]).toBeGreaterThan(20);
+
+  const box = (await page.locator("#view").boundingBox())!;
+  await page.mouse.move(box.x + at[0], box.y + at[1]);
+  for (let i = 0; i < 80; i++) await page.mouse.wheel(0, -120);
+  await page.waitForTimeout(800);
+  await page.evaluate(() => (window as any).__gecko.settled());
+
+  // It went to that cube, and right up to it. Towards the middle of the
+  // screen it would have stopped in the empty space, still twenty-four
+  // away from either.
+  const close = await page.evaluate(() => (window as any).__gecko.camera());
+  const off = Math.hypot(
+    close.target[0] - 0.5,
+    close.target[1] - 0.5,
+    close.target[2] - 0.5,
+  );
+  expect(off).toBeLessThan(1.5);
+  expect(close.radius).toBeLessThan(3);
   expect(close.radius).toBeGreaterThanOrEqual(close.closest - 1e-6);
   expect(errors).toEqual([]);
 });

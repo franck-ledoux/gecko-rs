@@ -1299,11 +1299,8 @@ describe("how close the camera may get", () => {
     // without reframing, and the limits still have to be right.
     viewer.setView(decodeView(kernel.view()));
 
-    const diagonal = Math.sqrt(3);
-    expect(viewer.camera.lowerRadiusLimit).toBeCloseTo(
-      diagonal * CLOSEST_APPROACH,
-      5,
-    );
+    // A share of a block's edge, which for a unit cube is one.
+    expect(viewer.camera.lowerRadiusLimit).toBeCloseTo(CLOSEST_APPROACH, 5);
     // Room to zoom in, and never as far as the center it orbits.
     expect(viewer.camera.lowerRadiusLimit!).toBeGreaterThan(0);
     expect(viewer.camera.lowerRadiusLimit!).toBeLessThan(viewer.camera.radius);

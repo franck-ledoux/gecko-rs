@@ -299,9 +299,16 @@ through the model and out the far side. The camera also stops a little short
 of the model rather than reaching the point it orbits — an orbit camera that
 arrives at its own center has nothing left to turn around, and the view flips.
 
-How near and how far are both derived from the model's size, and they follow
-it: build a block from a script and the limits move with it, without the camera
-being yanked anywhere.
+It zooms **towards what the pointer is over**, not towards the middle of the
+screen: the point it orbits moves onto that surface as you go in. After framing
+two parts far apart, the middle of the screen is the empty space between them;
+pointing at one and turning the wheel takes you to it.
+
+How near the camera may come is a share of a typical block edge, and how far a
+multiple of the model's size. Both follow the model: build a block from a
+script and the limits move with it, without the camera being yanked anywhere.
+A part placed far away makes the model bigger but not its blocks, so it does
+not keep the camera off the rest.
 
 ## Recentring
 

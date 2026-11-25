@@ -13,6 +13,8 @@ import type { AbstractEngine } from "@babylonjs/core/Engines/abstractEngine";
 import { Scene } from "@babylonjs/core/scene";
 import { ArcRotateCamera } from "@babylonjs/core/Cameras/arcRotateCamera";
 import { Camera } from "@babylonjs/core/Cameras/camera";
+import type { ArcRotateCameraMouseWheelInput } from "@babylonjs/core/Cameras/Inputs/arcRotateCameraMouseWheelInput";
+import { PointerEventTypes } from "@babylonjs/core/Events/pointerEvents";
 import { Viewport } from "@babylonjs/core/Maths/math.viewport";
 import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight";
 import { DirectionalLight } from "@babylonjs/core/Lights/directionalLight";
@@ -316,13 +318,42 @@ export const FRAMING_MS = 450;
 export const ZOOM_PER_NOTCH = 0.02;
 
 /**
- * How close the camera may orbit, as a fraction of the model's diagonal.
+ * How close the camera may orbit, as a fraction of a typical block edge.
  *
  * An orbit camera that reaches its own target has nothing left to orbit
  * around, and the view turns inside out. Stopping just short of the model is
  * what zooming in means for this kind of camera.
+ *
+ * A block's size rather than the whole model's: a cube put down fifty units
+ * away from a shell two units across makes the model's diagonal fifty, and a
+ * limit taken from that kept the camera twenty units from the shell, with
+ * no way to look at it closer.
  */
 export const CLOSEST_APPROACH = 0.35;
+
+/**
+ * The median length of the blocking's edges: what size a block is, give or
+ * take, unswayed by one long edge or by how far apart two parts are.
+ * Zero when there are no edges.
+ */
+export function typicalEdge(
+  positions: ArrayLike<number>,
+  edges: ArrayLike<number>,
+): number {
+  const count = Math.floor(edges.length / 2);
+  if (!count) return 0;
+  const lengths = new Float64Array(count);
+  for (let e = 0; e < count; e++) {
+    const a = edges[2 * e] * 3;
+    const b = edges[2 * e + 1] * 3;
+    const dx = positions[b] - positions[a];
+    const dy = positions[b + 1] - positions[a + 1];
+    const dz = positions[b + 2] - positions[a + 2];
+    lengths[e] = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+  lengths.sort();
+  return lengths[Math.floor(count / 2)];
+}
 
 /**
  * Depth bias pushing the surfaces back, so the wireframe along their borders
@@ -856,6 +887,7 @@ export class Viewer {
     // model and out the other side. `lowerRadiusLimit` is set when the model
     // is framed, since what counts as close depends on how big it is.
     this.camera.wheelDeltaPercentage = ZOOM_PER_NOTCH;
+    this.zoomTowardsPointer();
     this.camera.minZ = 0.001;
     this.camera.layerMask = MAIN_LAYER;
     const light = new HemisphericLight(
@@ -4124,12 +4156,65 @@ export class Viewer {
    * that only a reframe set would never be set at all for a model built from
    * Python.
    */
+  /**
+   * Make the wheel zoom towards what is under the pointer, not towards the
+   * middle of the screen.
+   *
+   * Babylon's own `zoomToMouseLocation` slides the target towards the
+   * pointer, but across a plane through the target, square to the view — and
+   * after framing two parts far apart, that plane is the empty space between
+   * them. So before each notch the target is first moved along the line of
+   * sight to the depth of the surface under the pointer, the radius changing
+   * by the same amount: the camera does not move and nothing on screen
+   * changes, but the plane now goes through what is being pointed at, and
+   * the zoom ends on it.
+   */
+  private zoomTowardsPointer() {
+    const wheel = this.camera.inputs.attached
+      .mousewheel as ArcRotateCameraMouseWheelInput;
+    wheel.zoomToMouseLocation = true;
+    this.scene.onPrePointerObservable.add(() => {
+      if (this.hovered !== "3d") return;
+      const camera = this.camera;
+      const hit = this.scene.pick(
+        this.scene.pointerX,
+        this.scene.pointerY,
+        (m) =>
+          m.isVisible &&
+          m.visibility > 0 &&
+          (m.layerMask & MAIN_LAYER) !== 0 &&
+          !m.getClassName().includes("Line"),
+        false,
+        camera,
+      );
+      if (!hit?.hit || !hit.pickedPoint) return;
+      const sight = camera.target.subtract(camera.position);
+      const length = sight.length();
+      if (!length) return;
+      sight.scaleInPlace(1 / length);
+      const depth = Vector3.Dot(
+        hit.pickedPoint.subtract(camera.position),
+        sight,
+      );
+      if (!(depth > (camera.lowerRadiusLimit ?? 0))) return;
+      const from = camera.position.clone();
+      camera.radius = depth;
+      camera.target = from.add(sight.scale(depth));
+      // The plane the zoom aims across is kept between notches; this one has
+      // to be the plane through the new target.
+      (wheel as unknown as { _hitPlane: unknown })._hitPlane = null;
+    }, PointerEventTypes.POINTERWHEEL);
+  }
+
   private fitLimits() {
     const diagonal = this.modelBounds();
+    // A geometry with no blocks on it yet has no edges to go by; its own
+    // size is what there is.
+    const scale =
+      (this.view && typicalEdge(this.view.positions, this.view.edges)) ||
+      diagonal;
     // One node has no diagonal, and a limit of zero is worse than none.
-    this.camera.lowerRadiusLimit = diagonal
-      ? diagonal * CLOSEST_APPROACH
-      : null;
+    this.camera.lowerRadiusLimit = scale ? scale * CLOSEST_APPROACH : null;
     this.camera.upperRadiusLimit = diagonal ? diagonal * 60 : null;
   }
 

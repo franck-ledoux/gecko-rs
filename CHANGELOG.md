@@ -3,6 +3,16 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
+## Unreleased
+
+- **The wheel zooms towards the pointer, and a far-away part no longer keeps
+  the camera off the rest.** How close the camera could come was a share of
+  the whole model's diagonal, so a cube put fifty units from a shell two units
+  across kept it seventeen units from either; and the wheel zoomed towards the
+  middle of the screen, which after framing both was empty space. The closest
+  approach is now a share of a typical block edge, and the wheel heads for the
+  surface under the pointer.
+
 ## 0.2.7
 
 - **Smoothing aims at cubes, and is symmetric.** It used to move each node
