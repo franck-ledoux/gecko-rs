@@ -193,7 +193,7 @@ dependencies = [
 
 [[package]]
 name = "gecko-cli"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "axum",
  "gecko-cmd",
@@ -210,7 +210,7 @@ dependencies = [
 
 [[package]]
 name = "gecko-cmd"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "gecko-core",
  "gecko-geom",
@@ -221,7 +221,7 @@ dependencies = [
 
 [[package]]
 name = "gecko-core"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "anyhow",
  "thiserror",
@@ -229,7 +229,7 @@ dependencies = [
 
 [[package]]
 name = "gecko-geom"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "anyhow",
  "thiserror",
@@ -237,7 +237,7 @@ dependencies = [
 
 [[package]]
 name = "gecko-lua"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "gecko-cmd",
  "mlua",
@@ -246,7 +246,7 @@ dependencies = [
 
 [[package]]
 name = "gecko-lua-wasm"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "gecko-lua",
  "mlua",
@@ -255,7 +255,7 @@ dependencies = [
 
 [[package]]
 name = "gecko-wasm"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "console_error_panic_hook",
  "gecko-cmd",

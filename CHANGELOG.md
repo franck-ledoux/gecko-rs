@@ -3,7 +3,7 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
-## Unreleased
+## 0.2.8
 
 - **A mesh checked against its geometry.** Under the quality figures, a
   check measures how far the mesh's skin is from the surfaces, how far the
