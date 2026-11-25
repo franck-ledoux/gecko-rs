@@ -44,6 +44,13 @@ impl Kernel for Local {
             "blocks" => session.blocks_json(),
             "stats" => session.stats_json(),
             "quality" => session.quality_json(),
+            // The tolerance, as a share of the element size; the default
+            // when it is not a number.
+            "fidelity" => session.fidelity_json(
+                arg.trim()
+                    .parse()
+                    .unwrap_or(gecko_cmd::fidelity::DEFAULT_SHARE),
+            ),
             "patches" => session.patches_json(),
             "groups" => session.groups_json(),
             "entities" => session.entities_json(),

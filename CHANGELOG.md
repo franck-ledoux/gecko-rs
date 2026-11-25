@@ -5,6 +5,15 @@ the day a tag was cut.
 
 ## Unreleased
 
+- **A mesh checked against its geometry.** Under the quality figures, a
+  check measures how far the mesh's skin is from the surfaces, how far the
+  surfaces are from the skin — which catches a feature the blocking never
+  made — and whether every curve has mesh edges running along it and every
+  corner a node on it, each against a tolerance that is a share of the
+  element size. What is missed can be drawn in red, and the camera flown to
+  the worst of it. `gecko.fidelity{ tolerance = … }` from a script. Seams a
+  merge of surfaces took inside it are not checked.
+
 - **The README and the front page say what gecko-rs is.** They described it
   as a port built on a combinatorial map, which it has not been since 0.2.0.
 

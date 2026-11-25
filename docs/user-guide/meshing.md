@@ -135,6 +135,58 @@ end
 `q.histogram[i]` counts the cells from `q.bins[i]` up to the next bin's start,
 the last running to one.
 
+## How faithfully it follows the geometry
+
+Quality says the cells are well shaped; this says the mesh is the right
+**shape**. A mesh can score perfectly by quality with a hole never cut, a
+notch left filled or a sharp edge rounded off.
+
+**Check against the geometry**, under the quality figures, measures three
+things:
+
+- **the mesh on the geometry**: how far each node of the mesh's skin is from
+  the nearest surface. Skin floating off the part — a face classified on
+  nothing, a node stranded between two surfaces — shows here. With every
+  boundary cell classified it is nought.
+- **the geometry on the mesh**: how far the geometry is from the skin, looked
+  at all over every surface, about a cell apart. The direction that catches
+  what is **missing**: a feature the blocking never made leaves geometry far
+  from any mesh.
+- **curves and corners**: whether every curve has mesh edges running **along**
+  it — within 30° of its direction, not merely the skin passing near — and
+  every corner a mesh node on it. That is what aligned with the boundary
+  means.
+
+A curve counts if the model still has it as a curve: itself, or a merge of
+curves. A seam a merge of surfaces took inside it, such as the joint of a
+cylinder's two halves, is not a feature, and is not checked.
+
+Each gap is held against a **tolerance**, a share of the element size there —
+a quarter by default, set with the slider. A mesh that does follow a curve
+still cuts across it between its nodes, by about an eighth of the element size
+where the cells are as long as the curve's radius, and more across the corners
+of a curve given as a polygon; a feature it misses leaves gaps a cell across or
+more. A tenth flagged the circles of a part meshed correctly.
+
+**Show what is missed** draws it in red: pieces of curves no edge runs along,
+crosses on corners and on points of surfaces away from the mesh, and whole
+triangles where nothing of them is near it. **Go to the worst gap** flies
+there.
+
+It is asked for rather than worked out with every mesh, being a nearest-point
+search from every node of the skin and all over the geometry — a few hundredths
+of a second for a part meshed with thirty thousand cells. A new mesh drops the
+last check.
+
+```lua
+local f = gecko.fidelity{ tolerance = 0.25 }   -- nil without mesh and geometry
+print(f.skin.max, f.geometry.max)
+print(f.curves.followed, f.curves.checked)
+for _, c in ipairs(f.curves.missed) do print("not followed", c.tag) end
+for _, c in ipairs(f.corners.missed) do print("no node on", c.tag) end
+if f.worst then print(f.worst.what, f.worst.distance) end
+```
+
 ## Writing it out
 
 `⇧E` writes a VTK legacy ASCII file, named for the moment it was taken —

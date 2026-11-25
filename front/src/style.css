@@ -438,3 +438,11 @@ body[data-dropping] #view {
 }
 #mesh-quality .quality-note { font-size: 10px; color: var(--dim); margin: 2px 0 6px; }
 #mesh-quality button { margin-top: 4px; width: 100%; }
+#mesh-quality .fidelity { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
+#mesh-quality .fidelity-head {
+  font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--dim); margin-bottom: 4px;
+}
+#mesh-quality .fidelity-line { font-size: 11px; margin: 3px 0; }
+#mesh-quality .fidelity-line.ok { color: var(--dim); }
+#mesh-quality .fidelity-line.bad { color: #e5484d; }

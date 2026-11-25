@@ -109,6 +109,11 @@ impl WasmSession {
         self.inner.quality_json()
     }
 
+    #[wasm_bindgen(js_name = fidelityJson)]
+    pub fn fidelity_json(&self, share: f64) -> String {
+        self.inner.fidelity_json(share)
+    }
+
     #[wasm_bindgen(js_name = cellsBelowBuffer)]
     pub fn cells_below_buffer(&self, below: f64) -> Vec<u8> {
         self.inner.cells_below_buffer(below)

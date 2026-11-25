@@ -140,6 +140,51 @@ export interface Quality {
   blocks: { block: number; worst: number; inverted: number; cells: number }[];
 }
 
+/** A gap between the mesh and the geometry: where, how far, and how big
+ *  the cells are there. */
+export interface Gap {
+  at: [number, number, number];
+  distance: number;
+  size: number;
+}
+
+/** How faithfully a mesh follows its geometry, as the kernel measures it. */
+export interface Fidelity {
+  /** Which mesh this is about, as `stats().mesh.generation` counts them. */
+  generation: number;
+  /** The tolerance, as a share of the local element size. */
+  share: number;
+  /** Every node of the skin, to the nearest surface. */
+  skin: { nodes: number; max: number; mean: number; beyond: number };
+  /** Every vertex and triangle middle of the geometry, to the skin. */
+  geometry: {
+    samples: number;
+    max: number;
+    beyond: number;
+    surfaces: { tag: number; max: number; beyond: number }[];
+  };
+  /** The curves with mesh edges along them, and those without. */
+  curves: {
+    checked: number;
+    followed: number;
+    missed: { tag: number; max: number; beyond: number; samples: number }[];
+  };
+  /** The corners with a mesh node on them, and those without. */
+  corners: {
+    checked: number;
+    missed: { tag: number; at: [number, number, number]; distance: number }[];
+  };
+  /** The worst gap beyond the tolerance, and what it is a gap of. */
+  worst: (Gap & { what: string }) | null;
+  /** What is missed, in model coordinates, to be drawn. */
+  overlay: {
+    segments: number[][];
+    triangles: number[][];
+    /** Every sample of the geometry off the mesh. */
+    points: [number, number, number][];
+  };
+}
+
 /** One group of blocks, as the kernel describes it. */
 export interface Group {
   name: string;
@@ -187,6 +232,9 @@ export interface Kernel {
   cellsBelow(below: number): Uint8Array;
   /** How good the mesh is, or null if there is none. */
   quality(): Quality | null;
+  /** How faithfully the mesh follows the geometry, with the tolerance a
+   *  share of the local element size; null without both. */
+  fidelity(share: number): Fidelity | null;
   /** The mesh as a VTK legacy file, or null if there is none. */
   vtk(): string | null;
   stats(): Stats;

@@ -9,6 +9,7 @@
 //! and it is what makes the two modes testable against each other, by replaying
 //! one script through both and comparing the bytes that come out.
 
+pub mod fidelity;
 pub mod groups;
 pub mod script;
 pub mod view;
@@ -3353,6 +3354,21 @@ impl Session {
                 .collect::<Vec<_>>(),
         })
         .to_string()
+    }
+
+    /// How faithfully the mesh follows the geometry, with the tolerance a
+    /// share of the local element size. `null` without both a mesh and a
+    /// geometry: there is nothing to hold one against.
+    ///
+    /// Asked for, not worked out with every mesh: it is a nearest-point
+    /// search from every node of the skin and every vertex of the geometry.
+    pub fn fidelity_json(&self, share: f64) -> String {
+        let (Some(mesh), Some(geometry)) = (&self.mesh, &self.geometry) else {
+            return "null".to_string();
+        };
+        let mut out = fidelity::measure(geometry, &self.composites, mesh, share);
+        out["generation"] = serde_json::json!(self.mesh_generation);
+        out.to_string()
     }
 
     /// The session as a Lua script: what a reader would have typed to

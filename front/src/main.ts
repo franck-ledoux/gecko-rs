@@ -8,7 +8,7 @@
 
 import { Engine } from "@babylonjs/core/Engines/engine";
 import { decodeGeometry, decodeMesh, decodeNodes, decodeView } from "./decode";
-import type { Stats } from "./kernel";
+import type { Fidelity, Stats } from "./kernel";
 import { initKernel, WasmKernel } from "./kernel-wasm";
 import { Viewer, type Group, type Pick, type Target } from "./viewer";
 import {
@@ -680,6 +680,12 @@ async function boot() {
    *  are. */
   let qualityShown = false;
   let qualityBelow = 0.3;
+  /** The last check against the geometry, the tolerance it used, and
+   *  whether what it found missing is drawn. A check is of one mesh: a new
+   *  mesh drops it. */
+  let fidelity: Fidelity | null = null;
+  let fidelityShare = 0.25;
+  let fidelityShown = false;
   function drawMeshLayer() {
     const layer = prefs.mesh;
     $("mesh-layer").innerHTML =
@@ -720,12 +726,119 @@ async function boot() {
    * Asked of the kernel each time a mesh is drawn, not kept: a mesh is
    * replaced whole, and the figures with it.
    */
+  /**
+   * The check against the geometry, under the quality figures: on demand,
+   * since it is a nearest-point search from every node of the skin and
+   * every vertex of the geometry.
+   */
+  function fidelityBlock(generation: number): string {
+    if (fidelity && fidelity.generation !== generation) {
+      fidelity = null;
+      viewer.setMissed(null);
+    }
+    const hasGeometry = kernel.stats().geometry.surfaces !== undefined;
+    const head =
+      `<div class="fidelity-head">geometry</div>` +
+      `<label class="slider"><span>tolerance</span>` +
+      `<input type="range" min="0.05" max="1" step="0.05" value="${fidelityShare}"` +
+      ` data-test="fidelity-share" /></label>` +
+      `<div class="quality-note">× the element size: <b data-test="fidelity-share-value">${fidelityShare.toFixed(2)}</b></div>` +
+      `<button data-test="fidelity-check"${hasGeometry ? "" : " disabled"}>` +
+      `${fidelity ? "Check again" : "Check against the geometry"}</button>`;
+    if (!fidelity) return `<div class="fidelity">${head}</div>`;
+    const f = fidelity;
+    const missedCurves = f.curves.missed.map((c) => c.tag).join(", ");
+    const missedCorners = f.corners.missed.map((c) => c.tag).join(", ");
+    const line = (ok: boolean, text: string, test: string) =>
+      `<div class="fidelity-line ${ok ? "ok" : "bad"}" data-test="${test}">${text}</div>`;
+    return (
+      `<div class="fidelity">${head}` +
+      line(
+        f.skin.beyond === 0,
+        `mesh on the geometry: gap ${f.skin.max.toFixed(3)}` +
+          (f.skin.beyond ? ` · ${f.skin.beyond} nodes off` : ""),
+        "fidelity-skin",
+      ) +
+      line(
+        f.geometry.beyond === 0,
+        `geometry on the mesh: gap ${f.geometry.max.toFixed(3)}` +
+          (f.geometry.beyond ? ` · ${f.geometry.beyond} points off` : ""),
+        "fidelity-geometry",
+      ) +
+      line(
+        !f.curves.missed.length,
+        `curves followed: ${f.curves.followed} of ${f.curves.checked}` +
+          (missedCurves ? ` · not ${missedCurves}` : ""),
+        "fidelity-curves",
+      ) +
+      line(
+        !f.corners.missed.length,
+        `corners on a node: ${f.corners.checked - f.corners.missed.length} of ${f.corners.checked}` +
+          (missedCorners ? ` · not ${missedCorners}` : ""),
+        "fidelity-corners",
+      ) +
+      (f.worst
+        ? `<label class="check"><input type="checkbox" data-test="fidelity-show"` +
+          `${fidelityShown ? " checked" : ""} /> show what is missed</label>` +
+          `<button data-test="fidelity-worst">Go to the worst gap</button>`
+        : "") +
+      `</div>`
+    );
+  }
+
+  /** What is missed, as the viewer draws it, or nothing. */
+  function drawMissed() {
+    viewer.setMissed(
+      fidelity && fidelityShown
+        ? {
+            segments: fidelity.overlay.segments,
+            triangles: fidelity.overlay.triangles,
+            corners: fidelity.corners.missed.map((c) => c.at),
+            points: fidelity.overlay.points,
+          }
+        : null,
+    );
+  }
+
+  function wireFidelity(box: HTMLElement) {
+    const find = (test: string) =>
+      box.querySelector<HTMLInputElement>(`[data-test="${test}"]`);
+    find("fidelity-share")?.addEventListener("input", (e) => {
+      fidelityShare = Number((e.target as HTMLInputElement).value);
+      box.querySelector('[data-test="fidelity-share-value"]')!.textContent =
+        fidelityShare.toFixed(2);
+    });
+    find("fidelity-check")?.addEventListener("click", () => {
+      fidelity = kernel.fidelity(fidelityShare);
+      drawMissed();
+      refreshQuality(false);
+      if (!fidelity) return;
+      say(
+        fidelity.worst
+          ? `the mesh misses the geometry — worst at ${fidelity.worst.what}, ${fidelity.worst.distance.toFixed(3)}`
+          : "the mesh follows the geometry",
+      );
+    });
+    find("fidelity-show")?.addEventListener("change", (e) => {
+      fidelityShown = (e.target as HTMLInputElement).checked;
+      drawMissed();
+    });
+    find("fidelity-worst")?.addEventListener("click", () => {
+      const w = fidelity?.worst;
+      if (!w) return;
+      viewer.frameOn(w.at, w.size);
+      say(`worst gap: ${w.what}, ${w.distance.toFixed(3)}`);
+    });
+  }
+
   function refreshQuality(cells = true) {
     const box = document.getElementById("mesh-quality");
     const q = kernel.quality();
     if (!q || !q.cells) {
       if (box) box.innerHTML = "";
       if (cells) viewer.setBadCells(null);
+      fidelity = null;
+      viewer.setMissed(null);
       return;
     }
     const inverted = q.below["0"] ?? 0;
@@ -768,7 +881,8 @@ async function boot() {
       (qualityShown
         ? `<div class="quality-note" data-test="quality-count">${shown} cell${shown === 1 ? "" : "s"} shown</div>`
         : "") +
-      `<button data-test="quality-worst">Go to the worst cell</button>`;
+      `<button data-test="quality-worst">Go to the worst cell</button>` +
+      fidelityBlock(q.generation);
     const find = (test: string) =>
       box.querySelector<HTMLInputElement>(`[data-test="${test}"]`)!;
     find("quality-show").addEventListener("change", (e) => {
@@ -783,6 +897,7 @@ async function boot() {
       box.querySelector('[data-test="quality-threshold"]')!.textContent =
         Number((e.target as HTMLInputElement).value).toFixed(2);
     });
+    wireFidelity(box);
     find("quality-worst").addEventListener("click", () => {
       if (!q.worst) return;
       viewer.frameOn(q.worst.center, q.worst.size);
@@ -3511,6 +3626,7 @@ async function boot() {
      *  threshold are drawn. */
     quality: () => kernel.quality(),
     badCellsDrawn: () => viewer.badCount,
+    missedDrawn: () => viewer.missedCount,
     nodePosition: (name: number) => viewer.nodePosition(name),
     center: () => viewer.center,
     apply: (command: Record<string, unknown>) => kernel.apply(command),

@@ -748,6 +748,8 @@ export class Viewer {
   private badView?: MeshView;
   private badCells?: Mesh;
   private badWire?: LinesMesh;
+  /** What the mesh misses of the geometry, drawn in red over it. */
+  private missed: (Mesh | LinesMesh)[] = [];
   /** The face being grown, while the pointer is down on it: where it is,
    *  which way is out, and how far the pointer has asked for so far. */
   private growing?: {
@@ -2786,6 +2788,89 @@ export class Viewer {
   setBadCells(view: MeshView | null) {
     this.badView = view?.blocks.length ? view : undefined;
     this.rebuildMesh();
+  }
+
+  /**
+   * Draw what the mesh misses of the geometry — triangles it leaves bare,
+   * pieces of curves no mesh edge runs along, corners no mesh node sits on
+   * — in red, over everything else, or stop drawing it.
+   *
+   * In model coordinates, as the kernel reports them.
+   */
+  setMissed(
+    missed: {
+      segments: number[][];
+      triangles: number[][];
+      corners: [number, number, number][];
+      points: [number, number, number][];
+    } | null,
+  ) {
+    for (const m of this.missed) m.dispose();
+    this.missed = [];
+    if (!missed) return;
+    const red = new Color3(0.93, 0.16, 0.16);
+    const c = this.center;
+    const at = (x: number, y: number, z: number) =>
+      new Vector3(x - c[0], y - c[1], z - c[2]);
+    if (missed.triangles.length) {
+      const positions: number[] = [];
+      for (const t of missed.triangles) {
+        for (let k = 0; k < 9; k += 3) {
+          positions.push(t[k] - c[0], t[k + 1] - c[1], t[k + 2] - c[2]);
+        }
+      }
+      const patch = new Mesh("missed-surface", this.scene);
+      const data = new VertexData();
+      data.positions = positions;
+      data.indices = Array.from({ length: positions.length / 3 }, (_, i) => i);
+      const normals: number[] = [];
+      VertexData.ComputeNormals(data.positions, data.indices, normals);
+      data.normals = normals;
+      data.applyToMesh(patch);
+      const material = new StandardMaterial("missedMat", this.scene);
+      material.diffuseColor = red;
+      material.emissiveColor = red.scale(0.4);
+      material.specularColor = Color3.Black();
+      material.backFaceCulling = false;
+      // In front of the geometry's own surfaces it lies on.
+      material.zOffset = -2;
+      patch.material = material;
+      this.missed.push(patch);
+    }
+    const lines: Vector3[][] = missed.segments.map((s) => [
+      at(s[0], s[1], s[2]),
+      at(s[3], s[4], s[5]),
+    ]);
+    // A corner as three short strokes through it — a cross reads at any
+    // distance — and a point of a surface the same, smaller.
+    const cross = (p: [number, number, number], arm: number) => {
+      const o = at(p[0], p[1], p[2]);
+      for (const d of [
+        new Vector3(arm, 0, 0),
+        new Vector3(0, arm, 0),
+        new Vector3(0, 0, arm),
+      ]) {
+        lines.push([o.subtract(d), o.add(d)]);
+      }
+    };
+    const size = Math.max(this.modelBounds(), 1e-6);
+    for (const p of missed.corners) cross(p, size / 80);
+    for (const p of missed.points) cross(p, size / 200);
+    if (lines.length) {
+      const wire = CreateLineSystem("missed-lines", { lines }, this.scene);
+      wire.color = red;
+      this.missed.push(wire);
+    }
+    for (const m of this.missed) {
+      m.isPickable = false;
+      m.layerMask = MAIN_LAYER;
+      m.renderingGroupId = PASS.blocking;
+    }
+  }
+
+  /** How many things of what the mesh misses are drawn, for a test. */
+  get missedCount(): number {
+    return this.missed.length;
   }
 
   /** How many cells below the threshold are drawn, for a test to read. */

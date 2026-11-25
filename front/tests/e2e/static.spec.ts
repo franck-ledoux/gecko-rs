@@ -5489,6 +5489,82 @@ test("the mesh's quality is shown, its worst cells drawn, and the worst flown to
   expect(errors).toEqual([]);
 });
 
+test("a mesh is checked against its geometry, and what it misses is shown", async ({
+  page,
+}) => {
+  const errors = await boot(page);
+  await page.locator("#msh").setInputFiles({
+    name: "cube.msh",
+    mimeType: "text/plain",
+    buffer: Buffer.from(CUBE_MSH),
+  });
+  await page.waitForFunction(
+    () => (window as any).__gecko.stats().geometry.surfaces !== undefined,
+  );
+  // A box standing well clear of the part, put on nothing: the mesh is
+  // nowhere near the geometry, and the geometry nowhere near the mesh.
+  await openConsole(page);
+  await lua(
+    page,
+    `gecko.box_geometry{ margin = 0.3 } gecko.mesh{ segments = 4 }`,
+  );
+  await page.waitForFunction(
+    () => (window as any).__gecko.quality()?.cells === 64,
+  );
+  await page.locator("#console-open").click();
+  await expect(page.locator("#console")).toBeHidden();
+
+  await openSection(page, "mesh");
+  await page.locator("[data-test=fidelity-check]").click();
+  await expect(page.locator("[data-test=fidelity-skin]")).toHaveClass(/bad/);
+  await expect(page.locator("[data-test=fidelity-geometry]")).toHaveClass(
+    /bad/,
+  );
+  await expect(page.locator("#status")).toContainText(
+    "the mesh misses the geometry",
+  );
+  // What is missed, drawn in red; and the camera goes to the worst of it.
+  await page.locator("[data-test=fidelity-show]").check();
+  expect(
+    await page.evaluate(() => (window as any).__gecko.missedDrawn()),
+  ).toBeGreaterThan(0);
+  await page.locator("[data-test=fidelity-worst]").click();
+  await expect(page.locator("#status")).toContainText("worst gap");
+
+  // The same box resting on the part and put on it: nothing missed, and
+  // the new mesh drops the old check and what it drew.
+  const first = await page.evaluate(
+    () => (window as any).__gecko.quality().generation,
+  );
+  await openConsole(page);
+  await lua(
+    page,
+    `local all = {}
+     for _, b in ipairs(gecko.blocks()) do all[#all + 1] = b.id end
+     gecko.remove_blocks(all)
+     gecko.box_geometry{ margin = 0 } gecko.classify{} gecko.mesh{ segments = 4 }`,
+  );
+  await page.waitForFunction((was) => {
+    const q = (window as any).__gecko.quality();
+    return q && q.generation > was && q.cells === 64;
+  }, first);
+  await page.locator("#console-open").click();
+  expect(await page.evaluate(() => (window as any).__gecko.missedDrawn())).toBe(
+    0,
+  );
+  await expect(page.locator("[data-test=fidelity-skin]")).toHaveCount(0);
+  await page.locator("[data-test=fidelity-check]").click();
+  for (const line of ["skin", "geometry", "curves", "corners"]) {
+    await expect(page.locator(`[data-test=fidelity-${line}]`)).toHaveClass(
+      /ok/,
+    );
+  }
+  await expect(page.locator("#status")).toContainText(
+    "the mesh follows the geometry",
+  );
+  expect(errors).toEqual([]);
+});
+
 /** Open the console and wait for the interpreter to be there. */
 async function openConsole(page: import("@playwright/test").Page) {
   if (

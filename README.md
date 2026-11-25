@@ -146,16 +146,16 @@ passes locally passes there.
   configurations kept symmetric, and blocks turned inside out untangled
   first;
 - **mesh**: every block discretised by transfinite interpolation, following
-  the geometry its cells are classified on, written out as VTK legacy — and
-  its quality measured cell by cell, with the worst cells shown wherever
-  they are;
+  the geometry its cells are classified on, written out as VTK legacy — its
+  quality measured cell by cell, with the worst cells shown wherever they
+  are, and checked against the geometry: every curve followed, every corner
+  on a node, nothing of the part missing;
 - **look at it**: every group shown, colored, faded and shrunk on its own,
   one view or four, with a picture saved at publication size;
 - **script**: all of the above, in Lua, in the page or from a terminal.
 
-Not there yet: a check of how faithfully the mesh follows the geometry,
-Bézier curves and Coons surfaces for the blocking itself, grading along an
-edge.
+Not there yet: Bézier curves and Coons surfaces for the blocking itself,
+grading along an edge.
 
 ## Documentation
 

@@ -12,6 +12,7 @@ import type {
   Chord,
   Direct,
   Entity,
+  Fidelity,
   Group,
   Kernel,
   Quality,
@@ -57,6 +58,8 @@ export class WasmKernel implements Kernel {
             return this.session.statsJson();
           case "quality":
             return this.session.qualityJson();
+          case "fidelity":
+            return this.session.fidelityJson(arg === "" ? NaN : Number(arg));
           case "entities":
             return this.session.entitiesJson();
           case "sheet":
@@ -115,6 +118,10 @@ export class WasmKernel implements Kernel {
 
   cellsBelow(below: number): Uint8Array {
     return this.session.cellsBelowBuffer(below);
+  }
+
+  fidelity(share: number): Fidelity | null {
+    return JSON.parse(this.session.fidelityJson(share)) as Fidelity | null;
   }
 
   quality(): Quality | null {

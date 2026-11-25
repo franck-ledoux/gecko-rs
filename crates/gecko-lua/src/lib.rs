@@ -404,6 +404,23 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
     }
 
     {
+        // `gecko.fidelity{ tolerance = 0.1 }`: the tolerance as a share of
+        // the local element size, the kernel's default when left out.
+        let host = Rc::clone(&kernel);
+        gecko.set(
+            "fidelity",
+            lua.create_function(move |lua, options: Option<mlua::Table>| {
+                let share: Option<f64> = match &options {
+                    Some(t) => t.get("tolerance")?,
+                    None => None,
+                };
+                let arg = share.map(|x| x.to_string()).unwrap_or_default();
+                answer(lua, &host.query("fidelity", &arg))
+            })?,
+        )?;
+    }
+
+    {
         let host = Rc::clone(&kernel);
         gecko.set(
             "chord",
