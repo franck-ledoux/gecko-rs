@@ -338,9 +338,13 @@ kbd {
    a different font engine sets the same words to a different height. What
    has to fit is not a number measured here. */
 @media (max-height: 780px) {
-  #help-card { padding: 14px 20px; }
+  /* Wider as well as shorter: a column that wraps less is a column that is
+     shorter, and the margin round the card is the cheapest place to find
+     the width. Twenty-four pixels less of it was twenty-five off the card
+     at 900 by 700. */
+  #help-card { padding: 14px 20px; width: min(980px, calc(100vw - 24px)); }
   #help-who { margin-bottom: 6px; }
-  #help-groups > * { margin-bottom: 5px; }
+  #help-groups > * { margin-bottom: 3px; }
   /* The row gap, which is the lever with the most rows behind it: the
      tallest column has twenty of them, so a pixel here is twenty off the
      card. */
@@ -349,9 +353,14 @@ kbd {
      A column here is about a hundred pixels wide, so nearly every
      description wraps onto two or three lines, and the card has three
      times as many lines as it has rows. Taking the leading from the
-     browser's default to 1.3 is fifty pixels off the card and reads no
-     tighter at this size; the keys keep their own spacing. */
-  #help-card dd { font-size: 11px; line-height: 1.3; }
+     browser's default to 1.3 was fifty pixels off the card, and 1.2 is
+     thirty more; at this size it still reads as one line after another.
+     The keys keep their own spacing.
+
+     Both of these were taken when the runner's fonts set the card forty
+     pixels taller than this machine's did, and a merge shortcut was the row
+     that tipped it: 539 here at 900 by 700, from 594. */
+  #help-card dd { font-size: 11px; line-height: 1.2; }
   #help-card h2 { margin-bottom: 3px; }
   #help-hint { margin-top: 6px; }
   #help-legend { gap: 4px; }

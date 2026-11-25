@@ -16,6 +16,8 @@ the day a tag was cut.
   symmetric and a cut put down off the middle goes to the middle. No corner
   falls below a scaled Jacobian of 0.2, or below where it started. It takes
   more rounds than before to settle.
+- The help card fits a 900 by 700 window on a machine whose fonts set it
+  taller, which stopped 0.2.6's site from being published.
 
 ## 0.2.6
 
