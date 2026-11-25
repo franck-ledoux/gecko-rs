@@ -25,8 +25,7 @@ place turns up in the other, the console and the mouse being one session.
 
 ## What a file has to say
 
-**MSH 2.2, ASCII.** What the C++ GECKO reads, and what every `.msh` in its
-test data is. Modern gmsh writes 4.1 by default, where the same information
+**MSH 2.2, ASCII.** Modern gmsh writes 4.1 by default, where the same information
 lives somewhere else entirely, so a 4.1 file is refused by name rather than
 misread — re-export it with `-format msh2`.
 
@@ -46,8 +45,8 @@ recovers it — so it has to be in the file, as a point element.
 
 The other tag, the `$PhysicalNames` group, is read and kept but **groups
 nothing**. A physical group is a name for a set of entities and routinely
-spans several of them; and in every `.msh` GECKO's own test data holds, it is
-0 on every element while the entity tag carries the whole structure.
+spans several of them, and it is often 0 on every element while the entity tag
+carries the whole structure.
 
 !!! note "Tetrahedra are skipped, and counted"
     A gmsh file of a meshed CAD model usually carries the volume mesh and its
@@ -181,8 +180,8 @@ A piece belongs to one merge. Undo takes a merge back like anything else.
 containing just the surfaces selected.
 
 It is almost always the first block of a session: something that contains the
-shape, to be cut and fitted onto it afterwards. The C++ GECKO has the same
-button, and the same margin — each half-side is grown by **2%**, so the box
+shape, to be cut and fitted onto it afterwards. Each half-side is grown by
+**2%**, so the box
 stands clear of the geometry rather than resting on it. From a script,
 `gecko.box_geometry{ margin = 0 }` for one that rests on it exactly.
 

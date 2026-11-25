@@ -5,6 +5,9 @@ the day a tag was cut.
 
 ## Unreleased
 
+- **The README and the front page say what gecko-rs is.** They described it
+  as a port built on a combinatorial map, which it has not been since 0.2.0.
+
 - **The mesh's quality, measured and shown.** Every hexahedron's scaled
   Jacobian — the worst of its eight corners — is measured when it is meshed,
   and meshing says the worst cell and how many are inverted. The Mesh section

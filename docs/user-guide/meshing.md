@@ -56,8 +56,9 @@ from faces that already lie on their surfaces. That is what makes the mesh
     it lies in**: a corner, a point along an edge, a point inside a face, or
     a point inside a block.
 
-    Cells are shared by construction, that being what the combinatorial map
-    is for, so the sharing of nodes falls out of the naming. There is no
+    Cells are shared by construction — two glued blocks have one face
+    between them, not two — so the sharing of nodes falls out of the
+    naming. There is no
     tolerance anywhere in the mesher.
 
 ## Looking at it

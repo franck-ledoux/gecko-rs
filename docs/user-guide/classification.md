@@ -167,9 +167,7 @@ is right for exactly one model.
 
 There is a second way in, and it is the one you use with the mouse: **a node
 dropped near the model takes hold of it**. Drag a corner onto a surface, let
-go, and it is classified on that surface and pulled onto it. The two together
-are `classify()` and `snap_node()` in the C++ GECKO, and they are here for
-the same reasons.
+go, and it is classified on that surface and pulled onto it.
 
 ## How a node is classified
 

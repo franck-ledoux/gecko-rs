@@ -9,13 +9,15 @@ download.
 
 ______________________________________________________________________
 
-A Rust port of [GECKO](https://github.com/franck-ledoux/gecko), rebuilt step by
-step.
+A tool for building **block structures** and meshing them with hexahedra: put a
+handful of blocks round a geometry, lay them on its surfaces, curves and
+corners, and every block becomes a structured grid of cells that follows the
+part.
 
-The block structure sits on a **3-dimensional combinatorial map**
-([`honeycomb-core`](https://github.com/LIHPC-Computational-Geometry/honeycomb)),
-the Rust counterpart of what `CGAL::Combinatorial_map` gives the C++ version:
-darts, attributes at every dimension, merge and split functors.
+The block structure is an explicit complex of cells — nodes, edges, faces and
+blocks, each with an identity of its own — because only a cell that exists can
+carry a curve, a surface or a classification, and those are what let a block
+structure follow a geometry rather than merely sit near it.
 
 One kernel, in one place: **the page**. It carries the kernel compiled to
 wasm and a Lua 5.4 interpreter beside it, so the mouse and a script drive the
@@ -79,6 +81,6 @@ blocking itself, grading along an edge.
 
 ## Licence
 
-AGPL-3.0-only, like GECKO. Section 13 is not decoration here: `gecko`
+AGPL-3.0-only. Section 13 is not decoration here: `gecko`
 **serves the interface over HTTP**, so anyone deploying a modified version
 owes its source to the people connecting to it.

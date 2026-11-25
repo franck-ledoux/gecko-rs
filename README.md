@@ -4,13 +4,15 @@
 [![kernel coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Ffranck-ledoux.github.io%2Fgecko-rs%2Fcoverage%2Fkernel-badge.json)](https://franck-ledoux.github.io/gecko-rs/coverage/)
 [![page coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Ffranck-ledoux.github.io%2Fgecko-rs%2Fcoverage%2Fpage-badge.json)](https://franck-ledoux.github.io/gecko-rs/coverage/)
 
-A Rust port of [GECKO](https://github.com/franck-ledoux/gecko), rebuilt step by
-step.
+A tool for building **block structures** and meshing them with hexahedra: put a
+handful of blocks round a geometry, lay them on its surfaces, curves and
+corners, and every block becomes a structured grid of cells that follows the
+part.
 
-The block structure sits on a **3-dimensional combinatorial map**
-([`honeycomb-core`](https://github.com/LIHPC-Computational-Geometry/honeycomb)),
-the Rust counterpart of what `CGAL::Combinatorial_map` gives the C++ version:
-darts, attributes at every dimension, merge and split functors.
+The block structure is an explicit complex of cells — nodes, edges, faces and
+blocks, each with an identity of its own — because only a cell that exists can
+carry a curve, a surface or a classification, and those are what let a block
+structure follow a geometry rather than merely sit near it.
 
 One kernel, in one place: **the page**. It carries the kernel compiled to wasm
 and a Lua 5.4 interpreter beside it, so the mouse and a script drive the same
@@ -133,18 +135,27 @@ passes locally passes there.
   whole chord of blocks, lay an o-grid along one — with five steps of undo,
   settable;
 - **read a geometry**: a gmsh surface mesh (MSH 2.2) as a boundary
-  representation — surfaces, curves and corners, drawn beside the blocks;
+  representation — surfaces, curves and corners, drawn beside the blocks —
+  and merge the pieces of it that meet smoothly into one, by hand or within
+  an angle;
 - **classify**: nodes onto corners, curves and surfaces, by hand or by
-  proximity; edges and faces inferred from them; sliding, freezing, and a
-  band to catch a handful of handles at once;
+  proximity; edges and faces inferred from them, or put on several entities
+  at once; a face laid down on what it covers, corners and sides with it;
+  sliding, freezing, and a band to catch a handful of handles at once;
+- **smooth**: every block towards a cube, the geometry respected, symmetric
+  configurations kept symmetric, and blocks turned inside out untangled
+  first;
 - **mesh**: every block discretised by transfinite interpolation, following
-  the geometry its cells are classified on, written out as VTK legacy;
+  the geometry its cells are classified on, written out as VTK legacy — and
+  its quality measured cell by cell, with the worst cells shown wherever
+  they are;
 - **look at it**: every group shown, colored, faded and shrunk on its own,
   one view or four, with a picture saved at publication size;
 - **script**: all of the above, in Lua, in the page or from a terminal.
 
-Not there yet: geometric validity, Bézier curves and Coons surfaces for the
-blocking itself, grading along an edge.
+Not there yet: a check of how faithfully the mesh follows the geometry,
+Bézier curves and Coons surfaces for the blocking itself, grading along an
+edge.
 
 ## Documentation
 
@@ -158,7 +169,7 @@ in a second wasm module, and what the view buffer promises.
 
 ## Licence
 
-AGPL-3.0-only, like GECKO — see [LICENSE](LICENSE). Dependencies are MIT or
+AGPL-3.0-only — see [LICENSE](LICENSE). Dependencies are MIT or
 Apache-2.0, so compatible.
 
 Section 13 is not decoration here: `gecko` **serves the interface over HTTP**,
