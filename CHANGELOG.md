@@ -3,7 +3,7 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
-## Unreleased
+## 0.2.9
 
 - **Quality in three named metrics.** The mesh's quality is read in the
   **scaled Jacobian**, the **skewness** or the **aspect ratio**, picked at the
