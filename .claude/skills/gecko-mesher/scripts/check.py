@@ -100,9 +100,20 @@ def check(report, rules, known):
         rule(True, "every real corner on a node", f"missed {real_corners}" if real_corners else "yes"
              + (f", known {sorted(set(corners) - set(real_corners))}" if len(corners) > len(real_corners) else ""),
              not real_corners)
-        worst = f.get("worst")
-        skin_ok = worst is None or (worst.get("what", "").startswith("curve") and any(str(t) in worst["what"] for t in known["curves"]))
-        rule(True, "skin on the part", f"skin max {f['skin']['max']:.3f}, geometry max {f['geometry']['max']:.3f}", skin_ok)
+        # The skin on the part: no skin node past the tolerance, and no
+        # surface of the part that no face is on — the fidelity check only
+        # samples surfaces something covers, so a surface missed whole would
+        # otherwise score as followed. Known defects do not excuse either:
+        # they are curves and corners, not where the skin lies.
+        beyond = f["skin"].get("beyond", 0)
+        uncovered = []
+        if report.get("blocking"):
+            uncovered = [i["on"]["tag"] for i in report["blocking"]["issues"]
+                         if i["kind"] == "surface_not_covered" and i["on"]["tag"] not in known["surfaces"]]
+        said = f"skin max {f['skin']['max']:.3f} ({beyond} nodes past the tolerance)"
+        if uncovered:
+            said += f", surfaces {uncovered} covered by no face and never measured"
+        rule(True, "skin on the part", said, beyond == 0 and not uncovered)
     elif q:
         rule(False, "fidelity measured", "no geometry", False)
 

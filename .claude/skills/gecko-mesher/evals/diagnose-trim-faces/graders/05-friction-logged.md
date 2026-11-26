@@ -4,4 +4,4 @@ focus: trace
 weight: 1
 ---
 
-The answer logs (or proposes logging) the missing detection of duplicated curves as a Gecko friction or feature idea.
+The duplicated seam is logged as a feature request for Gecko (frictions.jsonl, kind feature-request) proposing a concrete command or load-time check, such as detecting or stitching duplicated curves.

@@ -11,7 +11,7 @@ is a deliverable, not a diary: one JSON object per line in
 | ----- | ------------- |
 | `part` | the model, e.g. `"B1"` |
 | `step` | `understand`, `plan`, `build`, `check`, `size`, `mesh`, `diagnose`, `optimise`, `deliver` |
-| `kind` | `missing-read` (Gecko could not tell me X), `missing-command` (could not do X), `wrong-result` (did X badly), `bug`, `cad-defect` (the file, not Gecko), `manual-work` (I did by hand what a tool could do), `docs` |
+| `kind` | `feature-request` (a command or read Gecko should have — every script written to make up for Gecko, and every stopgap of the skill used), `missing-read` (Gecko could not tell me X), `missing-command` (could not do X), `wrong-result` (did X badly), `bug`, `cad-defect` (the file, not Gecko), `manual-work` (I did by hand what a tool could do), `docs` |
 | `need` | what you were trying to get or do, in one sentence |
 | `workaround` | what you did instead |
 | `cost` | what it cost: time, tool calls, quality, blocks — numbers where you have them |

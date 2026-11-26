@@ -35,7 +35,12 @@
 -- on corner 17; curve 26 duplicates curve 23 but lies on S7 where 23 lies on
 -- S6. Merging 20+23+26 (below) clears corner 16 but leaves a curve no surface
 -- contains, so 5 outer faces along the trim follow nothing — blocking.issues
--- shows them. The mesh still lies within 0.11 of the part. Not fixed yet.
+-- shows them. The mesh still lies within 0.11 of the part, but check.py
+-- fails it: 39 skin nodes past the tolerance, and the trim never measured.
+-- The cure is upstream: scripts/step_to_msh.py heals the file (the duplicate
+-- seam and the zero-length curve are fused), after which the plain merges
+-- 20+23 follow both surfaces — the tags change, so the script needs
+-- retagging. The fix within this file is in the diagnose-trim-faces case.
 --
 -- The vertex positions were tuned with scripts/optimize.py (min SJ 0.41 for
 -- the first placement); P holds the result. A global PARAMS set before this

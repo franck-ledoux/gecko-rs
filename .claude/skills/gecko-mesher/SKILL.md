@@ -31,6 +31,21 @@ Four things are judged, and they pull against each other:
 The rules the user holds a mesh to are in `references/quality-rules.md`.
 Read it before you start; it says what "done" means.
 
+## Gecko first: ask for the feature, do not write the script
+
+When Gecko cannot do something the job needs, the user wants to hear it as
+**a feature request for Gecko**, not to receive a Python script that does it
+on the side. A helper that measures the mesh, searches vertex positions or
+re-derives what the kernel knows solves one part once and hides what Gecko
+should do for every part. So before writing any such helper: look for a way
+inside Gecko, write the request (the command or read you want, with its
+arguments), and only if the part cannot be finished otherwise write the
+smallest stopgap — named as one, pointing to its request.
+`references/feature-requests.md` says how, and lists the requests the
+skill's own scripts already stand for: `fundamental.py`, `optimize.py`,
+`check.py` and parts of `blocklib.lua` are stopgaps too, to use while the
+features do not exist and to say so when you do.
+
 ## Before anything: the tools
 
 - The binary: `gecko` on the PATH, or `<gecko-rs>/target/release/gecko`.
@@ -76,8 +91,10 @@ Then write down, in a few lines:
   on those, not on the pieces.
 - **CAD defects**: curves of zero length, two curves with the same ends and
   length (duplicates), corners at the same point. They make "curve not
-  followed" / "corner not held" reports that no blocking can clear. Name
-  them now so you do not chase them later, and log them as frictions.
+  followed" / "corner not held" reports that no blocking can clear, and
+  merges that leave faces on nothing. Converting from STEP with
+  `step_to_msh.py` heals them (the default); with only a `.msh`, name them
+  now so you do not chase them later. Log them either way.
 
 ### 2. Plan the topology before writing code
 
@@ -176,8 +193,10 @@ problems with placement.
 
 ### 7. Optimise placement
 
-Once the topology is right, the vertex positions are worth tuning. With the
-positions behind `PARAMS` as in step 3, run `scripts/optimize.py` (read its
+Once the topology is right, the vertex positions are worth tuning. Gecko
+has no placement optimiser yet (`references/feature-requests.md`); until it
+does, with the positions behind `PARAMS` as in step 3, run the stopgap
+`scripts/optimize.py` (read its
 header) with a `params.json` naming what may move: a random
 coordinate search on min SJ (plus a little mean), each evaluation a
 `gecko run --json`. Optimise at a **coarse** size (fast), then **verify at
@@ -209,7 +228,7 @@ In the part's folder:
 Report numbers as the report gives them; if a rule failed, say which and by
 how much rather than rounding it into a pass.
 
-### 9. Log the frictions — this is half the job
+### 9. Log the frictions and feature requests — this is half the job
 
 Every time Gecko made you work around something — a read that was missing,
 a number you had to compute outside, a command that did the wrong thing, a
@@ -217,12 +236,14 @@ defect it did not catch, a step you did by hand that a tool could do — append
 one line to `frictions.jsonl` in the part's folder, as you go, not at the end:
 
 ```json
-{"part":"B1","step":"plan","need":"…","workaround":"…","cost":"…","idea":"…"}
+{"part":"B1","step":"plan","kind":"feature-request","need":"…","workaround":"…","cost":"…","idea":"gecko.…{ … }","severity":3}
 ```
 
-`references/feature-log.md` has the fields and examples. At the end,
-`python3 scripts/frictions.py <folders…>` ranks them across parts — that is
-the feature list the user is after. A run with no frictions logged is
+Every script you wrote to make up for Gecko, and every stopgap of the skill
+you used, is a `feature-request` line. `references/feature-log.md` has the
+fields and examples. At the end, `python3 scripts/frictions.py <folders…>`
+ranks them across parts — that is the feature list the user is after; give
+the requests first in your summary. A run with no frictions logged is
 suspicious: say so if there truly were none.
 
 ## Reference files
@@ -234,5 +255,8 @@ suspicious: say so if there truly were none.
   before writing the first script.
 - `references/quality-rules.md` — what "done" means. Read first.
 - `references/feature-log.md` — the friction-log format.
+- `references/feature-requests.md` — asking Gecko for features instead of
+  scripting around them; the requests the skill's own stopgaps stand for,
+  and those found while testing. Read before writing any helper script.
 - `examples/B1.lua` — a complete worked example: Mambo B1, 13 blocks, min
   SJ 0.64, with its own known defect noted in the header.

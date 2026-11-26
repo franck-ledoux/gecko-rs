@@ -14,7 +14,7 @@
 | Minimum scaled Jacobian | ≥ 0.30 | `quality.scaled_jacobian.min` |
 | Every real curve followed | `fidelity.curves.missed` holds only known CAD defects | report |
 | Every real corner on a node | `fidelity.corners.missed` holds only known CAD defects | report |
-| The skin on the part | `fidelity.skin.max` ≤ the fidelity tolerance (a quarter of the local element size) — i.e. `fidelity.worst` absent or a known defect | report |
+| The skin on the part | no skin node past the fidelity tolerance (`fidelity.skin.beyond == 0`), **and** no `surface_not_covered` in `blocking.issues` — the fidelity check never samples a surface no face is on, so a surface missed whole scores as followed | report |
 | Every outer face attached | no `outer_face_on_nothing` in `blocking.issues` | report |
 | **The blocking is fundamental** | every geometric surface captured by one fun sheet, every curve by fundamental chords — below | `scripts/fundamental.py report.json` |
 
@@ -95,6 +95,9 @@ span (`gecko.geometry().span`), at least 3 cells through any wall, at least
 ## Known CAD defects
 
 Zero-length curves, duplicated curves and coincident corners cannot be
-followed. List them (tag and why) in the summary and pass them to
-`check.py --known`; never count them as the mesh's failure, and never hide a
+followed. **Heal them first**: `scripts/step_to_msh.py` does by default
+(gmsh's OCC coherence), and on B1 that leaves nothing to exempt — 17/17
+curves followed. Exempt only what healing cannot fix, or a `.msh` you were
+given without its STEP: list each (tag and why) in the summary, pass them to
+`check.py --known`, never count them as the mesh's failure, and never hide a
 real miss among them.

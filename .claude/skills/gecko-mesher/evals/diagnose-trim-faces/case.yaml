@@ -8,7 +8,8 @@ expected_outcome: |
   surface 6, so the merged curve is contained in no single surface and no face
   touching it can be put on one. It says the mesh fidelity check misses this
   (the skin is still within about 0.11 of the part), proposes a fix or a way
-  forward without rewriting the script, and logs the missing duplicate-curve
-  detection as a friction.
+  forward without rewriting the script — rerun, leaving zero outer faces on
+  nothing — and logs the missing duplicate-curve detection as a feature
+  request for Gecko.
 context:
   scaffold_script: place-files.sh
