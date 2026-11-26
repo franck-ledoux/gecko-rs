@@ -7,4 +7,5 @@
 //! real one reads as nothing at all. One target, one copy, one answer.
 
 pub mod files;
+pub mod report;
 pub mod serve;

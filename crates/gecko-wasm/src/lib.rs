@@ -174,6 +174,22 @@ impl WasmSession {
         self.inner.entities_json()
     }
 
+    /// The geometry described: sizes, incidence and shapes.
+    #[wasm_bindgen(js_name = geometryJson)]
+    pub fn geometry_json(&self) -> String {
+        self.inner.geometry_describe_json()
+    }
+
+    #[wasm_bindgen(js_name = polylineJson)]
+    pub fn polyline_json(&self, tag: i32) -> String {
+        self.inner.polyline_json(tag)
+    }
+
+    #[wasm_bindgen(js_name = closestJson)]
+    pub fn closest_json(&self, arg: &str) -> String {
+        self.inner.closest_json(arg)
+    }
+
     /// The session as a Lua script — its history, in the one form that
     /// can be run again.
     #[wasm_bindgen(js_name = script)]

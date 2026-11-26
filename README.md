@@ -138,7 +138,10 @@ passes locally passes there.
   on a node, nothing of the part missing;
 - **look at it**: every group shown, colored, faded and shrunk on its own,
   one view or four, with a picture saved at publication size;
-- **script**: all of the above, in Lua, in the page or from a terminal.
+- **script**: all of the above, in Lua, in the page or from a terminal;
+- **be driven by a program**: a run written up as JSON, the geometry
+  described in numbers — planes, cylinders, arcs, what touches what — and
+  pictures drawn without a browser, labelled with every entity's tag.
 
 Not there yet: Bézier curves and Coons surfaces for the blocking itself,
 grading along an edge.

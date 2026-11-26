@@ -81,6 +81,16 @@ pub trait Kernel {
     /// able to ask.
     fn files(&self) -> Vec<String>;
     fn write(&self, path: &str, text: &str) -> Result<(), String>;
+
+    /// Bytes rather than text — a picture. Only where there are files to
+    /// write them to: the page passes text to its host and nothing else,
+    /// and has a picture button of its own.
+    fn write_bytes(&self, path: &str, _bytes: &[u8]) -> Result<(), String> {
+        Err(format!(
+            "{path}: a picture is written from a terminal, with `gecko run`; \
+             in the page, the camera button in the toolbar saves one"
+        ))
+    }
 }
 
 /// Put the `gecko` table into this interpreter.
@@ -438,6 +448,40 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
         )?;
     }
 
+    // The geometry, described: `gecko.geometry()` for every entity's size,
+    // incidence and shape; `gecko.polyline(tag)` for a curve's nodes in
+    // order; `gecko.closest({x, y, z})` for the nearest corner, curve and
+    // surface — or `gecko.closest(p, { dim = 1, tag = 5 })` for one.
+    read(lua, &gecko, &kernel, "geometry", "geometry")?;
+    {
+        let host = Rc::clone(&kernel);
+        gecko.set(
+            "polyline",
+            lua.create_function(move |lua, tag: i32| {
+                answer(lua, &host.query("polyline", &tag.to_string()))
+            })?,
+        )?;
+    }
+    {
+        let host = Rc::clone(&kernel);
+        gecko.set(
+            "closest",
+            lua.create_function(move |lua, (point, options): (Value, Option<Table>)| {
+                let point: Json = lua.from_value(point)?;
+                let mut asked = json!({ "point": point });
+                if let Some(options) = options {
+                    let dim: Option<u8> = options.get("dim")?;
+                    let tag: Option<i32> = options.get("tag")?;
+                    if let (Some(dim), Some(tag)) = (dim, tag) {
+                        asked["dim"] = json!(dim);
+                        asked["tag"] = json!(tag);
+                    }
+                }
+                answer(lua, &host.query("closest", &asked.to_string()))
+            })?,
+        )?;
+    }
+
     {
         let host = Rc::clone(&kernel);
         gecko.set(
@@ -495,8 +539,88 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
         )?;
     }
 
+    {
+        // `gecko.render("view.png", { view = "iso", show = {"mesh"}, below = 0.3 })`:
+        // a picture of the session, drawn without a browser. The kernel
+        // answers with the PNG in base64, since a read answers with text.
+        let host = Rc::clone(&kernel);
+        gecko.set(
+            "render",
+            lua.create_function(move |lua, (path, options): (String, Option<Value>)| {
+                let options: Json = match options {
+                    Some(v) => empty_as_list(lua.from_value(v)?),
+                    None => Json::Null,
+                };
+                let options = match options {
+                    Json::Array(a) if a.is_empty() => Json::Null,
+                    other => other,
+                };
+                let reply: Json = serde_json::from_str(&host.query("render", &options.to_string()))
+                    .map_err(mlua::Error::external)?;
+                if let Some(error) = reply["error"].as_str() {
+                    return Err(mlua::Error::RuntimeError(error.to_string()));
+                }
+                let Some(png) = reply["png"].as_str() else {
+                    return Err(mlua::Error::RuntimeError(
+                        "a picture is drawn from a terminal, with `gecko run`; in the page, \
+                         the camera button in the toolbar saves one"
+                            .into(),
+                    ));
+                };
+                let bytes = unbase64(png)
+                    .ok_or_else(|| mlua::Error::external("a picture that is not base64"))?;
+                host.write_bytes(&path, &bytes)
+                    .map_err(mlua::Error::external)?;
+                let shown: Vec<&str> = reply["shown"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(Json::as_str).collect())
+                    .unwrap_or_default();
+                let mut said = format!(
+                    "{}×{} picture of {} written to {path}",
+                    reply["width"],
+                    reply["height"],
+                    shown.join(", ")
+                );
+                if let Some(n) = reply["flagged"].as_u64().filter(|n| *n > 0) {
+                    said.push_str(&format!("; {n} cells below the threshold drawn over it"));
+                }
+                Ok(said)
+            })?,
+        )?;
+    }
+
     lua.globals().set("gecko", gecko)?;
     Ok(())
+}
+
+/// Standard base64, padded, back to bytes; nothing when it is not that.
+fn unbase64(text: &str) -> Option<Vec<u8>> {
+    let value = |c: u8| -> Option<u32> {
+        Some(match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        } as u32)
+    };
+    let bytes = text.as_bytes();
+    if !bytes.len().is_multiple_of(4) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
+    for chunk in bytes.chunks(4) {
+        let pad = chunk.iter().rev().take_while(|c| **c == b'=').count();
+        let mut n = 0u32;
+        for &c in &chunk[..4 - pad] {
+            n = (n << 6) | value(c)?;
+        }
+        n <<= 6 * pad as u32;
+        let got = [(n >> 16) as u8, (n >> 8) as u8, n as u8];
+        out.extend_from_slice(&got[..3 - pad]);
+    }
+    Some(out)
 }
 
 /// One command, as a Lua function: build the JSON, send it, hand back what
@@ -610,4 +734,18 @@ fn with(mut command: Json, options: &Map<String, Json>, wanted: &[&str]) -> Json
         }
     }
     command
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn unbase64_reads_what_base64_writes() {
+        assert_eq!(super::unbase64("").unwrap(), b"");
+        assert_eq!(super::unbase64("Zg==").unwrap(), b"f");
+        assert_eq!(super::unbase64("Zm8=").unwrap(), b"fo");
+        assert_eq!(super::unbase64("Zm9vYmFy").unwrap(), b"foobar");
+        assert_eq!(super::unbase64("+/8=").unwrap(), [0xfb, 0xff]);
+        assert!(super::unbase64("Zm9").is_none());
+        assert!(super::unbase64("Zm9*").is_none());
+    }
 }

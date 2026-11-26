@@ -55,6 +55,10 @@ impl Kernel for Local {
             "patches" => session.patches_json(),
             "groups" => session.groups_json(),
             "entities" => session.entities_json(),
+            "geometry" => session.geometry_describe_json(),
+            "polyline" => session.polyline_json(arg.trim().parse().unwrap_or(i32::MAX)),
+            "closest" => session.closest_json(arg),
+            "render" => session.render_json(arg),
             "sheet" => session.sheet_json(arg.trim().parse().unwrap_or(u32::MAX)),
             "sheet_cells" => session.sheet_cells_json(arg.trim().parse().unwrap_or(u32::MAX)),
             // Two numbers, as a JSON array: `query` carries one string, and
@@ -100,5 +104,9 @@ impl Kernel for Local {
 
     fn write(&self, path: &str, text: &str) -> Result<(), String> {
         std::fs::write(path, text).map_err(|e| format!("{path}: {e}"))
+    }
+
+    fn write_bytes(&self, path: &str, bytes: &[u8]) -> Result<(), String> {
+        std::fs::write(path, bytes).map_err(|e| format!("{path}: {e}"))
     }
 }

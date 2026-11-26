@@ -9,8 +9,11 @@
 //! and it is what makes the two modes testable against each other, by replaying
 //! one script through both and comparing the bytes that come out.
 
+pub mod describe;
 pub mod fidelity;
 pub mod groups;
+pub mod png;
+pub mod render;
 pub mod script;
 pub mod view;
 pub mod vtk;
@@ -3421,6 +3424,89 @@ impl Session {
         out.to_string()
     }
 
+    /// Every entity of the geometry, described: where, how big, what it
+    /// touches and what shape it is. `null` with no geometry. See
+    /// [`describe`].
+    pub fn geometry_describe_json(&self) -> String {
+        match &self.geometry {
+            Some(geometry) => describe::geometry(geometry, &self.composites).to_string(),
+            None => "null".to_string(),
+        }
+    }
+
+    /// A curve's nodes in order, or `null`.
+    pub fn polyline_json(&self, tag: i32) -> String {
+        match &self.geometry {
+            Some(geometry) => describe::polyline(geometry, &self.composites, tag).to_string(),
+            None => "null".to_string(),
+        }
+    }
+
+    /// The nearest point of the model to the one `arg` names, as JSON:
+    /// `{"point": [x, y, z]}`, with `"dim"` and `"tag"` to ask of one entity.
+    /// `null` with no geometry or no point.
+    pub fn closest_json(&self, arg: &str) -> String {
+        let Some(geometry) = &self.geometry else {
+            return "null".to_string();
+        };
+        let asked: serde_json::Value = serde_json::from_str(arg).unwrap_or_default();
+        let Some(point) = asked["point"]
+            .as_array()
+            .filter(|p| p.len() == 3)
+            .and_then(|p| Some([p[0].as_f64()?, p[1].as_f64()?, p[2].as_f64()?]))
+        else {
+            return "null".to_string();
+        };
+        let on = match (asked["dim"].as_u64(), asked["tag"].as_i64()) {
+            (Some(dim), Some(tag)) => Some((dim as u8, tag as i32)),
+            _ => None,
+        };
+        describe::closest(geometry, &self.composites, point, on).to_string()
+    }
+
+    /// A picture of the session, as PNG bytes in base64 with what was drawn:
+    /// `{"width", "height", "shown", "flagged", "png"}`, or `{"error": …}`
+    /// for options that make no sense. `arg` is the options as JSON — see
+    /// [`render::Options::parse`].
+    pub fn render_json(&self, arg: &str) -> String {
+        let asked: serde_json::Value = if arg.trim().is_empty() {
+            serde_json::Value::Null
+        } else {
+            match serde_json::from_str(arg) {
+                Ok(v) => v,
+                Err(e) => {
+                    return serde_json::json!({ "error": format!("render options: {e}") })
+                        .to_string()
+                }
+            }
+        };
+        let has = render::Show {
+            geometry: self.geometry.is_some(),
+            blocks: self.blocking.census().blocks > 0,
+            mesh: self.mesh.is_some(),
+            ..render::Show::default()
+        };
+        let options = match render::Options::parse(&asked, has) {
+            Ok(options) => options,
+            Err(e) => return serde_json::json!({ "error": e }).to_string(),
+        };
+        let scene = render::Scene {
+            blocking: &self.blocking,
+            geometry: self.geometry.as_deref(),
+            composites: &self.composites,
+            mesh: self.mesh.as_ref(),
+        };
+        let picture = render::render(&scene, &options);
+        serde_json::json!({
+            "width": picture.width,
+            "height": picture.height,
+            "shown": picture.shown,
+            "flagged": picture.flagged,
+            "png": png::base64(&png::encode(picture.width, picture.height, &picture.rgb)),
+        })
+        .to_string()
+    }
+
     /// The session as a Lua script: what a reader would have typed to
     /// arrive where it now is.
     pub fn script(&self) -> String {
@@ -3568,7 +3654,7 @@ fn spot_json(on: On) -> serde_json::Value {
 /// A composite is printed by what it is made of: `side -1` tells a reader
 /// nothing, and the tag of a side is an implementation detail of the table
 /// it lives in.
-fn name_in(on: On, composites: &Composites) -> String {
+pub(crate) fn name_in(on: On, composites: &Composites) -> String {
     match composites.members(on.tag) {
         None => name_of(on),
         // A merge is one entity of the model, and named as one: by its

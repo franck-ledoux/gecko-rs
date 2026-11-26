@@ -105,7 +105,11 @@ shorthand for a call with one table.
 And the reads, each a plain table: `nodes()`, `edges()`, `faces()`,
 `blocks()`, `groups()`, `entities()`, `stats()`, `quality(metric)`,
 `fidelity{ tolerance = 0.25 }`, `sheet(edge)`,
-`sheet_cells(edge)`, `chord(face, block)`, `vtk()`, `script()`.
+`sheet_cells(edge)`, `chord(face, block)`, `vtk()`, `script()` — and, to
+plan a blocking from, `geometry()`, `polyline(curve)` and
+`closest(point)`: what each entity of the geometry is, in numbers. A
+picture is `render("view.png", { … })`, from a terminal. Both are in
+[Scripts run by programs](programs.md).
 
 ```lua
 for _, node in ipairs(gecko.nodes()) do
@@ -137,6 +141,10 @@ for _, n in ipairs({ 2, 4, 8 }) do
   gecko.export_vtk(string.format("mesh-%d.vtk", n))
 end
 ```
+
+`gecko run sweep.lua --json` writes the run up as one JSON object instead —
+what it printed and returned, and the mesh's quality and fidelity — for a
+program to read; see [Scripts run by programs](programs.md).
 
 `gecko run` and the page are **two sessions**, not one: a script run in the
 terminal shows nothing, and a script run in the console is the one you

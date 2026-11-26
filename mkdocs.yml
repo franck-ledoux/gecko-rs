@@ -64,6 +64,7 @@ nav:
       - Smoothing: user-guide/smoothing.md
       - Meshing: user-guide/meshing.md
       - Scripting: user-guide/scripting.md
+      - Scripts run by programs: user-guide/programs.md
   - Developer Guide:
       - Architecture: developer-guide/architecture.md
       - The cellular structure: developer-guide/cellular.md

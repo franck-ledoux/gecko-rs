@@ -63,6 +63,12 @@ export class WasmKernel implements Kernel {
             return this.session.fidelityJson(arg === "" ? NaN : Number(arg));
           case "entities":
             return this.session.entitiesJson();
+          case "geometry":
+            return this.session.geometryJson();
+          case "polyline":
+            return this.session.polylineJson(Number(arg));
+          case "closest":
+            return this.session.closestJson(arg);
           case "sheet":
             return this.session.sheetJson(Number(arg));
           case "sheet_cells":

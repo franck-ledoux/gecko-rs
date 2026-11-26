@@ -3,6 +3,28 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
+## Unreleased
+
+- **`gecko run --json`.** A run written up as one JSON object on stdout:
+  whether the script got to the end and why not, what it printed and
+  returned, the counts, the mesh under all three quality metrics and held
+  against the geometry. Written when the script fails too, of the session as
+  it was at the error.
+
+- **The geometry, described.** `gecko.geometry()` gives every entity its
+  size, what it touches, and its shape when it has a simple one — a line or
+  a circle for a curve; a plane, a cylinder or a sphere for a surface, with
+  the numbers that pin it down and which way it turns. A merge is described
+  as one entity, and its pieces each on their own. `gecko.polyline(tag)`
+  gives a curve's nodes in order, and `gecko.closest(point)` the nearest
+  corner, curve and surface.
+
+- **Pictures without a browser.** `gecko.render("view.png", { … })` draws
+  the geometry, the blocks or the mesh in software and writes a PNG: from a
+  named view or any direction, the mesh coloured by quality or by block, the
+  cells below a threshold drawn over everything, and every entity labelled
+  with its tag. From a terminal; the page has its camera button.
+
 ## 0.2.9
 
 - **Quality in three named metrics.** The mesh's quality is read in the

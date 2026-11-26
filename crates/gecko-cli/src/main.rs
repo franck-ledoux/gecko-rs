@@ -21,6 +21,10 @@ gecko — a block toolkit
 
     gecko                    serve the page and open it
     gecko run <script.lua>   run a script, with no browser
+    gecko run <script.lua> --json
+                             the same, written up as one JSON object on
+                             stdout: what it printed and returned, the
+                             counts, the mesh's quality and fidelity
     gecko --help
 
     --port <n>    serve on this port rather than one the system picks
@@ -37,10 +41,13 @@ fn main() -> ExitCode {
     }
 
     if args.first().is_some_and(|a| a == "run") {
-        let Some(script) = args.get(1) else {
+        let Some(script) = args.iter().skip(1).find(|a| !a.starts_with("--")) else {
             eprintln!("gecko run: which script?\n\n{USAGE}");
             return ExitCode::FAILURE;
         };
+        if flag("--json") {
+            return report(script);
+        }
         return match run(script) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
@@ -69,6 +76,23 @@ fn main() -> ExitCode {
             eprintln!("gecko: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// The same run, as a report on stdout. The exit status still says whether
+/// the script got to the end, so a shell can branch on it without parsing.
+fn report(script: &str) -> ExitCode {
+    let report = match std::fs::read_to_string(script) {
+        Ok(source) => gecko_cli::report::run(script, &source),
+        Err(e) => {
+            serde_json::json!({ "script": script, "ok": false, "error": format!("{script}: {e}") })
+        }
+    };
+    println!("{report}");
+    if report["ok"] == true {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
     }
 }
 
