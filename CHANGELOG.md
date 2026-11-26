@@ -3,6 +3,14 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
+## Unreleased
+
+- **A release is the source code, and the site.** Releases no longer carry
+  binaries or `gecko-web.zip`: the page is the application, and every release
+  publishes it. Build the local binary yourself to work on files from a
+  folder. A release also goes out sooner, since the tag no longer runs the
+  checks again over a commit `main` has just passed.
+
 ## 0.2.8
 
 - **A mesh checked against its geometry.** Under the quality figures, a

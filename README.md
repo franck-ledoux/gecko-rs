@@ -23,28 +23,14 @@ nothing to install, because a page that carries its own kernel needs no
 server. The [documentation](https://franck-ledoux.github.io/gecko-rs/) is
 published beside it.
 
-## Installing a version of it
+## Releases
 
-The [latest release](https://github.com/franck-ledoux/gecko-rs/releases/latest)
-carries one binary per machine. Each is the whole application — the page is
-baked into it — so there is nothing else to put anywhere:
-
-|                                   |                                                                                                                           |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| macOS, Apple silicon              | [`gecko-macos-arm64`](https://github.com/franck-ledoux/gecko-rs/releases/latest/download/gecko-macos-arm64)               |
-| Linux, x86-64                     | [`gecko-linux-x86_64`](https://github.com/franck-ledoux/gecko-rs/releases/latest/download/gecko-linux-x86_64)             |
-| Windows, x86-64                   | [`gecko-windows-x86_64.exe`](https://github.com/franck-ledoux/gecko-rs/releases/latest/download/gecko-windows-x86_64.exe) |
-| the static page, to host yourself | [`gecko-web.zip`](https://github.com/franck-ledoux/gecko-rs/releases/latest/download/gecko-web.zip)                       |
-
-```bash
-chmod +x gecko-macos-arm64
-xattr -d com.apple.quarantine gecko-macos-arm64   # macOS only: it is unsigned
-./gecko-macos-arm64                               # in a folder of meshes
-```
-
-Those links always point at the newest release. What a release is for, over
-the page above: **files**. The binary lends the page the directory it was
-started in, so a script can read a `.msh` and write a mesh out.
+A [release](https://github.com/franck-ledoux/gecko-rs/releases) is the source
+code at a version, with what changed in it. There are no binaries to download:
+the page above is the application, and every release publishes it. To work on
+files from a folder on your machine, build the local binary yourself — the
+page is baked into it, and it lends the page the directory it was started in,
+so a script can read a `.msh` and write a mesh out.
 
 What follows is for building it yourself.
 

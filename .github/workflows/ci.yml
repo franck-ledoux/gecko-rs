@@ -28,8 +28,16 @@ jobs:
   # `./check.sh` on Linux, which is `cargo fmt`, `clippy` and `cargo test`
   # before it is anything else. A third copy of them proves nothing and
   # fails for the same reasons twice.
+  #
+  # **Not on a tag.** A tag points at a commit `main` has already run these
+  # on, and a macOS runner GitHub never handed out held 0.2.8's release back
+  # without a line of the code being run.
   rust:
     name: Rust (${{ matrix.os }})
+    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+    # A hung step, not a queue: time spent waiting for a runner does not
+    # count against this.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -118,25 +126,35 @@ jobs:
 
       - name: Install the browser Playwright drives
         working-directory: front
-        # The browser comes from Playwright's own download. `--with-deps`
-        # is an `apt-get` on top of it, for fonts and X libraries that the
-        # runner image already carries — and twice in a row it has failed
-        # outright, unable to resolve Ubuntu's mirrors, with no incident
-        # declared anywhere. That is eleven minutes of machine time thrown
-        # away over fonts.
-        #
-        # So ask for them, and carry on without them when apt cannot be
-        # reached. Nothing is papered over: a dependency that is genuinely
-        # missing stops the browser from starting, which fails the next
-        # step loudly.
+        # The browser alone, from Playwright's own download. `--with-deps`
+        # was an `apt-get` on top of it, for fonts and X libraries the
+        # runner image already carries: a minute a run, and twice an outright
+        # failure when Ubuntu's mirrors could not be resolved. Nothing is
+        # papered over by leaving it out — a library that is genuinely
+        # missing stops the browser from starting, which fails the suite
+        # loudly.
         run: |
           npm ci
-          npx playwright install --with-deps chromium \
-            || npx playwright install chromium
+          npx playwright install chromium
 
       - name: Everything
         # The same script a developer runs. What passes locally passes here.
+        #
+        # **Not on a tag**, where `main` has already run it over the same
+        # commit: the `main-passed` job below waits for that result, and
+        # nothing is published without it. The tag builds the page and
+        # measures its coverage — which runs both suites of the page again,
+        # with the collector on, and fails on a failing test like any run.
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         run: ./check.sh
+
+      - name: The page, on a tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          npm ci --no-audit --no-fund
+          ./build-wasm.sh
+          ./build-lua.sh
+          (cd front && npm run build)
 
       - name: Keep the traces of a failed run
         if: failure()
@@ -220,6 +238,25 @@ jobs:
             target/coverage/kernel/html
             target/coverage/kernel-badge.json
           retention-days: 1
+
+  # On a tag, what stands in for running `./check.sh` again: `main`'s run
+  # over the same commit, waited for and read. It runs alongside the rest —
+  # `main` was pushed a moment before the tag, so its run is usually still
+  # going — and what it gates is publishing, not building.
+  main-passed:
+    name: The same commit, passed on main
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Wait for main's check, and read it
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: tools/wait_for_main.sh
 
   # Builds the site on every push, which is what keeps the links honest:
   # docs.sh passes --strict, so a dead link or a page missing from the
@@ -335,9 +372,10 @@ jobs:
   # suite, which is what a green `docs` already means.
   deploy-docs:
     name: Publish the documentation
-    needs: docs
+    needs: [docs, main-passed]
     if: >-
       ${{ !cancelled() && needs.docs.result == 'success'
+      && needs.main-passed.result == 'success'
       && startsWith(github.ref, 'refs/tags/v')
       && !github.event.repository.private }}
     runs-on: ubuntu-latest
@@ -351,3 +389,37 @@ jobs:
       - name: Deploy
         id: deploy
         uses: actions/deploy-pages@v5
+
+  # The release itself: the changelog's section for this version, and the
+  # source code, which GitHub attaches to every release as a zip and a
+  # tarball on its own. No binaries — the page is the application, and it is
+  # published above.
+  #
+  # Here rather than in a workflow of its own so that it waits for the same
+  # things the site does: the commit passed on `main`, and the page built and
+  # measured on the tag.
+  release:
+    name: Publish the release
+    needs: [full, main-passed]
+    if: >-
+      ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v')
+      && needs.full.result == 'success'
+      && needs.main-passed.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      # One description of what changed, not two that can disagree.
+      - name: Take the notes out of the changelog
+        run: python3 tools/release_notes.py "${GITHUB_REF_NAME#v}" > notes.md
+
+      - name: Create it
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file notes.md \
+            --verify-tag
