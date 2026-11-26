@@ -92,6 +92,9 @@ fn measure(kernel: &Rc<Local>) -> Vec<(&'static str, Json)> {
     }
     vec![
         ("stats", stats),
+        // Written whatever happened: when a script stops half way, the
+        // blocking it got to is what says why.
+        ("blocking", read("blocking", "")),
         ("quality", quality),
         ("fidelity", fidelity),
     ]
@@ -108,6 +111,7 @@ fn failed(name: &str, error: &str, started: Instant) -> Json {
         "returned": null,
         "seconds": started.elapsed().as_secs_f64(),
         "stats": null,
+        "blocking": null,
         "quality": null,
         "fidelity": null,
     })
@@ -229,6 +233,9 @@ mod tests {
         assert!(report["error"].as_str().unwrap().contains("broken.lua"));
         assert_eq!(report["printed"], json!(["before"]));
         assert_eq!(report["stats"]["blocks"], 1, "the state at the failure");
+        // And the blocking it got to, whole.
+        assert_eq!(report["blocking"]["blocks"].as_array().unwrap().len(), 1);
+        assert_eq!(report["blocking"]["nodes"].as_array().unwrap().len(), 8);
         assert_eq!(report["quality"], Json::Null);
     }
 

@@ -12,6 +12,7 @@
 pub mod describe;
 pub mod fidelity;
 pub mod groups;
+pub mod inspect;
 pub mod png;
 pub mod render;
 pub mod script;
@@ -3432,6 +3433,14 @@ impl Session {
             Some(geometry) => describe::geometry(geometry, &self.composites).to_string(),
             None => "null".to_string(),
         }
+    }
+
+    /// The whole block structure — blocks with their corners and quality,
+    /// nodes, edges, faces, sheets — and what looks wrong with it, held
+    /// against the geometry when there is one. See [`inspect`].
+    pub fn blocking_json(&self) -> String {
+        let geometry = self.geometry.as_deref().map(|g| (g, &self.composites));
+        inspect::blocking(&self.blocking, geometry).to_string()
     }
 
     /// A curve's nodes in order, or `null`.

@@ -25,18 +25,52 @@ printed is captured into it rather than mixed with it.
 | `printed`  | the lines `print` and `io.write` wrote, in order                                               |
 | `returned` | what the script returned, as JSON — `return { blocks = 13 }` arrives as an object              |
 | `stats`    | `gecko.stats()` as the run left it                                                             |
+| `blocking` | the block structure, whole, and what looks wrong with it: `gecko.blocking()`, below            |
 | `quality`  | the mesh under each metric — `scaled_jacobian`, `skewness`, `aspect_ratio` — or `null`         |
 | `fidelity` | the mesh held against the geometry, as `gecko.fidelity()` gives it less its drawing, or `null` |
 | `seconds`  | how long it took                                                                               |
 
 The report is written **when the script fails as well**: `ok` is false, and
-the counts, quality and fidelity are of the session as it was at the error,
-which is the state worth having. The exit status still says which, so a shell
+the counts, the blocking, the quality and the fidelity are of the session as
+it was at the error, which is the state worth having. The exit status still says which, so a shell
 can branch on it without parsing anything.
 
 ```bash
 gecko run part.lua --json | jq '.quality.scaled_jacobian.min'
 ```
+
+## The block structure, written up
+
+`gecko.blocking()` — and `blocking` in the report — is the whole block
+structure, with what looks wrong with it found before anything is meshed:
+
+| field     | what it holds                                                                                                      |
+| --------- | ------------------------------------------------------------------------------------------------------------------ |
+| `summary` | how many blocks, how many inverted, the worst block and its figure, how many problems of each kind, `not_followed` |
+| `issues`  | each problem: its `kind`, the cells it is about, and a `message` that says why                                     |
+| `blocks`  | `id`, its eight `corners` in VTK order, `center`, and `jacobian`: the scaled Jacobian of its eight corners         |
+| `nodes`   | `id`, `pos`, `on` (`{dim, tag}` or nothing), `frozen`, `outer`: whether it is on the outside of the blocking       |
+| `edges`   | `id`, its two `nodes`, `on`, and the `sheet` it is in                                                              |
+| `faces`   | `id`, the `blocks` it bounds — one when it is `outer` — its four `nodes` and `on`                                  |
+| `sheets`  | `id`, the `segments` it is cut into and whether somebody `set` them, how many `blocks`, its `edges`                |
+
+The problems it looks for:
+
+| `kind`                  | what it means                                                                                            |
+| ----------------------- | -------------------------------------------------------------------------------------------------------- |
+| `inverted_block`        | a block turned inside out: some corner's scaled Jacobian is below nought                                 |
+| `poor_block`            | a block whose worst corner is below 0.2 — it rarely meshes into cells any better                         |
+| `outer_face_on_nothing` | a face on the outside follows no surface; `corners_on` says what each corner is on, which is usually why |
+| `outer_node_on_nothing` | a node on the outside follows nothing, so it neither stays on the part nor moves when smoothed           |
+| `node_off_its_entity`   | a node further from what it is classified on than rounding                                               |
+| `corner_not_held`       | a corner of the geometry with no node on it                                                              |
+| `curve_not_followed`    | a curve of the geometry no edge is classified on                                                         |
+| `surface_not_covered`   | a surface of the geometry no face is classified on                                                       |
+
+The last three are **boundary alignment failing**, said before the mesh is
+built rather than measured after it by `gecko.fidelity()`; `summary.not_followed`
+lists their tags. A part with a hole that never got its own blocks shows up as
+the hole's surface and rims there.
 
 ## The geometry, described
 

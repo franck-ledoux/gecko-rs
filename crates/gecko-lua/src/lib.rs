@@ -453,6 +453,9 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
     // order; `gecko.closest({x, y, z})` for the nearest corner, curve and
     // surface — or `gecko.closest(p, { dim = 1, tag = 5 })` for one.
     read(lua, &gecko, &kernel, "geometry", "geometry")?;
+    // And the block structure the same way: `gecko.blocking()`, every block,
+    // node, edge, face and sheet, with what looks wrong with them.
+    read(lua, &gecko, &kernel, "blocking", "blocking")?;
     {
         let host = Rc::clone(&kernel);
         gecko.set(

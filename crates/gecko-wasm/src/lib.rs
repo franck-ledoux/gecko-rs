@@ -180,6 +180,12 @@ impl WasmSession {
         self.inner.geometry_describe_json()
     }
 
+    /// The block structure written up, with what looks wrong with it.
+    #[wasm_bindgen(js_name = blockingJson)]
+    pub fn blocking_json(&self) -> String {
+        self.inner.blocking_json()
+    }
+
     #[wasm_bindgen(js_name = polylineJson)]
     pub fn polyline_json(&self, tag: i32) -> String {
         self.inner.polyline_json(tag)

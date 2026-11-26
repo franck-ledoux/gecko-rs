@@ -65,6 +65,8 @@ export class WasmKernel implements Kernel {
             return this.session.entitiesJson();
           case "geometry":
             return this.session.geometryJson();
+          case "blocking":
+            return this.session.blockingJson();
           case "polyline":
             return this.session.polylineJson(Number(arg));
           case "closest":

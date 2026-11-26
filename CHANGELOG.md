@@ -25,6 +25,14 @@ the day a tag was cut.
   cells below a threshold drawn over everything, and every entity labelled
   with its tag. From a terminal; the page has its camera button.
 
+- **The block structure, written up.** `gecko.blocking()`, and `blocking`
+  in the `--json` report, give every block with its corners and its own
+  quality, every node, edge, face and sheet with what it is classified on,
+  and the problems found before anything is meshed: blocks inverted or poor,
+  outer faces and nodes that follow nothing — saying what each corner is on
+  — nodes off their entity, and the corners, curves and surfaces of the
+  geometry nothing follows. Written even when the script fails.
+
 ## 0.2.9
 
 - **Quality in three named metrics.** The mesh's quality is read in the

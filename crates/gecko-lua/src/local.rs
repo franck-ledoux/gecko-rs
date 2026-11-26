@@ -56,6 +56,7 @@ impl Kernel for Local {
             "groups" => session.groups_json(),
             "entities" => session.entities_json(),
             "geometry" => session.geometry_describe_json(),
+            "blocking" => session.blocking_json(),
             "polyline" => session.polyline_json(arg.trim().parse().unwrap_or(i32::MAX)),
             "closest" => session.closest_json(arg),
             "render" => session.render_json(arg),
