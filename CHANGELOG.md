@@ -33,6 +33,15 @@ the day a tag was cut.
   — nodes off their entity, and the corners, curves and surfaces of the
   geometry nothing follows. Written even when the script fails.
 
+- **`merge_smooth` no longer merges across a crease because of a sliver.**
+  A triangle as good as flat — or one on an edge as good as a point, as a
+  mesher leaves where a CAD export put two corners on one spot — has no
+  direction to fold in, and read as one it folded up to 180°, which made
+  every crease round its surface look smooth: on Mambo B1 meshed at half
+  size, the top, bottom and end faces merged into the wall across their 90°
+  edges. Such triangles are now left out of what a surface's own folding
+  is measured by.
+
 ## 0.2.9
 
 - **Quality in three named metrics.** The mesh's quality is read in the

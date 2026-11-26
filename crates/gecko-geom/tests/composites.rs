@@ -485,3 +485,107 @@ fn a_seam_down_one_surface_goes_into_it_with_its_corners() {
         Some((CORNER, 3))
     );
 }
+
+/// `folded`, with the upright square faceted the way a mesher leaves one
+/// at a CAD defect: one of its triangles near enough flat to nothing — its
+/// third node a hair off the edge it stands on.
+fn folded_with_a_sliver() -> Geometry {
+    let f = [1.0, 0.0, 1.0];
+    let g = [1.0, 1.0, 1.0];
+    // On the diagonal C–g, a billionth off it.
+    let h = [1.0, 0.5, 0.5 + 1e-9];
+    let mut b = Build::default();
+    for (p, tag) in [(A, 21), (C, 23), (D, 24), (E, 25), (f, 26), (g, 27)] {
+        b.element(POINT, tag, &[p]);
+    }
+    for (from, to, tag) in [
+        (A, C, 11),
+        (C, D, 13),
+        (D, E, 14),
+        (E, A, 15),
+        (C, f, 16),
+        (f, g, 17),
+        (g, D, 18),
+    ] {
+        b.element(LINE, tag, &[from, to]);
+    }
+    for t in [[A, C, D], [A, D, E]] {
+        b.element(TRIANGLE, 1, &t);
+    }
+    for t in [[C, f, g], [C, g, h], [C, h, D], [h, g, D]] {
+        b.element(TRIANGLE, 2, &t);
+    }
+    b.done()
+}
+
+#[test]
+fn a_sliver_inside_a_surface_does_not_make_its_creases_smooth() {
+    // How much a surface folds on its own is what a crease is measured
+    // against. A triangle with no area has no direction to fold in, and
+    // read as one it folded anything up to 180°, which made every crease
+    // round that surface look smooth: on Mambo B1 the top, bottom and end
+    // faces were merged into the wall across their 90° edges.
+    let g = folded_with_a_sliver();
+    let mut c = Composites::new();
+    let found = c.merge_smooth(&g, 10.0);
+    assert!(found.merges.is_empty(), "{found:?}");
+    let seam = found
+        .joins
+        .iter()
+        .find(|j| j.across == (CURVE, 13))
+        .unwrap();
+    assert!((seam.degrees - 90.0).abs() < 1e-4, "{seam:?}");
+}
+
+/// The facets Mambo B1 has round its CAD defect when gmsh meshes it at half
+/// size: corners 17 and 19 a ten-thousandth apart, the outer wall (surface
+/// 7) holding a triangle on the short edge between them, and the bottom
+/// face (surface 8) meeting the wall at 90° along curve 28. The real
+/// coordinates, from the file.
+fn b1_defect() -> Geometry {
+    let n16 = [0.0, -5.0, -2.0];
+    let n17 = [-0.0250628144669001, -4.99993718513853, -2.5];
+    let n19 = [-0.02515484461491346, -4.999997801938574, -2.499990785240934];
+    let n112 = [-0.02506903020854234, -3.999934294834575, -2.49999937529446];
+    let n130 = [
+        -0.006325172989973816,
+        -5.000032064220894,
+        -2.250309628126838,
+    ];
+    let n131 = [-0.02511527354745675, -4.999956824826683, -2.499994739860164];
+    let n137 = [1.091650573763975, -4.879374860041067, -2.5];
+    let mut b = Build::default();
+    b.element(POINT, 17, &[n17]);
+    b.element(POINT, 19, &[n19]);
+    b.element(LINE, 28, &[n137, n17]);
+    b.element(LINE, 27, &[n19, n131]);
+    b.element(LINE, 27, &[n131, n17]);
+    for t in [
+        [n137, n16, n130],
+        [n137, n130, n17],
+        [n130, n19, n17],
+        [n17, n131, n19],
+    ] {
+        b.element(TRIANGLE, 7, &t);
+    }
+    b.element(TRIANGLE, 8, &[n137, n17, n112]);
+    b.done()
+}
+
+#[test]
+fn two_corners_on_one_spot_do_not_make_a_crease_smooth_either() {
+    // The edge between corners 17 and 19 is a ten-thousandth long next to
+    // a triangle reaching a quarter out: no direction worth the name, and
+    // read as one, the wall folded 90.8° there — which let the bottom, the
+    // top and the end of B1 merge into the wall across 90° edges.
+    let g = b1_defect();
+    let mut c = Composites::new();
+    let found = c.merge_smooth(&g, 10.0);
+    assert!(found.merges.is_empty(), "{found:?}");
+    let crease = found
+        .joins
+        .iter()
+        .find(|j| j.across == (CURVE, 28))
+        .expect("the wall and the bottom meet along curve 28");
+    assert!(crease.degrees > 80.0, "{crease:?}");
+}

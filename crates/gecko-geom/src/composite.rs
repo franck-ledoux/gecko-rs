@@ -867,18 +867,28 @@ fn folded(da: [f64; 3], db: [f64; 3]) -> f64 {
     180.0 - cos.acos().to_degrees()
 }
 
-/// The unit direction from the segment `p q` towards `c`, square to it.
+/// How far off its edge a triangle's third node has to be, as a share of
+/// the edge, for the triangle to lean any way at all. A sliver flatter than
+/// this — what a mesher leaves where a CAD export has two corners on one
+/// point — has no direction: read as one, it folds anything up to 180°.
+const SLIVER: f64 = 1e-3;
+
+/// The unit direction from the segment `p q` towards `c`, square to it, or
+/// nothing when that has no meaning: `c` on the segment's line or as good as
+/// on it, or the segment itself as good as a point next to the triangle —
+/// two nodes on one spot, as where an export left two corners together.
 fn lean(p: [f64; 3], q: [f64; 3], c: [f64; 3]) -> Option<[f64; 3]> {
     let along = [q[0] - p[0], q[1] - p[1], q[2] - p[2]];
     let to = [c[0] - p[0], c[1] - p[1], c[2] - p[2]];
     let ll = along.iter().map(|x| x * x).sum::<f64>();
-    if ll <= 0.0 {
+    let reach = to.iter().map(|x| x * x).sum::<f64>();
+    if ll <= 0.0 || ll < SLIVER * SLIVER * reach {
         return None;
     }
     let t = (0..3).map(|k| to[k] * along[k]).sum::<f64>() / ll;
     let d = [0, 1, 2].map(|k| to[k] - t * along[k]);
     let n = d.iter().map(|x| x * x).sum::<f64>().sqrt();
-    (n > 0.0).then(|| d.map(|x| x / n))
+    (n > SLIVER * ll.sqrt()).then(|| d.map(|x| x / n))
 }
 
 /// How far from straight two curves meet at a node, **beyond** how far
