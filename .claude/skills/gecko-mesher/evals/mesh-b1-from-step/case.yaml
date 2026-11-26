@@ -1,0 +1,17 @@
+schema_version: "1.1"
+name: mesh-b1-from-step
+expected_outcome: |
+  B1.step is converted to an MSH 2.2 surface mesh and meshed with Gecko into
+  a block-structured hex mesh. The b1-mesh folder holds a Lua script that
+  reruns the whole thing with `gecko run`, the VTK mesh, the `--json` report
+  of the final run, pictures of the blocking and the mesh, and a
+  frictions.jsonl log. The mesh has no inverted cell, a minimum scaled
+  Jacobian of at least 0.5, and follows every curve and corner of the part
+  except the CAD file's own defects (a zero-length curve, a duplicated corner),
+  which the summary names as such. The blocking is fundamental — every
+  surface captured by one sheet of blocks, every curve by fundamental chords,
+  as scripts/fundamental.py reports — and uses an O-grid round the hole that
+  does not reach the outer surfaces, staying under about 30 blocks, and the summary gives the block count,
+  hexahedra, min and mean scaled Jacobian, and what was tried.
+context:
+  scaffold_script: place-files.sh

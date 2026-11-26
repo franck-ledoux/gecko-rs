@@ -1,0 +1,14 @@
+schema_version: "1.1"
+name: diagnose-trim-faces
+expected_outcome: |
+  The answer finds that five faces on the outside of the blocking along the
+  trim are classified on nothing — from gecko.blocking() or the blocking
+  section of a `--json` report — and explains why: the script merges curves
+  20, 23 and 26, where 26 duplicates 23 but lies on surface 7 while 23 lies on
+  surface 6, so the merged curve is contained in no single surface and no face
+  touching it can be put on one. It says the mesh fidelity check misses this
+  (the skin is still within about 0.11 of the part), proposes a fix or a way
+  forward without rewriting the script, and logs the missing duplicate-curve
+  detection as a friction.
+context:
+  scaffold_script: place-files.sh
