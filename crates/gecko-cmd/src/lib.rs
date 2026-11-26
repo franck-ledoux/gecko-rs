@@ -20,6 +20,8 @@ use std::sync::Arc;
 
 use crate::groups::{GroupError, Groups};
 use gecko_core::ids::CellId;
+/// The measures a mesh's quality is read in, by the names a script uses.
+pub use gecko_core::Metric;
 use gecko_core::{cube_corners, Blocking, BlockingError, Mesh, On, Smoothing, SEGMENTS};
 use gecko_geom::model::GeometryError;
 use gecko_geom::{BoundsError, Composites, Geometry, Model};
@@ -3281,49 +3283,91 @@ impl Session {
         }
     }
 
-    /// Every face of every hexahedron worse than `below`, the worst first
-    /// and no more than [`MOST_CELLS_SHOWN`] of them, in the mesh buffer's
-    /// encoding — the cells to look at, inside the mesh as well as on it.
-    pub fn cells_below_buffer(&self, below: f64) -> Vec<u8> {
+    /// Every face of every hexahedron whose figure under `metric` is in
+    /// `[from, to)`, the worst first and no more than [`MOST_CELLS_SHOWN`]
+    /// of them, in the mesh buffer's encoding — the cells to look at,
+    /// inside the mesh as well as on it. One bar of the histogram, or every
+    /// cell past a threshold.
+    pub fn cells_buffer(&self, metric: Metric, from: f64, to: f64) -> Vec<u8> {
         let center = self.origin.unwrap_or([0.0; 3]);
         match &self.mesh {
-            Some(mesh) => MeshBuffer::cells_below(mesh, center, below, MOST_CELLS_SHOWN).to_bytes(),
+            Some(mesh) => {
+                MeshBuffer::cells_in(mesh, center, metric, (from, to), MOST_CELLS_SHOWN).to_bytes()
+            }
             None => MeshBuffer::empty(center),
         }
     }
 
-    /// How good the mesh is: the worst corner of its cells, summed up, and
-    /// the blocks the worst of them are in. `null` with no mesh.
-    pub fn quality_json(&self) -> String {
+    /// The score under `metric` of each quadrangle of the skin, in the
+    /// order [`Session::mesh_buffer`] lists them, as little-endian f32:
+    /// what the skin is colored by. Empty with no mesh.
+    pub fn skin_scores(&self, metric: Metric) -> Vec<u8> {
+        match &self.mesh {
+            Some(mesh) => MeshBuffer::skin_scores(mesh, metric)
+                .iter()
+                .flat_map(|x| x.to_le_bytes())
+                .collect(),
+            None => Vec::new(),
+        }
+    }
+
+    /// [`Session::quality_json`] for a metric given by name, the scaled
+    /// Jacobian when the name is empty: what a script and the page ask
+    /// with. A name that is no metric is answered with `{"error": …}`
+    /// listing the ones there are, for the asker to raise.
+    pub fn quality_json_named(&self, name: &str) -> String {
+        if name.trim().is_empty() {
+            return self.quality_json(Metric::ScaledJacobian);
+        }
+        match Metric::parse(name) {
+            Some(metric) => self.quality_json(metric),
+            None => serde_json::json!({ "error": unknown_metric(name) }).to_string(),
+        }
+    }
+
+    /// How good the mesh is under one metric: its cells summed up, the
+    /// worst of them, and the blocks the worst are in. `null` with no mesh.
+    ///
+    /// `inverted` counts the cells turned inside out whatever the metric:
+    /// a cell can have a fine aspect ratio and be inside out, and that is
+    /// the one thing nobody should have to go looking for.
+    pub fn quality_json(&self, metric: Metric) -> String {
         let Some(mesh) = &self.mesh else {
             return "null".to_string();
         };
-        let quality = mesh.quality();
-        let summary = gecko_core::summarize(&quality);
+        let values = mesh.metric(metric);
+        let jacobian = if metric == Metric::ScaledJacobian {
+            values.clone()
+        } else {
+            mesh.quality()
+        };
+        let summary = gecko_core::summarize(metric, &values);
         // The worst cell of each block, and how many of its cells are
         // turned inside out.
         let mut by_block: HashMap<CellId, (f64, usize, usize)> = HashMap::new();
-        for (h, q) in quality.iter().enumerate() {
-            let entry = by_block
-                .entry(mesh.blocks[h])
-                .or_insert((f64::INFINITY, 0, 0));
-            entry.0 = entry.0.min(*q);
-            entry.1 += usize::from(*q < 0.0);
+        for (h, v) in values.iter().enumerate() {
+            let entry = by_block.entry(mesh.blocks[h]).or_insert((*v, 0, 0));
+            if metric.worse(*v, entry.0) {
+                entry.0 = *v;
+            }
+            entry.1 += usize::from(jacobian[h] < 0.0);
             entry.2 += 1;
         }
         let mut blocks: Vec<(CellId, (f64, usize, usize))> = by_block.into_iter().collect();
-        blocks.sort_by(|a, b| a.1 .0.total_cmp(&b.1 .0).then(a.0.cmp(&b.0)));
+        blocks.sort_by(|a, b| {
+            let order = if metric.higher_is_better() {
+                a.1 .0.total_cmp(&b.1 .0)
+            } else {
+                b.1 .0.total_cmp(&a.1 .0)
+            };
+            order.then(a.0.cmp(&b.0))
+        });
         blocks.truncate(WORST_BLOCKS_LISTED);
-        let below: serde_json::Map<String, serde_json::Value> = gecko_core::quality::THRESHOLDS
-            .iter()
-            .zip(summary.below)
-            .map(|(t, n)| (format!("{t}"), serde_json::json!(n)))
-            .collect();
         let worst = summary.worst.map(|h| {
             serde_json::json!({
                 "cell": h,
                 "block": mesh.blocks[h].get(),
-                "quality": quality[h],
+                "value": values[h],
                 "center": mesh.hex_center(h),
                 // Corner to opposite corner: how far back to stand to see it.
                 "size": apart(
@@ -3334,19 +3378,25 @@ impl Session {
         });
         serde_json::json!({
             "generation": self.mesh_generation,
+            "metric": metric.key(),
+            "label": metric.label(),
+            "higher_is_better": metric.higher_is_better(),
             "cells": summary.cells,
             "min": summary.min,
+            "max": summary.max,
             "mean": summary.mean,
+            "inverted": jacobian.iter().filter(|q| **q < 0.0).count(),
             "worst": worst,
-            "below": below,
-            "bins": gecko_core::quality::BINS,
+            "thresholds": metric.thresholds(),
+            "beyond": summary.beyond,
+            "bins": metric.bins(),
             "histogram": summary.histogram,
             "blocks": blocks
                 .iter()
-                .map(|(b, (q, inverted, cells))| {
+                .map(|(b, (v, inverted, cells))| {
                     serde_json::json!({
                         "block": b.get(),
-                        "worst": q,
+                        "worst": v,
                         "inverted": inverted,
                         "cells": cells,
                     })
@@ -3416,18 +3466,27 @@ impl Session {
 /// the trouble.
 pub const MOST_CELLS_SHOWN: usize = 20_000;
 
+/// What is said of a metric's name that names none.
+pub fn unknown_metric(name: &str) -> String {
+    let known: Vec<&str> = Metric::ALL.iter().map(|m| m.key()).collect();
+    format!("no metric called {name:?}: there are {}", known.join(", "))
+}
+
 /// How many of the worst blocks the quality read lists.
 pub const WORST_BLOCKS_LISTED: usize = 20;
 
-/// What a mesh's quality comes to in one line: its worst cell, and how
-/// many are turned inside out if any are.
+/// What a mesh's quality comes to in one line: its worst scaled Jacobian,
+/// and how many cells are turned inside out if any are.
 fn quality_line(mesh: &Mesh) -> String {
-    let summary = gecko_core::summarize(&mesh.quality());
-    let inverted = summary.below[0];
+    let summary = gecko_core::summarize(Metric::ScaledJacobian, &mesh.quality());
+    let inverted = summary.beyond[0];
     if inverted == 0 {
-        format!("worst cell {:.2}", summary.min)
+        format!("min scaled Jacobian {:.2}", summary.min)
     } else {
-        format!("worst cell {:.2}, {} inverted", summary.min, inverted)
+        format!(
+            "min scaled Jacobian {:.2}, {} inverted",
+            summary.min, inverted
+        )
     }
 }
 

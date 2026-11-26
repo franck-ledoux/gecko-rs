@@ -431,7 +431,14 @@ body[data-dropping] #view {
   display: flex; align-items: flex-end; gap: 2px; height: 40px;
   border-bottom: 1px solid var(--line);
 }
-#mesh-quality .histogram .bar { flex: 1; min-width: 0; border-radius: 2px 2px 0 0; }
+#mesh-quality .histogram .bar {
+  flex: 1; min-width: 0; border-radius: 2px 2px 0 0;
+  margin: 0; padding: 0; width: auto; border: none; cursor: pointer;
+}
+#mesh-quality .histogram .bar:disabled { cursor: default; }
+#mesh-quality .histogram .bar:hover:not(:disabled) { filter: brightness(1.2); }
+#mesh-quality .histogram .bar.picked { outline: 2px solid var(--fg); outline-offset: 1px; }
+#mesh-quality select { flex: 1; min-width: 0; }
 #mesh-quality .histogram-axis {
   display: flex; justify-content: space-between; font-size: 9px; color: var(--dim);
   margin: 2px 0 6px;

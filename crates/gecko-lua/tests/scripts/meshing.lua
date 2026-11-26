@@ -26,7 +26,17 @@ assert(file:find("CELL_TYPES 32"), "with the cells it said")
 -- How good it is: every cell of an untouched cube is a cube.
 local q = gecko.quality()
 assert(q.cells == 2 * 4 * 4, "one figure a cell")
-assert(math.abs(q.min - 1) < 1e-12 and q.below["0"] == 0, "and every one perfect")
+assert(q.metric == "scaled_jacobian", "the scaled Jacobian unless asked")
+assert(math.abs(q.min - 1) < 1e-12 and q.inverted == 0, "and every one perfect")
 assert(#q.histogram == #q.bins, "a bin a count")
+-- The other two, by name.
+local skew = gecko.quality("skewness")
+assert(skew.label == "skewness" and skew.max < 1e-12, "no skew in a cube")
+-- Two segments one way and four the others: every cell twice as long as
+-- it is wide.
+local ratio = gecko.quality("aspect_ratio")
+assert(math.abs(ratio.min - 2) < 1e-12 and math.abs(ratio.max - 2) < 1e-12, "half as fine one way")
+local ok, err = pcall(gecko.quality, "jacobian")
+assert(not ok and tostring(err):find("skewness"), "a name that is no metric: " .. tostring(err))
 gecko.clear_mesh()
 assert(gecko.quality() == nil, "no mesh, no figures")

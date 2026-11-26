@@ -104,9 +104,11 @@ impl WasmSession {
 
     /// The mesh's skin, in the same bytes the station sends down its
     /// socket. Empty until something has been meshed.
+    /// One metric of the mesh, by name — the scaled Jacobian when the name
+    /// is empty — or `{"error": …}` for a name that is no metric.
     #[wasm_bindgen(js_name = qualityJson)]
-    pub fn quality_json(&self) -> String {
-        self.inner.quality_json()
+    pub fn quality_json(&self, metric: &str) -> String {
+        self.inner.quality_json_named(metric)
     }
 
     #[wasm_bindgen(js_name = fidelityJson)]
@@ -114,9 +116,24 @@ impl WasmSession {
         self.inner.fidelity_json(share)
     }
 
-    #[wasm_bindgen(js_name = cellsBelowBuffer)]
-    pub fn cells_below_buffer(&self, below: f64) -> Vec<u8> {
-        self.inner.cells_below_buffer(below)
+    /// The cells whose figure under `metric` is in `[from, to)`, in the
+    /// mesh buffer's encoding; empty for a name that is no metric.
+    #[wasm_bindgen(js_name = cellsBuffer)]
+    pub fn cells_buffer(&self, metric: &str, from: f64, to: f64) -> Vec<u8> {
+        match gecko_cmd::Metric::parse(metric) {
+            Some(m) => self.inner.cells_buffer(m, from, to),
+            None => Vec::new(),
+        }
+    }
+
+    /// The skin's score under `metric`, a little-endian f32 per quadrangle
+    /// of the mesh buffer; empty for a name that is no metric.
+    #[wasm_bindgen(js_name = skinScores)]
+    pub fn skin_scores(&self, metric: &str) -> Vec<u8> {
+        match gecko_cmd::Metric::parse(metric) {
+            Some(m) => self.inner.skin_scores(m),
+            None => Vec::new(),
+        }
     }
 
     #[wasm_bindgen(js_name = meshBuffer)]

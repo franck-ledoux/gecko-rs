@@ -1,6 +1,6 @@
 //! Discretising through the door, and the file that comes out.
 
-use gecko_cmd::{Command, Session};
+use gecko_cmd::{Command, Metric, Session};
 
 const UNIT_CUBE: [[f64; 3]; 8] = [
     [0.0, 0.0, 0.0],
@@ -31,7 +31,7 @@ fn a_blocking_is_meshed_and_the_counts_come_back() {
     let out = s.apply(Command::Mesh { segments: 3 }).unwrap();
     assert_eq!(
         out.message,
-        "meshed — 64 nodes, 27 hexahedra; worst cell 1.00"
+        "meshed — 64 nodes, 27 hexahedra; min scaled Jacobian 1.00"
     );
     // Not a change to the blocking, so not a step of undo either.
     assert!(!out.view_changed);
@@ -407,17 +407,32 @@ fn node_near(s: &Session, p: [f64; 3]) -> u32 {
     best["id"].as_u64().unwrap() as u32
 }
 
+fn quality(s: &Session, metric: Metric) -> serde_json::Value {
+    serde_json::from_str(&s.quality_json(metric)).unwrap()
+}
+
+/// How many cells a cell buffer holds: six quadrangles apiece, and the
+/// count of quadrangles is in its header.
+fn cells_in(bytes: &[u8]) -> u64 {
+    u32::from_le_bytes(bytes[36..40].try_into().unwrap()) as u64 / 6
+}
+
 #[test]
 fn the_quality_of_a_mesh_is_measured_and_its_worst_cells_can_be_drawn() {
     let mut s = cube();
-    assert_eq!(s.quality_json(), "null", "no mesh, no figures");
+    assert_eq!(
+        s.quality_json(Metric::ScaledJacobian),
+        "null",
+        "no mesh, no figures"
+    );
 
     // A sound cube: every cell a cube.
     s.apply(Command::Mesh { segments: 3 }).unwrap();
-    let q: serde_json::Value = serde_json::from_str(&s.quality_json()).unwrap();
+    let q = quality(&s, Metric::ScaledJacobian);
     assert_eq!(q["cells"], 27);
+    assert_eq!(q["label"], "scaled Jacobian");
     assert!((q["min"].as_f64().unwrap() - 1.0).abs() < 1e-12);
-    assert_eq!(q["below"]["0.5"], 0);
+    assert_eq!(q["beyond"][3], 0, "none below a half");
     assert_eq!(q["histogram"][9], 27);
 
     // One corner pushed most of the way through the opposite one: the cells
@@ -431,21 +446,101 @@ fn the_quality_of_a_mesh_is_measured_and_its_worst_cells_can_be_drawn() {
     })
     .unwrap();
     let out = s.apply(Command::Mesh { segments: 3 }).unwrap();
+    assert!(
+        out.message.contains("min scaled Jacobian"),
+        "{}",
+        out.message
+    );
     assert!(out.message.contains("inverted"), "{}", out.message);
-    let q: serde_json::Value = serde_json::from_str(&s.quality_json()).unwrap();
-    let inverted = q["below"]["0"].as_u64().unwrap();
+    let q = quality(&s, Metric::ScaledJacobian);
+    let inverted = q["beyond"][0].as_u64().unwrap();
     assert!(inverted > 0 && q["min"].as_f64().unwrap() < 0.0, "{q}");
+    assert_eq!(q["inverted"].as_u64().unwrap(), inverted);
     let worst = &q["worst"];
-    assert!(worst["quality"].as_f64().unwrap() < 0.0);
+    assert!(worst["value"].as_f64().unwrap() < 0.0);
     assert!(worst["size"].as_f64().unwrap() > 0.0);
     assert_eq!(q["blocks"][0]["inverted"].as_u64().unwrap(), inverted);
 
-    // The cells below a threshold, six faces apiece, in the mesh buffer's
-    // own encoding: the count is in its header.
-    let below_half = q["below"]["0.5"].as_u64().unwrap();
-    let bytes = s.cells_below_buffer(0.5);
-    let quads = u32::from_le_bytes(bytes[36..40].try_into().unwrap()) as u64;
-    assert_eq!(quads, below_half * 6);
-    let none = s.cells_below_buffer(-2.0);
-    assert_eq!(u32::from_le_bytes(none[36..40].try_into().unwrap()), 0);
+    // The cells below a threshold, in the mesh buffer's own encoding.
+    let below_half = q["beyond"][3].as_u64().unwrap();
+    let bytes = s.cells_buffer(Metric::ScaledJacobian, f64::NEG_INFINITY, 0.5);
+    assert_eq!(cells_in(&bytes), below_half);
+    let none = s.cells_buffer(Metric::ScaledJacobian, f64::NEG_INFINITY, -2.0);
+    assert_eq!(cells_in(&none), 0);
+}
+
+#[test]
+fn every_metric_is_named_and_every_bar_of_its_histogram_can_be_drawn_alone() {
+    let mut s = cube();
+    s.apply(Command::Mesh { segments: 3 }).unwrap();
+    // A cube's cells are as good as each measure goes.
+    let skew = quality(&s, Metric::Skewness);
+    assert_eq!(skew["label"], "skewness");
+    assert!(skew["max"].as_f64().unwrap() < 1e-12, "{skew}");
+    assert_eq!(skew["higher_is_better"], false);
+    let ratio = quality(&s, Metric::AspectRatio);
+    assert_eq!(ratio["metric"], "aspect_ratio");
+    assert!((ratio["max"].as_f64().unwrap() - 1.0).abs() < 1e-12);
+
+    // Bent, so that every measure has something to say.
+    let corner = node_near(&s, [1.0, 1.0, 1.0]);
+    s.apply(Command::MoveNode {
+        node: corner,
+        to: [1.6, 1.3, 1.9],
+        carrying: vec![],
+        snap: 0.0,
+    })
+    .unwrap();
+    s.apply(Command::Mesh { segments: 3 }).unwrap();
+    for metric in Metric::ALL {
+        let q = quality(&s, metric);
+        let numbers = |key: &str| -> Vec<f64> {
+            q[key]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|x| x.as_f64().unwrap())
+                .collect()
+        };
+        let (bins, histogram) = (numbers("bins"), numbers("histogram"));
+        assert_eq!(histogram.iter().sum::<f64>(), 27.0, "{metric:?}");
+        assert!(
+            histogram.iter().filter(|n| **n > 0.0).count() > 1,
+            "{metric:?}: {q}"
+        );
+        // A bar is drawn by asking for the cells from where it starts to
+        // where the next one does, the first and last open at their ends —
+        // and it holds exactly the cells the bar counts.
+        for (i, n) in histogram.iter().enumerate() {
+            let from = if i == 0 { f64::NEG_INFINITY } else { bins[i] };
+            let to = bins.get(i + 1).copied().unwrap_or(f64::INFINITY);
+            let drawn = cells_in(&s.cells_buffer(metric, from, to));
+            assert_eq!(drawn as f64, *n, "{metric:?}, bar {i}");
+        }
+        // The worst cell is the worst by the metric's own direction.
+        let worst = q["worst"]["value"].as_f64().unwrap();
+        let end = if metric.higher_is_better() {
+            "min"
+        } else {
+            "max"
+        };
+        assert_eq!(worst, q[end].as_f64().unwrap(), "{metric:?}");
+    }
+
+    // The skin's scores, one per quadrangle of the mesh buffer.
+    let skin = s.mesh_buffer();
+    let quads = u32::from_le_bytes(skin[36..40].try_into().unwrap()) as usize;
+    let scores = s.skin_scores(Metric::AspectRatio);
+    assert_eq!(scores.len(), quads * 4);
+    let first = f32::from_le_bytes(scores[0..4].try_into().unwrap());
+    assert!(first > 0.0 && first <= 1.0, "{first}");
+
+    // A name that is no metric says which ones there are, and no name at
+    // all is the scaled Jacobian.
+    let answer: serde_json::Value =
+        serde_json::from_str(&s.quality_json_named("jacobian")).unwrap();
+    let error = answer["error"].as_str().unwrap();
+    assert!(error.contains("aspect_ratio"), "{answer}");
+    let unnamed: serde_json::Value = serde_json::from_str(&s.quality_json_named("")).unwrap();
+    assert_eq!(unnamed, quality(&s, Metric::ScaledJacobian));
 }

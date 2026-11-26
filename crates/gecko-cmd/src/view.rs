@@ -10,7 +10,7 @@
 //! jitter and z-fighting. Rebasing costs nothing and cannot be retrofitted
 //! cheaply once a client assumes absolute coordinates.
 
-use gecko_core::{Blocking, CellId, Mesh, On};
+use gecko_core::{Blocking, CellId, Mesh, Metric, On};
 use gecko_geom::Geometry;
 use std::collections::HashMap;
 
@@ -717,8 +717,10 @@ pub struct MeshBuffer {
     pub quads: Vec<u32>,
     /// The block each quadrangle came out of.
     pub blocks: Vec<u32>,
-    /// The quality of the hexahedron each quadrangle is a face of: the
-    /// worst scaled Jacobian of its corners.
+    /// How good the hexahedron each quadrangle is a face of is, on the
+    /// common scale of [`Metric::score`]: one perfect, nought as bad as the
+    /// measure goes, below nought turned inside out. The scaled Jacobian
+    /// for the skin, whichever metric picked the cells otherwise.
     pub quality: Vec<f32>,
 }
 
@@ -732,11 +734,32 @@ impl MeshBuffer {
         out
     }
 
-    /// Every face of every hexahedron worse than `below`, the worst first
-    /// and no more than `most` of them: the cells to look at, wherever they
-    /// are — most of a mesh's bad cells are inside it, where the skin never
-    /// shows them.
-    pub fn cells_below(mesh: &Mesh, center: [f64; 3], below: f64, most: usize) -> MeshBuffer {
+    /// The score under `metric` of each quadrangle [`MeshBuffer::of`]
+    /// lists, in the same order: what the skin is colored by when it is
+    /// colored by a metric other than the one it carries.
+    pub fn skin_scores(mesh: &Mesh, metric: Metric) -> Vec<f32> {
+        let (_, cells) = mesh.skin_cells();
+        let values = mesh.metric(metric);
+        cells
+            .iter()
+            .map(|h| metric.score(values[*h]) as f32)
+            .collect()
+    }
+
+    /// Every face of every hexahedron whose figure under `metric` is at
+    /// least `from` and below `to`, the worst first and no more than `most`
+    /// of them: the cells to look at, wherever they are — most of a mesh's
+    /// bad cells are inside it, where the skin never shows them.
+    ///
+    /// Either end may be infinite, which is how a histogram's first and last
+    /// bins, and a threshold, are asked for.
+    pub fn cells_in(
+        mesh: &Mesh,
+        center: [f64; 3],
+        metric: Metric,
+        (from, to): (f64, f64),
+        most: usize,
+    ) -> MeshBuffer {
         const FACES: [[usize; 4]; 6] = [
             [0, 3, 2, 1],
             [4, 5, 6, 7],
@@ -745,18 +768,29 @@ impl MeshBuffer {
             [2, 3, 7, 6],
             [3, 0, 4, 7],
         ];
-        let quality = mesh.quality();
-        let mut bad: Vec<usize> = (0..quality.len()).filter(|h| quality[*h] < below).collect();
-        bad.sort_by(|a, b| quality[*a].total_cmp(&quality[*b]).then(a.cmp(b)));
-        bad.truncate(most);
-        let mut quads = Vec::with_capacity(bad.len() * 6);
-        let mut blocks = Vec::with_capacity(bad.len() * 6);
-        let mut q = Vec::with_capacity(bad.len() * 6);
-        for h in bad {
+        let values = mesh.metric(metric);
+        let mut picked: Vec<usize> = (0..values.len())
+            .filter(|h| values[*h] >= from && values[*h] < to)
+            .collect();
+        picked.sort_by(|a, b| {
+            let (x, y) = (values[*a], values[*b]);
+            let order = if metric.higher_is_better() {
+                x.total_cmp(&y)
+            } else {
+                y.total_cmp(&x)
+            };
+            order.then(a.cmp(b))
+        });
+        picked.truncate(most);
+        let mut quads = Vec::with_capacity(picked.len() * 6);
+        let mut blocks = Vec::with_capacity(picked.len() * 6);
+        let mut q = Vec::with_capacity(picked.len() * 6);
+        for h in picked {
+            let score = metric.score(values[h]) as f32;
             for f in FACES {
                 quads.push(f.map(|c| mesh.hexes[h][c]));
                 blocks.push(mesh.blocks[h]);
-                q.push(quality[h] as f32);
+                q.push(score);
             }
         }
         let mut out = MeshBuffer::from_quads(mesh, center, &quads, &blocks);

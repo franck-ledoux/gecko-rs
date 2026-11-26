@@ -43,7 +43,8 @@ impl Kernel for Local {
             "faces" => session.faces_json(),
             "blocks" => session.blocks_json(),
             "stats" => session.stats_json(),
-            "quality" => session.quality_json(),
+            // The metric by name, the scaled Jacobian when none is given.
+            "quality" => session.quality_json_named(arg),
             // The tolerance, as a share of the element size; the default
             // when it is not a number.
             "fidelity" => session.fidelity_json(

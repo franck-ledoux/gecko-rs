@@ -2874,6 +2874,12 @@ export class Viewer {
   }
 
   /** How many cells below the threshold are drawn, for a test to read. */
+  /** The score each quadrangle of the skin is colored by under the
+   *  quality coloring, for a test to read. */
+  get skinScores(): Float32Array | undefined {
+    return this.meshView?.quality;
+  }
+
   get badCount(): number {
     return this.badCells ? (this.badView?.blocks.length ?? 0) / 6 : 0;
   }

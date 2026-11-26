@@ -32,4 +32,4 @@ pub use cells::{
 };
 pub use ids::CellId;
 pub use mesh::{Mesh, SEGMENTS};
-pub use quality::{hex_quality, summarize, Summary};
+pub use quality::{hex_aspect_ratio, hex_quality, hex_skewness, summarize, Metric, Summary};

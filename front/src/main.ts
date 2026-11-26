@@ -7,8 +7,14 @@
  */
 
 import { Engine } from "@babylonjs/core/Engines/engine";
-import { decodeGeometry, decodeMesh, decodeNodes, decodeView } from "./decode";
-import type { Fidelity, Stats } from "./kernel";
+import {
+  decodeGeometry,
+  decodeMesh,
+  decodeNodes,
+  decodeView,
+  type MeshView,
+} from "./decode";
+import type { Fidelity, Metric, Quality, Stats } from "./kernel";
 import { initKernel, WasmKernel } from "./kernel-wasm";
 import { Viewer, type Group, type Pick, type Target } from "./viewer";
 import {
@@ -675,11 +681,17 @@ async function boot() {
    * step to open before reaching three controls, and a heading saying
    * "skin" over the only thing a mesh can be drawn as.
    */
-  /** Whether the cells below the threshold are drawn, and the threshold:
-   *  kept across redraws of the drawer, as the drawer's other settings
-   *  are. */
-  let qualityShown = false;
-  let qualityBelow = 0.3;
+  /** The metric the quality figures are read in; which cells are drawn —
+   *  none, those past the threshold, or one bar of the histogram, by its
+   *  place; and each metric's own threshold. Kept across redraws of the
+   *  drawer, as the drawer's other settings are. */
+  let qualityMetric: Metric = "scaled_jacobian";
+  let qualityShown: "threshold" | number | null = null;
+  const qualityLimit: Record<Metric, number> = {
+    scaled_jacobian: 0.3,
+    skewness: 0.5,
+    aspect_ratio: 3,
+  };
   /** The last check against the geometry, the tolerance it used, and
    *  whether what it found missing is drawn. A check is of one mesh: a new
    *  mesh drops it. */
@@ -719,8 +731,9 @@ async function boot() {
   drawGroups();
 
   /**
-   * The mesh's quality, in the mesh section of the drawer: the worst cell
-   * and the mean, a histogram, and the cells below a threshold drawn whole
+   * The mesh's quality, in the mesh section of the drawer, under the metric
+   * picked: the worst cell and the mean, a histogram whose bars each draw
+   * their own cells when clicked, and the cells past a threshold drawn whole
    * wherever they are — with a way to fly to the worst of them.
    *
    * Asked of the kernel each time a mesh is drawn, not kept: a mesh is
@@ -831,9 +844,43 @@ async function boot() {
     });
   }
 
+  /** The mesh's skin, colored under the metric picked when it is colored
+   *  by quality: the buffer carries the scaled Jacobian, and another
+   *  metric's scores replace it. */
+  function meshView(): MeshView {
+    const view = decodeMesh(kernel.mesh());
+    if (qualityMetric !== "scaled_jacobian" && view.blocks.length) {
+      view.quality = kernel.skinScores(qualityMetric);
+    }
+    return view;
+  }
+
+  /** The figure a metric reads, as short as it can say it. */
+  function figure(v: number): string {
+    return v > 1e6 ? "∞" : v.toFixed(2);
+  }
+
+  /** What a metric's slider runs over. */
+  const QUALITY_RANGE: Record<
+    Metric,
+    { min: number; max: number; step: number }
+  > = {
+    scaled_jacobian: { min: 0, max: 1, step: 0.05 },
+    skewness: { min: 0, max: 1, step: 0.05 },
+    aspect_ratio: { min: 1, max: 10, step: 0.25 },
+  };
+
+  /** The range of figures one bar of the histogram holds, open at the two
+   *  ends — the kernel's first and last bins run as far as the metric goes. */
+  function binRange(q: Quality, i: number): [number, number] {
+    const from = i === 0 ? -Infinity : q.bins[i];
+    const to = i + 1 < q.bins.length ? q.bins[i + 1] : Infinity;
+    return [from, to];
+  }
+
   function refreshQuality(cells = true) {
     const box = document.getElementById("mesh-quality");
-    const q = kernel.quality();
+    const q = kernel.quality(qualityMetric);
     if (!q || !q.cells) {
       if (box) box.innerHTML = "";
       if (cells) viewer.setBadCells(null);
@@ -841,56 +888,134 @@ async function boot() {
       viewer.setMissed(null);
       return;
     }
-    const inverted = q.below["0"] ?? 0;
+    const higher = q.higher_is_better;
+    const limit = qualityLimit[qualityMetric];
     // Only when what they are drawn from changed: the drawer is redrawn
     // for every touch of its opacity slider.
     if (cells) {
+      const range: [number, number] | null =
+        qualityShown === "threshold"
+          ? higher
+            ? [-Infinity, limit]
+            : [limit, Infinity]
+          : typeof qualityShown === "number"
+            ? binRange(q, qualityShown)
+            : null;
       viewer.setBadCells(
-        qualityShown ? decodeMesh(kernel.cellsBelow(qualityBelow)) : null,
+        range
+          ? decodeMesh(kernel.cellsIn(qualityMetric, range[0], range[1]))
+          : null,
       );
     }
     if (!box) return;
     const most = Math.max(...q.histogram, 1);
+    const last = q.bins.length - 1;
     const bars = q.histogram
       .map((n, i) => {
         const from = q.bins[i];
-        const to = q.bins[i + 1] ?? 1;
-        // Logarithmic: a good mesh has almost every cell in the last bin,
-        // and the handful in the first ones are what the picture is for.
+        const to = q.bins[i + 1];
+        // Logarithmic: a good mesh has almost every cell in one end bin,
+        // and the handful in the others are what the picture is for.
         const h = n ? 4 + (Math.log(1 + n) / Math.log(1 + most)) * 36 : 0;
-        const [r, g, b] = qualityColor(from < 0 ? -1 : (from + to) / 2);
+        const score =
+          qualityMetric === "scaled_jacobian"
+            ? from < 0
+              ? -1
+              : (from + (to ?? 1)) / 2
+            : qualityMetric === "skewness"
+              ? 1 - (from + (to ?? 1)) / 2
+              : 1 / (to === undefined ? from * 1.5 : (from + to) / 2);
+        const [r, g, b] = qualityColor(score);
         const rgb = `rgb(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)})`;
-        const range = from < 0 ? "inverted" : `${from}–${to}`;
-        return `<span class="bar" title="${range}: ${n}" style="height:${h}px;background:${rgb}"></span>`;
+        const range =
+          qualityMetric === "scaled_jacobian" && i === 0
+            ? "inverted"
+            : i === last
+              ? qualityMetric === "aspect_ratio"
+                ? `${from} and over`
+                : `${from}–1`
+              : `${from}–${to}`;
+        const picked = qualityShown === i ? " picked" : "";
+        return (
+          `<button class="bar${picked}" data-bin="${i}" title="${range}: ${n} cell${n === 1 ? "" : "s"}"` +
+          ` style="height:${h}px;background:${rgb}"${n ? "" : " disabled"}></button>`
+        );
       })
       .join("");
-    const shown = qualityShown ? viewer.badCount : 0;
+    const ends =
+      qualityMetric === "scaled_jacobian"
+        ? ["&lt;0", `${q.bins[5]}`, "1"]
+        : qualityMetric === "skewness"
+          ? ["0", `${q.bins[5]}`, "1"]
+          : ["1", `${q.bins[5]}`, "∞"];
+    const shown = qualityShown === null ? 0 : viewer.badCount;
+    const inBar =
+      typeof qualityShown === "number" ? q.histogram[qualityShown] : 0;
+    const what =
+      typeof qualityShown === "number"
+        ? ` in ${qualityMetric === "scaled_jacobian" && qualityShown === 0 ? "the inverted bar" : `the bar from ${q.bins[qualityShown]}`}` +
+          (inBar > shown ? `, the worst ${shown} of ${inBar}` : "")
+        : "";
+    const options = (
+      ["scaled_jacobian", "skewness", "aspect_ratio"] as Metric[]
+    )
+      .map(
+        (m) =>
+          `<option value="${m}"${m === qualityMetric ? " selected" : ""}>` +
+          `${m === "scaled_jacobian" ? "scaled Jacobian" : m === "skewness" ? "skewness" : "aspect ratio"}</option>`,
+      )
+      .join("");
+    const span = QUALITY_RANGE[qualityMetric];
     box.innerHTML =
+      `<label class="slider"><span>metric</span>` +
+      `<select data-test="quality-metric">${options}</select></label>` +
       `<div class="quality-head" data-test="quality-summary">` +
-      `worst <b>${q.min.toFixed(2)}</b> · mean ${q.mean.toFixed(2)}` +
-      (inverted ? ` · <b class="bad">${inverted} inverted</b>` : "") +
+      `${q.label}: worst <b>${figure(higher ? q.min : q.max)}</b> · mean ${figure(q.mean)}` +
+      (q.inverted ? ` · <b class="bad">${q.inverted} inverted</b>` : "") +
       `</div>` +
       `<div class="histogram" data-test="quality-histogram">${bars}</div>` +
-      `<div class="histogram-axis"><span>&lt;0</span><span>0.5</span><span>1</span></div>` +
+      `<div class="histogram-axis">${ends.map((e) => `<span>${e}</span>`).join("")}</div>` +
       `<label class="check"><input type="checkbox" data-test="quality-show"` +
-      `${qualityShown ? " checked" : ""} /> show cells below ` +
-      `<b data-test="quality-threshold">${qualityBelow.toFixed(2)}</b></label>` +
+      `${qualityShown === "threshold" ? " checked" : ""} /> show cells ${higher ? "below" : "at or above"} ` +
+      `<b data-test="quality-threshold">${limit.toFixed(2)}</b></label>` +
       `<label class="slider"><span>threshold</span>` +
-      `<input type="range" min="0" max="1" step="0.05" value="${qualityBelow}"` +
+      `<input type="range" min="${span.min}" max="${span.max}" step="${span.step}" value="${limit}"` +
       ` data-test="quality-below" /></label>` +
-      (qualityShown
-        ? `<div class="quality-note" data-test="quality-count">${shown} cell${shown === 1 ? "" : "s"} shown</div>`
-        : "") +
+      (qualityShown !== null
+        ? `<div class="quality-note" data-test="quality-count">${shown} cell${shown === 1 ? "" : "s"} shown${what}</div>`
+        : `<div class="quality-note">click a bar to show its cells</div>`) +
       `<button data-test="quality-worst">Go to the worst cell</button>` +
       fidelityBlock(q.generation);
     const find = (test: string) =>
       box.querySelector<HTMLInputElement>(`[data-test="${test}"]`)!;
+    box
+      .querySelector<HTMLSelectElement>('[data-test="quality-metric"]')!
+      .addEventListener("change", (e) => {
+        qualityMetric = (e.target as HTMLSelectElement).value as Metric;
+        // A bar of one metric is not a bar of another.
+        if (typeof qualityShown === "number") qualityShown = null;
+        // The skin carries the metric's scores, for when it is colored
+        // by quality — now or later.
+        viewer.setMesh(meshView());
+        refreshQuality();
+      });
+    box.querySelectorAll<HTMLButtonElement>(".histogram .bar").forEach((bar) =>
+      bar.addEventListener("click", () => {
+        const i = Number(bar.dataset.bin);
+        qualityShown = qualityShown === i ? null : i;
+        refreshQuality();
+      }),
+    );
     find("quality-show").addEventListener("change", (e) => {
-      qualityShown = (e.target as HTMLInputElement).checked;
+      qualityShown = (e.target as HTMLInputElement).checked
+        ? "threshold"
+        : null;
       refreshQuality();
     });
     find("quality-below").addEventListener("change", (e) => {
-      qualityBelow = Number((e.target as HTMLInputElement).value);
+      qualityLimit[qualityMetric] = Number(
+        (e.target as HTMLInputElement).value,
+      );
       refreshQuality();
     });
     find("quality-below").addEventListener("input", (e) => {
@@ -902,7 +1027,7 @@ async function boot() {
       if (!q.worst) return;
       viewer.frameOn(q.worst.center, q.worst.size);
       say(
-        `worst cell ${q.worst.quality.toFixed(2)}, in block ${q.worst.block}`,
+        `worst ${q.label} ${figure(q.worst.value)}, in block ${q.worst.block}`,
       );
     });
   }
@@ -2915,9 +3040,7 @@ async function boot() {
     // as well as the builds, so this is how a stale picture goes.
     if (stats.mesh.generation !== meshDrawn) {
       meshDrawn = stats.mesh.generation;
-      viewer.setMesh(
-        stats.mesh.nodes === undefined ? null : decodeMesh(kernel.mesh()),
-      );
+      viewer.setMesh(stats.mesh.nodes === undefined ? null : meshView());
       refreshQuality();
     }
     // The counts in the status line are the same ones; the history is not,
@@ -2971,9 +3094,7 @@ async function boot() {
     // as the builds, so this is also how a stale picture goes.
     if (recenterd || stats.mesh.generation !== meshDrawn) {
       meshDrawn = stats.mesh.generation;
-      viewer.setMesh(
-        stats.mesh.nodes === undefined ? null : decodeMesh(kernel.mesh()),
-      );
+      viewer.setMesh(stats.mesh.nodes === undefined ? null : meshView());
       refreshQuality();
     }
     // After the geometry, not before: framing has to see everything there
@@ -3622,10 +3743,11 @@ async function boot() {
     edgeMidpoint: (edge: number) => viewer.edgeMidpoint(edge),
     choose: (pick: Pick | null) => choose(pick),
     nodeScreen: (name: number) => viewer.nodeScreen(name),
-    /** The kernel's quality figures, and how many cells below the
-     *  threshold are drawn. */
-    quality: () => kernel.quality(),
+    /** The kernel's quality figures under a metric, and how many of the
+     *  cells picked are drawn. */
+    quality: (metric?: Metric) => kernel.quality(metric),
     badCellsDrawn: () => viewer.badCount,
+    skinScores: () => Array.from(viewer.skinScores ?? []),
     missedDrawn: () => viewer.missedCount,
     nodePosition: (name: number) => viewer.nodePosition(name),
     center: () => viewer.center,

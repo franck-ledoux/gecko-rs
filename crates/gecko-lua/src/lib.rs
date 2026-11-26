@@ -379,7 +379,6 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
     // --- the reads -------------------------------------------------------
     for kind in [
         "nodes", "edges", "faces", "blocks", "groups", "stats", "entities", "script", "vtk",
-        "quality",
     ] {
         read(lua, &gecko, &kernel, kind, kind)?;
     }
@@ -399,6 +398,25 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
             "sheet_cells",
             lua.create_function(move |lua, edge: u32| {
                 answer(lua, &host.query("sheet_cells", &edge.to_string()))
+            })?,
+        )?;
+    }
+
+    {
+        // `gecko.quality()`, `gecko.quality("skewness")`: one metric of the
+        // mesh, the scaled Jacobian when none is named. A name that is no
+        // metric is an error, which names the ones there are.
+        let host = Rc::clone(&kernel);
+        gecko.set(
+            "quality",
+            lua.create_function(move |lua, metric: Option<String>| {
+                let json = host.query("quality", metric.as_deref().unwrap_or(""));
+                if let Ok(Json::Object(map)) = serde_json::from_str::<Json>(&json) {
+                    if let Some(Json::String(error)) = map.get("error") {
+                        return Err(mlua::Error::RuntimeError(error.clone()));
+                    }
+                }
+                answer(lua, &json)
             })?,
         )?;
     }

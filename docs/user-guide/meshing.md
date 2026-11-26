@@ -85,55 +85,76 @@ something you could put on screen and not take off.
 
 ## How good it is
 
-Every hexahedron is measured by its **scaled Jacobian**: at each corner, the
-volume of the three unit edges leaving it — one at a right angle, nought where
-the corner has folded flat, below nought where it has folded through — and the
-cell's figure is the worst of its eight corners. It is the number solvers and
-other meshers quote, so a figure read here can be compared with one read
-anywhere else.
+Every hexahedron is measured three ways, each under the name other meshers and
+solvers give it, so a figure read here can be compared with one read anywhere
+else:
+
+| metric              | what it measures                                                                                                                              | perfect | worst           |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------- | --------------- |
+| **scaled Jacobian** | at each corner, the volume of the three unit edges leaving it; the cell's figure is its worst corner                                          | 1       | below 0         |
+| **skewness**        | the largest cosine between two of the cell's principal axes, each the sum of the four edges running that way                                  | 0       | 1               |
+| **aspect ratio**    | the longest of the twelve edges over the shortest — what [Verdict](https://github.com/sandialabs/verdict) calls the hexahedron's *edge ratio* | 1       | grows unbounded |
+
+The scaled Jacobian is the one that says a cell is **turned inside out**:
+nought where a corner has folded flat, below nought where it has folded
+through. A cell can be inside out with a fine aspect ratio, so the count of
+inverted cells is shown whichever metric is picked.
 
 Measured on the **mesh**, not on the blocks. A block whose corners are all
 square can still hold cells turned inside out, where a face of it follows a
 curve that bulges further than the block next to it is thick, and that is
 exactly the case worth catching before a solver does.
 
-Meshing says the worst of it straight away:
+Meshing says the worst scaled Jacobian straight away:
 
 ```text
-meshed — 37347 nodes, 33198 hexahedra; worst cell 0.42
-meshed — 35034 nodes, 31034 hexahedra; worst cell -1.00, 95 inverted
+meshed — 37347 nodes, 33198 hexahedra; min scaled Jacobian 0.42
+meshed — 35034 nodes, 31034 hexahedra; min scaled Jacobian -1.00, 95 inverted
 ```
 
-The **Mesh** section of the display panel has the rest:
+The **Mesh** section of the display panel has the rest, in the **metric**
+picked at its top:
 
-- the worst cell, the mean, and how many are inverted;
-- a histogram, from inverted on the left to perfect on the right — on a
-  logarithmic scale, since a good mesh has nearly every cell in the last bin
-  and the handful in the first ones are what it is for;
-- **show cells below** a threshold: every cell worse than it, drawn whole
-  wherever it is — most bad cells are inside the mesh, where its skin never
-  shows them — colored by its quality, with the skin made nearly clear around
-  them;
+- the worst figure, the mean, and how many cells are inverted;
+- a histogram of ten bars, from the best figures to the worst for the aspect
+  ratio and skewness, from inverted to perfect for the scaled Jacobian — on a
+  logarithmic scale, since a good mesh has nearly every cell in one end bar
+  and the handful in the others are what it is for;
+- **click a bar** to draw only its cells, whole and wherever they are — most
+  bad cells are inside the mesh, where its skin never shows them — with the
+  skin made nearly clear around them. Click it again to stop. Hovering a bar
+  says its range and how many cells it holds;
+- **show cells** past a threshold — below it for the scaled Jacobian, at or
+  above it for the other two — each metric keeping its own threshold;
 - **Go to the worst cell**, which flies the camera there and says which block
   it is in;
-- and **quality** among the ways to color the mesh: green for a cube,
-  through yellow and orange to red at nought, and a darker red for a cell
-  turned inside out.
+- and **quality** among the ways to color the mesh, in the metric picked:
+  green for a perfect cell, through yellow and orange to red, and a darker red
+  for a cell turned inside out.
 
-From a script:
+At most 20 000 cells are drawn at once, the worst first; the line under the
+histogram says when a bar holds more.
+
+From a script, the metric by name — the scaled Jacobian when none is given:
 
 ```lua
 gecko.mesh{ segments = 10 }
-local q = gecko.quality()      -- nil with no mesh
-print(q.min, q.mean, q.below["0"], q.below["0.2"])
-print(q.worst.block, q.worst.quality, q.worst.center[1])
-for _, b in ipairs(q.blocks) do   -- the worst blocks, worst first
+local q = gecko.quality()              -- nil with no mesh
+print(q.label, q.min, q.mean, q.inverted)
+local ratio = gecko.quality("aspect_ratio")
+print(ratio.max, ratio.worst.block, ratio.worst.value, ratio.worst.center[1])
+for _, b in ipairs(ratio.blocks) do    -- the worst blocks, worst first
   print(b.block, b.worst, b.inverted)
+end
+local skew = gecko.quality("skewness")
+for i, t in ipairs(skew.thresholds) do -- how many cells are past each
+  print(t, skew.beyond[i])
 end
 ```
 
-`q.histogram[i]` counts the cells from `q.bins[i]` up to the next bin's start,
-the last running to one.
+The names are `scaled_jacobian`, `skewness` and `aspect_ratio`; any other is
+an error. `q.histogram[i]` counts the cells from `q.bins[i]` up to the next
+bin's start, the last running to the end of the metric's range.
 
 ## How faithfully it follows the geometry
 

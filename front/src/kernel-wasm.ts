@@ -15,6 +15,7 @@ import type {
   Fidelity,
   Group,
   Kernel,
+  Metric,
   Quality,
   Reply,
   Sheet,
@@ -57,7 +58,7 @@ export class WasmKernel implements Kernel {
           case "stats":
             return this.session.statsJson();
           case "quality":
-            return this.session.qualityJson();
+            return this.session.qualityJson(arg);
           case "fidelity":
             return this.session.fidelityJson(arg === "" ? NaN : Number(arg));
           case "entities":
@@ -116,16 +117,26 @@ export class WasmKernel implements Kernel {
     return this.session.geometryBuffer();
   }
 
-  cellsBelow(below: number): Uint8Array {
-    return this.session.cellsBelowBuffer(below);
+  cellsIn(metric: Metric, from: number, to: number): Uint8Array {
+    return this.session.cellsBuffer(metric, from, to);
+  }
+
+  skinScores(metric: Metric): Float32Array {
+    const bytes = this.session.skinScores(metric);
+    // Read through a DataView: nothing promises the bytes start on a
+    // multiple of four, which a Float32Array over them would need.
+    const out = new Float32Array(bytes.length / 4);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    for (let i = 0; i < out.length; i++) out[i] = view.getFloat32(i * 4, true);
+    return out;
   }
 
   fidelity(share: number): Fidelity | null {
     return JSON.parse(this.session.fidelityJson(share)) as Fidelity | null;
   }
 
-  quality(): Quality | null {
-    return JSON.parse(this.session.qualityJson()) as Quality | null;
+  quality(metric: Metric = "scaled_jacobian"): Quality | null {
+    return JSON.parse(this.session.qualityJson(metric)) as Quality | null;
   }
 
   mesh(): Uint8Array {

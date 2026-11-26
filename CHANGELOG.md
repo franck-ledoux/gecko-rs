@@ -5,6 +5,19 @@ the day a tag was cut.
 
 ## Unreleased
 
+- **Quality in three named metrics.** The mesh's quality is read in the
+  **scaled Jacobian**, the **skewness** or the **aspect ratio**, picked at the
+  top of the quality figures, each with its own histogram, threshold and
+  worst cell, and the mesh colored by quality in the one picked. The count
+  of cells turned inside out is shown whichever it is.
+  `gecko.quality("skewness")` from a script; the fields are renamed with it
+  — `beyond` and `thresholds` for `below`, `worst.value` for
+  `worst.quality` — and the meshing message now says
+  `min scaled Jacobian`.
+
+- **A bar of the histogram draws its own cells.** Click one to see only the
+  cells in its range, wherever they are; click it again to stop.
+
 - **A release is the source code, and the site.** Releases no longer carry
   binaries or `gecko-web.zip`: the page is the application, and every release
   publishes it. Build the local binary yourself to work on files from a

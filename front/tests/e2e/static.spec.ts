@@ -5444,13 +5444,17 @@ test("the mesh's quality is shown, its worst cells drawn, and the worst flown to
   // Out of the way of the drawer, which it would sit over.
   await page.locator("#console-open").click();
   await expect(page.locator("#console")).toBeHidden();
-  expect(q.below["0"]).toBeGreaterThan(0);
+  expect(q.inverted).toBeGreaterThan(0);
+  expect(q.beyond[0]).toBe(q.inverted);
 
-  // The figures, in the mesh's own section of the drawer.
+  // The figures, in the mesh's own section of the drawer, under the name
+  // of the metric they are in.
   await openSection(page, "mesh");
   const summary = page.locator("[data-test=quality-summary]");
-  await expect(summary).toContainText(`worst ${q.min.toFixed(2)}`);
-  await expect(summary).toContainText(`${q.below["0"]} inverted`);
+  await expect(summary).toContainText(
+    `scaled Jacobian: worst ${q.min.toFixed(2)}`,
+  );
+  await expect(summary).toContainText(`${q.inverted} inverted`);
   expect(await page.locator("[data-test=quality-histogram] .bar").count()).toBe(
     q.histogram.length,
   );
@@ -5458,18 +5462,20 @@ test("the mesh's quality is shown, its worst cells drawn, and the worst flown to
   // The cells below the threshold, drawn whole — as many as the kernel
   // counted below it, inside the mesh as well as on it.
   await page.locator("[data-test=quality-show]").check();
+  // The third threshold is 0.3, the slider's starting place.
+  expect(q.thresholds[2]).toBe(0.3);
   await expect(page.locator("[data-test=quality-count]")).toContainText(
-    `${q.below["0.3"]} cell`,
+    `${q.beyond[2]} cell`,
   );
   expect(
     await page.evaluate(() => (window as any).__gecko.badCellsDrawn()),
-  ).toBe(q.below["0.3"]);
+  ).toBe(q.beyond[2]);
   // Down to the ones turned inside out.
   await page.locator("[data-test=quality-below]").fill("0");
   await page.locator("[data-test=quality-below]").dispatchEvent("change");
   await expect
     .poll(() => page.evaluate(() => (window as any).__gecko.badCellsDrawn()))
-    .toBe(q.below["0"]);
+    .toBe(q.inverted);
 
   // Colored by quality is one of the ways the mesh can be colored.
   await page.locator('[data-test="mesh-mode"]').selectOption("quality");
@@ -5478,7 +5484,7 @@ test("the mesh's quality is shown, its worst cells drawn, and the worst flown to
 
   // And the camera goes to the worst cell.
   await page.locator("[data-test=quality-worst]").click();
-  await expect(page.locator("#status")).toContainText("worst cell");
+  await expect(page.locator("#status")).toContainText("worst scaled Jacobian");
   await page.evaluate(() => (window as any).__gecko.settled());
   const target = (await page.evaluate(
     () => (window as any).__gecko.camera().target,
@@ -5486,6 +5492,114 @@ test("the mesh's quality is shown, its worst cells drawn, and the worst flown to
   for (let k = 0; k < 3; k++) {
     expect(target[k]).toBeCloseTo(q.worst.center[k], 3);
   }
+  expect(errors).toEqual([]);
+});
+
+test("the quality is read in the metric picked, and a bar of its histogram draws its own cells", async ({
+  page,
+}) => {
+  const errors = await boot(page);
+  // The same bent cube: every measure has something to say about it.
+  await openConsole(page);
+  await lua(
+    page,
+    `gecko.create_cube()
+     for _, n in ipairs(gecko.nodes()) do
+       if n.pos[1] > 0.5 and n.pos[2] > 0.5 and n.pos[3] > 0.5 then
+         gecko.move_node(n.id, {1.7, 1.4, 2.0})
+       end
+     end
+     gecko.mesh{ segments = 4 }`,
+  );
+  await page.waitForFunction(
+    () => (window as any).__gecko.quality()?.cells === 64,
+  );
+  await page.locator("#console-open").click();
+  await expect(page.locator("#console")).toBeHidden();
+  await openSection(page, "mesh");
+  const drawn = () =>
+    page.evaluate(() => (window as any).__gecko.badCellsDrawn());
+
+  for (const [metric, label] of [
+    ["aspect_ratio", "aspect ratio"],
+    ["skewness", "skewness"],
+    ["scaled_jacobian", "scaled Jacobian"],
+  ]) {
+    const q = await page.evaluate(
+      (m) => (window as any).__gecko.quality(m),
+      metric,
+    );
+    expect(q.label).toBe(label);
+    await page.locator("[data-test=quality-metric]").selectOption(metric);
+    const worst = q.higher_is_better ? q.min : q.max;
+    await expect(page.locator("[data-test=quality-summary]")).toContainText(
+      `${label}: worst ${worst.toFixed(2)}`,
+    );
+    // The fullest bar that does not hold every cell: picking it draws
+    // exactly the cells it counts, and nothing else.
+    const counts: number[] = q.histogram;
+    const bar = counts.reduce(
+      (best, n, i) =>
+        n > 0 && n < 64 && (best < 0 || n < counts[best]) ? i : best,
+      -1,
+    );
+    expect(bar, `${metric}: ${counts}`).toBeGreaterThanOrEqual(0);
+    const bars = page.locator("[data-test=quality-histogram] .bar");
+    await bars.nth(bar).click();
+    await expect(bars.nth(bar)).toHaveClass(/picked/);
+    await expect.poll(drawn).toBe(counts[bar]);
+    await expect(page.locator("[data-test=quality-count]")).toContainText(
+      `${counts[bar]} cell`,
+    );
+    // A second click puts it back.
+    await bars.nth(bar).click();
+    await expect.poll(drawn).toBe(0);
+    await expect(bars.nth(bar)).not.toHaveClass(/picked/);
+  }
+
+  // A bar picked under one metric is dropped on changing to another, and
+  // the threshold is the metric's own.
+  const ratio = await page.evaluate(() =>
+    (window as any).__gecko.quality("aspect_ratio"),
+  );
+  await page.locator("[data-test=quality-metric]").selectOption("aspect_ratio");
+  const full = ratio.histogram.findIndex((n: number) => n > 0);
+  await page.locator("[data-test=quality-histogram] .bar").nth(full).click();
+  await expect.poll(drawn).toBe(ratio.histogram[full]);
+  await page.locator("[data-test=quality-metric]").selectOption("skewness");
+  await expect.poll(drawn).toBe(0);
+  await page.locator("[data-test=quality-metric]").selectOption("aspect_ratio");
+  await expect(page.locator("[data-test=quality-threshold]")).toHaveText(
+    "3.00",
+  );
+  await page.locator("[data-test=quality-show]").check();
+  // At or above three: the second threshold the kernel counts.
+  expect(ratio.thresholds[1]).toBe(3);
+  await expect.poll(drawn).toBe(ratio.beyond[1]);
+
+  // And the skin, colored by quality, is colored in the metric picked —
+  // still the whole skin. Every one of these cells has edges of different
+  // lengths somewhere, so none scores one by its aspect ratio; by its
+  // scaled Jacobian most of them are perfect.
+  const skin = await page.evaluate(() => (window as any).__gecko.skinCount());
+  await page.locator('[data-test="mesh-mode"]').selectOption("quality");
+  expect(await page.evaluate(() => (window as any).__gecko.skinCount())).toBe(
+    skin,
+  );
+  const scores = (): Promise<number[]> =>
+    page.evaluate(() => (window as any).__gecko.skinScores());
+  const byRatio = await scores();
+  expect(byRatio.length).toBe(skin);
+  expect(byRatio.every((x) => x > 0 && x <= 1)).toBe(true);
+  await page
+    .locator("[data-test=quality-metric]")
+    .selectOption("scaled_jacobian");
+  const byJacobian = await scores();
+  expect(byJacobian).not.toEqual(byRatio);
+  await page.locator("[data-test=quality-metric]").selectOption("aspect_ratio");
+  expect(await scores()).toEqual(byRatio);
+  await page.locator("[data-test=quality-worst]").click();
+  await expect(page.locator("#status")).toContainText("worst aspect ratio");
   expect(errors).toEqual([]);
 });
 

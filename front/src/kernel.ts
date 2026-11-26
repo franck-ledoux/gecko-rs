@@ -114,26 +114,40 @@ export interface Direct {
   query(kind: string, arg: string): string;
 }
 
-/** How good a mesh is, as the kernel measures it: the worst scaled Jacobian
- *  of each cell's corners, summed up. */
+/** The measures of a cell the kernel knows, by the names it takes. */
+export type Metric = "scaled_jacobian" | "skewness" | "aspect_ratio";
+
+/** How good a mesh is under one metric, as the kernel measures it. */
 export interface Quality {
   /** Which mesh this is about, as `stats().mesh.generation` counts them. */
   generation: number;
+  metric: Metric;
+  /** The metric's name, as a reader is shown it. */
+  label: string;
+  /** True for the scaled Jacobian; the other two are better lower. */
+  higher_is_better: boolean;
   cells: number;
   min: number;
+  max: number;
   mean: number;
-  /** The worst cell: where it is in model coordinates, and its block. */
+  /** Cells turned inside out, whatever the metric. */
+  inverted: number;
+  /** The worst cell by this metric: where it is in model coordinates, and
+   *  its block. */
   worst: {
     cell: number;
     block: number;
-    quality: number;
+    value: number;
     center: [number, number, number];
     /** Corner to opposite corner. */
     size: number;
   } | null;
-  /** How many cells are below each threshold, keyed by the threshold. */
-  below: Record<string, number>;
-  /** Where each histogram bin starts; the last runs to one. */
+  /** The thresholds counted, and how many cells are worse than each:
+   *  below it for the scaled Jacobian, at or above it otherwise. */
+  thresholds: number[];
+  beyond: number[];
+  /** Where each histogram bin starts; the last runs to the end of the
+   *  metric's range. */
   bins: number[];
   histogram: number[];
   /** The worst blocks, worst first. */
@@ -226,12 +240,17 @@ export interface Kernel {
   /** The mesh's skin, on the same terms. Empty until something has been
    *  meshed, and empty again as soon as an edit throws it away. */
   mesh(): Uint8Array;
-  /** Every face of every cell of the mesh worse than `below`, the worst
-   *  first, in the mesh buffer's encoding: the cells to look at, inside the
-   *  mesh as well as on its skin. */
-  cellsBelow(below: number): Uint8Array;
-  /** How good the mesh is, or null if there is none. */
-  quality(): Quality | null;
+  /** Every face of every cell whose figure under `metric` is at least
+   *  `from` and below `to`, the worst first, in the mesh buffer's encoding:
+   *  the cells to look at, inside the mesh as well as on its skin. Either
+   *  end may be infinite. */
+  cellsIn(metric: Metric, from: number, to: number): Uint8Array;
+  /** The skin's score under `metric`, one per quadrangle of `mesh()`: one
+   *  perfect, nought as bad as the metric goes, below nought inside out. */
+  skinScores(metric: Metric): Float32Array;
+  /** How good the mesh is under `metric`, the scaled Jacobian when none is
+   *  named, or null if there is no mesh. */
+  quality(metric?: Metric): Quality | null;
   /** How faithfully the mesh follows the geometry, with the tolerance a
    *  share of the local element size; null without both. */
   fidelity(share: number): Fidelity | null;
