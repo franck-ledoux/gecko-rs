@@ -667,11 +667,14 @@ fn cutting_an_edge_leaves_a_node_on_what_the_edge_was_on() {
         .collect();
     assert_eq!(on_curve.len(), 1, "one new node, on the curve");
     let p = on_curve[0]["pos"].as_array().unwrap();
-    let y = p[1].as_f64().unwrap();
+    let (x, y) = (p[0].as_f64().unwrap(), p[1].as_f64().unwrap());
     assert!(y > 0.15, "the node was left on the chord at y = {y}");
-    // And it really is on the curve: the bend runs between y = 0 and
-    // y = 0.25, and the nearest point to the chord's middle is y = 0.2.
-    assert!((y - 0.2).abs() < 1e-9, "{p:?}");
+    // And it really is on the curve — as the kernel follows it, which is
+    // not the two straight pieces but the quadratic through their three
+    // points, y = x (1 - x). The lift is a point of the reconstruction near
+    // the facets' nearest point, not its exact nearest point, hence the
+    // margin.
+    assert!((y - x * (1.0 - x)).abs() < 0.01, "{p:?}");
 
     // The two halves the edge became are on the curve as well.
     let halves: Vec<_> = edges(&s)

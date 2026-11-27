@@ -1595,10 +1595,20 @@ impl Session {
                 );
                 Ok(Outcome {
                     script: None,
-                    message: if furthest == 0.0 {
+                    // Two reasons for nothing to move, and they want different
+                    // things of the reader: one is a blocking with nothing
+                    // free, the other one already as good as it gets.
+                    message: if furthest == 0.0 && blocking.smoothable(&[]) == 0 {
                         "nothing moved — every node is held, follows a point, or is on the \
                          boundary following nothing"
                             .to_string()
+                    } else if furthest == 0.0 {
+                        let free = blocking.smoothable(&[]);
+                        format!(
+                            "already settled — none of the {free} free node{} has anywhere \
+                             better to go",
+                            if free == 1 { "" } else { "s" },
+                        )
                     } else {
                         format!(
                             "smoothed {rounds} time{} by {:.0}% — the furthest any node went was {furthest:.4}",

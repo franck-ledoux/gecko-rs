@@ -84,6 +84,10 @@ pub struct Geometry {
     /// here rather than on demand: every edge classified intersects two of
     /// these, and nothing moves a geometry once it is read.
     containment: BTreeMap<(u8, i32), Vec<(u8, i32)>>,
+    /// The smooth curves and surfaces a point is projected onto, under the
+    /// facets: see [`crate::reconstruction`]. Fitted once, here, for the
+    /// same reason as the containment.
+    fits: crate::reconstruction::Fits,
 }
 
 impl Geometry {
@@ -173,13 +177,20 @@ impl Geometry {
             names: file.names.clone(),
             skipped: file.skipped,
             containment: BTreeMap::new(),
+            fits: Default::default(),
         };
         geometry.containment = crate::where_on::containment(&geometry);
+        geometry.fits =
+            crate::reconstruction::Fits::of(&geometry.nodes, &geometry.curves, &geometry.surfaces);
         Ok(geometry)
     }
 
     pub(crate) fn containment(&self) -> &BTreeMap<(u8, i32), Vec<(u8, i32)>> {
         &self.containment
+    }
+
+    pub(crate) fn fits(&self) -> &crate::reconstruction::Fits {
+        &self.fits
     }
 
     /// Every node of the faceting, shared between the entities that use it.

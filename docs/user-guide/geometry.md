@@ -174,6 +174,36 @@ pieces — `surface 2+3` — and the joins it swallowed are no longer drawn.
 
 A piece belongs to one merge. Undo takes a merge back like anything else.
 
+## What a node is kept on
+
+A node, an edge point or a face point classified on a curve or a surface is
+kept on it by projection — and not onto the facets themselves. A circle drawn
+with 31 segments is a polygon, and a node held on the polygon is held on its
+flats and kinks: its distance from the centre rises and falls as it slides
+round, and a smoothing reads every side as a shallow dip to settle in. The
+result depends on where it started rather than on the part — a symmetric part
+came out of smoothing visibly lopsided.
+
+So the facets are a sampling of something smooth, reconstructed when the
+geometry is read, in the spirit of P. Frey's surface simplification within a
+Hausdorff envelope:
+
+- at every node of a **curve**, the quadratic through it and its two
+  neighbours along the curve — at an end, through it and the next two;
+- at every node of a **surface**, a normal from the triangles round it and the
+  quadratic height over its tangent plane that best fits its neighbours.
+
+A point is projected onto the facets as before, and that foot is lifted onto
+the quadratics of the segment's two ends, or the triangle's three corners,
+blended by where the foot lies between them. A node of the faceting stays
+where it is, and on a flat face or a straight curve nothing changes at all.
+Each entity is fitted on its own triangles and segments, so a crease between
+two surfaces stays a crease.
+
+What it is not: the exact nearest point of the reconstruction, only a point
+of it near the facets' nearest point; and the corners of a curve that bends
+*within* one entity are rounded off, since nothing marks them.
+
 ## A box round it
 
 `B`, or the box button, adds **one block**: a box containing the geometry, or
@@ -197,14 +227,25 @@ Pick something with some depth to it, or add a surface facing another way.
 
 ## What it does not do yet
 
-Nothing is **classified** onto it. A box round the geometry is a block that
-*contains* the shape; no cell of it knows which surface it is supposed to lie
-on, and nothing snaps. That is the next thing this exists for.
+**No CAD.** A geometry is a faceting and only a faceting: there is no
+analytic surface behind it, so how closely the blocking can follow a curved
+part is bounded by how finely the part was meshed — the reconstruction under
+the facets narrows that, and does not remove it.
 
-There is also no incidence: which curve bounds which surface is not stated
-anywhere in `$Elements`, and the C++ recovers it from shared mesh nodes
-because classification needs it. Nothing needs it yet, and a table nobody
-reads is a table nobody notices is wrong.
+**Only MSH 2.2, ASCII.** A 4.1 file or a binary one is refused by name; gmsh
+writes 2.2 with `-format msh2`.
+
+**Incidence is read from shared nodes.** Which curves bound which surface,
+and which corners end which curve, is stated nowhere in `$Elements`, so it is
+recovered from the node numbers the entities share — what
+[classification](classification.md) uses to put an edge on what both of its
+ends agree about. That assumes a **conformal** faceting, the curves' nodes
+being the surfaces' own: true of any file gmsh writes from one CAD model, and
+not of one assembled from parts meshed separately, where fewer containments
+are found and never wrong ones.
+
+**No volumes.** Tetrahedra are skipped and counted; the inside of the part is
+never read.
 
 ## Dropping it
 

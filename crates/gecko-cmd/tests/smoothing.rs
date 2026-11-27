@@ -130,6 +130,25 @@ fn a_blocking_with_nowhere_to_move_says_so_rather_than_nothing() {
 }
 
 #[test]
+fn a_blocking_already_as_good_as_it_gets_says_it_has_settled() {
+    // Twenty-seven unit cubes: the eight nodes inside are free, and every
+    // one of them is already where it should be.
+    let mut s = grid(3);
+    let before = s.view_buffer();
+    let out = s
+        .apply(Command::Smooth {
+            rounds: 5,
+            share: 1.0,
+        })
+        .expect("a smoothing");
+    assert_eq!(
+        out.message,
+        "already settled — none of the 8 free nodes has anywhere better to go"
+    );
+    assert_eq!(s.view_buffer(), before);
+}
+
+#[test]
 fn moving_a_node_moves_that_node_and_nothing_else() {
     // A drag used to ripple: the ring of nodes around the one being moved
     // was smoothed a pass, then the ring beyond it, and so on. It was

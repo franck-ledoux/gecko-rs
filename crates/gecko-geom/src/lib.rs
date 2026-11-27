@@ -21,6 +21,7 @@ pub mod describe;
 pub mod model;
 pub mod msh;
 pub mod quad;
+mod reconstruction;
 pub mod where_on;
 
 pub use bounds::BoundsError;

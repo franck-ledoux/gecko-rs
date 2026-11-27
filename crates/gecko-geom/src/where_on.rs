@@ -222,8 +222,10 @@ impl Geometry {
             .map(|(_, e)| e)
     }
 
-    /// The point of an entity nearest `p`, or nothing when no entity answers
-    /// to that pair.
+    /// Where `p` lands on an entity, or nothing when no entity answers to
+    /// that pair: the nearest point of the facets, lifted onto the smooth
+    /// curve or surface reconstructed under them — see
+    /// [`crate::reconstruction`]. A corner is its own node.
     pub fn project(&self, dim: u8, tag: i32, p: [f64; 3]) -> Option<[f64; 3]> {
         match dim {
             CORNER => self
@@ -232,31 +234,42 @@ impl Geometry {
                 .find(|c| c.tag == tag)
                 .map(|c| self.nodes()[c.node as usize]),
             CURVE => self.curves().iter().find(|c| c.tag == tag).map(|curve| {
-                nearest_of(
-                    curve.segments.iter().map(|s| {
-                        on_segment(p, self.nodes()[s[0] as usize], self.nodes()[s[1] as usize])
-                    }),
-                    p,
-                )
+                let nodes = self.nodes();
+                let best = curve
+                    .segments
+                    .iter()
+                    .map(|s| {
+                        let (q, u) = on_segment(p, nodes[s[0] as usize], nodes[s[1] as usize]);
+                        (apart(q, p), q, u, *s)
+                    })
+                    .min_by(|a, b| a.0.partial_cmp(&b.0).expect("a finite distance"));
+                match best {
+                    Some((_, q, u, s)) => self.fits().lift_curve(nodes, tag, s, u, q),
+                    None => p,
+                }
             }),
             SURFACE => self
                 .surfaces()
                 .iter()
                 .find(|s| s.tag == tag)
                 .map(|surface| {
-                    nearest_of(
-                        surface.triangles.iter().map(|t| {
-                            on_triangle(
-                                p,
-                                [
-                                    self.nodes()[t[0] as usize],
-                                    self.nodes()[t[1] as usize],
-                                    self.nodes()[t[2] as usize],
-                                ],
-                            )
-                        }),
-                        p,
-                    )
+                    let nodes = self.nodes();
+                    let best = surface
+                        .triangles
+                        .iter()
+                        .map(|t| {
+                            let corners = t.map(|n| nodes[n as usize]);
+                            let q = on_triangle(p, corners);
+                            (apart(q, p), q, *t, corners)
+                        })
+                        .min_by(|a, b| a.0.partial_cmp(&b.0).expect("a finite distance"));
+                    match best {
+                        Some((_, q, t, corners)) => match barycentric(q, corners) {
+                            Some(w) => self.fits().lift_surface(nodes, tag, t, w, q),
+                            None => q,
+                        },
+                        None => p,
+                    }
                 }),
             _ => None,
         }
@@ -295,16 +308,6 @@ impl Geometry {
     }
 }
 
-fn nearest_of(candidates: impl Iterator<Item = [f64; 3]>, p: [f64; 3]) -> [f64; 3] {
-    candidates
-        .min_by(|a, b| {
-            apart(*a, p)
-                .partial_cmp(&apart(*b, p))
-                .expect("a finite distance")
-        })
-        .unwrap_or(p)
-}
-
 fn apart(a: [f64; 3], b: [f64; 3]) -> f64 {
     (0..3).map(|k| (a[k] - b[k]).powi(2)).sum::<f64>().sqrt()
 }
@@ -321,14 +324,31 @@ fn along(from: [f64; 3], direction: [f64; 3], t: f64) -> [f64; 3] {
     [0, 1, 2].map(|k| from[k] + direction[k] * t)
 }
 
-/// The point of a segment nearest `p`, ends included.
-fn on_segment(p: [f64; 3], a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+/// The point of a segment nearest `p`, ends included, and how far along
+/// the segment it is, from nought at `a` to one at `b`.
+fn on_segment(p: [f64; 3], a: [f64; 3], b: [f64; 3]) -> ([f64; 3], f64) {
     let ab = minus(b, a);
     let length = dot(ab, ab);
     if length <= 0.0 {
-        return a;
+        return (a, 0.0);
     }
-    along(a, ab, (dot(minus(p, a), ab) / length).clamp(0.0, 1.0))
+    let u = (dot(minus(p, a), ab) / length).clamp(0.0, 1.0);
+    (along(a, ab, u), u)
+}
+
+/// The barycentric coordinates of a point of a triangle's plane, or nothing
+/// for a triangle with no area.
+fn barycentric(q: [f64; 3], t: [[f64; 3]; 3]) -> Option<[f64; 3]> {
+    let (v0, v1, v2) = (minus(t[1], t[0]), minus(t[2], t[0]), minus(q, t[0]));
+    let (d00, d01, d11) = (dot(v0, v0), dot(v0, v1), dot(v1, v1));
+    let (d20, d21) = (dot(v2, v0), dot(v2, v1));
+    let den = d00 * d11 - d01 * d01;
+    if den <= 1e-300 * (d00 * d11).max(1e-300) {
+        return None;
+    }
+    let v = (d11 * d20 - d01 * d21) / den;
+    let w = (d00 * d21 - d01 * d20) / den;
+    Some([1.0 - v - w, v, w])
 }
 
 /// The point of a triangle nearest `p`.

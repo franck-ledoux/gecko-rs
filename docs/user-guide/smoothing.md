@@ -46,8 +46,16 @@ worse than it was). The score's wall alone is not enough: a step can jump
 clean over it.
 
 The consequence worth knowing: on a blocking that is already as good as it
-gets, smoothing does **nothing**, and says so. A cube's corners are right
-angles and its edges even, and there is no move that improves on that.
+gets, smoothing does **nothing**, and says so — *already settled*, with how
+many nodes were free to move. A cube's corners are right angles and its edges
+even, and there is no move that improves on that. *Nothing moved* is the other
+case: no node is free at all.
+
+Symmetric in the moves is not symmetric in the result unless the geometry is
+too. Nodes on the boundary follow what the faceting samples, and a circle
+drawn with 31 segments has one mirror, not four: a blocking smoothed round it
+drifts, slowly, along the directions the sampling breaks. Mesh the part with a
+multiple of four segments round a hole that should be four-fold.
 
 ## Untangling first
 

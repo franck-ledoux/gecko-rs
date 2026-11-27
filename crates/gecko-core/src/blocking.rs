@@ -2297,19 +2297,17 @@ impl Blocking {
         out
     }
 
-    pub fn smooth(
-        &mut self,
-        how: Smoothing<'_>,
-        project: impl Fn(On, [f64; 3]) -> Option<[f64; 3]>,
-    ) -> f64 {
-        let share = how.share.clamp(0.0, 1.0);
-        if share == 0.0 || how.rounds == 0 {
-            return 0.0;
-        }
-        let held: HashSet<CellId> = how.held.iter().copied().collect();
+    /// How many nodes a smoothing would be free to move, with `held` kept
+    /// where they are: what tells a blocking with nothing to move from one
+    /// that has settled, when a smoothing moves nothing.
+    pub fn smoothable(&self, held: &[CellId]) -> usize {
+        self.movable(held).len()
+    }
 
-        // By name, so the order does not depend on where anything happens
-        // to sit in an arena.
+    /// The nodes a smoothing may move, by name, so the order does not
+    /// depend on where anything happens to sit in an arena.
+    fn movable(&self, held: &[CellId]) -> Vec<(CellId, NodeId)> {
+        let held: HashSet<CellId> = held.iter().copied().collect();
         let mut movable: Vec<(CellId, NodeId)> = self
             .nodes
             .iter()
@@ -2328,6 +2326,19 @@ impl Blocking {
             })
             .collect();
         movable.sort_by_key(|(name, _)| *name);
+        movable
+    }
+
+    pub fn smooth(
+        &mut self,
+        how: Smoothing<'_>,
+        project: impl Fn(On, [f64; 3]) -> Option<[f64; 3]>,
+    ) -> f64 {
+        let share = how.share.clamp(0.0, 1.0);
+        if share == 0.0 || how.rounds == 0 {
+            return 0.0;
+        }
+        let movable = self.movable(how.held);
         if movable.is_empty() {
             return 0.0;
         }
