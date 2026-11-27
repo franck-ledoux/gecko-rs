@@ -91,6 +91,13 @@ likewise from its four corners. Consequences:
 that is all there is; blocks over a faded part; the mesh by quality. Labels
 read `S`/`C`/`P`/`B` + tag. Terminal only.
 
+## Versions
+
+`gecko run --json` reports the Gecko that ran it in `gecko`. Lua cannot ask
+it (no `gecko.version()` yet). A part's script returns its tuning stamp —
+`return { tuned = L.tuned{ gecko = …, min_sj = …, curves = … } }` — which
+lands in the report's `returned`, and `check.py` compares the two.
+
 ## Lua pitfalls
 
 - JSON `null` becomes `nil`, and a `nil` **inside a list is a hole**: `#t`

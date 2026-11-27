@@ -20,8 +20,10 @@
 --   Ru Rl         carried through the right bend to the end face, so the box
 --                 corners there open towards 60° (patterns.md §4)
 --
--- 13 blocks, 25 242 hexes at H = 0.4: scaled Jacobian min 0.640, mean 0.929,
--- none inverted; 17/18 curves followed.
+-- 13 blocks, 25 242 hexes at H = 0.4: scaled Jacobian min 0.658, mean 0.930,
+-- none inverted; 17/18 curves followed (Gecko 0.2.10 with the smooth check
+-- against the geometry; tuned on 0.2.9, where it gave 0.640 — the stamp at
+-- the end says so, and check.py flags it as due a retune).
 --
 -- NOT FUNDAMENTAL (scripts/fundamental.py): the O-grid box's sides reach the
 -- top and bottom of the wall, so S9 and S8 are each spread over 3 sheets of
@@ -143,3 +145,7 @@ L.size(H)
 gecko.mesh()
 L.summary()
 if not NO_EXPORT then gecko.export_vtk("B1.vtk") end
+
+-- What the positions were tuned on, for check.py to compare with the Gecko
+-- that runs this.
+return { tuned = L.tuned{ gecko = "0.2.9", min_sj = 0.640, curves = "17/18" } }
