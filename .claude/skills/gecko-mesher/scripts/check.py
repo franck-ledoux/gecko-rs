@@ -11,6 +11,11 @@ skill's references/, or named with --rules:
     {"min_sj": 0.3, "target_min_sj": 0.5, "max_share_below_07": 0.01,
      "target_mean_sj": 0.9, "max_aspect_ratio": 10, "max_skewness": 0.8}
 
+If the script returned what its positions were tuned on —
+`return { tuned = L.tuned{ gecko = "0.2.10", min_sj = 0.644, curves = "17/17" } }`
+— that is compared with the Gecko that ran it and what it gave: a different
+version, or a minimum or curve count that moved, says to retune.
+
 `--known` lists CAD defects (tags) that no mesh can follow: they are reported
 but do not fail the check. The fundamental-blocking rule is the one of
 scripts/fundamental.py, which gives the details.
@@ -116,6 +121,26 @@ def check(report, rules, known):
         rule(True, "skin on the part", said, beyond == 0 and not uncovered)
     elif q:
         rule(False, "fidelity measured", "no geometry", False)
+
+    # Tuned on this Gecko? Positions tuned against one version's
+    # projection are not the best against another's.
+    tuned = (report.get("returned") or {}).get("tuned") if isinstance(report.get("returned"), dict) else None
+    if tuned is None:
+        rule(False, "tuning stamped", "no L.tuned{} returned: say what the positions were tuned on", False)
+    else:
+        now_version = report.get("gecko")
+        drift = []
+        if str(tuned.get("gecko")) != str(now_version):
+            drift.append(f"tuned with Gecko {tuned.get('gecko')}, run with {now_version}")
+        if q and tuned.get("min_sj") is not None and q["min"] < float(tuned["min_sj"]) - 0.01:
+            drift.append(f"min SJ {float(tuned['min_sj']):.3f} when tuned, {q['min']:.3f} now")
+        fid = report.get("fidelity")
+        if fid and tuned.get("curves"):
+            now_curves = f"{fid['curves']['followed']}/{fid['curves']['checked']}"
+            if now_curves != str(tuned["curves"]):
+                drift.append(f"curves {tuned['curves']} when tuned, {now_curves} now")
+        rule(False, "tuned on this Gecko", "; ".join(drift) + " — retune (optimize.py from these positions)" if drift
+             else f"yes (Gecko {now_version})", not drift)
 
     b = report.get("blocking")
     if b:

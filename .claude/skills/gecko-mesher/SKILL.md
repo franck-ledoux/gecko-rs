@@ -207,6 +207,17 @@ the final size** — the minimum moves when the cell aspect changes (on B1:
 before and after: on B1 it inverted cells and pulled nodes off a hole rim.
 Keep whichever is better.
 
+**Tuned positions belong to the Gecko they were tuned on.** A change in how
+Gecko projects nodes moves every node on a curve, and positions tuned against
+the old projection are no longer the best: on B1, 0.2.10's smooth projection
+took a placement tuned at min SJ 0.644 down to 0.467, and 600 more tries of
+the optimiser brought it back to 0.598. So stamp what you tuned on — the
+script returns `{ tuned = L.tuned{ gecko = "0.2.10", min_sj = 0.644,
+curves = "17/17" } }`, taking the version from the report's `gecko` field —
+and whenever you run a part's script on another Gecko, `check.py` compares
+the two and says when to retune. Retune from the stamped positions, not from
+scratch: the topology still holds; only the placement has drifted.
+
 Iterate between 6 and 7. When the bottleneck stops moving, the topology is
 the limit: try the variant from step 2, or add the one sheet that relieves
 the worst corner (on B1, one extra cut through the hole's right half took min
@@ -217,7 +228,8 @@ SJ from 0.58 to 0.69 for two more blocks). Say what each extra block bought.
 In the part's folder:
 
 - `part.lua` — **self-contained**: the final values in its defaults, `blocklib.lua`
-  beside it, rerunnable with `gecko run part.lua`, writing `part.vtk`;
+  beside it, rerunnable with `gecko run part.lua`, writing `part.vtk`, and
+  returning its tuning stamp (`L.tuned{}`, step 7);
 - `part.vtk`, `report.json`, and pictures: the blocking, the mesh by quality,
   and the bad cells;
 - a short summary for the user: block count, hexes, SJ min/mean/inverted,

@@ -21,6 +21,12 @@
 //!    it, not merely the skin passing near, and every corner a mesh node on
 //!    it. What "aligned with the boundary" means.
 //!
+//! Everything is measured against the **smooth** curves and surfaces the
+//! mesh is projected onto — the quadratic reconstruction under the facets —
+//! not the facets themselves. A mesh put on that reconstruction lies on the
+//! circle and cuts inside the corners of the polygon it was given as;
+//! measured against the polygon, a rim followed exactly read as missed.
+//!
 //! A curve is a feature if the model still has it as a curve — itself, or a
 //! merge of curves. One a merge of surfaces swallowed, the seam of a
 //! cylinder, is not: the mesh has no reason to follow it. Corners the same.
@@ -270,23 +276,27 @@ pub fn measure(
     };
 
     // --- 1. the skin to the geometry -------------------------------------
-    let triangles: Vec<[u32; 3]> = geometry
+    let triangles: Vec<(i32, [u32; 3])> = geometry
         .surfaces()
         .iter()
-        .flat_map(|s| s.triangles.iter().copied())
+        .flat_map(|s| s.triangles.iter().map(move |t| (s.tag, *t)))
         .collect();
     let tri_boxes: Vec<_> = triangles
         .iter()
-        .map(|t| bounds(&t.map(|i| g[i as usize])))
+        .map(|(_, t)| bounds(&t.map(|i| g[i as usize])))
         .collect();
     let tri_grid = Grid::new(&tri_boxes, 2.0 * typical);
     let mut skin_worst: Option<Miss> = None;
     let (mut skin_sum, mut skin_beyond) = (0.0, 0usize);
     for &n in &skin_nodes {
         let p = points[n as usize];
+        // To the smooth surface under each triangle, where a node is put:
+        // the nearest of those, not the smooth surface under the nearest
+        // facet — a node of a disc beside its rim can be nearer the tube's
+        // facet than the disc's, and is not on the tube.
         let Some((d, _)) = tri_grid.nearest(p, |i| {
-            let t = triangles[i];
-            to_triangle(p, g[t[0] as usize], g[t[1] as usize], g[t[2] as usize])
+            let (tag, t) = triangles[i];
+            length(sub(p, geometry.surface_point_near(tag, t, p)))
         }) else {
             continue;
         };
@@ -352,7 +362,10 @@ pub fn measure(
                     .or_insert_with(|| to_skin(g[i as usize]))
             });
             let (a, b, c) = (g[t[0] as usize], g[t[1] as usize], g[t[2] as usize]);
-            let middle = [0, 1, 2].map(|k| (a[k] + b[k] + c[k]) / 3.0);
+            // Samples on the smooth surface under the triangle, not on its
+            // flat: that is where the mesh was put.
+            let on = |w: [f64; 3]| geometry.surface_point(surface.tag, *t, w);
+            let middle = on([1.0 / 3.0; 3]);
             let mut all = vec![corners[0], corners[1], corners[2], to_skin(middle)];
             // A triangle larger than the cells is looked at all over, on a
             // lattice about a cell apart: a geometry faceted coarsely has
@@ -372,7 +385,7 @@ pub fn measure(
                         j as f64 / steps as f64,
                         k as f64 / steps as f64,
                     );
-                    all.push(to_skin([0, 1, 2].map(|q| a[q] * u + b[q] * v + c[q] * w)));
+                    all.push(to_skin(on([u, v, w])));
                 }
             }
             let mut out = 0;
@@ -454,7 +467,11 @@ pub fn measure(
             let pieces = (length(sub(a, b)) / (0.5 * typical))
                 .ceil()
                 .clamp(2.0, 256.0) as usize;
-            for p in (0..=pieces).map(|i| lerp(a, b, i as f64 / pieces as f64)) {
+            // Along the smooth curve under the segment, where the mesh was
+            // put; the segment's direction still says which way it runs.
+            for p in
+                (0..=pieces).map(|i| geometry.curve_point(curve.tag, *s, i as f64 / pieces as f64))
+            {
                 let Some(m) = to_edge(p, sub(b, a)) else {
                     // No mesh edge anywhere runs this way.
                     let e = curves.entry(tag).or_insert((f64::INFINITY, 0, 0));

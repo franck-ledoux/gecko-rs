@@ -178,6 +178,12 @@ things:
   every corner a mesh node on it. That is what aligned with the boundary
   means.
 
+All three measure against the **smooth** curves and surfaces the mesh is
+projected onto — the reconstruction under the facets — not the facets
+themselves. A mesh put on that reconstruction lies on the circle and cuts
+inside the corners of the polygon the circle was given as; measured against
+the polygon, a rim followed exactly would read as missed.
+
 A curve counts if the model still has it as a curve: itself, or a merge of
 curves. A seam a merge of surfaces took inside it, such as the joint of a
 cylinder's two halves, is not a feature, and is not checked.

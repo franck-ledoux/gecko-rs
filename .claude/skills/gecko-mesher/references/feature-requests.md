@@ -34,7 +34,7 @@ for a request below. Use them while the features do not exist, and say so.
 | stopgap | what it does | the Gecko feature that replaces it |
 | ------- | ------------ | ---------------------------------- |
 | `scripts/fundamental.py` | rebuilds block sheets and chords from the report to check fun sheets and fundamental chords | `gecko.fundamental()` — for each surface the sheet capturing it and its level, for each curve its fundamental chords and type, and the verdict; `gecko.render{ show = {"sheets"} }` colouring the capturing sheets |
-| `scripts/optimize.py` | random search over vertex positions, one `gecko run` per try | `gecko.optimize{ nodes = …, objective = "min_sj", size = h }` — block-corner placement against the **mesh** quality, nodes kept on their entities; or a `gecko.smooth` that judges its steps by the mesh |
+| `scripts/optimize.py` | random search over vertex positions, one `gecko run` per try | `gecko.optimize{ nodes = …, objective = "min_sj", size = h }` — block-corner placement against the **mesh** quality, nodes kept on their entities; or a `gecko.smooth` that judges its steps by the mesh. Also what lets a tuned part follow Gecko's upgrades without a retune by hand |
 | `scripts/check.py` | holds a report to rules | `gecko.check{ rules }` — the hard rules and targets of `quality-rules.md` as a read, so the page can show them too |
 | `blocklib.size(h)` | segments per sheet from a target size | `gecko.mesh{ size = h }` |
 | `blocklib.weld()` | glues every pair of coincident faces | `gecko.glue_coincident()`, or `add_block` welding onto faces already there |
@@ -58,8 +58,12 @@ them, with what it cost there.
 - **The fidelity check never samples a surface no face is on**, so a whole
   surface the mesh misses scores as followed. Wanted: `fidelity` measuring
   every surface, and naming the uncovered ones.
-- **Mesh nodes are projected onto the facets**, not the smooth surface, so a
-  coarse `.msh` caps the quality (B1: min SJ rose from 0.614 to 0.630 just
-  from a finer faceting). Wanted: projection onto the surface's fitted shape
-  where `gecko.geometry()` recognises one.
+- ~~**Mesh nodes are projected onto the facets**~~ — **done in 0.2.10**:
+  nodes are projected onto a quadratic reconstruction under the facets, and
+  since the next release the check against the geometry measures against it
+  too. A surface's reconstruction still stops at its facets (a coarse disc
+  stays an octagon while its rim is a circle).
+- **Lua cannot ask Gecko's version**, so a script cannot tell it is running
+  on another Gecko than the one it was tuned on; `L.tuned{}` and `check.py`
+  work round it through the `--json` report. Wanted: `gecko.version()`.
 - **Pillowing drops a classification on several curves taken as one.**

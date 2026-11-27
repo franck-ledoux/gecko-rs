@@ -194,3 +194,87 @@ fn a_seam_a_merge_took_away_is_not_a_curve_to_follow() {
     assert_eq!(f["curves"]["checked"], 12, "{f}");
     assert_eq!(f["curves"]["followed"], 12);
 }
+
+/// A cylinder faceted coarsely: its rims are polygons of `sides` sides,
+/// the tube that many flat strips — what a coarse `.msh` gives.
+fn cylinder(sides: usize, radius: f64, height: f64) -> String {
+    let mut nodes = vec![[0.0, 0.0, 0.0], [0.0, 0.0, height]];
+    for end in [0.0, height] {
+        for k in 0..sides {
+            let a = std::f64::consts::TAU * k as f64 / sides as f64;
+            nodes.push([radius * a.cos(), radius * a.sin(), end]);
+        }
+    }
+    let bottom = |k: usize| 3 + k % sides;
+    let top = |k: usize| 3 + sides + k % sides;
+    let mut elements: Vec<String> = Vec::new();
+    for k in 0..sides {
+        elements.push(format!("1 2 0 201 {} {}", bottom(k), bottom(k + 1)));
+        elements.push(format!("1 2 0 202 {} {}", top(k), top(k + 1)));
+        elements.push(format!("2 2 0 1 1 {} {}", bottom(k + 1), bottom(k)));
+        elements.push(format!("2 2 0 2 2 {} {}", top(k), top(k + 1)));
+        elements.push(format!(
+            "2 2 0 3 {} {} {}",
+            bottom(k),
+            bottom(k + 1),
+            top(k + 1)
+        ));
+        elements.push(format!("2 2 0 3 {} {} {}", bottom(k), top(k + 1), top(k)));
+    }
+    let mut out = String::from("$MeshFormat\n2.2 0 8\n$EndMeshFormat\n$Nodes\n");
+    out.push_str(&format!("{}\n", nodes.len()));
+    for (i, p) in nodes.iter().enumerate() {
+        out.push_str(&format!("{} {} {} {}\n", i + 1, p[0], p[1], p[2]));
+    }
+    out.push_str(&format!("$EndNodes\n$Elements\n{}\n", elements.len()));
+    for (i, e) in elements.iter().enumerate() {
+        out.push_str(&format!("{} {}\n", i + 1, e));
+    }
+    out.push_str("$EndElements\n");
+    out
+}
+
+#[test]
+fn a_mesh_on_the_smooth_rim_of_a_coarse_cylinder_follows_it() {
+    // The mesh is projected onto the smooth curve reconstructed under a
+    // polygon, so it lies on the circle and cuts inside the polygon's
+    // corners. Measured against the polygon, a rim the mesh follows
+    // exactly read as missed — Mambo B1's hole rims did, in 0.2.10. It is
+    // measured against the same reconstruction the mesh is put on.
+    let mut s = Session::new().unwrap();
+    s.apply(Command::LoadGeometry {
+        msh: cylinder(8, 1.0, 2.0),
+        name: "coarse.msh".to_string(),
+    })
+    .unwrap();
+    s.apply(Command::BoxGeometry {
+        surfaces: vec![],
+        margin: 0.0,
+    })
+    .unwrap();
+    let nodes: Vec<serde_json::Value> = serde_json::from_str(&s.nodes_json()).unwrap();
+    for (z, tag) in [(0.0, 201), (2.0, 202)] {
+        let four: Vec<u32> = nodes
+            .iter()
+            .filter(|n| (n["pos"][2].as_f64().unwrap() - z).abs() < 0.5)
+            .map(|n| n["id"].as_u64().unwrap() as u32)
+            .collect();
+        s.apply(Command::ClassifyNode {
+            nodes: four,
+            on: Some(gecko_cmd::Spot { dim: 1, tag }.into()),
+        })
+        .unwrap();
+    }
+    s.apply(Command::Mesh { segments: 16 }).unwrap();
+    let f = fidelity(&s, 0.25);
+    assert_eq!(f["curves"]["checked"], 2, "{f}");
+    assert_eq!(f["curves"]["followed"], 2, "both rims: {}", f["curves"]);
+    // And the skin is measured on the smooth surfaces too: against the
+    // facets, more than half of it read as off (812 of 1538 nodes, mean
+    // 0.029). What is left is the flat ends beyond their octagon: a node
+    // there is on the true disc, but a surface's reconstruction stops at
+    // its facets — see the geometry guide, what it does not do yet.
+    let skin = &f["skin"];
+    assert!(skin["beyond"].as_u64().unwrap() < 200, "{skin}");
+    assert!(skin["mean"].as_f64().unwrap() < 0.015, "{skin}");
+}

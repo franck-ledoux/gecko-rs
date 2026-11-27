@@ -3,6 +3,16 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
+## Unreleased
+
+- **The check against the geometry measures against the smooth geometry.**
+  Since 0.2.10 the mesh is projected onto a reconstruction under the
+  facets, but the check still measured against the facets: a mesh on the
+  smooth circle cut inside the polygon's corners and read as off it. On
+  Mambo B1 the two rims of the hole, followed more closely than before,
+  were reported as not followed. Curves, the skin and the geometry samples
+  are now all measured against the reconstruction the mesh is put on.
+
 ## 0.2.10
 
 - **`gecko run --json`.** A run written up as one JSON object on stdout:

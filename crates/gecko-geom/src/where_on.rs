@@ -280,6 +280,40 @@ impl Geometry {
         self.project(dim, tag, p).map(|q| apart(p, q))
     }
 
+    /// The point of the smooth curve reconstructed under segment `s` of
+    /// curve `tag`, a share `u` of the way from its first node: where a
+    /// point of that segment is put, so what to measure a mesh on the curve
+    /// against. The segment's own point on a straight curve.
+    pub fn curve_point(&self, tag: i32, s: [u32; 2], u: f64) -> [f64; 3] {
+        let nodes = self.nodes();
+        let (a, b) = (nodes[s[0] as usize], nodes[s[1] as usize]);
+        let q = [0, 1, 2].map(|k| a[k] + (b[k] - a[k]) * u);
+        self.fits().lift_curve(nodes, tag, s, u, q)
+    }
+
+    /// The point of the smooth surface reconstructed under triangle `t` of
+    /// surface `tag`, at barycentric coordinates `w`.
+    pub fn surface_point(&self, tag: i32, t: [u32; 3], w: [f64; 3]) -> [f64; 3] {
+        let nodes = self.nodes();
+        let corners = t.map(|n| nodes[n as usize]);
+        let q =
+            [0, 1, 2].map(|k| w[0] * corners[0][k] + w[1] * corners[1][k] + w[2] * corners[2][k]);
+        self.fits().lift_surface(nodes, tag, t, w, q)
+    }
+
+    /// Where `p` lands on the smooth surface under triangle `t` of surface
+    /// `tag`, as [`project`](Self::project) would put it there: the
+    /// nearest point of the triangle, lifted.
+    pub fn surface_point_near(&self, tag: i32, t: [u32; 3], p: [f64; 3]) -> [f64; 3] {
+        let nodes = self.nodes();
+        let corners = t.map(|n| nodes[n as usize]);
+        let q = on_triangle(p, corners);
+        match barycentric(q, corners) {
+            Some(w) => self.fits().lift_surface(nodes, tag, t, w, q),
+            None => q,
+        }
+    }
+
     /// The entity to classify a point on, or nothing when it is near none.
     ///
     /// Dimension by dimension, stopping at the **lowest** one with anything

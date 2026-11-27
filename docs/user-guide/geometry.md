@@ -232,6 +232,12 @@ analytic surface behind it, so how closely the blocking can follow a curved
 part is bounded by how finely the part was meshed — the reconstruction under
 the facets narrows that, and does not remove it.
 
+**A surface's reconstruction stops at its facets.** A flat end of a coarse
+cylinder is reconstructed as the octagon it was given as, while the rim round
+it is reconstructed as a circle that bulges past the octagon's sides. A mesh
+node between the two is on the true disc and reads as a little off it — a
+few hundredths on a cylinder of radius 1 faceted in eight.
+
 **Only MSH 2.2, ASCII.** A 4.1 file or a binary one is refused by name; gmsh
 writes 2.2 with `-format msh2`.
 

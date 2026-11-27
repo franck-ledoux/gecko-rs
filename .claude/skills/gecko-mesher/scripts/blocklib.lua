@@ -21,6 +21,11 @@
 --                                         returns gecko.blocking()
 --   L.summary()                           print quality and fidelity in a line
 --                                         each; returns quality, fidelity
+--   L.tuned{ gecko =, min_sj =, curves = } what the positions were tuned on
+--                                         and what they gave; return it from
+--                                         the script (`return { tuned = … }`)
+--                                         so check.py can tell when Gecko has
+--                                         moved under them
 --
 -- Order matters: build every block, weld, then attach. Welding matches faces
 -- by their centres, and attaching moves nodes onto the geometry.
@@ -161,6 +166,22 @@ function L.summary()
       f.skin.max, #missed > 0 and (", missed: " .. table.concat(missed, ", ")) or ""))
   end
   return q, f
+end
+
+--- What the vertex positions were tuned on, and what they gave there.
+---
+--- Tuned positions hold for the Gecko they were tuned with, not for every
+--- Gecko: a change in how nodes are projected moves every node on a curve,
+--- and positions tuned against the old ones are no longer the best — on B1,
+--- 0.2.10's smooth projection took a placement tuned at 0.644 to 0.467, and
+--- a retune brought it back. Lua cannot ask Gecko's version yet
+--- (references/feature-requests.md), so the script states it, returns it,
+--- and `check.py` compares it with the `gecko` field of the report.
+function L.tuned(stamp)
+  assert(type(stamp) == "table" and stamp.gecko and stamp.min_sj,
+    "L.tuned{ gecko = \"0.2.10\", min_sj = 0.644, curves = \"17/17\" }")
+  L.stamp = stamp
+  return stamp
 end
 
 return L
