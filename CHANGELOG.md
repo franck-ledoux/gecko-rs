@@ -3,7 +3,7 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
-## Unreleased
+## 0.2.10
 
 - **`gecko run --json`.** A run written up as one JSON object on stdout:
   whether the script got to the end and why not, what it printed and
@@ -41,6 +41,20 @@ the day a tag was cut.
   size, the top, bottom and end faces merged into the wall across their 90°
   edges. Such triangles are now left out of what a surface's own folding
   is measured by.
+
+- **Nodes are kept on a smooth curve or surface, not on the facets.** The
+  faceting is a sampling: at every node of a curve a quadratic through its
+  neighbours, at every node of a surface a quadratic height over its tangent
+  plane, and a point projected onto the facets is lifted onto them. A node
+  sliding round a circle no longer catches on every side of the polygon, so
+  smoothing round a hole no longer settles wherever it happened to start —
+  on a symmetric part it comes out symmetric to within what the faceting
+  breaks. Flat faces and straight curves are unchanged.
+
+- **Smoothing says when a blocking has settled.** It said "nothing moved —
+  every node is held" of a blocking whose nodes were free and simply had
+  nowhere better to go; that is now *already settled*, with how many were
+  free.
 
 ## 0.2.9
 
