@@ -233,6 +233,8 @@ version = "0.2.10"
 dependencies = [
  "anyhow",
  "nurbs",
+ "serde",
+ "serde_json",
  "thiserror",
 ]
 

@@ -511,12 +511,52 @@ can be put behind one interface without either changing. Two differences:
 Every number comes from the four operations and square roots, in nurbs-rs
 and here, so the page and the terminal still agree bit for bit.
 
-What is not there yet: a file format to read one from, and a session that
-uses one. A `CadGeometry` is put together in code, with `CadBuilder`; the
-tests in `crates/gecko-geom/tests/cad.rs` build a plate with a hole, a
-cylinder and its seam, a sphere and its poles, a cone and its apex, two
-faces at a sharp edge, and a window cut across a seam, and hold every
-projection to the closed form, to 1e-10.
+A loop's polygon is drawn from each edge's **p-curve** — its curve in the
+face's parameters — when it has one, as every edge of a CAD model does; it
+is how a full sphere, a seam and an edge at each pole that is a point,
+closes up. Without one, the edge is sampled and projected onto the
+surface, which is what a geometry put together in code does.
+
+What is not there yet: a session that uses one. The tests in
+`crates/gecko-geom/tests/cad.rs` build geometries in code — a plate with a
+hole, a cylinder and its seam, a sphere and its poles, a cone and its apex,
+two faces at a sharp edge, a window cut across a seam — and those in
+`tests/gcad.rs` read them from `.gcad` files; both hold every projection to
+the closed form, to 1e-10.
+
+### The .gcad format
+
+What `gecko_geom::gcad::read` reads: JSON, one entity to a line, so that two
+imports of a part diff entity by entity. The module's documentation has
+every field; in short, a header saying what it is (`"format": "gcad"`,
+`"version": 1`) and how it was made (`source`, `units`, `deflection`,
+`tolerance`), then vertices, edges and faces, each tagged from one. Every
+curve and surface is a NURBS written out in full — degree, knots each as
+many times as their multiplicity, control points, weights — every face
+lists its loops with each edge's p-curve, and a tessellation comes with it,
+triangles per face and a polyline per edge, for drawing and for a first
+guess. A file of another format or version is refused by name.
+
+It is written by `scripts/step_to_gcad.py`, from a STEP file:
+
+```bash
+uv run scripts/step_to_gcad.py part.step part.gcad
+```
+
+The script needs OpenCascade's Python bindings, `cadquery-ocp`, and says
+so in its header: `uv` builds that environment on first use and keeps it
+cached, so nothing is installed in the repository or the system Python.
+gecko never links OpenCascade, and CI never installs it — the tests read
+`.gcad` files made once and committed, by `scripts/make_gcad_fixtures.py`
+(see `crates/gecko-geom/tests/data/README.md`).
+
+What the script does: reads the file (lengths in millimetres), heals it
+with ShapeFix, sews it on `--sew`, turns every curve and surface into a
+NURBS with `BRepBuilderAPI_NurbsConvert` — exactly, conics and quadrics
+included — and tessellates it within `--deflection`, a thousandth of the
+part's diagonal by default. Tags are positions in OpenCascade's maps of
+the shape, so the same file gives the same tags, and the same bytes, every
+time.
 
 ## Where a classification lives
 

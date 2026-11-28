@@ -8,6 +8,8 @@ description = "Geometric models: faceted, read from a gmsh surface mesh, and exa
 [dependencies]
 thiserror = { workspace = true }
 nurbs = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 anyhow = "1"

@@ -12,8 +12,8 @@
 //! models.
 //!
 //! The other is **exact**: [`CadGeometry`], whose edges and faces are NURBS
-//! curves and surfaces from the [`nurbs`] crate, put together in code for
-//! now — reading one from a file, and a session using one, come next.
+//! curves and surfaces from the [`nurbs`] crate, read from a `.gcad` file
+//! ([`gcad`]) or put together in code — a session using one comes next.
 //!
 //! Nothing here knows about blocks. The dependency runs the other way: a cell
 //! of a block structure will eventually be *classified* onto one of these
@@ -24,6 +24,7 @@ pub mod bounds;
 pub mod cad;
 pub mod composite;
 pub mod describe;
+pub mod gcad;
 pub mod model;
 pub mod msh;
 pub mod quad;
@@ -31,9 +32,10 @@ mod reconstruction;
 pub mod where_on;
 
 pub use bounds::BoundsError;
-pub use cad::{CadBuilder, CadError, CadGeometry, Edge, Face, Trim, Vertex};
+pub use cad::{CadBuilder, CadError, CadGeometry, Edge, Face, Triangulation, Trim, Use, Vertex};
 pub use composite::{Composites, Join, MergeError, Model, Smoothing};
 pub use describe::{CurveFacts, CurveShape, SurfaceFacts, SurfaceShape};
+pub use gcad::{GcadError, GcadInfo};
 pub use model::{Corner, Curve, Geometry, Surface};
 pub use msh::{Msh, MshError, PhysicalName, LINE, POINT, TRIANGLE};
 /// The NURBS library the exact geometry is made of.

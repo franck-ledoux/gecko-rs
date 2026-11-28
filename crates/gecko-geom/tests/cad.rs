@@ -5,7 +5,7 @@
 //!
 //! Every projection is checked against the closed form, to 1e-10.
 
-use gecko_geom::cad::{CadBuilder, CadError, CadGeometry, Trim};
+use gecko_geom::cad::{CadBuilder, CadError, CadGeometry, Trim, Use};
 use gecko_geom::nurbs::shapes::{arc, bilinear, circle, cone, cylinder, line, sphere};
 use gecko_geom::{CORNER, CURVE, SURFACE};
 
@@ -64,8 +64,8 @@ fn plate() -> CadGeometry {
         bilinear(c),
         &[1, 2, 3, 4, 5],
         Trim::Loops(vec![
-            vec![(1, false), (2, false), (3, false), (4, false)],
-            vec![(5, false)],
+            vec![Use::along(1), Use::along(2), Use::along(3), Use::along(4)],
+            vec![Use::along(5)],
         ]),
     );
     b.build().unwrap()
@@ -320,7 +320,12 @@ fn window() -> (CadGeometry, [f64; 3], [f64; 3]) {
         1,
         s,
         &[1, 2, 3, 4],
-        Trim::Loops(vec![vec![(1, false), (2, false), (3, true), (4, true)]]),
+        Trim::Loops(vec![vec![
+            Use::along(1),
+            Use::along(2),
+            Use::against(3),
+            Use::against(4),
+        ]]),
     );
     (b.build().unwrap(), x, y)
 }
@@ -378,7 +383,7 @@ fn a_loop_round_a_cylinder_does_not_trim_it() {
         circle([0.0; 3], [f[0], f[1], 0.0], [-f[1], f[0], 0.0], 1.0).unwrap(),
         [1, 1],
     );
-    b.face(1, s, &[1], Trim::Loops(vec![vec![(1, false)]]));
+    b.face(1, s, &[1], Trim::Loops(vec![vec![Use::along(1)]]));
     assert_eq!(
         b.build().unwrap_err(),
         CadError::Unclosed { face: 1, ring: 0 }
@@ -438,7 +443,7 @@ fn a_geometry_that_does_not_hang_together_is_refused() {
             [i as i32 + 1, (i as i32 + 1) % 4 + 1],
         );
     }
-    let loop_ = vec![(1, false), (3, false), (2, false), (4, false)];
+    let loop_ = vec![Use::along(1), Use::along(3), Use::along(2), Use::along(4)];
     b.face(1, bilinear(c), &[1, 2, 3, 4], Trim::Loops(vec![loop_]));
     assert_eq!(
         b.build().unwrap_err(),
@@ -455,4 +460,20 @@ fn a_geometry_that_does_not_hang_together_is_refused() {
         b.build().unwrap_err(),
         CadError::NoEdge { face: 1, edge: 7 }
     );
+}
+
+#[test]
+fn a_model_says_how_far_apart_its_same_point_may_be() {
+    // An edge ending a micron from its vertex: refused at a billionth of
+    // the span, taken at the model's own tolerance.
+    let (a, b2) = ([0.0; 3], [1.0, 0.0, 0.0]);
+    let mut b = CadBuilder::new();
+    b.vertex(1, a).vertex(2, [1.0, 1e-6, 0.0]);
+    b.edge(1, line(a, b2), [1, 2]);
+    assert!(matches!(
+        b.build().unwrap_err(),
+        CadError::EndApart { edge: 1, .. }
+    ));
+    b.tolerance(1e-5);
+    assert!(b.build().is_ok());
 }

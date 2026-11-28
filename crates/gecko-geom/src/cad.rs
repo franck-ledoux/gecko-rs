@@ -25,8 +25,10 @@
 //!
 //! A loop is a list of edges, each either way round, ending where the
 //! next begins. Its polygon in the face's parameters is sampled once, when
-//! the geometry is built: each edge is sampled and every sample projected
-//! onto the surface. Where the surface is periodic — a cylinder round its
+//! the geometry is built: from each edge's curve in those parameters, its
+//! p-curve, which a CAD model gives for every edge of every face — or,
+//! without one, by sampling the edge and projecting every sample onto the
+//! surface. Where the surface is periodic — a cylinder round its
 //! seam — consecutive samples are kept within half a period of each other,
 //! so a loop straddling the seam stays in one piece.
 //!
@@ -35,10 +37,11 @@
 //! round each was given.
 //!
 //! A loop that would not close in the parameters is refused rather than
-//! guessed at: one going right round a periodic surface, or one through a
-//! pole of a sphere, where one point of space is a whole line of
-//! parameters. Those faces are left untrimmed — a full sphere, a full
-//! cylinder — which is what they are.
+//! guessed at. Projected, that is one going right round a periodic surface,
+//! or one through a pole of a sphere, where one point of space is a whole
+//! line of parameters: such faces are left untrimmed, or given their
+//! p-curves, with which a CAD model's full sphere — a seam and two
+//! degenerate edges at its poles — closes up like any other face.
 //!
 //! # Projection
 //!
@@ -113,11 +116,58 @@ pub struct Vertex {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Edge {
     pub tag: i32,
-    /// The whole domain of it is the edge.
+    /// The whole domain of it is the edge. For a degenerate edge, a curve
+    /// that stays at its vertex.
     pub curve: Curve,
     /// The vertex at the start of its domain, and the one at the end: the
     /// same one twice for a closed curve.
     pub ends: [i32; 2],
+    /// A point in space, and a line in the parameters of the faces it
+    /// bounds: the pole of a sphere, the apex of a cone.
+    pub degenerate: bool,
+    /// Points along it, for drawing it: none unless given.
+    pub polyline: Vec<[f64; 3]>,
+}
+
+/// One edge of a loop, as the loop runs along it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Use {
+    pub edge: i32,
+    /// Taken against its curve's direction.
+    pub reversed: bool,
+    /// The edge in the face's parameters, `(u, v)` as the first two
+    /// coordinates of each control point, running the way the edge's own
+    /// curve does. Given by a CAD model for every edge of every face, and
+    /// what draws the loop when it is there; without it, the loop is found
+    /// by projecting the edge onto the surface.
+    pub pcurve: Option<Curve>,
+}
+
+impl Use {
+    /// The edge, along its curve.
+    pub fn along(edge: i32) -> Use {
+        Use {
+            edge,
+            reversed: false,
+            pcurve: None,
+        }
+    }
+
+    /// The edge, against its curve.
+    pub fn against(edge: i32) -> Use {
+        Use {
+            reversed: true,
+            ..Use::along(edge)
+        }
+    }
+
+    /// With its curve in the face's parameters.
+    pub fn on(self, pcurve: Curve) -> Use {
+        Use {
+            pcurve: Some(pcurve),
+            ..self
+        }
+    }
 }
 
 /// Which part of its surface a face is.
@@ -125,9 +175,16 @@ pub struct Edge {
 pub enum Trim {
     /// All of it.
     Natural,
-    /// What is inside the loops: each a list of edges, `true` for one
-    /// taken against its curve's direction.
-    Loops(Vec<Vec<(i32, bool)>>),
+    /// What is inside the loops, each a list of edges end to end.
+    Loops(Vec<Vec<Use>>),
+}
+
+/// Triangles drawing a face.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Triangulation {
+    pub nodes: Vec<[f64; 3]>,
+    /// Three indices into `nodes` each, wound outward from the solid.
+    pub triangles: Vec<[u32; 3]>,
 }
 
 /// A surface of the model, and what bounds it.
@@ -139,6 +196,10 @@ pub struct Face {
     /// the seam of a cylinder is one, and trims nothing.
     pub edges: Vec<i32>,
     pub trim: Trim,
+    /// Its outward normal is the surface's turned round.
+    pub reversed: bool,
+    /// Triangles drawing it, when given.
+    pub triangulation: Option<Triangulation>,
     /// The loops' polygons in the surface's parameters, sampled when the
     /// geometry was built; none for a face left whole.
     polygons: Vec<Vec<[f64; 2]>>,
@@ -179,7 +240,14 @@ impl Face {
 pub struct CadBuilder {
     vertices: Vec<Vertex>,
     edges: Vec<Edge>,
+    /// Degenerate edges, at a vertex: their curve is made when the vertex
+    /// is known.
+    points: Vec<(i32, i32)>,
     faces: Vec<(i32, Surface, Vec<i32>, Trim)>,
+    polylines: BTreeMap<i32, Vec<[f64; 3]>>,
+    triangulations: BTreeMap<i32, Triangulation>,
+    reversed: BTreeSet<i32>,
+    tolerance: f64,
 }
 
 impl CadBuilder {
@@ -193,7 +261,45 @@ impl CadBuilder {
     }
 
     pub fn edge(&mut self, tag: i32, curve: Curve, ends: [i32; 2]) -> &mut Self {
-        self.edges.push(Edge { tag, curve, ends });
+        self.edges.push(Edge {
+            tag,
+            curve,
+            ends,
+            degenerate: false,
+            polyline: Vec::new(),
+        });
+        self
+    }
+
+    /// An edge that is a single point, at `vertex`: see [`Edge::degenerate`].
+    pub fn degenerate_edge(&mut self, tag: i32, vertex: i32) -> &mut Self {
+        self.points.push((tag, vertex));
+        self
+    }
+
+    /// Points drawing an edge.
+    pub fn polyline(&mut self, edge: i32, points: Vec<[f64; 3]>) -> &mut Self {
+        self.polylines.insert(edge, points);
+        self
+    }
+
+    /// Triangles drawing a face.
+    pub fn triangulation(&mut self, face: i32, triangulation: Triangulation) -> &mut Self {
+        self.triangulations.insert(face, triangulation);
+        self
+    }
+
+    /// A face whose outward normal is its surface's turned round.
+    pub fn reversed(&mut self, face: i32) -> &mut Self {
+        self.reversed.insert(face);
+        self
+    }
+
+    /// How far apart two points meant to be one may be — where an edge ends
+    /// and its vertex, say. By default a billionth of the span; a CAD model
+    /// says its own, usually far looser.
+    pub fn tolerance(&mut self, tolerance: f64) -> &mut Self {
+        self.tolerance = tolerance;
         self
     }
 
@@ -204,15 +310,36 @@ impl CadBuilder {
 
     pub fn build(&self) -> Result<CadGeometry, CadError> {
         repeated("vertex", self.vertices.iter().map(|v| v.tag))?;
-        repeated("edge", self.edges.iter().map(|e| e.tag))?;
+        let vertex = |tag: i32| self.vertices.iter().find(|v| v.tag == tag);
+        let mut all_edges = self.edges.clone();
+        for &(tag, at) in &self.points {
+            let v = vertex(at).ok_or(CadError::NoVertex {
+                edge: tag,
+                vertex: at,
+            })?;
+            all_edges.push(Edge {
+                tag,
+                curve: nurbs::shapes::line(v.point, v.point),
+                ends: [at, at],
+                degenerate: true,
+                polyline: Vec::new(),
+            });
+        }
+        all_edges.sort_by_key(|e| e.tag);
+        for e in &mut all_edges {
+            if let Some(points) = self.polylines.get(&e.tag) {
+                e.polyline = points.clone();
+            }
+        }
+        let all_edges = all_edges;
+        repeated("edge", all_edges.iter().map(|e| e.tag))?;
         repeated("face", self.faces.iter().map(|f| f.0))?;
 
-        let span = span(&self.vertices, &self.edges, &self.faces);
-        let tolerance = TOLERANCE * span.max(1.0);
-        let vertex = |tag: i32| self.vertices.iter().find(|v| v.tag == tag);
-        let edge = |tag: i32| self.edges.iter().find(|e| e.tag == tag);
+        let span = span(&self.vertices, &all_edges, &self.faces);
+        let tolerance = (TOLERANCE * span.max(1.0)).max(self.tolerance);
+        let edge = |tag: i32| all_edges.iter().find(|e| e.tag == tag);
 
-        for e in &self.edges {
+        for e in &all_edges {
             let (a, b) = e.curve.domain();
             for (end, t, tag) in [("start", a, e.ends[0]), ("end", b, e.ends[1])] {
                 let v = vertex(tag).ok_or(CadError::NoVertex {
@@ -244,15 +371,15 @@ impl CadBuilder {
                     if l.is_empty() {
                         return Err(CadError::EmptyLoop { face });
                     }
-                    for &(e, _) in l {
-                        if !edges.contains(&e) {
-                            return Err(CadError::NotBounding { face, edge: e });
+                    for u in l {
+                        if !edges.contains(&u.edge) {
+                            return Err(CadError::NotBounding { face, edge: u.edge });
                         }
                     }
                     // Each edge begins where the one before it ends.
-                    let oriented = |&(e, back): &(i32, bool)| {
-                        let ends = edge(e).expect("checked above").ends;
-                        if back {
+                    let oriented = |u: &Use| {
+                        let ends = edge(u.edge).expect("checked above").ends;
+                        if u.reversed {
                             [ends[1], ends[0]]
                         } else {
                             ends
@@ -264,7 +391,7 @@ impl CadBuilder {
                             return Err(CadError::OpenLoop {
                                 face,
                                 ring: k,
-                                edge: step.0,
+                                edge: step.edge,
                             });
                         }
                     }
@@ -279,6 +406,8 @@ impl CadBuilder {
                 surface: surface.clone(),
                 edges: edges.clone(),
                 trim: trim.clone(),
+                reversed: self.reversed.contains(&face),
+                triangulation: self.triangulations.get(&face).cloned(),
                 polygons,
                 periods,
             });
@@ -286,7 +415,7 @@ impl CadBuilder {
 
         let mut geometry = CadGeometry {
             vertices: self.vertices.clone(),
-            edges: self.edges.clone(),
+            edges: all_edges,
             faces,
             containment: BTreeMap::new(),
             span,
@@ -472,19 +601,31 @@ fn periods(s: &Surface, tolerance: f64) -> [Option<f64>; 2] {
 fn polygon<'a>(
     surface: &Surface,
     periods: [Option<f64>; 2],
-    l: &[(i32, bool)],
+    l: &[Use],
     curve: impl Fn(i32) -> &'a Curve,
 ) -> Option<Vec<[f64; 2]>> {
     let mut out: Vec<[f64; 2]> = Vec::new();
-    for &(e, back) in l {
-        let mut samples = curve(e).sample(LOOP_SAMPLES + 1);
-        if back {
+    for u in l {
+        // In the parameters straight away, from the p-curve; or projected
+        // there, point by point.
+        let mut samples: Vec<[f64; 2]> = match &u.pcurve {
+            Some(c) => c
+                .sample(LOOP_SAMPLES + 1)
+                .into_iter()
+                .map(|p| [p[0], p[1]])
+                .collect(),
+            None => curve(u.edge)
+                .sample(LOOP_SAMPLES + 1)
+                .into_iter()
+                .map(|p| surface.project(p).0)
+                .collect(),
+        };
+        if u.reversed {
             samples.reverse();
         }
         // The last sample is where the next edge begins.
         samples.pop();
-        for p in samples {
-            let (mut uv, _, _) = surface.project(p);
+        for mut uv in samples {
             if let Some(prev) = out.last() {
                 uv = unwrapped(uv, *prev, periods);
             }

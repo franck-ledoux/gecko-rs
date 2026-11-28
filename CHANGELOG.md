@@ -18,8 +18,15 @@ the day a tag was cut.
   0.1.1. Faces whole or trimmed by loops of their edges, across a periodic
   seam too; projection onto a vertex, an edge or a face, exact to 1e-10;
   incidence read from the topology; the nearest entity, as for the faceted
-  model. Put together in code for now: no file format and no session use
-  yet.
+  model. No session uses one yet.
+- **The `.gcad` format, and `scripts/step_to_gcad.py`.** A STEP file to an
+  exact geometry: healed, every curve and surface made a NURBS by
+  OpenCascade, each edge's curve in each face's parameters, and a
+  tessellation within a deflection of the shapes. `uv run` fetches
+  OpenCascade's Python bindings for the script; gecko itself never needs
+  them. `gecko_geom::gcad::read` reads the file, and refuses another format
+  or version by name. Tested on a plate with a hole, a cylinder, a sphere,
+  a cone, and Mambo's B10 and B47.
 
 ## 0.2.10
 
