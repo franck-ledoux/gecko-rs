@@ -19,6 +19,18 @@ the day a tag was cut.
   seam too; projection onto a vertex, an edge or a face, exact to 1e-10;
   incidence read from the topology; the nearest entity, as for the faceted
   model. No session uses one yet.
+- **An exact geometry in a session.** `gecko.load_cad("part.gcad")`, or a
+  `.gcad` opened or dropped in the page: drawn from its tessellation, and
+  everything else worked out on the NURBS — a node put on a face is on it to
+  the last digits, and the fidelity check measures the skin on the exact
+  faces. The same blocking of a cylinder on its `.msh` and its `.gcad`:
+  the same classification, the skin on the cylinder to 1e-15 rather than
+  3e-3, and as good a mesh.
+- **Curves on surfaces, faceted, by their segments.** A curve is on a
+  surface when every one of its segments is a side of the surface's
+  triangles, no longer merely when its nodes are the surface's: a straight
+  curve of one segment had its two ends on every surface meeting it at both
+  corners.
 - **The `.gcad` format, and `scripts/step_to_gcad.py`.** A STEP file to an
   exact geometry: healed, every curve and surface made a NURBS by
   OpenCascade, each edge's curve in each face's parameters, and a

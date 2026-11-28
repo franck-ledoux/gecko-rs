@@ -88,6 +88,9 @@ pub struct Geometry {
     /// facets: see [`crate::reconstruction`]. Fitted once, here, for the
     /// same reason as the containment.
     fits: crate::reconstruction::Fits,
+    /// The exact geometry this is the tessellation of, when it is one: see
+    /// [`CadGeometry::into_geometry`](crate::cad::CadGeometry::into_geometry).
+    exact: Option<std::sync::Arc<crate::cad::CadGeometry>>,
 }
 
 impl Geometry {
@@ -178,11 +181,23 @@ impl Geometry {
             skipped: file.skipped,
             containment: BTreeMap::new(),
             fits: Default::default(),
+            exact: None,
         };
         geometry.containment = crate::where_on::containment(&geometry);
         geometry.fits =
             crate::reconstruction::Fits::of(&geometry.nodes, &geometry.curves, &geometry.surfaces);
         Ok(geometry)
+    }
+
+    /// The exact geometry this faceting is the tessellation of, if it is
+    /// one: what a [`Model`](crate::Model) over it projects onto.
+    pub fn exact(&self) -> Option<&crate::cad::CadGeometry> {
+        self.exact.as_deref()
+    }
+
+    pub(crate) fn with_exact(mut self, exact: crate::cad::CadGeometry) -> Self {
+        self.exact = Some(std::sync::Arc::new(exact));
+        self
     }
 
     pub(crate) fn containment(&self) -> &BTreeMap<(u8, i32), Vec<(u8, i32)>> {

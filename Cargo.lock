@@ -492,8 +492,8 @@ dependencies = [
 
 [[package]]
 name = "nurbs"
-version = "0.1.1"
-source = "git+https://github.com/franck-ledoux/nurbs-rs?tag=v0.1.1#181d36918cdc0376a0a78110033fb2e78fce7df9"
+version = "0.1.2"
+source = "git+https://github.com/franck-ledoux/nurbs-rs?tag=v0.1.2#ecea39b9e7d5648946c1ab3f89f22fa2375c2fe8"
 
 [[package]]
 name = "once_cell"

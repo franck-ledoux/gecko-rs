@@ -48,18 +48,40 @@ pub(crate) fn containment(geometry: &Geometry) -> BTreeMap<(u8, i32), Vec<(u8, i
         .iter()
         .map(|s| (s.tag, s.triangles.iter().flatten().copied().collect()))
         .collect();
+    // The sides of each surface's triangles, each as its two nodes in order.
+    let side = |a: u32, b: u32| if a < b { [a, b] } else { [b, a] };
+    let surface_sides: BTreeMap<i32, BTreeSet<[u32; 2]>> = geometry
+        .surfaces()
+        .iter()
+        .map(|s| {
+            let sides = s
+                .triangles
+                .iter()
+                .flat_map(|t| [side(t[0], t[1]), side(t[1], t[2]), side(t[2], t[0])])
+                .collect();
+            (s.tag, sides)
+        })
+        .collect();
 
     let mut out: BTreeMap<(u8, i32), Vec<(u8, i32)>> = BTreeMap::new();
     // Every entity contains itself, so intersecting two up-sets never comes
     // back empty merely because both cells are on the same thing.
-    for (tag, nodes) in &curve_nodes {
-        let mut up = vec![(CURVE, *tag)];
-        for (surface, on_it) in &surface_nodes {
-            if nodes.iter().all(|n| on_it.contains(n)) {
+    // A curve is on a surface when every one of its segments is a side of
+    // one of the surface's triangles: running along it, not merely touching
+    // it at its ends — a straight curve of one segment has only its two end
+    // nodes, and a surface meeting it at both corners has them too.
+    for curve in geometry.curves() {
+        let mut up = vec![(CURVE, curve.tag)];
+        for (surface, sides) in &surface_sides {
+            if curve
+                .segments
+                .iter()
+                .all(|s| sides.contains(&side(s[0], s[1])))
+            {
                 up.push((SURFACE, *surface));
             }
         }
-        out.insert((CURVE, *tag), up);
+        out.insert((CURVE, curve.tag), up);
     }
     for corner in geometry.corners() {
         let mut up = vec![(CORNER, corner.tag)];

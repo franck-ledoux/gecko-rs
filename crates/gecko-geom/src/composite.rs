@@ -387,33 +387,117 @@ impl Composites {
 /// know the difference.
 #[derive(Clone, Copy, Debug)]
 pub struct Model<'a> {
+    /// The faceting: every tag there is, and what draws them. For an exact
+    /// geometry, its tessellation, with the same tags.
     pub geometry: &'a Geometry,
+    /// The exact geometry, when there is one: then a point is projected
+    /// onto it, and what contains what is its topology's.
+    pub exact: Option<&'a crate::cad::CadGeometry>,
     pub composites: &'a Composites,
 }
 
 impl<'a> Model<'a> {
+    /// Over a geometry: the exact one it is the tessellation of, if it is
+    /// one ([`Geometry::exact`]), and the faceting itself otherwise.
     pub fn new(geometry: &'a Geometry, composites: &'a Composites) -> Self {
         Self {
             geometry,
+            exact: geometry.exact(),
             composites,
+        }
+    }
+
+    /// The same model over its faceting alone, the exact geometry left
+    /// aside: for ranking entities by how near they are, which the
+    /// triangles, within a deflection of the shapes, do as well at a
+    /// thousandth of the cost.
+    pub fn faceted(&self) -> Model<'a> {
+        Model {
+            exact: None,
+            ..*self
+        }
+    }
+
+    // What the geometry underneath answers: the exact one's when there is
+    // one, the faceting's otherwise. Everything else here is built on
+    // these, so the composites work the same over both.
+
+    fn base_project(&self, dim: u8, tag: i32, p: [f64; 3]) -> Option<[f64; 3]> {
+        match self.exact {
+            Some(cad) => cad.project(dim, tag, p),
+            None => self.geometry.project(dim, tag, p),
+        }
+    }
+
+    fn base_distance(&self, dim: u8, tag: i32, p: [f64; 3]) -> Option<f64> {
+        match self.exact {
+            Some(cad) => cad.distance(dim, tag, p),
+            None => self.geometry.distance(dim, tag, p),
+        }
+    }
+
+    fn base_nearest(&self, p: [f64; 3], tolerance: [f64; 3]) -> Option<(u8, i32)> {
+        let Some(cad) = self.exact else {
+            return self.geometry.nearest(p, tolerance);
+        };
+        if cad.deflection() <= 0.0 {
+            return cad.nearest(p, tolerance);
+        }
+        // The faceting first, which is within a deflection of the shapes
+        // and costs a thousandth as much: an entity whose triangles are
+        // farther than the tolerance and two deflections cannot be within
+        // the tolerance exactly, and is never projected onto.
+        let slack = 2.0 * cad.deflection() + cad.tolerance();
+        for dim in [CORNER, crate::CURVE, crate::SURFACE] {
+            let tags: Vec<i32> = match dim {
+                CORNER => cad.vertices().iter().map(|v| v.tag).collect(),
+                crate::CURVE => cad.edges().iter().map(|e| e.tag).collect(),
+                _ => cad.faces().iter().map(|f| f.tag).collect(),
+            };
+            let best = tags
+                .into_iter()
+                .filter(|&tag| {
+                    // A degenerate edge is in no faceting: it is a point,
+                    // and cheap to measure exactly.
+                    self.geometry
+                        .distance(dim, tag, p)
+                        .is_none_or(|d| d <= tolerance[dim as usize] + slack)
+                })
+                .filter_map(|tag| cad.distance(dim, tag, p).map(|d| (d, tag)))
+                .filter(|(d, _)| *d <= tolerance[dim as usize])
+                .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+            if let Some((_, tag)) = best {
+                return Some((dim, tag));
+            }
+        }
+        None
+    }
+
+    fn base_containing(&self, dim: u8, tag: i32) -> &'a [(u8, i32)] {
+        match self.exact {
+            Some(cad) => cad.containing(dim, tag),
+            None => self.geometry.containing(dim, tag),
         }
     }
 
     /// How big the model is, corner to corner — a tolerance is a share of
     /// something, and this is the something.
     pub fn span(&self) -> f64 {
-        self.geometry.span()
+        match self.exact {
+            Some(cad) => cad.span(),
+            None => self.geometry.span(),
+        }
     }
 
     /// The point of an entity nearest `p`. For a composite, the nearest
     /// point of whichever member is nearest.
     pub fn project(&self, dim: u8, tag: i32, p: [f64; 3]) -> Option<[f64; 3]> {
         match self.composites.members(tag) {
-            None => self.geometry.project(dim, tag, p),
+            None => self.base_project(dim, tag, p),
             Some((dim, members)) => members
                 .iter()
                 .filter_map(|&m| {
-                    let at = self.geometry.project(dim, m, p)?;
+                    let at = self.base_project(dim, m, p)?;
                     Some((apart(at, p), at))
                 })
                 .min_by(|a, b| a.0.total_cmp(&b.0))
@@ -424,10 +508,10 @@ impl<'a> Model<'a> {
     /// How far `p` is from an entity.
     pub fn distance(&self, dim: u8, tag: i32, p: [f64; 3]) -> Option<f64> {
         match self.composites.members(tag) {
-            None => self.geometry.distance(dim, tag, p),
+            None => self.base_distance(dim, tag, p),
             Some((dim, members)) => members
                 .iter()
-                .filter_map(|&m| self.geometry.distance(dim, m, p))
+                .filter_map(|&m| self.base_distance(dim, m, p))
                 .min_by(f64::total_cmp),
         }
     }
@@ -445,7 +529,7 @@ impl<'a> Model<'a> {
     /// on the merged curve.
     pub fn nearest(&self, p: [f64; 3], tolerance: [f64; 3]) -> Option<(u8, i32)> {
         if self.composites.stand_in.is_empty() {
-            return self.geometry.nearest(p, tolerance);
+            return self.base_nearest(p, tolerance);
         }
         for dim in [CORNER, crate::CURVE, crate::SURFACE] {
             let best = self
@@ -486,17 +570,12 @@ impl<'a> Model<'a> {
     pub fn containing(&self, dim: u8, tag: i32) -> Vec<(u8, i32)> {
         if let Some((dim, members)) = self.composites.members(tag) {
             let mut up: BTreeSet<(u8, i32)> = match members.first() {
-                Some(&first) => self
-                    .geometry
-                    .containing(dim, first)
-                    .iter()
-                    .copied()
-                    .collect(),
+                Some(&first) => self.base_containing(dim, first).iter().copied().collect(),
                 None => BTreeSet::new(),
             };
             for &m in members.iter().skip(1) {
                 let theirs: BTreeSet<(u8, i32)> =
-                    self.geometry.containing(dim, m).iter().copied().collect();
+                    self.base_containing(dim, m).iter().copied().collect();
                 up.retain(|e| theirs.contains(e));
             }
             // The members themselves are *in* it, not above it.
@@ -518,7 +597,7 @@ impl<'a> Model<'a> {
                 let under = members.iter().all(|&m| {
                     theirs
                         .iter()
-                        .any(|&t| self.geometry.containing(dim, m).contains(&(group, t)))
+                        .any(|&t| self.base_containing(dim, m).contains(&(group, t)))
                 });
                 if under {
                     out.push((group, name));
@@ -527,7 +606,7 @@ impl<'a> Model<'a> {
             return out;
         }
 
-        let mut up: Vec<(u8, i32)> = self.geometry.containing(dim, tag).to_vec();
+        let mut up: Vec<(u8, i32)> = self.base_containing(dim, tag).to_vec();
         if up.is_empty() {
             return up;
         }

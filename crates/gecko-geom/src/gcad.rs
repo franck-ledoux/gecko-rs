@@ -19,8 +19,11 @@
 //! - a **face**: `{"tag", "reversed", "surface", "uv", "edges", "loops",
 //!   "triangulation"}`, where `edges` lists every edge bounding it, each
 //!   loop is a list of `{"edge", "reversed", "pcurve"}`, and
-//!   `triangulation` is `{"nodes": [[x, y, z]], "triangles": [[i, j, k]]}`
-//!   indexed from nought.
+//!   `triangulation` is `{"nodes": [[x, y, z]], "uv": [[u, v]],
+//!   "triangles": [[i, j, k]]}`, the surface's parameters at each node,
+//!   the triangles indexed from nought; an edge's `params` are its curve's
+//!   parameter at each point of its polyline. Both are where a projection
+//!   starts from, and may be left out.
 //!
 //! A curve is `{"degree", "knots", "points", "weights"}`, the knots in full,
 //! each as many times as its multiplicity; a p-curve the same with points
@@ -97,6 +100,8 @@ struct EdgeJson {
     curve: Option<CurveJson>,
     #[serde(default)]
     polyline: Vec<[f64; 3]>,
+    #[serde(default)]
+    params: Vec<f64>,
 }
 
 #[derive(Deserialize)]
@@ -125,6 +130,8 @@ struct UseJson {
 #[derive(Deserialize)]
 struct TriangulationJson {
     nodes: Vec<[f64; 3]>,
+    #[serde(default)]
+    uv: Vec<[f64; 2]>,
     triangles: Vec<[u32; 3]>,
 }
 
@@ -170,6 +177,7 @@ pub fn read(text: &str) -> Result<(CadGeometry, GcadInfo), GcadError> {
     // Twice the model's own: an edge's end and its vertex are each within
     // it of where they are meant to be.
     b.tolerance(2.0 * file.tolerance);
+    b.deflection(file.deflection);
     for v in &file.vertices {
         b.vertex(v.tag, v.point);
     }
@@ -188,7 +196,7 @@ pub fn read(text: &str) -> Result<(CadGeometry, GcadInfo), GcadError> {
             }
         }
         if !e.polyline.is_empty() {
-            b.polyline(e.tag, e.polyline);
+            b.polyline(e.tag, e.polyline, e.params);
         }
     }
     for f in file.faces {
@@ -229,6 +237,7 @@ pub fn read(text: &str) -> Result<(CadGeometry, GcadInfo), GcadError> {
                 f.tag,
                 Triangulation {
                     nodes: t.nodes,
+                    uv: t.uv,
                     triangles: t.triangles,
                 },
             );

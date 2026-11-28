@@ -91,6 +91,7 @@ shorthand for a call with one table.
 | `gecko.classify_face(ids, dim, tag, { down = true })`                | corners and sides onto the rim too                                   |
 | `gecko.freeze_node(ids)`, `gecko.thaw_node(ids)`                     |                                                                      |
 | `gecko.load_geometry(path)`, `gecko.clear_geometry()`                |                                                                      |
+| `gecko.load_cad(path)`                                               | an exact geometry, from a `.gcad`                                    |
 | `gecko.files()`                                                      | what can be opened by name here                                      |
 | `gecko.box_geometry{ surfaces = {…}, margin = 0.02 }`                | 2% round each half-side by default                                   |
 | `gecko.classify{ tolerance = 0.02 }`                                 |                                                                      |

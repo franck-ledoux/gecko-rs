@@ -2843,9 +2843,15 @@ async function boot() {
     await refresh("glide");
   }
 
-  async function loadGeometry(name: string, msh: string) {
+  /** A geometry: a gmsh `.msh`, faceted, or a `.gcad`, exact — told apart
+   *  by the extension, which is how the kernel's two commands differ. */
+  async function loadGeometry(name: string, text: string) {
     say(`reading ${name}…`);
-    const reply = await send({ op: "load_geometry", msh, name });
+    const reply = await send(
+      name.toLowerCase().endsWith(".gcad")
+        ? { op: "load_cad", gcad: text, name }
+        : { op: "load_geometry", msh: text, name },
+    );
     message = reply.message;
     // Framed: a geometry you have just opened is the thing to look at, and
     // it may be nowhere near where the camera was pointing.
@@ -2865,9 +2871,9 @@ async function boot() {
       // name, which is the only way a page on a static host has of opening
       // a file at all.
       files.keep(file.name, text);
-      // The extension decides. A `.msh` is a model to work on, a `.lua` is
-      // a session to replay — the same button, because "open" is the same
-      // question either way.
+      // The extension decides. A `.msh` or a `.gcad` is a model to work
+      // on, a `.lua` is a session to replay — the same button, because
+      // "open" is the same question either way.
       if (file.name.toLowerCase().endsWith(".lua"))
         await replay(file.name, text);
       else await loadGeometry(file.name, text);
@@ -2885,8 +2891,8 @@ async function boot() {
    * of a loop and cannot wait. A file that is already here needs no
    * waiting.
    *
-   * A single `.msh` is also opened as the geometry, because that is
-   * plainly what dropping one means.
+   * A single `.msh` or `.gcad` is also opened as the geometry, because
+   * that is plainly what dropping one means.
    */
   async function takeFiles(dropped: File[]) {
     if (dropped.length === 0) return;
@@ -2901,7 +2907,7 @@ async function boot() {
       }
     }
     const only = dropped.length === 1 ? dropped[0] : undefined;
-    if (only && only.name.toLowerCase().endsWith(".msh")) {
+    if (only && /\.(msh|gcad)$/i.test(only.name)) {
       await loadGeometry(only.name, await only.text());
       return;
     }
@@ -3678,7 +3684,7 @@ async function boot() {
     geomLook: (group: GeomGroup, tag: number) => viewer.geomLook(group, tag),
     /** Load a geometry without a file picker, which a test cannot drive
      *  from inside the page. The path through the kernel is the same one. */
-    loadGeometry: (name: string, msh: string) => loadGeometry(name, msh),
+    loadGeometry: (name: string, text: string) => loadGeometry(name, text),
     /** Jump the camera onto an axis without the animation, so a test asserts
      *  where it landed rather than racing it. */
     snapTo: (axis: Axis) => viewer.axes.snapTo(axis),

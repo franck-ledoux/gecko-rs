@@ -5906,6 +5906,52 @@ test("the page's Lua and the terminal's agree, byte for byte", async ({
   expect(errors).toEqual([]);
 });
 
+test("a .gcad opens as an exact geometry, and the two hosts agree on its mesh", async ({
+  page,
+}) => {
+  // agree.lua's question again, on NURBS: every point of the mesh's skin
+  // projected onto a cylinder, its rims and its discs — iterations and
+  // square roots where two hosts could part. The file goes in through the
+  // button, as a reader's would, which also keeps it for the script.
+  const errors = await boot(page);
+  const gcad = await readFile(
+    new URL(
+      "../../../crates/gecko-geom/tests/data/cylinder.gcad",
+      import.meta.url,
+    ),
+  );
+  await page.locator("#msh").setInputFiles({
+    name: "cylinder.gcad",
+    mimeType: "application/json",
+    buffer: gcad,
+  });
+  await expect(page.locator("#status")).toContainText(
+    "cylinder.gcad loaded, exact",
+  );
+  // Drawn from its tessellation, like any geometry.
+  await page.waitForFunction(
+    () => (window as any).__gecko.geomCount("surfaces") === 3,
+  );
+
+  await openConsole(page);
+  const script = await readFile(
+    new URL(
+      "../../../crates/gecko-lua/tests/scripts/agree_exact.lua",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  await lua(page, script);
+  await expect(page.locator("[data-test=console-out]")).toContainText(
+    "exact: 125 nodes, 64 hexes, digest 809104",
+  );
+  expect(
+    await page.locator("#console-out .bad").count(),
+    "the hosts disagree",
+  ).toBe(0);
+  expect(errors).toEqual([]);
+});
+
 test("holding shift lights the chord, and ⇧Del takes it out", async ({
   page,
 }) => {

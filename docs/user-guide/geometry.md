@@ -1,8 +1,10 @@
 # Geometry
 
 A block structure is meant to **follow** something. That something is a
-geometry: a boundary representation read from a gmsh surface mesh, drawn
-alongside the blocks so you can see what you are meshing.
+geometry: a boundary representation, drawn alongside the blocks so you can
+see what you are meshing — **faceted**, read from a gmsh surface mesh, or
+**exact**, read from a `.gcad` file made from a STEP file, its curves and
+surfaces NURBS.
 
 ## Opening one
 
@@ -14,6 +16,23 @@ gecko.load_geometry("sphere.msh")
 -- 'sphere.msh loaded — 2 corners, 1 curve, 1 surface (2986 triangles),
 --  18220 elements of other kinds ignored'
 ```
+
+An exact geometry the same way — the button, a drop, or a script:
+
+```lua
+gecko.load_cad("B47.gcad")
+-- 'B47.gcad loaded, exact — 24 vertices, 36 edges, 15 faces, NURBS,
+--  from B47.step; drawn with 500 triangles'
+```
+
+A `.gcad` is made from a STEP file once, with
+`uv run scripts/step_to_gcad.py part.step part.gcad`: see [the format and
+the importer](../developer-guide/architecture.md#the-gcad-format). It is
+drawn from the tessellation in it, and everything else is worked out on the
+NURBS: a node put on a face is **on** the face, to the last digits, not on
+the chord of a triangle. Its entities are numbered as OpenCascade numbers
+them, not as gmsh does, so a script written for the `.msh` of a part names
+other tags for the same curves.
 
 On the published page that name is one you handed over first: dropping a
 file on the window, or opening it with the button, keeps it under its own
@@ -227,14 +246,15 @@ Pick something with some depth to it, or add a surface facing another way.
 
 ## What it does not do yet
 
-**No CAD in a session yet.** A geometry a session loads is a faceting and
-only a faceting: there is no analytic surface behind it, so how closely the
-blocking can follow a curved part is bounded by how finely the part was
-meshed — the reconstruction under the facets narrows that, and does not
-remove it. An exact model, with NURBS curves and surfaces, exists in the
-library, and `scripts/step_to_gcad.py` makes one from a STEP file (see
-[the architecture](../developer-guide/architecture.md#the-gcad-format));
-loading one into a session comes next.
+**A faceted geometry is only as good as its facets.** There is no analytic
+surface behind a `.msh`, so how closely the blocking can follow a curved
+part is bounded by how finely the part was meshed — the reconstruction
+under the facets narrows that, and does not remove it. A `.gcad` has the
+exact shapes.
+
+**No curved blocks yet.** A block's edges are still straight between the
+nodes put on a curve, and its faces bilinear between them: the mesh's nodes
+are on the exact shapes, the blocks themselves are not curved.
 
 **A surface's reconstruction stops at its facets.** A flat end of a coarse
 cylinder is reconstructed as the octagon it was given as, while the rim round
@@ -249,8 +269,9 @@ writes 2.2 with `-format msh2`.
 and which corners end which curve, is stated nowhere in `$Elements`, so it is
 recovered from the node numbers the entities share — what
 [classification](classification.md) uses to put an edge on what both of its
-ends agree about. That assumes a **conformal** faceting, the curves' nodes
-being the surfaces' own: true of any file gmsh writes from one CAD model, and
+ends agree about: a curve is on a surface when each of its segments is a
+side of one of the surface's triangles. That assumes a **conformal**
+faceting, the curves' nodes being the surfaces' own: true of any file gmsh writes from one CAD model, and
 not of one assembled from parts meshed separately, where fewer containments
 are found and never wrong ones.
 

@@ -127,6 +127,9 @@ pub struct Edge {
     pub degenerate: bool,
     /// Points along it, for drawing it: none unless given.
     pub polyline: Vec<[f64; 3]>,
+    /// The curve's parameter at each point of the polyline, when known:
+    /// where a projection onto the edge starts from.
+    pub params: Vec<f64>,
 }
 
 /// One edge of a loop, as the loop runs along it.
@@ -183,6 +186,9 @@ pub enum Trim {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Triangulation {
     pub nodes: Vec<[f64; 3]>,
+    /// The surface's parameters at each node, when known: where a
+    /// projection onto the face starts from.
+    pub uv: Vec<[f64; 2]>,
     /// Three indices into `nodes` each, wound outward from the solid.
     pub triangles: Vec<[u32; 3]>,
 }
@@ -200,9 +206,9 @@ pub struct Face {
     pub reversed: bool,
     /// Triangles drawing it, when given.
     pub triangulation: Option<Triangulation>,
-    /// The loops' polygons in the surface's parameters, sampled when the
-    /// geometry was built; none for a face left whole.
-    polygons: Vec<Vec<[f64; 2]>>,
+    /// The loops in the surface's parameters, sampled when the geometry
+    /// was built; none for a face left whole.
+    rings: Vec<Ring>,
     /// The period of each parameter, where the surface closes up on itself.
     periods: [Option<f64>; 2],
 }
@@ -216,7 +222,7 @@ impl Face {
 
     /// Whether `(u, v)` is part of the face.
     pub fn contains(&self, uv: [f64; 2]) -> bool {
-        if self.polygons.is_empty() {
+        if self.rings.is_empty() {
             return true;
         }
         // The point, and its copies a period away where the surface is
@@ -229,7 +235,7 @@ impl Face {
         shifts(self.periods[0]).into_iter().any(|du| {
             shifts(self.periods[1]).into_iter().any(|dv| {
                 let q = [uv[0] + du, uv[1] + dv];
-                self.polygons.iter().filter(|l| inside(q, l)).count() % 2 == 1
+                within(q, &self.rings)
             })
         })
     }
@@ -244,10 +250,11 @@ pub struct CadBuilder {
     /// is known.
     points: Vec<(i32, i32)>,
     faces: Vec<(i32, Surface, Vec<i32>, Trim)>,
-    polylines: BTreeMap<i32, Vec<[f64; 3]>>,
+    polylines: BTreeMap<i32, (Vec<[f64; 3]>, Vec<f64>)>,
     triangulations: BTreeMap<i32, Triangulation>,
     reversed: BTreeSet<i32>,
     tolerance: f64,
+    deflection: f64,
 }
 
 impl CadBuilder {
@@ -267,6 +274,7 @@ impl CadBuilder {
             ends,
             degenerate: false,
             polyline: Vec::new(),
+            params: Vec::new(),
         });
         self
     }
@@ -277,9 +285,10 @@ impl CadBuilder {
         self
     }
 
-    /// Points drawing an edge.
-    pub fn polyline(&mut self, edge: i32, points: Vec<[f64; 3]>) -> &mut Self {
-        self.polylines.insert(edge, points);
+    /// Points drawing an edge, and the curve's parameter at each when
+    /// known (else nothing).
+    pub fn polyline(&mut self, edge: i32, points: Vec<[f64; 3]>, params: Vec<f64>) -> &mut Self {
+        self.polylines.insert(edge, (points, params));
         self
     }
 
@@ -292,6 +301,14 @@ impl CadBuilder {
     /// A face whose outward normal is its surface's turned round.
     pub fn reversed(&mut self, face: i32) -> &mut Self {
         self.reversed.insert(face);
+        self
+    }
+
+    /// How far the tessellation strays from the exact shapes, at most: what
+    /// lets the faceting stand in for them when looking for what is near a
+    /// point. Nothing, by default: then it never does.
+    pub fn deflection(&mut self, deflection: f64) -> &mut Self {
+        self.deflection = deflection;
         self
     }
 
@@ -323,12 +340,16 @@ impl CadBuilder {
                 ends: [at, at],
                 degenerate: true,
                 polyline: Vec::new(),
+                params: Vec::new(),
             });
         }
         all_edges.sort_by_key(|e| e.tag);
         for e in &mut all_edges {
-            if let Some(points) = self.polylines.get(&e.tag) {
+            if let Some((points, params)) = self.polylines.get(&e.tag) {
                 e.polyline = points.clone();
+                if params.len() == points.len() {
+                    e.params = params.clone();
+                }
             }
         }
         let all_edges = all_edges;
@@ -365,7 +386,17 @@ impl CadBuilder {
                 edge(e).ok_or(CadError::NoEdge { face, edge: e })?;
             }
             let periods = periods(surface, tolerance);
-            let mut polygons = Vec::new();
+            // How far a loop's polygon may cut across the face's true
+            // boundary, in space: a point that far inside the face is taken
+            // for one outside it and put on the boundary — which, smoothing
+            // a node near a rim round after round, pulls it onto the rim.
+            let chord = if self.deflection > 0.0 {
+                self.deflection / 100.0
+            } else {
+                1e-6 * span.max(1.0)
+            }
+            .max(tolerance);
+            let mut rings = Vec::new();
             if let Trim::Loops(loops) = trim {
                 for (k, l) in loops.iter().enumerate() {
                     if l.is_empty() {
@@ -395,10 +426,11 @@ impl CadBuilder {
                             });
                         }
                     }
-                    let polygon =
-                        polygon(surface, periods, l, |e| &edge(e).expect("checked").curve)
-                            .ok_or(CadError::Unclosed { face, ring: k })?;
-                    polygons.push(polygon);
+                    let drawn = ring(surface, periods, l, chord, |e| {
+                        &edge(e).expect("checked").curve
+                    })
+                    .ok_or(CadError::Unclosed { face, ring: k })?;
+                    rings.push(drawn);
                 }
             }
             faces.push(Face {
@@ -408,7 +440,7 @@ impl CadBuilder {
                 trim: trim.clone(),
                 reversed: self.reversed.contains(&face),
                 triangulation: self.triangulations.get(&face).cloned(),
-                polygons,
+                rings: sided(rings),
                 periods,
             });
         }
@@ -419,6 +451,8 @@ impl CadBuilder {
             faces,
             containment: BTreeMap::new(),
             span,
+            tolerance,
+            deflection: self.deflection,
         };
         geometry.containment = containment(&geometry);
         Ok(geometry)
@@ -435,9 +469,100 @@ pub struct CadGeometry {
     /// Everything containing each entity, itself first.
     containment: BTreeMap<(u8, i32), Vec<(u8, i32)>>,
     span: f64,
+    /// How far apart two points meant to be one may be.
+    tolerance: f64,
+    /// How far the tessellation strays from the shapes, at most; nought
+    /// when not known.
+    deflection: f64,
 }
 
 impl CadGeometry {
+    /// How far apart two points meant to be one may be: the model's own,
+    /// or a billionth of its span, whichever is the larger.
+    pub fn tolerance(&self) -> f64 {
+        self.tolerance
+    }
+
+    /// How far the tessellation strays from the exact shapes, at most, or
+    /// nought when that is not known.
+    pub fn deflection(&self) -> f64 {
+        self.deflection
+    }
+
+    /// The tessellation, as a faceted geometry with the same tags: what
+    /// draws the model, and what everything that reads a faceting —
+    /// describing, merging, a box round it — reads.
+    ///
+    /// Each face's triangles, each edge's polyline and each vertex, with
+    /// the nodes they share in space merged into one: conformal, as a gmsh
+    /// mesh of the model would be, provided the polylines are the nodes the
+    /// faces' triangles have along each edge — which is how
+    /// `scripts/step_to_gcad.py` writes them. Degenerate edges have no
+    /// segments, and are not in it.
+    ///
+    /// Nothing at all for a model with no triangles to draw it.
+    pub fn faceting(&self) -> Option<crate::Geometry> {
+        self.facets()
+    }
+
+    /// The faceting, carrying the exact geometry with it
+    /// ([`Geometry::exact`](crate::Geometry::exact)): what a session holds,
+    /// drawn and described from its triangles, and projected onto exactly.
+    pub fn into_geometry(self) -> Option<crate::Geometry> {
+        let faceting = self.facets()?;
+        Some(faceting.with_exact(self))
+    }
+
+    fn facets(&self) -> Option<crate::Geometry> {
+        use crate::msh::{Element, Msh, LINE, POINT, TRIANGLE};
+        let mut nodes = Merged::new(self.tolerance);
+        let mut elements = Vec::new();
+        for v in &self.vertices {
+            let n = nodes.at(v.point);
+            elements.push(Element {
+                kind: POINT,
+                physical: 0,
+                entity: v.tag,
+                nodes: [n, n, n],
+            });
+        }
+        for e in self.edges.iter().filter(|e| !e.degenerate) {
+            for w in e.polyline.windows(2) {
+                let (a, b) = (nodes.at(w[0]), nodes.at(w[1]));
+                if a != b {
+                    elements.push(Element {
+                        kind: LINE,
+                        physical: 0,
+                        entity: e.tag,
+                        nodes: [a, b, b],
+                    });
+                }
+            }
+        }
+        for f in &self.faces {
+            let Some(t) = &f.triangulation else { continue };
+            let here: Vec<u32> = t.nodes.iter().map(|p| nodes.at(*p)).collect();
+            for tri in &t.triangles {
+                let [a, b, c] = tri.map(|i| here[i as usize]);
+                if a != b && b != c && a != c {
+                    elements.push(Element {
+                        kind: TRIANGLE,
+                        physical: 0,
+                        entity: f.tag,
+                        nodes: [a, b, c],
+                    });
+                }
+            }
+        }
+        let msh = Msh {
+            nodes: nodes.points,
+            elements,
+            names: Vec::new(),
+            skipped: 0,
+        };
+        crate::Geometry::of(&msh).ok()
+    }
+
     pub fn vertices(&self) -> &[Vertex] {
         &self.vertices
     }
@@ -482,10 +607,10 @@ impl CadGeometry {
     pub fn project(&self, dim: u8, tag: i32, p: [f64; 3]) -> Option<[f64; 3]> {
         match dim {
             CORNER => self.vertex(tag).map(|v| v.point),
-            CURVE => self.edge(tag).map(|e| e.curve.project(p).1),
+            CURVE => self.edge(tag).map(|e| on_edge(e, p).1),
             SURFACE => {
                 let face = self.face(tag)?;
-                let (uv, q, _) = face.surface.project(p);
+                let (uv, q, _) = on_face(face, p);
                 if face.contains(uv) {
                     return Some(q);
                 }
@@ -493,7 +618,7 @@ impl CadGeometry {
                 face.edges
                     .iter()
                     .filter_map(|&e| self.edge(e))
-                    .map(|e| e.curve.project(p))
+                    .map(|e| on_edge(e, p))
                     .min_by(|a, b| a.2.partial_cmp(&b.2).expect("a finite distance"))
                     .map(|(_, q, _)| q)
                     .or(Some(q))
@@ -506,7 +631,7 @@ impl CadGeometry {
     /// whether or not inside the trim — and whether the face contains it.
     pub fn parameters(&self, face: i32, p: [f64; 3]) -> Option<([f64; 2], bool)> {
         let face = self.face(face)?;
-        let (uv, _, _) = face.surface.project(p);
+        let (uv, _, _) = on_face(face, p);
         Some((uv, face.contains(uv)))
     }
 
@@ -535,6 +660,161 @@ impl CadGeometry {
             }
         }
         None
+    }
+}
+
+/// How many of the nearest points of a tessellation a projection starts
+/// from: a few, in case the nearest is across a fold from the answer.
+const SEEDS: usize = 3;
+
+/// The indices of the `SEEDS` points nearest `p`, nearest first, no two
+/// of them the same point of space: the apex of a cone is a node of every
+/// triangle round it, each with parameters of its own, and three seeds
+/// there are one seed — at the one point of the surface where its
+/// parameters say nothing of which way to go.
+fn nearest_of(points: &[[f64; 3]], p: [f64; 3]) -> Vec<usize> {
+    let gap = |a: [f64; 3], b: [f64; 3]| {
+        let d = [0, 1, 2].map(|k| a[k] - b[k]);
+        d[0] * d[0] + d[1] * d[1] + d[2] * d[2]
+    };
+    // The nearest few, in one pass; all of them in order only when those
+    // are too few distinct points — a pinch that many triangles share.
+    let few = 4 * SEEDS;
+    let mut order: Vec<(f64, usize)> = Vec::with_capacity(few + 1);
+    for (i, q) in points.iter().enumerate() {
+        let d = gap(*q, p);
+        if order.len() < few || d < order[few - 1].0 {
+            let at = order.partition_point(|(e, j)| (*e, *j) < (d, i));
+            order.insert(at, (d, i));
+            order.truncate(few);
+        }
+    }
+    let distinct = |order: &[(f64, usize)]| {
+        let mut chosen: Vec<usize> = Vec::with_capacity(SEEDS);
+        for &(_, i) in order {
+            let q = points[i];
+            if chosen
+                .iter()
+                .all(|&j| gap(points[j], q) > 1e-24 * (1.0 + gap(q, [0.0; 3])))
+            {
+                chosen.push(i);
+                if chosen.len() == SEEDS {
+                    break;
+                }
+            }
+        }
+        chosen
+    };
+    let chosen = distinct(&order);
+    if chosen.len() == SEEDS || order.len() == points.len() {
+        return chosen;
+    }
+    let mut order: Vec<(f64, usize)> = points
+        .iter()
+        .enumerate()
+        .map(|(i, q)| (gap(*q, p), i))
+        .collect();
+    order.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    distinct(&order)
+}
+
+/// The point of an edge nearest `p`: from the nearest points of its
+/// polyline when it has their parameters, and a search of the whole curve
+/// otherwise.
+fn on_edge(e: &Edge, p: [f64; 3]) -> (f64, [f64; 3], f64) {
+    if e.params.is_empty() {
+        return e.curve.project(p);
+    }
+    let seeds: Vec<f64> = nearest_of(&e.polyline, p)
+        .into_iter()
+        .map(|i| e.params[i])
+        .collect();
+    e.curve.project_from(p, &seeds)
+}
+
+/// The point of a face's surface nearest `p`, the same way: from the
+/// nearest nodes of its triangles when it has their parameters.
+fn on_face(f: &Face, p: [f64; 3]) -> ([f64; 2], [f64; 3], f64) {
+    match &f.triangulation {
+        Some(t) if !t.uv.is_empty() && t.uv.len() == t.nodes.len() => {
+            // A CAD model's parameters of a periodic surface can be a period
+            // off its domain: brought back into it, not clamped to its end.
+            let domain = f.surface.domain();
+            let wrapped = |mut uv: [f64; 2]| {
+                for k in 0..2 {
+                    if let Some(period) = f.periods[k] {
+                        let (lo, hi) = [domain[0], domain[1]][k];
+                        while uv[k] < lo {
+                            uv[k] += period;
+                        }
+                        while uv[k] > hi {
+                            uv[k] -= period;
+                        }
+                    }
+                }
+                uv
+            };
+            let seeds: Vec<[f64; 2]> = nearest_of(&t.nodes, p)
+                .into_iter()
+                .map(|i| wrapped(t.uv[i]))
+                .collect();
+            let found = f.surface.project_from(p, &seeds);
+            // Landed where the surface pinches to a point — an apex, a
+            // pole — whose parameters say nothing of the way off it: the
+            // whole surface searched as well, and the nearer kept.
+            let d = f.surface.derivatives(found.0[0], found.0[1], 1);
+            let (su, sv) = (norm(d[1][0]), norm(d[0][1]));
+            if su.min(sv) <= 1e-9 * su.max(sv) {
+                let full = f.surface.project(p);
+                if full.2 < found.2 {
+                    return full;
+                }
+            }
+            found
+        }
+        _ => f.surface.project(p),
+    }
+}
+
+fn norm(a: [f64; 3]) -> f64 {
+    (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt()
+}
+
+/// Points, those within a tolerance of one another taken as one: a grid of
+/// cells a tolerance wide, and a look in the neighbouring cells.
+struct Merged {
+    points: Vec<[f64; 3]>,
+    cells: BTreeMap<[i64; 3], Vec<u32>>,
+    tolerance: f64,
+}
+
+impl Merged {
+    fn new(tolerance: f64) -> Self {
+        Merged {
+            points: Vec::new(),
+            cells: BTreeMap::new(),
+            tolerance: tolerance.max(1e-300),
+        }
+    }
+
+    fn at(&mut self, p: [f64; 3]) -> u32 {
+        let cell = p.map(|x| (x / self.tolerance).floor() as i64);
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    let near = [cell[0] + dx, cell[1] + dy, cell[2] + dz];
+                    for &n in self.cells.get(&near).into_iter().flatten() {
+                        if apart(self.points[n as usize], p) <= self.tolerance {
+                            return n;
+                        }
+                    }
+                }
+            }
+        }
+        let n = self.points.len() as u32;
+        self.points.push(p);
+        self.cells.entry(cell).or_default().push(n);
+        n
     }
 }
 
@@ -596,47 +876,211 @@ fn periods(s: &Surface, tolerance: f64) -> [Option<f64>; 2] {
     [closes(0).then_some(u1 - u0), closes(1).then_some(v1 - v0)]
 }
 
-/// A loop's polygon in a surface's parameters, or nothing when it does not
+/// Which of a ring's p-curves a segment of its polygon follows, the curve's
+/// parameters at the segment's two ends, and how far the polygon was moved
+/// by whole periods there.
+type Follows = (usize, f64, f64, [f64; 2]);
+
+/// A loop in a surface's parameters: its polygon, and for each of its
+/// segments the p-curve it follows, so that near the boundary the curve
+/// itself can say which side a point is on.
+#[derive(Clone, Debug, PartialEq)]
+struct Ring {
+    points: Vec<[f64; 2]>,
+    /// For the segment from each point to the next: which of `curves` it
+    /// follows, the curve's parameters at its two ends, and how far the
+    /// polygon was moved by whole periods there. None for a loop found by
+    /// projection, which has no curve to ask.
+    along: Vec<Option<Follows>>,
+    /// The p-curves, each with whether the loop runs against it.
+    curves: Vec<(Curve, bool)>,
+    /// How far the polygon strays from its curves at most, in the
+    /// parameters: nearer the polygon than this, the curve decides.
+    band: f64,
+    /// Whether the face is on the left of the loop as it runs.
+    left: bool,
+}
+
+/// A loop's ring in a surface's parameters, or nothing when it does not
 /// close there.
-fn polygon<'a>(
+fn ring<'a>(
     surface: &Surface,
     periods: [Option<f64>; 2],
     l: &[Use],
+    chord: f64,
     curve: impl Fn(i32) -> &'a Curve,
-) -> Option<Vec<[f64; 2]>> {
-    let mut out: Vec<[f64; 2]> = Vec::new();
+) -> Option<Ring> {
+    let mut points: Vec<[f64; 2]> = Vec::new();
+    let mut along_: Vec<Option<Follows>> = Vec::new();
+    let mut curves: Vec<(Curve, bool)> = Vec::new();
+    let mut band = 0.0f64;
     for u in l {
-        // In the parameters straight away, from the p-curve; or projected
-        // there, point by point.
-        let mut samples: Vec<[f64; 2]> = match &u.pcurve {
-            Some(c) => c
-                .sample(LOOP_SAMPLES + 1)
-                .into_iter()
-                .map(|p| [p[0], p[1]])
-                .collect(),
+        // In the parameters straight away, from the p-curve, as finely as
+        // keeps every piece of the polygon within `chord` of the edge on
+        // the surface; or projected there, point by point.
+        let mut samples: Vec<([f64; 2], f64)> = match &u.pcurve {
+            Some(c) => {
+                let (samples, strays) = along(surface, c, chord);
+                band = band.max(strays);
+                curves.push((c.clone(), u.reversed));
+                samples
+            }
             None => curve(u.edge)
                 .sample(LOOP_SAMPLES + 1)
                 .into_iter()
-                .map(|p| surface.project(p).0)
+                .map(|p| (surface.project(p).0, f64::NAN))
                 .collect(),
         };
         if u.reversed {
             samples.reverse();
         }
+        let which = u.pcurve.as_ref().map(|_| curves.len() - 1);
         // The last sample is where the next edge begins.
-        samples.pop();
-        for mut uv in samples {
-            if let Some(prev) = out.last() {
-                uv = unwrapped(uv, *prev, periods);
-            }
-            out.push(uv);
+        for k in 0..samples.len().saturating_sub(1) {
+            let (raw, t0) = samples[k];
+            let t1 = samples[k + 1].1;
+            let uv = match points.last() {
+                Some(prev) => unwrapped(raw, *prev, periods),
+                None => raw,
+            };
+            let moved = [uv[0] - raw[0], uv[1] - raw[1]];
+            points.push(uv);
+            along_.push(which.map(|c| (c, t0, t1, moved)));
         }
     }
     // Closed, if the first point comes back to itself from the last.
-    let first = *out.first()?;
-    let back = unwrapped(first, *out.last()?, periods);
+    let first = *points.first()?;
+    let back = unwrapped(first, *points.last()?, periods);
     let step = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).abs().max((a[1] - b[1]).abs());
-    (step(back, first) <= 1e-9 * (1.0 + step(first, [0.0, 0.0]))).then_some(out)
+    if step(back, first) > 1e-9 * (1.0 + step(first, [0.0, 0.0])) {
+        return None;
+    }
+    Some(Ring {
+        points,
+        along: along_,
+        curves,
+        // Four times what was measured at the middles of the pieces: a
+        // piece's worst is near, not always at, its middle.
+        band: 4.0 * band + 1e-12,
+        left: true,
+    })
+}
+
+/// A p-curve's points, from one end to the other, each with the curve's
+/// parameter there: a fixed number to begin with, and each piece halved
+/// while the surface's point at its middle is more than `chord` from the
+/// surface's point at the middle of its chord. And how far, in the
+/// parameters, the pieces kept stray from the curve at their middles.
+fn along(surface: &Surface, c: &Curve, chord: f64) -> (Vec<([f64; 2], f64)>, f64) {
+    let (a, b) = c.domain();
+    let at = |t: f64| {
+        let p = c.eval(t);
+        [p[0], p[1]]
+    };
+    let on = |uv: [f64; 2]| surface.eval(uv[0], uv[1]);
+    #[allow(clippy::too_many_arguments)]
+    fn halve(
+        t0: f64,
+        t1: f64,
+        depth: u32,
+        at: &dyn Fn(f64) -> [f64; 2],
+        on: &dyn Fn([f64; 2]) -> [f64; 3],
+        chord: f64,
+        out: &mut Vec<([f64; 2], f64)>,
+        strays: &mut f64,
+    ) {
+        let (p0, p1) = (at(t0), at(t1));
+        let tm = 0.5 * (t0 + t1);
+        let middle = at(tm);
+        let straight = [0.5 * (p0[0] + p1[0]), 0.5 * (p0[1] + p1[1])];
+        if depth < 12 && apart(on(middle), on(straight)) > chord {
+            halve(t0, tm, depth + 1, at, on, chord, out, strays);
+            halve(tm, t1, depth + 1, at, on, chord, out, strays);
+        } else {
+            let d = ((middle[0] - straight[0]).powi(2) + (middle[1] - straight[1]).powi(2)).sqrt();
+            *strays = strays.max(d);
+            out.push((p1, t1));
+        }
+    }
+    let mut out = vec![(at(a), a)];
+    let mut strays = 0.0;
+    for i in 0..LOOP_SAMPLES {
+        let t0 = a + (b - a) * i as f64 / LOOP_SAMPLES as f64;
+        let t1 = a + (b - a) * (i + 1) as f64 / LOOP_SAMPLES as f64;
+        halve(t0, t1, 0, &at, &on, chord, &mut out, &mut strays);
+    }
+    (out, strays)
+}
+
+/// Which side of its rings a point of the parameters is on: inside an odd
+/// number of their polygons — and, nearer a polygon than it strays from its
+/// curve, on the face's side of that curve.
+fn within(q: [f64; 2], rings: &[Ring]) -> bool {
+    let odd = rings.iter().filter(|r| inside(q, &r.points)).count() % 2 == 1;
+    // The nearest segment of any ring.
+    let mut near: Option<(f64, usize, usize)> = None;
+    for (r, ring) in rings.iter().enumerate() {
+        let n = ring.points.len();
+        for k in 0..n {
+            let d = to_segment(q, ring.points[k], ring.points[(k + 1) % n]);
+            if near.is_none_or(|(best, _, _)| d < best) {
+                near = Some((d, r, k));
+            }
+        }
+    }
+    let Some((d, r, k)) = near else { return odd };
+    let ring = &rings[r];
+    let Some((c, t0, t1, moved)) = ring.along[k] else {
+        return odd;
+    };
+    if d > ring.band {
+        return odd;
+    }
+    let (curve, back) = &ring.curves[c];
+    let at = [q[0] - moved[0], q[1] - moved[1], 0.0];
+    let (t, foot, _) = curve.project_from(at, &[t0, t1, 0.5 * (t0 + t1)]);
+    let mut tangent = curve.derivatives(t, 1)[1];
+    if *back {
+        tangent = tangent.map(|x| -x);
+    }
+    let cross = tangent[0] * (at[1] - foot[1]) - tangent[1] * (at[0] - foot[0]);
+    cross == 0.0 || (cross > 0.0) == ring.left
+}
+
+/// How far `q` is from the segment `a`–`b`, in the parameters.
+fn to_segment(q: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
+    let ab = [b[0] - a[0], b[1] - a[1]];
+    let len = ab[0] * ab[0] + ab[1] * ab[1];
+    let t = if len > 0.0 {
+        (((q[0] - a[0]) * ab[0] + (q[1] - a[1]) * ab[1]) / len).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let d = [q[0] - a[0] - t * ab[0], q[1] - a[1] - t * ab[1]];
+    (d[0] * d[0] + d[1] * d[1]).sqrt()
+}
+
+/// Which side of each ring the face is on: a step to the left of its first
+/// segment, and whether the polygons have that point inside.
+fn sided(mut rings: Vec<Ring>) -> Vec<Ring> {
+    let lefts: Vec<bool> = rings
+        .iter()
+        .map(|ring| {
+            let (a, b) = (ring.points[0], ring.points[1 % ring.points.len()]);
+            let d = [b[0] - a[0], b[1] - a[1]];
+            let len = (d[0] * d[0] + d[1] * d[1]).sqrt().max(1e-300);
+            let step = 1e-6 * len;
+            let probe = [
+                0.5 * (a[0] + b[0]) - d[1] / len * step,
+                0.5 * (a[1] + b[1]) + d[0] / len * step,
+            ];
+            rings.iter().filter(|r| inside(probe, &r.points)).count() % 2 == 1
+        })
+        .collect();
+    for (ring, left) in rings.iter_mut().zip(lefts) {
+        ring.left = left;
+    }
+    rings
 }
 
 /// `uv`, moved by whole periods to within half of one of `near`.

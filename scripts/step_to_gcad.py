@@ -25,7 +25,9 @@ What it does, in order:
    weights, and every edge's curve in each face's parameters (its p-curve).
 5. Writes a tessellation beside it, for drawing and for a first guess:
    triangles per face and a polyline per edge, within `--deflection` of the
-   exact shapes (by default a thousandth of the part's diagonal).
+   exact shapes (by default a thousandth of the part's diagonal). An edge's
+   polyline is the nodes its faces' triangles have along it, so the faces
+   meet node for node, as in a gmsh mesh.
 
 Tags are positions in OpenCascade's maps of the shape's vertices, edges and
 faces, from one: the same file imports to the same tags every time.
@@ -210,18 +212,16 @@ def gcad(shape, deflection: float | None = None, source: str = "") -> dict:
             vertices.FindIndex(TopExp.LastVertex_s(e)),
         ]
         bs = edge_curve(e)
+        # Filled in from the faces' triangles below: the points a face's
+        # triangles have along the edge, so that the faceting is conformal.
         polyline = []
-        if bs is not None:
-            sampler = GCPnts_QuasiUniformDeflection(BRepAdaptor_Curve(e), deflection)
-            for k in range(1, sampler.NbPoints() + 1):
-                p = sampler.Value(k)
-                polyline.append([p.X(), p.Y(), p.Z()])
         out_edges.append(
             {
                 "tag": i,
                 "ends": ends,
                 "curve": None if bs is None else curve_json(bs, 3),
                 "polyline": polyline,
+                "params": [],
             }
         )
 
@@ -255,16 +255,40 @@ def gcad(shape, deflection: float | None = None, source: str = "") -> dict:
 
         loc = TopLoc_Location()
         tri = BRep_Tool.Triangulation_s(f, loc)
-        nodes, triangles = [], []
+        nodes, uvs, triangles = [], [], []
         if tri is not None:
             moved = loc.Transformation()
             for k in range(1, tri.NbNodes() + 1):
                 p = tri.Node(k).Transformed(moved)
                 nodes.append([p.X(), p.Y(), p.Z()])
+                if tri.HasUVNodes():
+                    q = tri.UVNode(k)
+                    uvs.append([q.X(), q.Y()])
             for k in range(1, tri.NbTriangles() + 1):
                 t = tri.Triangle(k)
                 a, b, c = (t.Value(1) - 1, t.Value(2) - 1, t.Value(3) - 1)
                 triangles.append([a, c, b] if reversed_ else [a, b, c])
+            # Each edge's polyline from the first face it bounds: the very
+            # nodes the triangles have along it, which every face along the
+            # edge shares — what lets gecko stitch the faces' triangles into
+            # one faceting, as a gmsh mesh is.
+            for tag in bounding:
+                edge_out = out_edges[tag - 1]
+                if edge_out["polyline"] or edge_out["curve"] is None:
+                    continue
+                e = TopoDS.Edge(edges.FindKey(tag))
+                polygon = BRep_Tool.PolygonOnTriangulation_s(e, tri, loc)
+                if polygon is None:
+                    continue
+                ks = range(1, polygon.NbNodes() + 1)
+                points = [nodes[polygon.Node(k) - 1] for k in ks]
+                params = [polygon.Parameter(k) for k in ks] if polygon.HasParameters() else []
+                start = out_vertices[edge_out["ends"][0] - 1]["point"]
+                if math.dist(points[-1], start) < math.dist(points[0], start):
+                    points.reverse()
+                    params.reverse()
+                edge_out["polyline"] = points
+                edge_out["params"] = params
         u0, u1, v0, v1 = BRepTools.UVBounds_s(f)
         out_faces.append(
             {
@@ -274,9 +298,20 @@ def gcad(shape, deflection: float | None = None, source: str = "") -> dict:
                 "uv": [[u0, u1], [v0, v1]],
                 "edges": bounding,
                 "loops": loops,
-                "triangulation": {"nodes": nodes, "triangles": triangles},
+                "triangulation": {"nodes": nodes, "uv": uvs, "triangles": triangles},
             }
         )
+
+    # An edge no face's triangles run along — a wire on its own — sampled
+    # within the deflection instead.
+    for edge_out in out_edges:
+        if edge_out["polyline"] or edge_out["curve"] is None:
+            continue
+        e = TopoDS.Edge(edges.FindKey(edge_out["tag"]).Oriented(TopAbs_FORWARD))
+        sampler = GCPnts_QuasiUniformDeflection(BRepAdaptor_Curve(e), deflection)
+        ks = range(1, sampler.NbPoints() + 1)
+        edge_out["polyline"] = [[p.X(), p.Y(), p.Z()] for p in (sampler.Value(k) for k in ks)]
+        edge_out["params"] = [sampler.Parameter(k) for k in ks]
 
     return {
         "format": FORMAT,

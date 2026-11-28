@@ -11,7 +11,8 @@
 //! and a great deal on cells a hundredth across:
 //!
 //! 1. **The mesh to the geometry**: how far each node of the skin is from
-//!    the nearest surface. Skin floating off the part — a face classified
+//!    the nearest surface — the exact one, for an exact geometry, found
+//!    through the triangles drawing it. Skin floating off the part — a face classified
 //!    on nothing, a node stranded between two surfaces.
 //! 2. **The geometry to the mesh**: how far each vertex and the middle of
 //!    each triangle of the geometry is from the skin. The direction that
@@ -276,11 +277,16 @@ pub fn measure(
     };
 
     // --- 1. the skin to the geometry -------------------------------------
+    //
+    // For an exact geometry, the nearest triangle found that way says which
+    // face, and the distance is then to the exact face itself: a node the
+    // mesh put on a cylinder is on it to the last digits.
     let triangles: Vec<(i32, [u32; 3])> = geometry
         .surfaces()
         .iter()
         .flat_map(|s| s.triangles.iter().map(move |t| (s.tag, *t)))
         .collect();
+    let exact = geometry.exact();
     let tri_boxes: Vec<_> = triangles
         .iter()
         .map(|(_, t)| bounds(&t.map(|i| g[i as usize])))
@@ -294,12 +300,15 @@ pub fn measure(
         // the nearest of those, not the smooth surface under the nearest
         // facet — a node of a disc beside its rim can be nearer the tube's
         // facet than the disc's, and is not on the tube.
-        let Some((d, _)) = tri_grid.nearest(p, |i| {
+        let Some((d, i)) = tri_grid.nearest(p, |i| {
             let (tag, t) = triangles[i];
             length(sub(p, geometry.surface_point_near(tag, t, p)))
         }) else {
             continue;
         };
+        let d = exact
+            .and_then(|cad| cad.distance(gecko_geom::SURFACE, triangles[i].0, p))
+            .unwrap_or(d);
         let miss = Miss {
             at: p,
             distance: d,

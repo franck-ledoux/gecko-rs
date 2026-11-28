@@ -108,7 +108,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     show: "O",
     key: "o",
     action: "open",
-    does: "open a .msh, or replay a .lua",
+    does: "open a .msh or a .gcad, or replay a .lua",
     group: "Edit",
   },
   {

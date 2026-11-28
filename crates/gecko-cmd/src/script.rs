@@ -15,8 +15,8 @@ use crate::Command;
 /// The preamble a saved script needs to stand on its own.
 pub const HEADER: &str = "\
 -- Written by gecko. Run it with `gecko run <this file>`, or paste it into
--- the console. A geometry is named rather than carried, so a `.msh` it
--- loads has to be beside it.
+-- the console. A geometry is named rather than carried, so a `.msh` or a
+-- `.gcad` it loads has to be beside it.
 ";
 
 /// The whole journal, as a script.
@@ -182,6 +182,14 @@ pub fn line(command: &Command) -> String {
             "gecko.load_geometry({:?})",
             if name.is_empty() {
                 "geometry.msh"
+            } else {
+                name
+            }
+        ),
+        Command::LoadCad { name, .. } => format!(
+            "gecko.load_cad({:?})",
+            if name.is_empty() {
+                "geometry.gcad"
             } else {
                 name
             }

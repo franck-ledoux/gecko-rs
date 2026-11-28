@@ -45,10 +45,14 @@ pub enum SessionError {
     #[error("{0}")]
     Geometry(#[from] GeometryError),
     #[error("{0}")]
+    Gcad(#[from] gecko_geom::GcadError),
+    #[error("{0} has no triangles to draw it: import it again with scripts/step_to_gcad.py")]
+    NoTessellation(String),
+    #[error("{0}")]
     Bounds(#[from] BoundsError),
     #[error("{0}")]
     Quad(#[from] gecko_geom::QuadError),
-    #[error("no geometry is loaded — open a .msh first")]
+    #[error("no geometry is loaded — open a .msh or a .gcad first")]
     NoGeometry,
     #[error("there is no {0} on the model")]
     NoSuchEntity(String),
@@ -562,6 +566,18 @@ pub enum Command {
     /// `name` is for the message and nothing else.
     LoadGeometry {
         msh: String,
+        #[serde(default)]
+        name: String,
+    },
+    /// Read an exact geometry from a `.gcad` file — NURBS edges and faces,
+    /// made from a STEP file by `scripts/step_to_gcad.py` — replacing
+    /// whatever was loaded before.
+    ///
+    /// The contents, like [`LoadGeometry`](Command::LoadGeometry)'s. Drawn
+    /// and described from the tessellation in the file; projected onto
+    /// exactly.
+    LoadCad {
+        gcad: String,
         #[serde(default)]
         name: String,
     },
@@ -1645,6 +1661,42 @@ impl Session {
                 // The view changes too, even though not one block moved: the
                 // rebasing origin is settled over the geometry as well, and a
                 // geometry far from the blocks moves it.
+                Ok(Outcome {
+                    script: None,
+                    message,
+                    view_changed: true,
+                })
+            }
+            Command::LoadCad { gcad, name } => {
+                let (exact, info) = gecko_geom::gcad::read(&gcad)?;
+                let what = if name.is_empty() {
+                    "geometry".to_string()
+                } else {
+                    name
+                };
+                let (vertices, edges, faces) = (
+                    exact.vertices().len(),
+                    exact.edges().len(),
+                    exact.faces().len(),
+                );
+                let geometry = exact
+                    .into_geometry()
+                    .ok_or_else(|| SessionError::NoTessellation(what.clone()))?;
+                let message = format!(
+                    "{what} loaded, exact — {vertices} {}, {edges} edge{}, {faces} face{}, \
+                     NURBS{}; drawn with {} triangles",
+                    if vertices == 1 { "vertex" } else { "vertices" },
+                    plural(edges),
+                    plural(faces),
+                    if info.source.is_empty() {
+                        String::new()
+                    } else {
+                        format!(", from {}", info.source)
+                    },
+                    geometry.nb_triangles(),
+                );
+                self.geometry = Some(Arc::new(geometry));
+                self.geometry_generation += 1;
                 Ok(Outcome {
                     script: None,
                     message,
@@ -2844,18 +2896,23 @@ impl Session {
                 return Some(on);
             }
             let lowest = shared.iter().map(|e| e.0).find(|d| *d >= cell.at_least)?;
+            // Ranked on the faceting: which of a few entities the cell is
+            // nearest is a question its triangles answer — for an exact
+            // geometry, within a deflection of the shapes and for a
+            // thousandth of the cost of projecting onto them, which this
+            // does for every cell after every command. Each measured once.
+            let rough = model.faceted();
             shared
                 .iter()
                 .filter(|e| e.0 == lowest)
-                .min_by(|a, b| {
-                    let far =
-                        |e: &(u8, i32)| model.distance(e.0, e.1, cell.middle).unwrap_or(f64::MAX);
-                    far(a).partial_cmp(&far(b)).expect("a finite distance")
+                .map(|e| {
+                    (
+                        rough.distance(e.0, e.1, cell.middle).unwrap_or(f64::MAX),
+                        *e,
+                    )
                 })
-                .map(|(dim, tag)| On {
-                    dim: *dim,
-                    tag: *tag,
-                })
+                .min_by(|a, b| a.0.partial_cmp(&b.0).expect("a finite distance"))
+                .map(|(_, (dim, tag))| On { dim, tag })
         });
     }
 
@@ -3650,6 +3707,10 @@ fn trim(command: Command) -> Command {
     match command {
         Command::LoadGeometry { name, .. } => Command::LoadGeometry {
             msh: String::new(),
+            name,
+        },
+        Command::LoadCad { name, .. } => Command::LoadCad {
+            gcad: String::new(),
             name,
         },
         other => other,

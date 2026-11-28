@@ -517,12 +517,53 @@ is how a full sphere, a seam and an edge at each pole that is a point,
 closes up. Without one, the edge is sampled and projected onto the
 surface, which is what a geometry put together in code does.
 
-What is not there yet: a session that uses one. The tests in
-`crates/gecko-geom/tests/cad.rs` build geometries in code — a plate with a
-hole, a cylinder and its seam, a sphere and its poles, a cone and its apex,
-two faces at a sharp edge, a window cut across a seam — and those in
-`tests/gcad.rs` read them from `.gcad` files; both hold every projection to
-the closed form, to 1e-10.
+The tests in `crates/gecko-geom/tests/cad.rs` build geometries in code — a
+plate with a hole, a cylinder and its seam, a sphere and its poles, a cone
+and its apex, two faces at a sharp edge, a window cut across a seam — and
+those in `tests/gcad.rs` read them from `.gcad` files; both hold every
+projection to the closed form, to 1e-10.
+
+### In a session
+
+`LoadCad { gcad, name }` — `gecko.load_cad(path)`, a `.gcad` opened in the
+page — reads the file, and the session holds what it holds for a `.msh`: a
+faceted `Geometry`. Built from the tessellation, with the exact model's
+tags, its nodes merged where faces meet (`CadGeometry::into_geometry`), and
+carrying the exact model with it (`Geometry::exact`). So everything that
+draws or describes a geometry, merges it or boxes it, works unchanged on
+the triangles; and `Model::new` sees the exact model, and from then on a
+point is projected onto the NURBS and what contains what is the topology's.
+Undo, the journal and every borrow of the session's geometry needed nothing
+new: the pair is one `Arc`.
+
+What made it fast enough to be the same session:
+
+- **A projection starts from the tessellation.** The `.gcad` gives the
+  surface's parameters at every node of a face's triangles and the curve's
+  at every point of an edge's polyline; a projection starts from the
+  nearest few, and only where it ends on a pinch — an apex, a pole — is the
+  whole surface searched as well.
+- **The faceting narrows the search.** `Model::nearest` measures every
+  entity on the triangles first and projects exactly onto only those within
+  the tolerance and two deflections; and the classification ranks the few
+  entities a cell could be on by their triangles, after every command.
+
+And what made it right:
+
+- **Projection onto a trimmed face is continuous across its boundary.** The
+  smoother differentiates every node's energy through its projection, by
+  steps of a millionth of its cell; a jump where the loop's polygon and the
+  true boundary part company dragged nodes onto rims and held them there,
+  and turned cells inside out on B47. Inside or out is decided by the
+  polygon away from the boundary, and by the edge's own p-curve near it.
+- **The mesh's skin is measured on the exact faces** by the fidelity check,
+  through the triangle nearest each node.
+
+What it gives, on Mambo's B47 and the blocking script written for its
+`.msh` — the same script, its tags translated: every node of the mesh's
+skin on the part to 3e-15 rather than 0.034; aspect ratios a fiftieth as
+bad on average; the worst scaled Jacobian lower, 0.33 rather than 0.41, at
+the bottom of the blind hole, where the mesh now follows the true circle.
 
 ### The .gcad format
 

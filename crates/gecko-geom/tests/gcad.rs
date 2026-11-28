@@ -300,3 +300,130 @@ fn a_file_of_another_format_or_version_is_refused_by_name() {
     assert!(matches!(read(&other), Err(GcadError::Format(f)) if f == "msh"));
     assert!(matches!(read("{"), Err(GcadError::Json(_))));
 }
+
+/// The faceting is conformal: what contains what, read from the nodes the
+/// triangles and polylines share, is the topology's — degenerate edges
+/// aside, which have no segments to share.
+#[test]
+fn the_faceting_meets_node_for_node_and_says_what_the_topology_says() {
+    for name in ALL {
+        let (g, _) = fixture(name);
+        let f = g.faceting().expect("a faceting");
+        assert_eq!(f.surfaces().len(), g.faces().len(), "{name}");
+        assert_eq!(
+            f.curves().len(),
+            g.edges().iter().filter(|e| !e.degenerate).count(),
+            "{name}"
+        );
+        assert_eq!(f.corners().len(), g.vertices().len(), "{name}");
+        let degenerate: Vec<i32> = g
+            .edges()
+            .iter()
+            .filter(|e| e.degenerate)
+            .map(|e| e.tag)
+            .collect();
+        let keep = |l: &[(u8, i32)]| -> Vec<(u8, i32)> {
+            l.iter()
+                .copied()
+                .filter(|(d, t)| !(*d == CURVE && degenerate.contains(t)))
+                .collect()
+        };
+        for (dim, tags) in [
+            (
+                CORNER,
+                g.vertices().iter().map(|v| v.tag).collect::<Vec<_>>(),
+            ),
+            (
+                CURVE,
+                g.edges()
+                    .iter()
+                    .filter(|e| !e.degenerate)
+                    .map(|e| e.tag)
+                    .collect(),
+            ),
+            (SURFACE, g.faces().iter().map(|f| f.tag).collect()),
+        ] {
+            for tag in tags {
+                assert_eq!(
+                    keep(f.containing(dim, tag)),
+                    keep(g.containing(dim, tag)),
+                    "{name}: ({dim}, {tag})"
+                );
+            }
+        }
+    }
+}
+
+/// A model over an exact geometry looks for what is near a point through
+/// the faceting first, and still finds what the exact geometry alone does —
+/// points right on a face between the nodes of its triangles included,
+/// which the triangles' chords leave a deflection away.
+#[test]
+fn the_faceting_narrows_the_search_without_changing_what_is_found() {
+    for name in ["cylinder", "sphere", "B47"] {
+        let (g, info) = fixture(name);
+        let faceting = g.clone().into_geometry().unwrap();
+        let none = gecko_geom::Composites::new();
+        let model = gecko_geom::Model::new(&faceting, &none);
+        let mut points = scattered(150, [-5.0, -5.0, -2.5], [5.0, 5.0, 4.5]);
+        // On each face, in the middle of its triangles: off the faceting by
+        // as much as the deflection, and on the face exactly.
+        for f in g.faces() {
+            let t = f.triangulation.as_ref().unwrap();
+            for tri in t.triangles.iter().step_by(7) {
+                let [a, b, c] = tri.map(|i| t.nodes[i as usize]);
+                let middle = [0, 1, 2].map(|k| (a[k] + b[k] + c[k]) / 3.0);
+                points.push(g.project(SURFACE, f.tag, middle).unwrap());
+            }
+        }
+        for tolerance in [[1e-9; 3], [0.3; 3]] {
+            for p in &points {
+                assert_eq!(
+                    model.nearest(*p, tolerance),
+                    g.nearest(*p, tolerance),
+                    "{name}: {p:?} at {tolerance:?}, deflection {}",
+                    info.deflection
+                );
+            }
+        }
+    }
+}
+
+/// Projection onto a trimmed face is continuous across its boundary: a
+/// point walked across the rim of a hole in steps of a micron moves its
+/// projection by about as much, never by a jump. A smoother differentiates
+/// through it, by steps far smaller than any polygon of the loop could be
+/// drawn to — a jump there, and the node it is moving is dragged onto the
+/// rim and held. Inside or out is decided by the loop's polygon away from
+/// the boundary, and by the edge's own curve near it.
+#[test]
+fn projection_onto_a_trimmed_face_is_continuous_across_its_boundary() {
+    let (g, _) = fixture("plate");
+    let top = g
+        .faces()
+        .iter()
+        .map(|f| f.tag)
+        .find(|&t| {
+            g.distance(SURFACE, t, [1.5, 1.5, 1.0]).unwrap() < EXACT
+                && g.distance(SURFACE, t, [1.5, 1.5, 0.0]).unwrap() > 0.5
+        })
+        .unwrap();
+    // Across the rim of the hole at many angles, between its samples.
+    for k in 0..37 {
+        let a = 0.1 + k as f64 * 0.17;
+        let mut last: Option<([f64; 3], [f64; 3])> = None;
+        for i in 0..=400 {
+            let r = 1.0 - 2e-4 + i as f64 * 1e-6;
+            let p = [r * a.cos(), r * a.sin(), 1.0];
+            let q = g.project(SURFACE, top, p).unwrap();
+            if let Some((p0, q0)) = last {
+                assert!(
+                    apart(q, q0) <= 2.0 * apart(p, p0) + 1e-12,
+                    "at {a} rad, r = {r}: a jump of {:e}",
+                    apart(q, q0)
+                );
+            }
+            last = Some((p, q));
+        }
+    }
+}

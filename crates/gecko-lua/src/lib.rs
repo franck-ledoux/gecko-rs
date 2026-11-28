@@ -523,6 +523,18 @@ pub fn open(lua: &Lua, kernel: Rc<dyn Kernel>) -> mlua::Result<()> {
     {
         let host = Rc::clone(&kernel);
         gecko.set(
+            "load_cad",
+            lua.create_function(move |_, path: String| {
+                let gcad = host.read(&path).map_err(mlua::Error::external)?;
+                let name = path.rsplit(['/', '\\']).next().unwrap_or(&path);
+                let command = json!({ "op": "load_cad", "gcad": gcad, "name": name });
+                said(&host.apply(&command.to_string()))
+            })?,
+        )?;
+    }
+    {
+        let host = Rc::clone(&kernel);
+        gecko.set(
             "export_vtk",
             lua.create_function(move |_, (path, segments): (String, Option<u32>)| {
                 // Mesh first if nothing has been meshed since the last
