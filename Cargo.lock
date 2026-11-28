@@ -232,6 +232,7 @@ name = "gecko-geom"
 version = "0.2.10"
 dependencies = [
  "anyhow",
+ "nurbs",
  "thiserror",
 ]
 
@@ -486,6 +487,11 @@ checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
 ]
+
+[[package]]
+name = "nurbs"
+version = "0.1.1"
+source = "git+https://github.com/franck-ledoux/nurbs-rs?tag=v0.1.1#181d36918cdc0376a0a78110033fb2e78fce7df9"
 
 [[package]]
 name = "once_cell"

@@ -485,6 +485,39 @@ onto one of these entities, not the other way round, so the geometry gets to
 be testable with no block structure in sight. And a file reader has no
 business inside a combinatorial map.
 
+## An exact geometry
+
+`gecko-geom::cad` is the other kind of model: a boundary representation
+whose edges are NURBS curves and whose faces are NURBS surfaces, from
+[nurbs-rs](https://github.com/franck-ledoux/nurbs-rs), a crate of its own
+pinned by tag in the workspace's `Cargo.toml`. A separate repository
+because it is useful without gecko — it has its own teaching playground —
+and because the exact geometry and the curved blocking still to come
+both stand on it.
+
+It answers what the faceted model answers, under the same names —
+`project`, `distance`, `nearest`, `containing`, `span` — so that the two
+can be put behind one interface without either changing. Two differences:
+
+- **Incidence is the topology's.** A face lists its edges and an edge its
+  two vertices; nothing is deduced from shared nodes.
+- **A face can be trimmed**, by loops of its edges. Each loop is sampled
+  once into a polygon of the surface's parameters, kept in one piece across
+  a periodic seam, and a projection that lands outside it goes to the face's
+  boundary instead. A loop that does not close in the parameters — round a
+  cylinder, through a pole — is refused when the geometry is built, never
+  guessed at.
+
+Every number comes from the four operations and square roots, in nurbs-rs
+and here, so the page and the terminal still agree bit for bit.
+
+What is not there yet: a file format to read one from, and a session that
+uses one. A `CadGeometry` is put together in code, with `CadBuilder`; the
+tests in `crates/gecko-geom/tests/cad.rs` build a plate with a hole, a
+cylinder and its seam, a sphere and its poles, a cone and its apex, two
+faces at a sharp edge, and a window cut across a seam, and hold every
+projection to the closed form, to 1e-10.
+
 ## Where a classification lives
 
 Split across two crates, and the split is the point.

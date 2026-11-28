@@ -12,6 +12,14 @@ the day a tag was cut.
   Mambo B1 the two rims of the hole, followed more closely than before,
   were reported as not followed. Curves, the skin and the geometry samples
   are now all measured against the reconstruction the mesh is put on.
+- **An exact geometry, in the library.** `gecko_geom::cad::CadGeometry`: a
+  boundary representation whose edges are NURBS curves and whose faces are
+  NURBS surfaces, from [nurbs-rs](https://github.com/franck-ledoux/nurbs-rs)
+  0.1.1. Faces whole or trimmed by loops of their edges, across a periodic
+  seam too; projection onto a vertex, an edge or a face, exact to 1e-10;
+  incidence read from the topology; the nearest entity, as for the faceted
+  model. Put together in code for now: no file format and no session use
+  yet.
 
 ## 0.2.10
 

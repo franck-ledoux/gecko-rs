@@ -3,10 +3,11 @@ name = "gecko-geom"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Faceted geometric model, read from a gmsh surface mesh."
+description = "Geometric models: faceted, read from a gmsh surface mesh, and exact, with NURBS curves and surfaces."
 
 [dependencies]
 thiserror = { workspace = true }
+nurbs = { workspace = true }
 
 [dev-dependencies]
 anyhow = "1"

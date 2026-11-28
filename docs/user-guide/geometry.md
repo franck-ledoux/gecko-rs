@@ -227,10 +227,13 @@ Pick something with some depth to it, or add a surface facing another way.
 
 ## What it does not do yet
 
-**No CAD.** A geometry is a faceting and only a faceting: there is no
-analytic surface behind it, so how closely the blocking can follow a curved
-part is bounded by how finely the part was meshed — the reconstruction under
-the facets narrows that, and does not remove it.
+**No CAD in a session yet.** A geometry a session loads is a faceting and
+only a faceting: there is no analytic surface behind it, so how closely the
+blocking can follow a curved part is bounded by how finely the part was
+meshed — the reconstruction under the facets narrows that, and does not
+remove it. An exact model, with NURBS curves and surfaces, exists in the
+library (see [the architecture](../developer-guide/architecture.md#an-exact-geometry));
+reading one from a file and loading it into a session come next.
 
 **A surface's reconstruction stops at its facets.** A flat end of a coarse
 cylinder is reconstructed as the octagon it was given as, while the rim round
