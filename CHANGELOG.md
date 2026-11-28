@@ -3,7 +3,7 @@
 Versions are what a reader can download, and this is what they get. Dates are
 the day a tag was cut.
 
-## Unreleased
+## 0.2.11
 
 - **The check against the geometry measures against the smooth geometry.**
   Since 0.2.10 the mesh is projected onto a reconstruction under the
