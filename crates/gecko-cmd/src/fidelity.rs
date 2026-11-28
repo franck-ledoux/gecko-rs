@@ -153,6 +153,28 @@ impl Grid {
         [0, 1, 2].map(|k| ((p[k] - self.lo[k]) / self.cell).floor() as i64)
     }
 
+    /// Everything in the cells within `r` of `p`: a superset of what is
+    /// within `r`, each once.
+    fn within(&self, p: [f64; 3], r: f64) -> Vec<usize> {
+        let (from, to) = (
+            self.index([p[0] - r, p[1] - r, p[2] - r]),
+            self.index([p[0] + r, p[1] + r, p[2] + r]),
+        );
+        let mut out = Vec::new();
+        for x in from[0]..=to[0] {
+            for y in from[1]..=to[1] {
+                for z in from[2]..=to[2] {
+                    if let Some(found) = self.buckets.get(&[x, y, z]) {
+                        out.extend(found);
+                    }
+                }
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
     /// The nearest thing to `p`, by `distance`, and how far it is.
     fn nearest(&self, p: [f64; 3], distance: impl Fn(usize) -> f64) -> Option<(f64, usize)> {
         let at = self.index(p);
@@ -225,6 +247,46 @@ impl Miss {
     }
 }
 
+/// How far `p` is from the part: from the smooth surface under each
+/// triangle, where a node is put, the nearest of those — not the smooth
+/// surface under the nearest facet, since a node of a disc beside its rim
+/// can be nearer the tube's facet than the disc's, and is not on the tube.
+///
+/// And for an exact geometry, from the nearest exact face: of every face
+/// with a triangle within that distance and two deflections, since the
+/// smooth surface under a rim's triangles can be the neighbouring face's.
+fn to_part(
+    geometry: &Geometry,
+    triangles: &[(i32, [u32; 3])],
+    grid: &Grid,
+    p: [f64; 3],
+) -> Option<f64> {
+    let smooth = |j: usize| {
+        let (tag, t) = triangles[j];
+        length(sub(p, geometry.surface_point_near(tag, t, p)))
+    };
+    let (d, i) = grid.nearest(p, smooth)?;
+    let Some(cad) = geometry.exact() else {
+        return Some(d);
+    };
+    let slack = 2.0 * cad.deflection() + cad.tolerance();
+    let mut faces: Vec<i32> = grid
+        .within(p, d + slack)
+        .into_iter()
+        .filter(|&j| smooth(j) <= d + slack)
+        .map(|j| triangles[j].0)
+        .collect();
+    faces.push(triangles[i].0);
+    faces.sort_unstable();
+    faces.dedup();
+    Some(
+        faces
+            .into_iter()
+            .filter_map(|tag| cad.distance(gecko_geom::SURFACE, tag, p))
+            .fold(f64::INFINITY, f64::min),
+    )
+}
+
 /// Measure it all. `share` is the tolerance as a share of the local
 /// element size.
 pub fn measure(
@@ -286,7 +348,6 @@ pub fn measure(
         .iter()
         .flat_map(|s| s.triangles.iter().map(move |t| (s.tag, *t)))
         .collect();
-    let exact = geometry.exact();
     let tri_boxes: Vec<_> = triangles
         .iter()
         .map(|(_, t)| bounds(&t.map(|i| g[i as usize])))
@@ -296,19 +357,9 @@ pub fn measure(
     let (mut skin_sum, mut skin_beyond) = (0.0, 0usize);
     for &n in &skin_nodes {
         let p = points[n as usize];
-        // To the smooth surface under each triangle, where a node is put:
-        // the nearest of those, not the smooth surface under the nearest
-        // facet — a node of a disc beside its rim can be nearer the tube's
-        // facet than the disc's, and is not on the tube.
-        let Some((d, i)) = tri_grid.nearest(p, |i| {
-            let (tag, t) = triangles[i];
-            length(sub(p, geometry.surface_point_near(tag, t, p)))
-        }) else {
+        let Some(d) = to_part(geometry, &triangles, &tri_grid, p) else {
             continue;
         };
-        let d = exact
-            .and_then(|cad| cad.distance(gecko_geom::SURFACE, triangles[i].0, p))
-            .unwrap_or(d);
         let miss = Miss {
             at: p,
             distance: d,
@@ -612,6 +663,76 @@ mod tests {
         assert!((to_triangle([0.2, 0.2, 3.0], a, b, c) - 3.0).abs() < 1e-12);
         assert!((to_triangle([2.0, 0.0, 0.0], a, b, c) - 1.0).abs() < 1e-12);
         assert!((to_triangle([-1.0, -1.0, 0.0], a, b, c) - 2f64.sqrt()).abs() < 1e-12);
+    }
+
+    /// A point on a face of an exact geometry is on the part, however near
+    /// a rim: not measured off a neighbouring face whose smooth surface
+    /// happens to be nearer there — the notch of Mambo's B47 is a ceiling
+    /// and a wall meeting along a U, and a point of the ceiling beside it
+    /// read as four thousandths off.
+    #[test]
+    fn a_point_on_an_exact_face_is_on_the_part_however_near_a_rim() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../gecko-geom/tests/data/B47.gcad"
+        );
+        let (cad, _) = gecko_geom::gcad::read(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let points: Vec<(i32, [f64; 3])> = cad
+            .faces()
+            .iter()
+            .flat_map(|f| {
+                let t = f.triangulation.as_ref().unwrap();
+                // Each triangle's middle, and points a little way along each
+                // of its sides from each corner: those from a corner on the
+                // boundary are just inside the face, beside its rim.
+                t.triangles
+                    .iter()
+                    .flat_map(|tri| {
+                        let at = tri.map(|i| t.nodes[i as usize]);
+                        let mut out = vec![(
+                            f.tag,
+                            [0, 1, 2].map(|k| (at[0][k] + at[1][k] + at[2][k]) / 3.0),
+                        )];
+                        for (a, b) in [(0, 1), (1, 0), (1, 2), (2, 1), (2, 0), (0, 2)] {
+                            for share in [0.01, 0.03, 0.1] {
+                                out.push((
+                                    f.tag,
+                                    [0, 1, 2].map(|k| at[a][k] + share * (at[b][k] - at[a][k])),
+                                ));
+                            }
+                        }
+                        out
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let mut on: Vec<(i32, [f64; 3])> = points
+            .into_iter()
+            .map(|(tag, p)| (tag, cad.project(gecko_geom::SURFACE, tag, p).unwrap()))
+            .collect();
+        // And the point the blocking of B47 found: on the ceiling, four
+        // thousandths in from where the wall meets it, and nearer the
+        // wall's smooth surface than the ceiling's.
+        on.push((6, [-0.5605679120281852, -2.802807103865507, -0.5]));
+        let geometry = cad.into_geometry().unwrap();
+        let triangles: Vec<(i32, [u32; 3])> = geometry
+            .surfaces()
+            .iter()
+            .flat_map(|s| s.triangles.iter().map(move |t| (s.tag, *t)))
+            .collect();
+        let g = geometry.nodes();
+        let boxes: Vec<_> = triangles
+            .iter()
+            .map(|(_, t)| bounds(&t.map(|i| g[i as usize])))
+            .collect();
+        let grid = Grid::new(&boxes, 0.5);
+        for (tag, p) in on {
+            let d = to_part(&geometry, &triangles, &grid, p).unwrap();
+            assert!(
+                d < 1e-9,
+                "a point of face {tag}, {p:?}, is {d:e} off the part"
+            );
+        }
     }
 
     #[test]

@@ -2901,16 +2901,19 @@ impl Session {
             // geometry, within a deflection of the shapes and for a
             // thousandth of the cost of projecting onto them, which this
             // does for every cell after every command. Each measured once.
+            //
+            // A lone candidate is not measured at all: most cells have one,
+            // and measuring it for nothing, for every cell after every
+            // command, is most of what a faceted session spends.
+            let candidates: Vec<(u8, i32)> =
+                shared.iter().copied().filter(|e| e.0 == lowest).collect();
+            if let [(dim, tag)] = candidates[..] {
+                return Some(On { dim, tag });
+            }
             let rough = model.faceted();
-            shared
-                .iter()
-                .filter(|e| e.0 == lowest)
-                .map(|e| {
-                    (
-                        rough.distance(e.0, e.1, cell.middle).unwrap_or(f64::MAX),
-                        *e,
-                    )
-                })
+            candidates
+                .into_iter()
+                .map(|e| (rough.distance(e.0, e.1, cell.middle).unwrap_or(f64::MAX), e))
                 .min_by(|a, b| a.0.partial_cmp(&b.0).expect("a finite distance"))
                 .map(|(_, (dim, tag))| On { dim, tag })
         });

@@ -19,6 +19,17 @@ the day a tag was cut.
   seam too; projection onto a vertex, an edge or a face, exact to 1e-10;
   incidence read from the topology; the nearest entity, as for the faceted
   model. No session uses one yet.
+- **An exact geometry as fast as a faceted one.** Mambo's B47 and its
+  blocking script, 6.5 s on its `.gcad` and 6.4 s on its `.msh`, where the
+  `.gcad` took 24: nurbs-rs 0.1.3 evaluates without allocating and once per
+  Newton step, to the same bits.
+- **A faceted session no slower for it.** Ranking the entities a cell could
+  be on measured a lone candidate for nothing, for every cell after every
+  command: B47's `.msh` had gone from 6.3 s to 14.
+- **The skin of a mesh on an exact geometry measured on the right face.**
+  A point of a face beside a rim was measured off the neighbouring face
+  when that face's smooth surface was the nearer: four thousandths off on
+  B47, where it is on the part.
 - **An exact geometry in a session.** `gecko.load_cad("part.gcad")`, or a
   `.gcad` opened or dropped in the page: drawn from its tessellation, and
   everything else worked out on the NURBS — a node put on a face is on it to
